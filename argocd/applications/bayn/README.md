@@ -103,7 +103,7 @@ reconciliation and deadline timers retain their specific purpose.
 
 The feed can reach only DNS, the existing egress proxy and Restate ingress 8080. Restate can reach the registered Bayn
 execution endpoint through its existing policy. HMAC authentication remains necessary even inside those network
-boundaries. Torghut's collector, account, credentials, topics and consumer groups are independent.
+boundaries. The shared market-data collector uses the primary provider entitlement through the market-data-only proxy listener. Its Kafka producer identity, topics and consumer groups stay independent of the private broker feed.
 
 The feed is the third member of Bayn's atomic image cohort. The main-only workflow tests and publishes
 `lab/bayn`, `lab/bayn-research` and `lab/bayn-broker-feed` under the same successful source/run receipt, withholding

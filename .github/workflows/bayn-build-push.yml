@@ -63,7 +63,8 @@ on:
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
-      - '**/package.json'
+      # services/bayn/** covers the only non-root workspace in Bayn's Bun install closure.
+      - 'package.json'
       - '.npmrc'
       - 'bunfig.toml'
       - 'patches/**'

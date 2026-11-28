@@ -335,9 +335,11 @@ Resource resolution order for Job containers (lowest to highest precedence):
 Use `spec.workload.resources` for normal per-run sizing. `spec.runtime.config.resources` is accepted for runtime-level
 submissions and is overridden by explicit workload resources.
 
-Jobs using the standard runner image use memory-backed scratch for `/workspace`, `/tmp`, the Bun cache, and any
-controller-created Codex home. Written data counts toward the Job container's memory limit. Use an explicit
-`spec.workload.volumes` mount for workspace data that must persist across Jobs.
+Jobs using the standard runner image default to memory-backed scratch. Standard GitHub Lab Codex Jobs with an
+8 GiB or larger `ephemeral-storage` request and 16 GiB or larger limit use disk for their generated `/workspace`
+and writable Bun cache instead, regardless of node cache availability. `/tmp` and the controller-created Codex
+home are still memory-backed. Use an explicit `spec.workload.volumes` mount for workspace data that must persist
+across Jobs. See [workspace cache](workspace-cache.md) for verification.
 
 ## Verify The Run Is Using The Spec Text
 

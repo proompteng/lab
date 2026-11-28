@@ -69,19 +69,34 @@ class InventoryTests(unittest.TestCase):
 
     def test_schema_only_changes_trigger_inventory_for_prs_and_main(self):
         workflow = (inventory.ROOT / ".github/workflows/ofz.yaml").read_text()
-        sections = re.findall(
-            r"(?ms)^  (?:pull_request|push):\n(.*?)(?=^  \w+:)", workflow
+        push_sections = re.findall(r"(?ms)^  push:\n(.*?)(?=^  \w+:|\Z)", workflow)
+        self.assertEqual(len(push_sections), 1)
+        push_paths = re.findall(r"^      - '([^']+)'$", push_sections[0], re.M)
+        self.assertTrue(
+            any(
+                fnmatchcase("apps/landing/src/lib/tengri/schemas.ts", pattern)
+                for pattern in push_paths
+            ),
+            "inventory schema dependency must trigger Ofz validation on main",
         )
-        self.assertEqual(len(sections), 2)
-        for section in sections:
-            paths = re.findall(r"^      - '([^']+)'$", section, re.M)
-            self.assertTrue(
-                any(
-                    fnmatchcase("apps/landing/src/lib/tengri/schemas.ts", pattern)
-                    for pattern in paths
-                ),
-                "inventory schema dependency must trigger Ofz validation",
-            )
+        self.assertRegex(workflow, r"(?m)^  workflow_call:\s*$")
+
+        pr_workflow = (inventory.ROOT / ".github/workflows/pull-request.yml").read_text()
+        pr_ofz_filter = re.search(
+            r"(?ms)^            ofz:\n(.*?)(?=^            \w+:|^\s*\n\s*- name:)",
+            pr_workflow,
+        )
+        self.assertIsNotNone(pr_ofz_filter, "pull-request.yml must define ofz filter")
+        assert pr_ofz_filter is not None
+        pr_paths = re.findall(r"^              - '([^']+)'$", pr_ofz_filter.group(1), re.M)
+        self.assertTrue(
+            any(
+                fnmatchcase("apps/landing/src/lib/tengri/schemas.ts", pattern)
+                for pattern in pr_paths
+            ),
+            "inventory schema dependency must trigger Ofz validation on PRs",
+        )
+        self.assertIn("uses: ./.github/workflows/ofz.yaml", pr_workflow)
 
     def test_new_rpc_fails_before_it_can_be_shipped(self):
         read_text = Path.read_text

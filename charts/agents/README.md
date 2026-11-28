@@ -357,10 +357,12 @@ Precedence:
 
 Use `env.vars.AGENTS_AGENT_RUNNER_IMAGE` for an explicit runner image override.
 
-The standard runner's generated scratch volumes use tmpfs with per-mount ceilings: 16 GiB for `/workspace`, 6 GiB
-for `/tmp`, 8 GiB for `/opt/bun/install/cache`, and 1 GiB for the Codex auth home when mounted. Each generated
-ceiling is capped at the Job's configured memory limit when smaller. The volumes share that limit with the runner;
-the ceilings do not reserve memory. Use `controller.defaultWorkload.affinity` and
+The standard runner's generated scratch volumes have per-mount ceilings: 16 GiB for `/workspace`, 6 GiB for `/tmp`,
+8 GiB for `/opt/bun/install/cache`, and 1 GiB for the Codex auth home when mounted. They normally use tmpfs and are
+capped at the Job's configured memory limit when smaller. Standard GitHub Lab Codex Jobs with at least an 8 GiB
+`ephemeral-storage` request and 16 GiB limit use disk for their generated workspace and Bun cache; the Pod's
+ephemeral-storage limit applies to these two volumes and other local storage together. Use
+`controller.defaultWorkload.affinity` and
 `controller.defaultWorkload.topologySpreadConstraints` to set default scheduling for AgentRun Jobs.
 
 ### Availability

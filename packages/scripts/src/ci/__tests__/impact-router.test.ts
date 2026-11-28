@@ -14,7 +14,7 @@ const yaml = (filename: string) =>
       {
         if?: string
         uses?: string
-        needs?: string[]
+        needs?: string | string[]
         secrets?: string
         steps?: { if?: string; run?: string; env?: Record<string, string> }[]
       }
@@ -127,46 +127,95 @@ test('queued service validation joins the required gate without duplicate or mut
   }
 })
 
-test('the PR gate requires all Jangar jobs when the runtime inputs are affected', () => {
+const prServices = {
+  jangar: 'jangar-ci.yml',
+  bumba: 'bumba-ci.yml',
+  froussard: 'froussard-ci.yml',
+  ofz: 'ofz.yaml',
+  oirat: 'oirat-ci.yml',
+  'signal-publisher': 'signal-publisher-ci.yml',
+}
+const prJob = (target: string) => (target === 'ofz' ? 'ofz-pr' : target)
+
+test('ci-pr rejects missing decisions and unsuccessful selected PR services', () => {
+  const gate = yaml('pull-request.yml').jobs['ci-pr']
+  const step = gate.steps?.find(({ env }) => env?.AFFECTED !== undefined)
+  if (!step?.run || !step.env?.RESULTS) throw new Error('PR service result enforcement is missing')
+  expect(step.if).toBe("github.event_name == 'pull_request'")
+  expect(step.env.AFFECTED).toBe('${{ needs.plan.outputs.pr_affected }}')
+  const command = step.run
+  const jobs = Object.keys(prServices)
+  expect(step.env.RESULTS.split('\n').sort()).toEqual(
+    jobs.map((job) => `${job}=\${{ needs.${prJob(job)}.result }}`).sort(),
+  )
+  const run = (target: string, affected: boolean | string | undefined, result: string) =>
+    Bun.spawnSync(['bash', '-c', command], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        AFFECTED: JSON.stringify(Object.fromEntries(jobs.map((job) => [job, job === target ? affected : false]))),
+        RESULTS: jobs.map((job) => `${job}=${job === target ? result : 'skipped'}`).join('\n'),
+      },
+    })
+  for (const job of jobs) {
+    expect(run(job, true, 'success').exitCode).toBe(0)
+    expect(run(job, false, 'skipped').exitCode).toBe(0)
+    for (const affected of [undefined, 'true']) {
+      const missing = run(job, affected, 'skipped')
+      expect(missing.exitCode).not.toBe(0)
+      expect(missing.stderr.toString()).toContain(`Missing PR impact decision: ${job}`)
+    }
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      const rejected = run(job, true, result)
+      expect(rejected.exitCode).toBe(1)
+      expect(rejected.stderr.toString()).toContain(`PR service validation failed: ${job}=${result}`)
+    }
+    expect(run(job, false, 'success').exitCode).toBe(1)
+  }
+})
+
+test('PR service calls share the router and do not add a second queue caller', () => {
   const router = yaml('pull-request.yml')
-  expect(router.jobs.jangar).toMatchObject({
-    needs: 'plan',
-    if: "github.event_name == 'pull_request' && needs.plan.result == 'success' && needs.plan.outputs.jangar_affected == 'true'",
-    uses: './.github/workflows/jangar-ci.yml',
-  })
-  const jangar = yaml('jangar-ci.yml')
-  expect(Object.keys(jangar.on)).toEqual(['workflow_call'])
-  expect(Object.keys(jangar.jobs).sort()).toEqual([
+  expect(router.on.pull_request).toBeNull()
+  expect(router.on.merge_group).toEqual({ types: ['checks_requested'] })
+  const gate = router.jobs['ci-pr']
+  expect(gate.if).toBe('${{ always() }}')
+  const groups = new Set<string>()
+  for (const [id, filename] of Object.entries(prServices)) {
+    const service = yaml(filename)
+    expect(service.on).toHaveProperty('workflow_call')
+    expect(service.on).not.toHaveProperty('pull_request')
+    expect(service.on).not.toHaveProperty('merge_group')
+    if (id !== 'jangar') {
+      const prefix = service.concurrency.group.split('${{')[0].toLowerCase()
+      expect(prefix).not.toBe('')
+      expect(groups.has(prefix)).toBe(false)
+      groups.add(prefix)
+    }
+    const job = prJob(id)
+    expect(router.jobs[job]).toMatchObject({ needs: 'plan', uses: `./.github/workflows/${filename}` })
+    expect(router.jobs[job].if).toContain(`.pr_affected || '{}').${id} == true`)
+    expect(router.jobs[job].if).toContain("github.event_name == 'pull_request' &&")
+    expect(gate.needs).toContain(job)
+    if (id === 'bumba' || id === 'froussard' || id === 'oirat') {
+      expect(service.on).toHaveProperty('push')
+      expect(service.on).toHaveProperty('workflow_dispatch')
+      expect(service.jobs.changes.if).toBe("github.event_name != 'pull_request'")
+    }
+  }
+  expect(Object.keys(yaml('jangar-ci.yml').jobs).sort()).toEqual([
     'atlas-search-integration',
     'dependency-closure',
     'lint-and-typecheck',
   ])
-  const gate = router.jobs['ci-pr']
-  expect(gate.needs).toContain('jangar')
-  const step = gate.steps?.find(({ env }) => env?.JANGAR_RESULT !== undefined)
-  if (!step?.run) throw new Error('Jangar result enforcement is missing')
-  expect(step.if).toBe("github.event_name == 'pull_request'")
-  expect(step.env?.JANGAR_AFFECTED).toBe('${{ needs.plan.outputs.jangar_affected }}')
-  expect(step.env?.JANGAR_RESULT).toBe('${{ needs.jangar.result }}')
-  const command = step.run
-  const run = (affected: string, result: string) =>
-    Bun.spawnSync(['bash', '-c', command], {
-      env: {
-        PATH: process.env.PATH ?? '',
-        JANGAR_AFFECTED: affected,
-        JANGAR_RESULT: result,
-      },
-    })
-  expect(run('true', 'success').exitCode).toBe(0)
-  expect(run('false', 'skipped').exitCode).toBe(0)
-  const missingDecision = run('', 'skipped')
-  expect(missingDecision.exitCode).toBe(1)
-  expect(missingDecision.stderr.toString()).toContain('Missing Jangar impact decision')
-  for (const result of ['failure', 'cancelled', 'skipped']) {
-    const rejected = run('true', result)
-    expect(rejected.exitCode).toBe(1)
-    expect(rejected.stderr.toString()).toContain('Jangar validation failed:')
-  }
+  expect(yaml('queue-service-validation.yml').jobs['signal-publisher'].uses).toBe(
+    './.github/workflows/signal-publisher-ci.yml',
+  )
+  expect(router.jobs.ofz).toMatchObject({
+    if: "github.event_name == 'merge_group'",
+    uses: './.github/workflows/ofz.yaml',
+  })
+  expect(router.jobs.ofz.needs).toBeUndefined()
+  expect(gate.needs).toContain('ofz')
 })
 
 describe('root script ownership', () => {
