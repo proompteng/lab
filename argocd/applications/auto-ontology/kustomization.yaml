@@ -7,6 +7,9 @@ resources:
   - oauth-discovery.yaml
   - tailscale-ingress.yaml
 configMapGenerator:
+  - name: auto-ontology-sql-routing
+    files:
+      - sql-routing.patch
   - name: auto-ontology-oauth-discovery
     files:
       - haproxy.cfg=oauth-discovery.cfg
@@ -18,6 +21,15 @@ helmCharts:
     repo: https://helm.ngc.nvidia.com/nvidia
     valuesFile: values.yaml
 patches:
+  - path: sql-routing-deployment.patch.yaml
+  # Helm emits this Deployment without a namespace. Match the generated ConfigMap for hash rewriting.
+  - target:
+      kind: Deployment
+      name: auto-ontology
+    patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: auto-ontology
   - target:
       kind: Service
       name: frontend
@@ -46,3 +58,15 @@ patches:
                     $patch: delete
                   - name: data
                     mountPath: /var/lib/postgresql
+
+replacements:
+  - source:
+      kind: Deployment
+      name: auto-ontology
+      fieldPath: spec.template.spec.containers.[name=backend].image
+    targets:
+      - select:
+          kind: Deployment
+          name: auto-ontology
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=copy-sql-runtime].image

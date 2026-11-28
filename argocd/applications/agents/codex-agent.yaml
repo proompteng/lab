@@ -5,6 +5,8 @@ metadata:
 spec:
   providerRef:
     name: codex
+  security:
+    allowedServiceAccounts: [codex-auto-ontology-runner]
   defaults:
     systemPromptRef:
       kind: ConfigMap

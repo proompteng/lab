@@ -1,0 +1,131 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agentrun-triage-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: agents.proompteng.ai/provider
+        operator: In
+        values: [codex, google]
+  policyTypes: [Egress]
+  egress:
+    # Preserve other pod traffic, including DNS, the MCP gateway, and artifact storage.
+    # Exclude both the observability writers and their Tailscale/Traefik ingress paths.
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: NotIn
+                values: [observability, tailscale, traefik]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: NotIn
+                values: [agents-observability-query]
+    # Keep public model, Git, and package registry access without admitting private
+    # cluster addresses (including Service IPs and tailnet ingress addresses).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - port: 443
+          protocol: TCP
+    # kube-router also sees traffic after kube-proxy translates the API Service.
+    - to:
+        - ipBlock:
+            cidr: 100.100.244.141/32
+        - ipBlock:
+            cidr: 100.100.244.142/32
+        - ipBlock:
+            cidr: 100.100.244.190/32
+      ports:
+        - port: 6443
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agents-observability-query
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-observability-query
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agents-observability-query
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: agents.proompteng.ai/provider
+                operator: In
+                values: [codex, google]
+              - key: agents.proompteng.ai/agent-run
+                operator: Exists
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: observability-mimir
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [gateway, alertmanager]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: gateway
+            matchExpressions:
+              - key: app.kubernetes.io/instance
+                operator: In
+                values: [observability-loki-v3, observability-tempo-v3]
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: observability-grafana
+              app.kubernetes.io/name: grafana
+      ports:
+        - port: 3000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

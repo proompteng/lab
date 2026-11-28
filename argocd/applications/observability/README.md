@@ -321,6 +321,30 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
   http://127.0.0.1:19090/prometheus/api/v1/query
 ```
 
+## Agents and Auto Ontology HTTP probes
+
+Cluster-metrics Alloy checks these internal Services every 30 seconds without credentials. The probe requires a
+direct HTTP 2xx response; it does not follow redirects.
+
+| Service | Health URL |
+| --- | --- |
+| Agents Auto Ontology MCP gateway | `http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/healthz` |
+| Agents Shell | `http://agents-shell.agents.svc.cluster.local:80/healthz` |
+| Auto Ontology frontend | `http://frontend.auto-ontology.svc.cluster.local:3000/api/health` |
+| Auto Ontology backend | `http://auto-ontology.auto-ontology.svc.cluster.local:3001/api/health` |
+
+`AgentsServiceHealthProbeFailed` sends a platform warning for a Service after five minutes of probe failures.
+In Mimir, query `probe_http_status_code{job=~"integrations/blackbox/agents-health/.+"}` to distinguish a non-2xx
+response from no HTTP response (status 0). If there is no ready endpoint, inspect pod readiness and events:
+
+```sh
+kubectl -n <namespace> get endpointslice -l kubernetes.io/service-name=<service>
+```
+
+The gateway can lose all endpoints when its pod `/readyz` stalls, even though `/healthz` still answers on the pod.
+If endpoints are ready but the Service is unreachable, check DNS and the scoped `agents-health-probes` ingress
+allowance for cluster-metrics Alloy. Missing probe samples are a telemetry issue, not a confirmed Service failure.
+
 ## Bayn research model
 
 Bayn's GEPA editor uses the shared Flamingo vLLM deployment. Central Alloy scrapes its metrics every fifteen

@@ -28,6 +28,7 @@ export const renderTopicHelp = (topic: string) => {
   agentctl run submit --agent <name> --impl <name> --runtime <type>
   agentctl init run --apply --wait
   agentctl run codex --prompt-file task.md --repo <owner/repo> --base main --head <branch> --verify
+  agentctl run google --prompt-file task.md --repo <owner/repo> --base main --head <branch> --verify
   agentctl run batch --spec runs.yaml [--verify] [--concurrency 8]
   agentctl run list --active -o wide
   agentctl run summary <name> [--json]

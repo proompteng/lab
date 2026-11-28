@@ -4,7 +4,7 @@ import { canaryPolicyV2 } from '../../src/strategy/macro-canary-etf/policy'
 import { planMacroCanaryEtfRebalanceV2 } from '../../src/strategy/macro-canary-etf/rebalance-planner'
 import { planMacroEtfCoreRebalanceV2, wholeShareCost } from '../../src/strategy/macro-etf-core/planner'
 import { corePolicyV2, type Etf, Profile } from '../../src/strategy/macro-etf-core/policy'
-import { MacroRiskMode, MacroRiskState, type MacroRiskConfig } from '../../src/strategy/macro-portfolio/risk'
+import { MacroRiskMode, MacroRiskState } from '../../src/strategy/macro-portfolio/risk'
 import { prepareMacroPortfolioV2, sizeMacroPortfolioV2 } from '../../src/strategy/macro-portfolio/targets'
 import { elapsedDays, requireAlignedSessions } from '../research-lib/calendar'
 import { maxDrawdown, mean, sharpe, sortino, sum } from '../research-lib/statistics'
@@ -14,12 +14,11 @@ import { replayDaily, ShareSizing, type DailySession } from '../three-account-ca
 
 export const start = { f4: 35_000, o1: 25_000 } as const
 export const targetVolatility = 0.1
-export const annualDebitBps = 600 // Scenario assumption, not a broker rate.
 const annualSessions = 252
 const micros = (usd: number) => BigInt(Math.round(usd * 1_000_000))
 const usd = (value: bigint) => Number(value) / 1_000_000
 
-export type Cost = (typeof costs)[number]
+type Cost = (typeof costs)[number]
 type Book = { cash: bigint; shares: Map<Etf, bigint> }
 type Day = {
   date: string
@@ -59,13 +58,10 @@ const initialBook = (funds: number, frame: DailyFrame, bps: Cost) => {
   }
 }
 
-export const prepareV2WalkForward = (frames: readonly DailyFrame[], risk: MacroRiskConfig) =>
-  Result.getOrThrow(prepareMacroPortfolioV2(risk, closeEvidence(frames)))
-
 /** Applies the production target and lot planner; only the execution marks and fills are simulated. */
-export const replayV2 = (
+const replayCash = (
   frames: readonly DailyFrame[],
-  prepared: ReturnType<typeof prepareV2WalkForward>,
+  prepared: Result.Result.Success<ReturnType<typeof prepareMacroPortfolioV2>>,
   oneWayBps: Cost,
 ): readonly Day[] => {
   const f4Policy = { schema: corePolicyV2, profile: Profile.F4, risk: prepared.risk }
@@ -97,7 +93,6 @@ export const replayV2 = (
         }),
       )
       riskState = target.f4.riskState
-      const days = elapsedDays(prior.date, frame.date)
       const marks = [...frame.bars.keys()].map((symbol) => ({
         symbol,
         openAt: frame.openAt,
@@ -106,23 +101,18 @@ export const replayV2 = (
         ...(!prior.bars.has(symbol)
           ? {}
           : { priorCloseAt: prior.closeAt, priorCloseMicros: mark(prior, symbol, 'close') }),
-        marginable: true, // Stylized scenario; live eligibility is a required owner input.
+        marginable: false,
       }))
       for (const sleeve of ['f4', 'o1'] as const) {
         const book = sleeve === 'f4' ? f4 : o1
         const priorEquityMicros = sleeve === 'f4' ? f4EquityMicros : o1EquityMicros
-        if (book.cash < 0n) {
-          // Debit held across the close accrues before the next opening, including nontrading days.
-          const denominator = 365n * 10_000n
-          book.cash -= (-book.cash * BigInt(annualDebitBps * days) + denominator - 1n) / denominator
-        }
         const inputs = {
           asOf: frame.openAt,
           cashMicros: book.cash,
           // Model sale proceeds settling at the next regular opening (T+1).
-          settledCashMicros: book.cash > 0n ? book.cash : 0n,
+          settledCashMicros: book.cash,
           priorEquityMicros,
-          debitCapMicros: prepared.risk.mode === MacroRiskMode.Margin ? priorEquityMicros / 2n : 0n,
+          debitCapMicros: 0n,
           grossCapMicros: micros(150_000),
           oneWayBps,
           positions: [...book.shares].map(([symbol, shares]) => ({ symbol, shares })),
@@ -162,7 +152,18 @@ export const replayV2 = (
   })
 }
 
-export const replayFrozenPair = (daily: readonly DailySession[], bps: Cost): readonly Day[] => {
+export const prepareCashWalkForward = (frames: readonly DailyFrame[]) => {
+  const prepared = Result.getOrThrow(
+    prepareMacroPortfolioV2({ mode: MacroRiskMode.Cash, targetVolatility }, closeEvidence(frames)),
+  )
+  const { f4PolicyHash, o1PolicyHash } = prepared
+  return {
+    policyHashes: { f4PolicyHash, o1PolicyHash },
+    replay: (bps: Cost) => replayCash(frames, prepared, bps),
+  }
+}
+
+const replayFrozenPair = (daily: readonly DailySession[], bps: Cost): readonly Day[] => {
   const traded = daily.map(() => 0)
   const trade = (i: number, notional: number) => {
     traded[i] += notional
@@ -217,17 +218,13 @@ export const pairedMetrics = (path: readonly Day[], first = 0, end = path.length
 
 export const costSweep = (frames: readonly DailyFrame[], daily: readonly DailySession[], first: number) => {
   requireAlignedSessions(frames, daily)
-  const prepare = (mode: MacroRiskMode) => prepareV2WalkForward(frames, { mode, targetVolatility })
-  const cash = prepare(MacroRiskMode.Cash)
-  const margin = prepare(MacroRiskMode.Margin)
-  const policies = ({ f4PolicyHash, o1PolicyHash }: typeof cash) => ({ f4PolicyHash, o1PolicyHash })
+  const cash = prepareCashWalkForward(frames)
   return {
-    policyHashes: { cash: policies(cash), margin: policies(margin) },
+    policyHashes: cash.policyHashes,
     scenarios: costs.map((bps) => ({
       bps,
       baseline: pairedMetrics(replayFrozenPair(daily, bps), first),
-      cash: pairedMetrics(replayV2(frames, cash, bps), first),
-      margin: pairedMetrics(replayV2(frames, margin, bps), first),
+      cash: pairedMetrics(cash.replay(bps), first),
     })),
   }
 }

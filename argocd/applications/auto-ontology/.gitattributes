@@ -1,0 +1,2 @@
+# Unified diffs preserve blank context lines.
+sql-routing.patch whitespace=-blank-at-eol,-blank-at-eof

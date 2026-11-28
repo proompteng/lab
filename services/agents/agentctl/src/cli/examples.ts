@@ -10,6 +10,7 @@ export const renderExamples = (topic?: string) => {
   agentctl run list --active -o wide
   agentctl run logs demo-xxxx --follow
   agentctl run codex --inline-prompt "Summarize repo" --repo owner/repo --base main --head codex/summary
+  agentctl run google --inline-prompt "Summarize repo" --repo owner/repo --base main --head google/summary
   agentctl completion install zsh
 `
   }
@@ -17,6 +18,7 @@ export const renderExamples = (topic?: string) => {
   if (normalized === 'run') {
     return `Run examples:
   agentctl run submit --agent demo --impl demo --runtime workflow --wait
+  agentctl run google --prompt-file task.md --repo owner/repo --base main --head google/task --verify
   agentctl run list --active -o wide
   agentctl run logs demo-xxxx --follow
 `

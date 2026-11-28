@@ -174,8 +174,9 @@ agentctl apply -f workspace.yaml
 agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl init run --apply --wait
 agentctl run codex --prompt-file task.md --repo owner/repo --base main --head codex/task --verify
+agentctl run google --prompt-file task.md --repo owner/repo --base main --head google/task --verify
 agentctl run batch --spec runs.yaml --verify --concurrency 8
-agentctl run list --stale -o wide
+agentctl run list --agent google-agent --stale -o wide
 agentctl run summary <name> --json
 agentctl get run
 agentctl get run <name>

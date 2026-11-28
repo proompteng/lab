@@ -30,7 +30,7 @@ const payload = {
   namespace: 'agents',
   implementation: { text: task },
   goal: { objective: task },
-  runtime: { type: 'job', config: { serviceAccountName: 'agents-sa' } },
+  runtime: { type: 'job' },
   ttlSecondsAfterFinished: 60,
   parameters: {
     stage: 'verification',

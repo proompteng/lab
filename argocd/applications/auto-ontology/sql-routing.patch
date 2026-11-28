@@ -1,0 +1,279 @@
+--- a/connector_routing.py
++++ b/connector_routing.py
+@@ -14,6 +14,9 @@
+ from __future__ import annotations
+ 
+ from typing import Iterable
++
++import sqlglot
++from sqlglot import exp
+ 
+ from auto_ontology.connectors.base import SQLDatabase
+ 
+@@ -109,4 +112,97 @@
+     )
+ 
+ 
+-__all__ = ["resolve_connector_from_tables", "resolve_target_database_name"]
++def resolve_connector_for_sql(
++    tables: Iterable[dict],
++    connectors: list[SQLDatabase],
++    sql: str | None,
++) -> SQLDatabase | None:
++    """The connector *sql* runs on, or None when it cannot be told.
++
++    Like :func:`resolve_connector_from_tables`, but never raises: when *tables*
++    span databases, the one holding every table *sql* reads decides. A name
++    two of them hold (every SQLite file's schema is ``main``) is not guessed
++    at; :func:`databases_for_sql` lists them so the caller can ask.
++    """
++    tables = [t for t in tables or [] if isinstance(t, dict)]
++    try:
++        return resolve_connector_from_tables(tables, connectors)
++    except ValueError:
++        if not sql:
++            return None
++    candidates = databases_for_sql(tables, connectors, sql)
++    if len(candidates) != 1:
++        return None
++    return _connector_named(candidates[0], connectors)
++
++
++def _connector_named(
++    database_name: str, connectors: list[SQLDatabase]
++) -> SQLDatabase | None:
++    """The connector for *database_name*, matched exactly, then ignoring case."""
++    try:
++        resolved = resolve_target_database_name(database_name, connectors)
++    except ValueError:
++        return None
++    for connector in connectors:
++        if getattr(connector, "database_name", None) == resolved:
++            return connector
++    return None
++
++
++def databases_for_sql(
++    tables: Iterable[dict], connectors: list[SQLDatabase], sql: str
++) -> list[str]:
++    """The databases among *tables* holding every table *sql* reads."""
++    referenced = _referenced_tables(sql, connectors)
++    if not referenced:
++        return []
++    candidates: list[str] | None = None
++    for schema, name in referenced:
++        holders = {
++            str(table.get("database_name") or "")
++            for table in tables
++            if isinstance(table, dict)
++            and str(table.get("name") or "").lower() == name
++            and (
++                schema is None or str(table.get("schema_name") or "").lower() == schema
++            )
++        }
++        holders.discard("")
++        candidates = sorted(
++            holders if candidates is None else holders.intersection(candidates)
++        )
++    return candidates or []
++
++
++def _referenced_tables(
++    sql: str, connectors: list[SQLDatabase]
++) -> list[tuple[str | None, str]] | None:
++    """The ``(schema, table)`` pairs *sql* reads, lowercased; None if unparsable.
++
++    Tried in each connector's dialect too: the default one rejects BigQuery's
++    backquoted ``project.dataset.table`` and names starting with a digit.
++    """
++    dialects = [None] + list(
++        dict.fromkeys(d for c in connectors if (d := getattr(c, "dialect", None)))
++    )
++    for dialect in dialects:
++        try:
++            statement = sqlglot.parse_one(sql, read=dialect)
++        except (sqlglot.errors.SqlglotError, ValueError):
++            continue
++        derived = {cte.alias_or_name.lower() for cte in statement.find_all(exp.CTE)}
++        return [
++            ((table.db or "").lower() or None, table.name.lower())
++            for table in statement.find_all(exp.Table)
++            if table.name and table.name.lower() not in derived
++        ]
++    return None
++
++
++__all__ = [
++    "databases_for_sql",
++    "resolve_connector_for_sql",
++    "resolve_connector_from_tables",
++    "resolve_target_database_name",
++]
+--- a/react/agent.py
++++ b/react/agent.py
+@@ -53,6 +53,16 @@
+     if name == ToolName.SUBMIT and not str(args.get("sql") or "").strip():
+         return "Answering an information question."
+     return "Submitting the final query."
++
++
++def tables_in_database(tables: list[dict], database_name: str) -> list[dict]:
++    """*tables* of *database_name*, ignoring case as routing does, plus untagged ones."""
++    wanted = database_name.casefold()
++    return [
++        t
++        for t in tables
++        if not t.get("database_name") or str(t["database_name"]).casefold() == wanted
++    ]
+ 
+ 
+ class ReactSQLAgent(BaseAgent):
+@@ -141,6 +151,10 @@
+                 "path_state": path_state,
+             }
+ 
++        if ctx.submitted_database:
++            path_state["relevant_tables"] = tables_in_database(
++                path_state["relevant_tables"], ctx.submitted_database
++            )
+         path_state["sql_code"] = submission.sql
+         path_state["sql_generation_result"] = SQLGenerationModel(
+             thought=submission.assumptions or _NO_ASSUMPTIONS,
+--- a/react/context.py
++++ b/react/context.py
+@@ -40,6 +40,9 @@
+     ``pages`` holds the ``run_sql`` results too long to show, for ``grep`` to
+     search; page *n* is ``pages[n - 1]``.
+ 
++    ``submitted_database`` is the database the accepted submission was written
++    for, whether it ran or was accepted unrun for lack of budget.
++
+     ``shown_tables`` is every table a ``retrieve`` result named — in a table
+     block, a JOIN route, a SIMILAR line or a definition's SQL — as lowercased
+     ``(schema, name)``. It is wider than ``seen_tables`` on purpose: a bridge
+@@ -72,6 +75,7 @@
+     prediction_llm: Any = None
+     custom_prompts: str = ""
+     seen_tables: dict[str, dict[str, Any]] = field(default_factory=dict)
++    submitted_database: str | None = None
+     joined_pairs: set[frozenset[str]] = field(default_factory=set)
+     join_paths: list[dict[str, Any]] = field(default_factory=list)
+     anchor_column_ids: dict[str, str | None] = field(default_factory=dict)
+--- a/react/run_sql.py
++++ b/react/run_sql.py
+@@ -39,7 +39,8 @@
+ )
+ from auto_ontology.retrieval.text_to_sql.chat_sql import execute_chat_sql
+ from auto_ontology.retrieval.text_to_sql.connector_routing import (
+-    resolve_connector_from_tables,
++    databases_for_sql,
++    resolve_connector_for_sql,
+ )
+ from auto_ontology.retrieval.text_to_sql.react import config
+ from auto_ontology.retrieval.text_to_sql.react.context import ToolContext
+@@ -364,11 +365,13 @@
+     return CheckResult(tables_not_shown(check.statement, ctx, catalog), check.statement)
+ 
+ 
+-def connector_for(ctx: ToolContext) -> SQLDatabase | None:
++def connector_for(ctx: ToolContext, sql: str | None = None) -> SQLDatabase | None:
+     """The database the episode's SQL runs on.
+ 
+-    The target database when the caller named one; otherwise the connector that
+-    owns the tables ``retrieve`` has shown, or the only one configured.
++    The target database when the caller named one; otherwise the only one
++    configured, or the connector that owns the tables ``retrieve`` has shown.
++    When those span several databases, *sql* decides: the one database
++    holding every table it reads.
+     """
+     if ctx.database_name:
+         for connector in ctx.connectors:
+@@ -376,12 +379,33 @@
+                 return connector
+     if len(ctx.connectors) == 1:
+         return ctx.connectors[0]
+-    try:
+-        return resolve_connector_from_tables(
+-            list(ctx.seen_tables.values()), ctx.connectors
++    return resolve_connector_for_sql(
++        list(ctx.seen_tables.values()), ctx.connectors, sql
++    )
++
++
++def no_database_error(ctx: ToolContext, sql: str) -> str:
++    """Why :func:`connector_for` found no database for *sql*."""
++    candidates = databases_for_sql(list(ctx.seen_tables.values()), ctx.connectors, sql)
++    if len(candidates) > 1:
++        return (
++            "Error: the tables this query reads are in more than one database "
++            f"({', '.join(candidates)}), and the query cannot say which. Use "
++            "tables only one of them has."
+         )
+-    except ValueError:
+-        return None
++    shown = sorted(
++        {
++            str(name)
++            for t in ctx.seen_tables.values()
++            if (name := t.get("database_name"))
++        }
++    )
++    if len(shown) > 1:
++        return (
++            "Error: no single shown database holds every table this query reads. "
++            f"Shown databases: {', '.join(shown)}. Query one database at a time."
++        )
++    return "Error: no database to run on. Retrieve the tables you need first."
+ 
+ 
+ def _cell(value: Any) -> str:
+@@ -427,9 +451,9 @@
+             "Error: no exploratory run_sql calls left in this episode. Run your "
+             "best query with final=true."
+         )
+-    connector = connector_for(ctx)
++    connector = connector_for(ctx, sql)
+     if connector is None:
+-        return "Error: no database to run on. Retrieve the tables you need first."
++        return no_database_error(ctx, sql)
+     dialect = getattr(connector, "dialect", None)
+     check = check_query(ctx, connector, sql)
+     if check.problems:
+--- a/react/loop.py
++++ b/react/loop.py
+@@ -45,6 +45,7 @@
+ from auto_ontology.retrieval.text_to_sql.react.run_sql import (
+     check_query,
+     connector_for,
++    no_database_error,
+     run_sql,
+ )
+ 
+@@ -106,9 +107,9 @@
+                 None,
+             )
+         return "Accepted.", Submission("", response, assumptions, None)
+-    connector = connector_for(ctx)
++    connector = connector_for(ctx, sql)
+     if connector is None:
+-        return "Error: no database to run on. Retrieve the tables you need first.", None
++        return no_database_error(ctx, sql), None
+     check = check_query(ctx, connector, sql)
+     if check.problems:
+         return "Not accepted. Fix these first:\n- " + "\n- ".join(check.problems), None
+@@ -116,6 +117,7 @@
+         # Running it would be refused, and a refusal is not a wrong query.
+         unrun = QueryResponse(result=[], sliced=False)
+         submission = Submission(sql, (response or "").strip(), assumptions, unrun)
++        ctx.submitted_database = getattr(connector, "database_name", None)
+         return "Accepted without running it: no budget left for a query.", submission
+     db_response = _run_sql(
+         sql, connector, record_numeric_kinds=ctx.numeric_type_alignment
+@@ -131,6 +133,7 @@
+             f"instead:\n{db_response.sql_correction}"
+         ), None
+     submission = Submission(sql, (response or "").strip(), assumptions, db_response)
++    ctx.submitted_database = getattr(connector, "database_name", None)
+     return "Accepted.", submission
+ 
+ 

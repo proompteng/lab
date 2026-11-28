@@ -82,7 +82,7 @@ spec:
             - name: OLLAMA_MAX_QUEUE
               value: "512"
             - name: OLLAMA_KEEP_ALIVE
-              value: 30m
+              value: "-1"
             - name: OLLAMA_MAX_LOADED_MODELS
               value: "1"
           livenessProbe:
@@ -136,8 +136,8 @@ spec:
               path: /readyz
               port: http
             periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 120
+            timeoutSeconds: 120
+            failureThreshold: 10
           readinessProbe:
             httpGet:
               path: /readyz

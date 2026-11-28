@@ -4,10 +4,10 @@ import { Result } from 'effect'
 import { fixture, preset } from '../../src/strategy/macro-etf-core/fixtures.test-support'
 import { Profile } from '../../src/strategy/macro-etf-core/policy'
 import { replayMacroEtfCoreSignals } from '../../src/strategy/macro-etf-core/signals'
-import { MacroRiskMode, MacroRiskState } from '../../src/strategy/macro-portfolio/risk'
+import { MacroRiskState } from '../../src/strategy/macro-portfolio/risk'
 import { closeEvidence, type DailyFrame } from '../research/macro-etf-core-dual-horizon-data'
 import { wave5dTargets } from '../research/macro-etf-core-wave5d'
-import { costSweep, prepareV2WalkForward, replayV2, targetVolatility } from './walk-forward'
+import { costSweep, prepareCashWalkForward } from './walk-forward'
 
 const sessions = (length: number): DailyFrame[] => {
   const { bars, calendar } = fixture(length)
@@ -20,7 +20,7 @@ const sessions = (length: number): DailyFrame[] => {
   })
 }
 
-test('runs frozen F4/O1 and both v2 modes deterministically on matched opens at 2, 5 and 10 bp', () => {
+test('runs only the frozen F4/O1 baseline and cash candidate on matched opens at all costs', () => {
   const frames = sessions(340)
   const f4 = new Map(
     Result.getOrThrow(replayMacroEtfCoreSignals(preset(Profile.F4), closeEvidence(frames))).map((target) => [
@@ -33,16 +33,15 @@ test('runs frozen F4/O1 and both v2 modes deterministically on matched opens at 
   const sweep = costSweep(frames, baseline, 127)
   const results = sweep.scenarios
   expect(sweep).toEqual(costSweep(frames, baseline, 127))
-  expect(sweep.policyHashes.cash.o1PolicyHash).not.toBe(sweep.policyHashes.margin.o1PolicyHash)
   expect(results.map(({ bps }) => bps)).toEqual([2, 5, 10])
-  for (const { baseline, cash, margin } of results) {
+  for (const result of results) {
+    expect(Object.keys(result).sort()).toEqual(['baseline', 'bps', 'cash'])
+    const { baseline, cash } = result
     expect(cash.sessions).toBe(baseline.sessions)
     expect(cash.first).toBe(baseline.first)
     expect(cash.last).toBe(baseline.last)
     expect(cash.maxOpeningGross ?? Infinity).toBeLessThanOrEqual(1)
-    expect(margin.maxOpeningGross ?? Infinity).toBeLessThanOrEqual(1.5)
-    expect(margin.maxOpeningGross ?? 0).toBeGreaterThan(1)
-    for (const row of [baseline, cash, margin]) {
+    for (const row of [baseline, cash]) {
       expect(row.oneWayTurnover).toBeGreaterThan(0)
       expect(row.correlation).not.toBeNull()
       expect(row.sharpe).not.toBeNull()
@@ -71,9 +70,8 @@ test('a future loss cannot affect an earlier fill; only the following open sees 
       ),
     }
   })
-  const risk = { mode: MacroRiskMode.Cash, targetVolatility }
-  const normal = replayV2(frames, prepareV2WalkForward(frames, risk), 10)
-  const shock = replayV2(stressed, prepareV2WalkForward(stressed, risk), 10)
+  const normal = prepareCashWalkForward(frames).replay(10)
+  const shock = prepareCashWalkForward(stressed).replay(10)
   expect(shock.slice(0, crashIndex)).toEqual(normal.slice(0, crashIndex))
   expect(shock[crashIndex].riskState).toBe(normal[crashIndex].riskState)
   expect(shock[crashIndex].tradedUsd).toBe(normal[crashIndex].tradedUsd)

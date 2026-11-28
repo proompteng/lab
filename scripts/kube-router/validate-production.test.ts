@@ -79,11 +79,11 @@ test('rejects a safety policy that can deny traffic', async () => {
   )
 })
 
-test('rejects a safety policy that overrides the catalog sync allowlist', async () => {
+test('rejects a safety policy that overrides the catalog sync and AgentRun triage allowlists', async () => {
   const files = copy(await loadProductionFiles())
   files.safetyPolicies = files.safetyPolicies.replace(
-    /  podSelector:\n    matchExpressions:\n      - key: app.kubernetes.io\/name\n        operator: NotIn\n        values: \[auto-ontology-sync\]/,
-    '  podSelector: {}',
+    /  podSelector:\n    matchExpressions:[\s\S]*?\n  policyTypes:/,
+    '  podSelector: {}\n  policyTypes:',
   )
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.safetyPolicies}: agents is not a retained traffic-neutral safety policy`,
