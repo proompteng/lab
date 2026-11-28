@@ -86,7 +86,11 @@ test('an expiring cycle leaves the next source window for its successor without 
 
   const successorAt = originalDeadline + 1
   expect(await check.run('b'.repeat(64), successorAt + 60_000, successorAt)).toMatchObject({
-    failure: { _tag: 'JevAwaitingEvidence', readiness: 'INFERENCE_UNAVAILABLE' },
+    failure: {
+      _tag: 'JevAwaitingEvidence',
+      readiness: 'DECISION_PENDING',
+      availableAt: utcInstantFromEpochMillis(observedMs + check.source.protocol.inferenceValidityMs),
+    },
   })
   expect(check.sourceReads()).toBe(1)
   expect(check.admitted).toHaveLength(1)

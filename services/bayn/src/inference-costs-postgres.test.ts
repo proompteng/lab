@@ -137,6 +137,7 @@ test('expense verification starts the next request while an earlier request is s
             volume: () => Effect.die('unexpected volume'),
             volumeRequest: () => Effect.die('unexpected volume request'),
             decision: () => Effect.die('unexpected decision'),
+            alphaDecision: () => Effect.die('unexpected alpha decision'),
             coverage: () => Effect.die('unexpected coverage'),
             inference: (payload, cutoff) =>
               Effect.gen(function* () {

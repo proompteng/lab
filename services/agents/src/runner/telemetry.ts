@@ -4,6 +4,9 @@ import { runnerQuotaSchema, runnerUsageSchema, runnerTelemetryKey, type RunnerTe
 
 import { isRecord } from './spec'
 
+const HEARTBEAT_INTERVAL_MS = 30_000
+const TELEMETRY_PUT_TIMEOUT_MS = 8_000
+
 type Notification = { method: string; params?: unknown }
 type Tool = RunnerTelemetry['activeTools'][number]
 type Options = {
@@ -11,6 +14,7 @@ type Options = {
   effort?: string
   now?: () => Date
   podName?: string
+  heartbeatIntervalMs?: number
   publish?: (snapshot: RunnerTelemetry) => Promise<void>
   write: (line: string) => void
 }
@@ -35,9 +39,9 @@ export const createRunnerTelemetry = (options: Options) => {
   const startedAt = now().toISOString()
   const active = new Map<string, Tool>()
   const streamedOutput = new Set<string>()
-  let pending = Promise.resolve()
+  let inFlight: Promise<void> | undefined
   let timer: ReturnType<typeof setInterval> | undefined
-  let closed = false
+  let completion: Promise<RunnerTelemetry> | undefined
   const current: RunnerTelemetry = {
     version: 1,
     state: 'starting',
@@ -62,22 +66,26 @@ export const createRunnerTelemetry = (options: Options) => {
   })
   const emit = (event: Record<string, unknown>) =>
     options.write(`${JSON.stringify({ ts: now().toISOString(), event })}\n`)
-  const flush = () => {
-    pending = pending.then(async () => {
-      current.heartbeatAt = now().toISOString()
-      const value = snapshot()
-      emit({ type: 'heartbeat', telemetry: value })
-      try {
-        await options.publish?.(value)
-      } catch (error) {
-        current.publishErrors += 1
-        emit({ type: 'telemetry_error', message: text(error instanceof Error ? error.message : String(error), 640) })
-      }
-    })
-    return pending
+  const publish = async (value: RunnerTelemetry) => {
+    try {
+      await options.publish?.(value)
+    } catch (error) {
+      current.publishErrors += 1
+      emit({ type: 'telemetry_error', message: text(error instanceof Error ? error.message : String(error), 640) })
+    }
   }
+  const heartbeat = () => {
+    current.heartbeatAt = now().toISOString()
+    const value = snapshot()
+    emit({ type: 'heartbeat', telemetry: value })
+    inFlight ??= publish(value).finally(() => {
+      inFlight = undefined
+    })
+    return inFlight
+  }
+  const flush = () => (completion ? undefined : heartbeat())
   const observe = ({ method, params: raw }: Notification) => {
-    if (closed) return
+    if (completion) return
     const params = record(raw)
     const thread = text(params.threadId) || text(record(params.thread).id)
     if (thread && current.threadId && thread !== current.threadId) return
@@ -177,23 +185,27 @@ export const createRunnerTelemetry = (options: Options) => {
         break
     }
   }
+  const finish = async () => {
+    if (timer) clearInterval(timer)
+    // Drain only the active PUT so it cannot overwrite the terminal snapshot.
+    await inFlight
+    active.clear()
+    current.state = 'finished'
+    await heartbeat()
+    return snapshot()
+  }
   return {
     observe,
     snapshot,
     flush,
     start: () => {
-      timer = setInterval(() => void flush(), 10_000)
-      timer.unref()
+      if (!timer && !completion) {
+        timer = setInterval(() => void flush(), options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS)
+        timer.unref()
+      }
       return flush()
     },
-    finish: async () => {
-      closed = true
-      if (timer) clearInterval(timer)
-      active.clear()
-      current.state = 'finished'
-      await flush()
-      return snapshot()
-    },
+    finish: () => (completion ??= finish()),
   }
 }
 
@@ -210,7 +222,7 @@ export const createTelemetryPublisher = (env: NodeJS.ProcessEnv = process.env, f
       body: Buffer.from(JSON.stringify(snapshot)),
       fetch: fetchImpl,
       now: new Date(),
-      timeoutMs: 5000,
+      timeoutMs: TELEMETRY_PUT_TIMEOUT_MS,
     })
   }
 }

@@ -128,8 +128,8 @@ spec:
                   keycloak) expected_reviewed_policy_hash=f684292a357941c6a41c29f41a8d8af5471dd7f47b08f729193c28a1d66a71d5 ;;
                   observability) expected_reviewed_policy_hash=bc98480fcfafda9fc71b8707689995fabf8aeecd02621d53cd4cb33c3dd4d38d ;;
                   ofz) expected_reviewed_policy_hash=4b4dd587be50f798059261d810285d0ab21701daf41d5fa611d9e688c7496fad ;;
-                  opencode) expected_reviewed_policy_hash=d4c19f9e287f47892b6c281fd9a5349e2911535fcfce4a9de5849d4732c841c2 ;;
-                  paperless) expected_reviewed_policy_hash=0c02e324f47b102291b7f3fa38faaf88eefc2e5a6ed397fc4024ef82dda7c12b ;;
+                  opencode) expected_reviewed_policy_hash=cc8671be21d2e10a2758a97729b76e5da7b8c9793a8500dfc2c7ae7870c06cbc ;;
+                  paperless) expected_reviewed_policy_hash=174d06c341da8f594d157ec41b3b2a3c66e98443f15243c29a73f3c54effca99 ;;
                   pelican) expected_reviewed_policy_hash=d67eb7e0bb254c9ce30e2338ca2ab4bbf6b2d802d0f56a54543b270c7b0bb959 ;;
                   proompteng) expected_reviewed_policy_hash=b869ee0dcb75f3071ce3bedeed428e281dd9cc1d49a469a62041ce395bf74e73 ;;
                   restate) expected_reviewed_policy_hash=e835a9694f394494a44600541f7f28aec57fec9e3c5e3c6fe49c1e0838addeea ;;

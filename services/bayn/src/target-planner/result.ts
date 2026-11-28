@@ -278,7 +278,7 @@ const targetPlanExecutionTermsIssues = (result: typeof TargetPlanResultBase.Type
     return [{ path: ['executionTerms'], issue: 'quote-bound target plans require durable execution-term evidence' }]
   }
   if (
-    result.executionTerms.executionPurpose !== undefined &&
+    result.executionTerms.executionPurpose === 'forced-close' &&
     result.targets.some((target) => target.targetWeight !== 0 || BigInt(target.targetQuantityAtoms) !== 0n)
   ) {
     return [{ path: ['executionTerms', 'executionPurpose'], issue: 'close execution must target a flat account' }]

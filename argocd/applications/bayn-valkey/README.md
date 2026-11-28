@@ -1,6 +1,6 @@
 # Bayn Valkey
 
-Dedicated Valkey 9.1.4 primary and replica, managed by chideat/valkey-operator v2.1.1.
+Dedicated Valkey 9.2.0 primary and replica, managed by chideat/valkey-operator v2.1.1.
 The `bayn-valkey` Application tracks reviewed `main` independently of Bayn's Kargo
 release. Valkey is a disposable cache; PostgreSQL, TigerBeetle and Kafka retain
 their existing authority.

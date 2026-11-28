@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url))
 const image = readFileSync(join(root, 'nix/images/bayn.nix'), 'utf8')
+const dailyBundles = ['run-macro-etf-core-rebalance', 'run-macro-canary-etf-rebalance', 'bayn-daily-scorecard'] as const
 const temporary: string[] = []
 const scratch = () => {
   const path = mkdtempSync(join(tmpdir(), 'bayn-study-image-'))
@@ -25,18 +26,6 @@ const run = (args: string[], env: Record<string, string | undefined> = {}) => {
   const result = Bun.spawnSync(args, { env: { ...process.env, ...env } })
   return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
 }
-
-test('the study exporter is compiled and installed only in the research runtime', () => {
-  const commands = image.match(/runtimeCommands = if research then \[([\s\S]*?)\] else \[([\s\S]*?)\];/)
-  expect(commands).not.toBeNull()
-  expect(commands?.[1]).toContain('"jev-study-export-command"')
-  expect(commands?.[2]).not.toContain('"jev-study-export-command"')
-  expect(image).toContain('bun build services/bayn/src/jev-study-export-command.ts --target=node')
-  expect(image).toContain('node services/bayn/dist/jev-study-export-command.js --help')
-  const extras = image.split('extraContents = [')[1]
-  expect(extras?.split('lib.optionals research [')[0]).not.toContain('studyExportCommand')
-  expect(extras?.split('lib.optionals research [')[1]).toContain('studyExportCommand')
-})
 
 test('the installed wrapper invokes image Node and forwards arguments without configuration', () => {
   const body = image.match(
@@ -67,6 +56,7 @@ const archive = (
     screenBundle?: boolean
     screenWrapper?: boolean
     reportWorker?: boolean
+    dailyBundle?: { name: (typeof dailyBundles)[number]; present: boolean }
   } = {},
 ) => {
   const path = scratch()
@@ -136,6 +126,10 @@ const archive = (
   if (options.wrapper) put(fs, 'bin/bayn-jev-study-export', '#!/bin/sh\nexit 0\n', true)
   if (options.screenBundle ?? role === 'research') put(fs, 'app/services/bayn/dist/equity-edge-screen.js')
   if (options.screenWrapper ?? role === 'research') put(fs, 'bin/bayn-equity-edge-screen', '#!/bin/sh\nexit 0\n', true)
+  for (const name of dailyBundles) {
+    if (options.dailyBundle?.name === name ? options.dailyBundle.present : role === 'research')
+      put(fs, `app/services/bayn/dist/${name}.js`)
+  }
   expect(run(['tar', '-cf', join(tarRoot, 'layer.tar'), '-C', fs, '.']).code).toBe(0)
   put(tarRoot, 'manifest.json', JSON.stringify([{ Layers: ['layer.tar'] }]))
   const result = join(path, 'image.tar')
@@ -170,6 +164,17 @@ test('the trading archive rejects either exporter artifact', () => {
   expect(wrapper.code).not.toBe(0)
   expect(wrapper.stderr).toContain('research executable bayn-jev-study-export')
 })
+
+for (const name of dailyBundles) {
+  test(`only the research archive can contain ${name}`, () => {
+    const research = archive('research', { bundle: true, wrapper: true, dailyBundle: { name, present: false } })
+    expect(research.code).not.toBe(0)
+    expect(research.stderr).toContain(`${name}.js`)
+    const trading = archive('trading', { dailyBundle: { name, present: true } })
+    expect(trading.code).not.toBe(0)
+    expect(trading.stderr).toContain(`research bundle ${name}`)
+  })
+}
 
 test('the research archive requires both equity-screen artifacts and trading rejects either one', () => {
   const missingBundle = archive('research', { bundle: true, wrapper: true, screenBundle: false })

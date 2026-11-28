@@ -483,6 +483,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
     let pendingIndex = 0
     let ended = false
     let advancedToMs = 0
+    let arrivalRevision = 0
     let advanceFailure: ReplaySourceFailure | undefined
     let brokerObserver:
       | ((atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) => Effect.Effect<void, ReplaySourceFailure>)
@@ -519,6 +520,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
               const previous = cursor.projection
               cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, next))
               pendingIndex++
+              arrivalRevision++
               if (publishBroker && brokerObserver !== undefined) {
                 const quote =
                   next.record.topic === marketSourceForTopic(manifest.marketSources, next.record.topic)?.topics.quotes
@@ -552,6 +554,15 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       manifest,
       source,
       cursor: Effect.sync(() => cursor),
+      // The prevalidated file supplies only the next arrival time here; values remain unpublished until advanceTo.
+      nextAvailableAtMs: permit.withPermit(
+        Effect.suspend(() =>
+          advanceFailure === undefined
+            ? peek.pipe(Effect.map((arrival) => arrival?.availableAtMs ?? null))
+            : Effect.fail(advanceFailure),
+        ),
+      ),
+      sourceRevision: Effect.sync(() => arrivalRevision),
       advanceTo: (atMs: number, readSource: Parameters<typeof advanceTo>[2]) => advanceTo(atMs, true, readSource),
       observeBroker: (observer: NonNullable<typeof brokerObserver>) =>
         Effect.acquireRelease(

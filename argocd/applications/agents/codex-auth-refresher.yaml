@@ -1,0 +1,344 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codex-auth-refresher
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codex-auth-refresher
+  namespace: agents
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - codex-auth-master
+      - codex-auth
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codex-auth-refresher
+  namespace: agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: codex-auth-refresher
+subjects:
+  - kind: ServiceAccount
+    name: codex-auth-refresher
+    namespace: agents
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codex-auth-refresher-script
+  namespace: agents
+data:
+  refresh.py: |
+    import base64
+    import copy
+    import datetime
+    import json
+    import os
+    import ssl
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    DEFAULT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+    DEFAULT_ISSUER = "https://auth.openai.com"
+    NAMESPACE = os.environ.get("NAMESPACE", "agents")
+    MASTER_SECRET = os.environ.get("MASTER_SECRET", "codex-auth-master")
+    WORKER_SECRET = os.environ.get("WORKER_SECRET", "codex-auth")
+    MIN_REMAINING_DAYS = float(os.environ.get("MIN_REMAINING_DAYS", "8.0"))
+    FORCE_REFRESH = os.environ.get("FORCE_REFRESH", "false").lower() in ("1", "true", "yes")
+    PATCH_MAX_ATTEMPTS = int(os.environ.get("PATCH_MAX_ATTEMPTS", "5"))
+    PATCH_RETRY_BASE_SECONDS = float(os.environ.get("PATCH_RETRY_BASE_SECONDS", "1.0"))
+    SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+
+    def decode_jwt_payload(token: str) -> dict:
+      if not token or "." not in token:
+        return {}
+      parts = token.split(".")
+      if len(parts) < 2:
+        return {}
+      padded = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+      return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+
+
+    def k8s_request(method: str, path: str, body: dict | None = None, content_type: str = "application/json") -> dict:
+      host = os.environ["KUBERNETES_SERVICE_HOST"]
+      port = os.environ["KUBERNETES_SERVICE_PORT"]
+      with open(f"{SA_DIR}/token", "r", encoding="utf-8") as fh:
+        sa_token = fh.read().strip()
+      ctx = ssl.create_default_context(cafile=f"{SA_DIR}/ca.crt")
+      url = f"https://{host}:{port}{path}"
+      data = json.dumps(body).encode("utf-8") if body is not None else None
+      req = urllib.request.Request(
+          url,
+          data=data,
+          method=method,
+          headers={
+              "Authorization": f"Bearer {sa_token}",
+              "Accept": "application/json",
+              "Content-Type": content_type,
+          },
+      )
+      with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+    def read_secret_auth(secret_name: str) -> dict:
+      obj = k8s_request("GET", f"/api/v1/namespaces/{NAMESPACE}/secrets/{secret_name}")
+      encoded = obj.get("data", {}).get("auth.json")
+      if not encoded:
+        raise RuntimeError(f"Secret {NAMESPACE}/{secret_name} is missing data['auth.json']")
+      return json.loads(base64.b64decode(encoded).decode("utf-8"))
+
+
+    def patch_secret_auth(secret_name: str, payload: dict) -> None:
+      raw = (json.dumps(payload, indent=2, sort_keys=False) + "\n").encode("utf-8")
+      encoded = base64.b64encode(raw).decode("ascii")
+      k8s_request(
+          "PATCH",
+          f"/api/v1/namespaces/{NAMESPACE}/secrets/{secret_name}",
+          body={"data": {"auth.json": encoded}},
+          content_type="application/strategic-merge-patch+json",
+      )
+
+
+    def persist_secret_auth(secret_name: str, payload: dict) -> None:
+      last_err: Exception | None = None
+      for attempt in range(1, max(1, PATCH_MAX_ATTEMPTS) + 1):
+        try:
+          patch_secret_auth(secret_name, payload)
+          return
+        except Exception as err:
+          last_err = err
+          # Reconcile uncertain write outcome via readback before retrying.
+          try:
+            if read_secret_auth(secret_name) == payload:
+              return
+          except Exception:
+            pass
+          if attempt < PATCH_MAX_ATTEMPTS:
+            time.sleep(PATCH_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+      raise RuntimeError(
+          f"Failed to persist Secret {NAMESPACE}/{secret_name} after {PATCH_MAX_ATTEMPTS} attempts: {type(last_err).__name__}"
+      ) from None
+
+
+    def extract_oauth_config(tokens: dict) -> tuple[str, str]:
+      id_claims = decode_jwt_payload(tokens.get("id_token") or "")
+      aud = id_claims.get("aud")
+      if isinstance(aud, list) and aud and isinstance(aud[0], str):
+        client_id = aud[0]
+      elif isinstance(aud, str) and aud:
+        client_id = aud
+      else:
+        client_id = DEFAULT_CLIENT_ID
+      issuer = id_claims.get("iss")
+      if not isinstance(issuer, str) or not issuer.startswith("https://"):
+        issuer = DEFAULT_ISSUER
+      return f"{issuer.rstrip('/')}/oauth/token", client_id
+
+
+    def refresh_oauth(token_url: str, client_id: str, refresh_token: str) -> dict:
+      body = json.dumps({
+          "client_id": client_id,
+          "grant_type": "refresh_token",
+          "refresh_token": refresh_token,
+      }).encode("utf-8")
+      req = urllib.request.Request(
+          token_url,
+          data=body,
+          method="POST",
+          headers={
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "User-Agent": "codex-auth-refresher/1.0",
+          },
+      )
+      try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+          return json.loads(resp.read().decode("utf-8"))
+      except urllib.error.HTTPError as err:
+        err_code = "unknown"
+        try:
+          err_payload = json.loads(err.read().decode("utf-8"))
+          if isinstance(err_payload, dict):
+            err_code = str(err_payload.get("error") or err_payload.get("error_description") or "unknown")[:80]
+        except Exception:
+          pass
+        raise RuntimeError(f"OAuth token refresh failed with HTTP {err.code} (error={err_code})") from None
+
+
+    def make_worker_projection(master_auth: dict) -> dict:
+      worker = copy.deepcopy(master_auth)
+      worker["OPENAI_API_KEY"] = None
+      worker_tokens = worker.get("tokens")
+      if not isinstance(worker_tokens, dict):
+        raise RuntimeError("Master auth.json is missing tokens object")
+      worker_tokens["refresh_token"] = ""
+      return worker
+
+
+    def main() -> int:
+      now = datetime.datetime.now(datetime.timezone.utc)
+      now_ts = now.timestamp()
+      master = read_secret_auth(MASTER_SECRET)
+      if master.get("auth_mode") != "chatgpt":
+        raise RuntimeError(f"Unexpected auth_mode={master.get('auth_mode')!r}; refusing non-ChatGPT refresh")
+      tokens = master.get("tokens")
+      if not isinstance(tokens, dict):
+        raise RuntimeError("Master auth.json is missing tokens object")
+      refresh_token = tokens.get("refresh_token")
+      if not isinstance(refresh_token, str) or not refresh_token:
+        raise RuntimeError(f"Secret {NAMESPACE}/{MASTER_SECRET} is missing tokens.refresh_token")
+
+      old_claims = decode_jwt_payload(tokens.get("access_token") or "")
+      old_exp = float(old_claims.get("exp") or 0)
+      old_days = (old_exp - now_ts) / 86400.0 if old_exp > 0 else -1.0
+      old_exp_iso = (
+          datetime.datetime.fromtimestamp(old_exp, tz=datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+          if old_exp > 0
+          else None
+      )
+
+      refreshed = False
+      if FORCE_REFRESH or old_days < MIN_REMAINING_DAYS:
+        token_url, client_id = extract_oauth_config(tokens)
+        oauth = refresh_oauth(token_url, client_id, refresh_token)
+        new_access = oauth.get("access_token")
+        if not isinstance(new_access, str) or not new_access:
+          raise RuntimeError("OAuth refresh response did not include access_token")
+        new_claims = decode_jwt_payload(new_access)
+        new_exp = float(new_claims.get("exp") or 0)
+        if new_exp <= now_ts + 3600:
+          raise RuntimeError("Refreshed access_token has invalid or near-expired exp claim")
+
+        updated_master = copy.deepcopy(master)
+        updated_master["OPENAI_API_KEY"] = None
+        updated_master["auth_mode"] = "chatgpt"
+        updated_master["last_refresh"] = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        updated_tokens = updated_master["tokens"]
+        updated_tokens["access_token"] = new_access
+        if isinstance(oauth.get("id_token"), str) and oauth["id_token"]:
+          updated_tokens["id_token"] = oauth["id_token"]
+        if isinstance(oauth.get("refresh_token"), str) and oauth["refresh_token"]:
+          updated_tokens["refresh_token"] = oauth["refresh_token"]
+
+        # Persist master FIRST with retry/readback so a rotated single-use refresh_token is never lost.
+        persist_secret_auth(MASTER_SECRET, updated_master)
+        master = updated_master
+        refreshed = True
+
+      worker_target = make_worker_projection(master)
+      worker_synced = False
+      try:
+        current_worker = read_secret_auth(WORKER_SECRET)
+      except Exception:
+        current_worker = None
+      if current_worker != worker_target:
+        persist_secret_auth(WORKER_SECRET, worker_target)
+        worker_synced = True
+
+      final_claims = decode_jwt_payload(master["tokens"].get("access_token") or "")
+      final_exp = float(final_claims.get("exp") or 0)
+      final_exp_iso = (
+          datetime.datetime.fromtimestamp(final_exp, tz=datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+          if final_exp > 0
+          else None
+      )
+      final_days = round((final_exp - now_ts) / 86400.0, 2) if final_exp > 0 else None
+
+      print(json.dumps({
+          "status": "ok",
+          "refreshed": refreshed,
+          "workerSynced": worker_synced,
+          "oldExp": old_exp_iso,
+          "newExp": final_exp_iso,
+          "daysRemaining": final_days,
+          "workerHasRefreshToken": False,
+      }))
+      return 0
+
+
+    if __name__ == "__main__":
+      sys.exit(main())
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: codex-auth-refresher
+  namespace: agents
+spec:
+  schedule: "0 6 */3 * *"
+  timeZone: America/Los_Angeles
+  suspend: false
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 180
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: codex-auth-refresher
+        spec:
+          serviceAccountName: codex-auth-refresher
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: refresher
+              image: python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+              command: ["python3", "-u", "/scripts/refresh.py"]
+              env:
+                - name: NAMESPACE
+                  value: agents
+                - name: MASTER_SECRET
+                  value: codex-auth-master
+                - name: WORKER_SECRET
+                  value: codex-auth
+                - name: MIN_REMAINING_DAYS
+                  value: "8.0"
+                - name: PYTHONDONTWRITEBYTECODE
+                  value: "1"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: scripts
+              configMap:
+                name: codex-auth-refresher-script
+                defaultMode: 0444

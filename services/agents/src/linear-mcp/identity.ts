@@ -1,6 +1,7 @@
 import { AuthenticationV1Api, KubeConfig, type V1TokenReview } from '@kubernetes/client-node'
 
 import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '../server/kube-types'
+import { makeApiClientWithTransport, shouldUseBunKubernetesTransport } from '../server/kubernetes-bun-transport'
 import { asRecord, asString, readNested } from '../server/primitives'
 
 export class LinearMcpIdentityError extends Error {
@@ -232,10 +233,20 @@ export const createLinearMcpIdentityVerifier = (options: {
   }
 }
 
-export const createKubernetesTokenReviewer = (): TokenReviewer => {
-  const config = new KubeConfig()
-  config.loadFromDefault()
-  const api = config.makeApiClient(AuthenticationV1Api)
+export const createKubernetesTokenReviewer = (
+  options: {
+    kubeConfig?: KubeConfig
+    useBunTransport?: boolean
+    makeBunClient?: (kubeConfig: KubeConfig, ApiClientType: typeof AuthenticationV1Api) => AuthenticationV1Api
+  } = {},
+): TokenReviewer => {
+  const config = options.kubeConfig ?? new KubeConfig()
+  if (!options.kubeConfig) {
+    config.loadFromDefault()
+  }
+  const useBunTransport = options.useBunTransport ?? shouldUseBunKubernetesTransport()
+  const makeBunClient = options.makeBunClient ?? makeApiClientWithTransport
+  const api = useBunTransport ? makeBunClient(config, AuthenticationV1Api) : config.makeApiClient(AuthenticationV1Api)
   return async (token, audience) => {
     const response = await api.createTokenReview({
       body: {

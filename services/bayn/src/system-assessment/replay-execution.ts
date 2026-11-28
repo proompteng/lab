@@ -315,7 +315,12 @@ export const observeReplayExecution = (
           )
     const report = yield* decode(
       Schema.Struct({
-        schemaVersion: Schema.Literals(['bayn.backtest-report.v9', 'bayn.frozen-control-latency-report.v1']),
+        schemaVersion: Schema.Literals([
+          'bayn.backtest-report.v9',
+          'bayn.backtest-report.v10',
+          'bayn.backtest-report.v11',
+          'bayn.frozen-control-latency-report.v1',
+        ]),
         runId: Sha256Schema,
         reportHash: Sha256Schema,
         executableSha256: Sha256Schema,
@@ -330,7 +335,12 @@ export const observeReplayExecution = (
       report.runId !== prepared.runId ||
       (wire.policy === JevResearchPolicy.Deployed
         ? report.schemaVersion !== 'bayn.frozen-control-latency-report.v1' || report.passLog.file !== 'passes.ndjson'
-        : report.schemaVersion !== 'bayn.backtest-report.v9' || report.passLog.file !== 'passes.ndjson.gz')
+        : report.schemaVersion !==
+            (wire.schemaVersion === 'bayn.backtest.v13'
+              ? 'bayn.backtest-report.v11'
+              : wire.schemaVersion === 'bayn.backtest.v12'
+                ? 'bayn.backtest-report.v10'
+                : 'bayn.backtest-report.v9') || report.passLog.file !== 'passes.ndjson.gz')
     )
       return yield* new SystemAssessmentError({ message: 'Captured report hash or run differs from its input' })
     const image = yield* VerifiedReplayImage.inspect(

@@ -27,6 +27,7 @@ import {
 import { strictParseOptions } from './schemas'
 import { BrokerMutationError, MutationFailure } from './broker/alpaca-mutations/model'
 import { advancePositionProtection } from './observe-composition/position-protection-interpreter'
+import { IntradayAlphaPhase } from './strategy/intraday-alpha/constants'
 import { withProviderSessions } from './testing/market-calendar-fixture'
 import { currentEquityMarketProfile as equityMarketProfile } from './jev/markets'
 import { CandidateObservationStore } from './observe-composition/candidate-observation'
@@ -55,6 +56,7 @@ import {
 } from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy, strategyExecutionRiskPolicy } from './execution/risk-policy'
 import { decodeJevPortfolio, JevPositionStore, JevPurpose } from './jev/portfolio'
+import { JevExitReason, jevMaximumHoldDueAt } from './jev/exit'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
@@ -9805,6 +9807,369 @@ test.each(['known', 'unknown', 'publication', 'filled', 'unaccounted'] as const)
     } else {
       expect(result._tag).toBe('PostMutationReconciliation')
       expect(calls).toEqual([`${intent.intentId}:${order.brokerOrderId}`])
+    }
+  },
+)
+
+test.each(['wide-iex-armed', 'gap-armed', 'wide-iex-absent', 'midday-native', 'midday-rejected'] as const)(
+  'advancePositionProtection preserves native exits at the strategy boundary: %s',
+  async (scenario) => {
+    const fixture = await executionLifecycleFixture()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
+    const decision = fixture.document.strategyDecision
+    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Entry fixture required')
+    const symbol = fixture.intent.symbol
+    const plan = decision.exitPolicy.plans[symbol]
+    const levels = plan?.levels
+    if (plan === undefined || levels === undefined) throw new Error('Bound strategy prices required')
+    const rejected = scenario === 'midday-rejected'
+    const midday = scenario === 'midday-native' || rejected
+    const armed = scenario !== 'wide-iex-absent' && !rejected
+    const intent = await Effect.runPromise(
+      planExecutionIntent(
+        {
+          schemaVersion: 'bayn.intent-plan.v3',
+          strategyName: 'jev',
+          cycleId: fixture.intent.cycleId,
+          decisionHash: fixture.intent.decisionHash,
+          policyHash: fixture.intent.policyHash,
+          accountId,
+          symbol,
+          quantityAtoms: fixture.intent.quantityAtoms,
+          timeInForce: TimeInForce.Day,
+          side: OrderSide.Sell,
+          orderType: OrderType.Limit,
+          limitPriceMicros: levels.profitLimitPriceMicros,
+          notionalLimitMicros: String(
+            (BigInt(fixture.intent.quantityAtoms) * BigInt(levels.profitLimitPriceMicros)) / 1_000_000_000n,
+          ),
+          protection: {
+            _tag: 'Oco',
+            stopPriceMicros: levels.stopPriceMicros,
+            stopLimitPriceMicros: levels.stopLimitPriceMicros,
+            profitLimitPriceMicros: levels.profitLimitPriceMicros,
+            entryDecisionHash: fixture.document.contentHash,
+          },
+          createdAt: observedAt,
+        },
+        {
+          authority: {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash,
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+            version: 1,
+            updatedAt: observedAt,
+          },
+        },
+      ),
+    )
+    const held = rejected
+      ? storedIntent(intent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected)
+      : storedIntent(intent, IntentState.Acknowledged, observedAt)
+    const root = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled)
+    const entryOrder: Order = {
+      schemaVersion: 'bayn.order.v3',
+      accountId,
+      brokerOrderId: 'armed-entry-broker',
+      clientOrderId: fixture.intent.clientOrderId,
+      intentId: fixture.intent.intentId,
+      symbol,
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: fixture.intent.quantityAtoms,
+      filledQuantityAtoms: fixture.intent.quantityAtoms,
+      limitPriceMicros: fixture.intent.limitPriceMicros,
+      status: OrderStatus.Filled,
+      observedAt,
+    }
+    const order: Order = {
+      schemaVersion: 'bayn.order.v3',
+      accountId,
+      brokerOrderId: 'armed-stop-order',
+      clientOrderId: intent.clientOrderId,
+      intentId: intent.intentId,
+      symbol,
+      side: OrderSide.Sell,
+      orderType: OrderType.StopLimit,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: intent.quantityAtoms,
+      filledQuantityAtoms: '0',
+      limitPriceMicros: levels.stopLimitPriceMicros,
+      stopPriceMicros: levels.stopPriceMicros,
+      status: OrderStatus.New,
+      observedAt,
+    }
+    const targetOrder: Order = {
+      schemaVersion: 'bayn.order.v3',
+      accountId,
+      brokerOrderId: 'armed-target-order',
+      clientOrderId: `${intent.clientOrderId}-tp`,
+      intentId: intent.intentId,
+      symbol,
+      side: OrderSide.Sell,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: intent.quantityAtoms,
+      filledQuantityAtoms: '0',
+      limitPriceMicros: levels.profitLimitPriceMicros,
+      status: OrderStatus.New,
+      observedAt,
+    }
+    const entryPriceMicros = BigInt(fixture.intent.limitPriceMicros)
+    const positionNotionalMicros = (
+      (BigInt(fixture.intent.quantityAtoms) * entryPriceMicros) /
+      1_000_000_000n
+    ).toString()
+    const position: Position = {
+      schemaVersion: 'bayn.position.v2',
+      accountId,
+      symbol,
+      quantityAtoms: fixture.intent.quantityAtoms,
+      averageEntryPriceMicros: entryPriceMicros.toString(),
+      costBasisMicros: positionNotionalMicros,
+      marketPriceMicros: entryPriceMicros.toString(),
+      marketValueMicros: positionNotionalMicros,
+      unrealizedPnlMicros: '0',
+      observedAt,
+    }
+    const reconciled = reconciliationResultAt(
+      observedAt,
+      0,
+      0,
+      [position],
+      armed ? [entryOrder, order, targetOrder] : [entryOrder],
+      rejected ? Authority.Observe : Authority.Execution,
+    )
+    const authority = reconciled.riskContext.authority
+    if (authority === null) throw new Error('Expected authority in exact reconciliation')
+    const reconciliation = rejected
+      ? {
+          ...reconciled,
+          riskContext: {
+            ...reconciled.riskContext,
+            authority: {
+              ...authority,
+              reason: 'Bayn execution cycle loop restricted effective authority: submit rejected',
+            },
+          },
+        }
+      : reconciled
+    const entryFillPriceAtoms = (entryPriceMicros * 1_000n).toString()
+    const portfolio = Result.getOrThrow(
+      decodeJevPortfolio({
+        purpose: JevPurpose.Manage,
+        brokerState: reconciliation.brokerState,
+        entryDecisionHash: fixture.document.contentHash,
+        exitPolicy: decision.exitPolicy,
+        protectionIntentIds: armed ? [intent.intentId] : [],
+        exitRequestedAt: rejected ? observedAt : null,
+        profitExitRequested: false,
+        entryIntentIds: [fixture.intent.intentId],
+        entryFills: [
+          {
+            schemaVersion: 'bayn.fill.v2',
+            accountId,
+            fillId: 'armed-entry-fill',
+            brokerOrderId: 'armed-entry-broker',
+            clientOrderId: fixture.intent.clientOrderId,
+            intentId: fixture.intent.intentId,
+            symbol,
+            side: OrderSide.Buy,
+            quantityAtoms: fixture.intent.quantityAtoms,
+            priceAtoms: entryFillPriceAtoms,
+            feeMicros: '0',
+            occurredAt: fixture.document.createdAt,
+          },
+        ],
+        entryInventoryDebit: {
+          quantityAtoms: '0',
+          costBasisMicros: '0',
+        },
+        protectionDisposals: { quantityAtoms: '0', costBasisMicros: '0' },
+      }),
+    )
+    if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected managed portfolio')
+    const submit: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '6'.repeat(64),
+      mutationId: '7'.repeat(64),
+      intentId: intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '8'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: order.brokerOrderId,
+      occurredAt: observedAt,
+    }
+    const { brokerOrderId: _rejectedOrderId, ...submitWithoutOrder } = submit
+    const latestSubmit: MutationEvent | undefined = rejected
+      ? { ...submitWithoutOrder, eventType: MutationEventType.SubmitRejected }
+      : armed
+        ? submit
+        : undefined
+    const stopPrice = Number(levels.stopPriceMicros) / 1_000_000
+    const quotesRange =
+      scenario === 'gap-armed' || scenario === 'midday-native'
+        ? { bidPrice: stopPrice - 0.15, askPrice: stopPrice - 0.05 }
+        : { bidPrice: stopPrice - 0.15, askPrice: stopPrice + 0.15 }
+    const marketData = {
+      ...fixture.input.intradayMarketData,
+      loadSnapshot: (query: Parameters<typeof fixture.input.intradayMarketData.loadSnapshot>[0]) =>
+        Effect.sync(() => {
+          const raw = makeIntradayMomentumTestSnapshot(
+            currentIntradayProtocol,
+            { ...query, archiveWatermarks: [] },
+            {
+              [symbol]: -0.02,
+            },
+          )
+          return streamingFixtureFromRaw(
+            {
+              ...raw,
+              quotes: raw.quotes.map((quote) => ({
+                ...quote,
+                ...quotesRange,
+                eventAt: observedAt,
+                ingestedAt: observedAt,
+              })),
+            },
+            query,
+          ).snapshot
+        }),
+    }
+    const calls: string[] = []
+    let replacement: typeof intent | undefined
+    const unused = Effect.die('Unexpected mutation call')
+    const program = {
+      ...sandboxExecutionProgram(),
+      cancelProtectionOrder: (owner: string, brokerOrderId: string) =>
+        Effect.sync(() => {
+          calls.push(`${owner}:${brokerOrderId}`)
+          return {
+            _tag: 'Accepted',
+            phase: 'Fresh',
+            receipt: {
+              command: { intentId: owner, accountId, brokerOrderId, requestedAt: observedAt },
+              requestHash: 'a'.repeat(64),
+              evidence: {
+                requestId: 'iex-stop-guard-cancel',
+                status: 204,
+                contentHash: 'b'.repeat(64),
+                observedAt,
+              },
+            },
+          } as const
+        }),
+    }
+    const document: typeof fixture.document = midday
+      ? {
+          ...fixture.document,
+          // Exercise the interpreter with the same sealed protection facts and the midday target discriminator.
+          strategyDecision: {
+            ...decision,
+            schemaVersion: 'bayn.intraday-alpha-target.v2',
+            phase: IntradayAlphaPhase.MiddayReversion,
+            exitPolicy: {
+              ...decision.exitPolicy,
+              plans: {
+                ...decision.exitPolicy.plans,
+                AAPL: { ...plan, levels: { ...levels, symbol: 'AAPL' } },
+              },
+            },
+          } as unknown as NonNullable<typeof fixture.document.strategyDecision>,
+        }
+      : fixture.document
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* advancePositionProtection({
+          input: { ...fixture.input, intradayMarketData: marketData },
+          cycle: fixture.boundCycle,
+          document,
+          protocol: currentIntradayProtocol,
+          policy: fixture.policy,
+          reconciliation,
+          capability: { _tag: rejected ? 'CloseOnly' : 'Mutation', executionProgram: program },
+          closeDue: false,
+          closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
+        })
+      }).pipe(
+        Effect.provideService(IntentStore, {
+          read: (id) => Effect.succeed(Option.some(id === intent.intentId ? held : root)),
+          protectionForCycle: () => Effect.succeed(armed || rejected ? [held] : []),
+          beginProtectionCancel: () => unused,
+          recordProtectionCancelAccepted: () => unused,
+          commit: () => unused,
+          commitClosing: (planned, risk) =>
+            Effect.sync(() => {
+              replacement = planned
+              return {
+                record: storedIntent({ ...planned, riskDecisionId: risk.decisionId }, IntentState.Approved, observedAt),
+                deduplicated: false,
+              }
+            }),
+        }),
+        Effect.provideService(MutationStore, {
+          latest: (_id, operation) => Effect.succeed(operation === MutationOperation.Submit ? latestSubmit : undefined),
+          authorizeSubmit: () => unused,
+          beginSubmit: () => unused,
+          submitAccepted: () => unused,
+          submitRejected: () => unused,
+          submitDenied: () => unused,
+          submitUnknown: () => unused,
+          beginCancel: () => unused,
+          cancelAccepted: () => unused,
+          cancelUnknown: () => unused,
+          recoveryFound: () => unused,
+          recoveryNotFound: () => unused,
+          recoveryUnknown: () => unused,
+        }),
+        Effect.provideService(JevPositionStore, { read: () => Effect.succeed(portfolio) }),
+        provideJevTestServices,
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    if (rejected) {
+      expect(result).toMatchObject({
+        _tag: 'Step',
+        step: { _tag: 'Execute', action: 'SUBMIT', intentId: replacement?.intentId },
+      })
+      expect(replacement).toMatchObject({
+        symbol,
+        quantityAtoms: position.quantityAtoms,
+        protection: { _tag: 'Oco', entryDecisionHash: document.contentHash },
+      })
+      expect(replacement?.intentId).not.toBe(intent.intentId)
+      expect(calls).toEqual([])
+      return
+    }
+    if (scenario === 'midday-native') {
+      expect(result).toEqual({ _tag: 'Step', step: { _tag: 'Wait', observedAt, waitReason: 'JEV_POSITION_HELD' } })
+      expect(calls).toEqual([])
+      return
+    }
+    if (scenario === 'wide-iex-armed') {
+      expect(result).toEqual({
+        _tag: 'Step',
+        step: {
+          _tag: 'Wait',
+          observedAt,
+          waitReason: 'JEV_POSITION_HELD',
+          maximumHoldDueAt: jevMaximumHoldDueAt(fixture.document.createdAt, decision.exitPolicy.maximumHoldingMinutes),
+          maximumHoldEvaluatedAt: observedAt,
+        },
+      })
+      expect(calls).toEqual([])
+    } else if (scenario === 'gap-armed') {
+      expect(result._tag).toBe('PostMutationReconciliation')
+      expect(calls).toEqual([`${intent.intentId}:${order.brokerOrderId}`])
+    } else {
+      expect(result).toMatchObject({ _tag: 'Ready', exitTarget: { reason: JevExitReason.ProtectiveStop } })
+      expect(calls).toEqual([])
     }
   },
 )
