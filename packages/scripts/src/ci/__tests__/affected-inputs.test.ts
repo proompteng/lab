@@ -253,6 +253,18 @@ test('OpenCode PR validation selects the PR head without publication secrets', (
     expect(selected(validation, 'pull_request', 'refs/pull/42/merge', helper)).toBe(false)
 })
 
+test('Bayn push triggers cover exactly the installed Bun workspace manifests', () => {
+  const { image } = parseTargets("image: ['', 'services/bayn']", '', '.github/workflows/bayn-build-push.yml', 'push')
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8'))
+  const manifests = Object.keys(lock.workspaces).map((path) => (path ? `${path}/package.json` : 'package.json'))
+  const dependencies = { image: { workspaces: image.workspaces, paths: [] } }
+
+  expect(manifests.filter((file) => matchesPaths(file, image.paths))).toEqual(
+    manifests.filter((file) => selectAffectedInputs([file], dependencies, lock, lock).image),
+  )
+  expect(matchesPaths('bun.lock', image.paths)).toBe(true)
+})
+
 test('Bayn publication ignores Froussard-only dependencies and still selects Bayn runtime changes', () => {
   const configured = parseTargets("image: ['', 'services/bayn']", '', '.github/workflows/bayn-build-push.yml', 'push')
   const prior = {
