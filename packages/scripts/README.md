@@ -43,6 +43,11 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | `src/torghut/storage-stability-gate.ts`               | Collects a read-only 30-minute clean observation window from Talos, Ceph/current SMART health, Kafka, Torghut and Jangar PostgreSQL, Argo CD, and contained Torghut write workloads; exits non-zero unless current storage, quorum, durability, WAL budgets, and runtime evidence prove staged activation is safe. | `kubectl`, `talosctl`              | `bun run gate:torghut-storage-stability --observation-start 2026-07-15T11:00:00Z --output json`                                   |
 | `src/torghut/generate-whitepaper-replay-workflows.ts` | Fetches closed whitepaper issues from GitHub, deduplicates them by source PDF, writes one direct-intake payload per unique paper under `docs/whitepapers/replay-workflows/`, and can optionally POST them to Torghut.                                                                                              | `gh`                               | `bun run whitepapers:replay --post --base-url http://localhost:8181`                                                              |
 
+## Agents collective knowledge
+
+`src/agents/curate-ontology-deltas.ts` validates AgentRun proposals against an in-memory copy of the Agents schema and
+updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
+
 ## Registry maintenance
 
 The Python 3.14 controller `src/registry/run.py` runs one cleanup worker inside the existing registry Pod.
@@ -85,8 +90,11 @@ Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
 Bayn also publishes images only from `main`. Its PRs retain source builds, type checks, PostgreSQL, archive, ledger,
-replay and production metadata validation. Python checks run for GEPA inputs; ordinary service test edits skip
-the independent proof pipeline unless they change its PostgreSQL conformance cases. Replay image and execution
+replay and production metadata validation. Standalone deployment manifests, Bayn validation scripts, and service
+documentation that is linted run the PR contract checks without starting runtime suites. Manifests read by runtime
+tests, such as `postgres-monitoring.yaml` and the ClickHouse schema, still select runtime validation. Python checks
+run for GEPA inputs; ordinary service test edits skip the independent proof pipeline unless they change its
+PostgreSQL conformance cases. Merge groups and release callers still validate every suite. Replay image and execution
 acceptance share one hosted job and Nix environment, including dependency source boundary checks.
 The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
@@ -97,9 +105,12 @@ GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
 
-Agents' existing Kind smoke job forces a rebuild of its shared dependency closure only when its Nix dependency
-inputs, installed workspace manifests or the installed Effect patch change. Ordinary runtime edits reuse the cache;
-test-only edits retain the unit tier. All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
+Agents CI runs the selected unit, chart/CRD, and Kind jobs in parallel once planning succeeds. Changes limited to the
+chart/CRD verifier or schema extractor need only the chart/CRD job; changes to charts and Kind inputs still run smoke.
+The central gate still requires the called workflow to pass, and merge groups select all suites. Kind forces a rebuild
+of its shared dependency closure only when its Nix dependency inputs, installed workspace manifests or the installed
+Effect patch change. Ordinary runtime edits reuse the cache; test-only edits retain the unit tier.
+All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
 semaphore used by Bayn; Agents' publication and Kargo discovery include that installed dependency input.
 A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.
 The shared verifier's own changes use its behavioral regressions and App's existing two native checks. Other services

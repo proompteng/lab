@@ -436,6 +436,13 @@ spec:
                       - /metadata/annotations
                       - /spec/volumeMode
                       - /spec/volumeName
+                  - group: ""
+                    kind: PersistentVolumeClaim
+                    name: saigak-ryzen-data
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /spec/volumeMode
+                      - /spec/volumeName
                   - group: apps
                     kind: StatefulSet
                     name: saigak
@@ -457,6 +464,20 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
+              - name: nemotron-rerank
+                path: argocd/applications/nemotron-rerank
+                namespace: nemotron-rerank
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+              - name: auto-ontology
+                path: argocd/applications/auto-ontology
+                namespace: auto-ontology
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
               - name: torghut-cuda-ranker
                 path: argocd/applications/torghut-cuda-ranker
                 namespace: torghut-cuda-ranker

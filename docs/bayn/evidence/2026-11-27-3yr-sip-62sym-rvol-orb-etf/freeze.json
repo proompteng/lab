@@ -1,0 +1,570 @@
+{
+  "schemaVersion": "bayn.sip-momentum-wave2d.freeze.v1",
+  "sources": {
+    "./research-3yr-sip-62sym-rvol-orb-etf.ts": "88ce240bec43415187a481628c87a8389397eb29ffbe110d4fb60543d7e388ab",
+    "./research-sip-momentum-data.ts": "aaa94c9e35acce3e61040c3c9d81b2ef2d9e662536833335f94c7818fc6d6379",
+    "./research-sip-momentum-protocol.ts": "4a188eb2f60990b839c3efef7b13dc95088cea05bc402f985f1ef8b0301906a9",
+    "./research-sip-momentum-replay.ts": "3d12e6d6c200d7461e54fd05a1fa7d7547846993372ef571e7da2872be877d5c",
+    "./research-sip-momentum-statistics.ts": "3ae042f3bc694c748cff9d989a5279f44690560708e77ec93a8ee03c95c40062",
+    "./research-sip-momentum-study.ts": "fdbe13d81100e255cad6cb193de22e949894cda65ddee665e9a4a8e019315619",
+    "./research-orb-zab-data.ts": "2128021f73ed208e8937dadead6b9cae679bd3f45f519f40ff8f689e4cbf18d3",
+    "./research-orb-zab-statistics.ts": "a2924c2249ab7af0f34fed1309f7731536a7edd540247a9bc3884b493a0d8b96",
+    "../src/broker/alpaca/model.ts": "9f105ede090270bbafd0e7d8269922117a4627cac459042490cd55b31a8f31b5",
+    "../src/broker/alpaca/normalizers.ts": "794dcfd96d8481932bc0617178e1ab5c9caac591aa3921e4661f3df7556603ca",
+    "../src/equity-hours.ts": "2e95f50756a08949518e7df8583b007186b55ea8ac54f8ab0c299ba86aef6e75",
+    "../../../bun.lock": "26a41d74bc4383eb825908d2d87f1851b74b1c66b68a3e7e64271c8c8122ec58",
+    "../../../docs/bayn/evidence/2026-11-27-3yr-sip-62sym-rvol-orb-etf/PROTOCOL.md": "9d0d7de4fce60fd6e66e530f27310c0ab758c0034c2f1dfba00fcf8a4cbc450e"
+  },
+  "provenance": {
+    "manifestKey": "bayn-research-datasets/2026-11-27-sip-multiyear/MANIFEST.json",
+    "manifestSha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead",
+    "calendarKey": "bayn-research-datasets/2026-11-27/calendar_2024_2026.json",
+    "calendarSha256": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71",
+    "key": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+    "rows": 3923737,
+    "rawBytes": 273982883,
+    "gzipBytes": 80649568,
+    "rawSha256": "c053ede2875ad791c99aae517db9efa9a4587b08c9907d55e0960dade59d567e",
+    "gzipSha256": "105972d7825b4deb14a30295fab153b1e734929e1c321642964ec8d35bbbc697"
+  },
+  "coverage": {
+    "rows": 3008992,
+    "regular": 2677772,
+    "nonRegular": 330844,
+    "preListing": 376,
+    "bySymbol": {
+      "AAPL": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "ALAB": {
+        "received": 39449,
+        "expected": 39486,
+        "missing": 37
+      },
+      "AMAT": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "AMD": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "AMZN": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "ANET": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "APP": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "ARKK": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "ARM": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "ASML": {
+        "received": 43680,
+        "expected": 43698,
+        "missing": 18
+      },
+      "AVGO": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "CEG": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "COHR": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "COIN": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "CRDO": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "CRWD": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "GEV": {
+        "received": 38862,
+        "expected": 38862,
+        "missing": 0
+      },
+      "GLD": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "GOOGL": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "HOOD": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "IEF": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "INTC": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "IWM": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "KLAC": {
+        "received": 43557,
+        "expected": 43698,
+        "missing": 141
+      },
+      "LITE": {
+        "received": 43688,
+        "expected": 43698,
+        "missing": 10
+      },
+      "LRCX": {
+        "received": 43679,
+        "expected": 43698,
+        "missing": 19
+      },
+      "META": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "MRVL": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "MSFT": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "MSTR": {
+        "received": 43692,
+        "expected": 43698,
+        "missing": 6
+      },
+      "MU": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "NET": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "NFLX": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "NOW": {
+        "received": 43680,
+        "expected": 43698,
+        "missing": 18
+      },
+      "NVDA": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "ORCL": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "PANW": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "PLTR": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "QQQ": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "SHOP": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "SMCI": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "SMH": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "SNDK": {
+        "received": 21498,
+        "expected": 21498,
+        "missing": 0
+      },
+      "SNOW": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "SOFI": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "SPOT": {
+        "received": 43691,
+        "expected": 43698,
+        "missing": 7
+      },
+      "SPY": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "TLT": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "TSLA": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "TSM": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "UBER": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "USO": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "VRT": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "VST": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "WDC": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "XBI": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "XLE": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "XLF": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "XLI": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "XLK": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "XLV": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      },
+      "XLY": {
+        "received": 43698,
+        "expected": 43698,
+        "missing": 0
+      }
+    }
+  },
+  "development": {
+    "registry": {
+      "orb": 2016,
+      "noise": 36,
+      "combo": 3
+    },
+    "benchmark": {
+      "nTests": 2055,
+      "nSharpes": 1863,
+      "expectedMaxDailySharpe": 0.21381985473097995
+    },
+    "selected": {
+      "orb": {
+        "trial": {
+          "engine": "orb",
+          "id": "orb5/2.5/k1/gap/range/2",
+          "rangeBars": 1,
+          "rvol": 2.5,
+          "top": 1,
+          "filter": "gap",
+          "stop": "range",
+          "target": 2
+        },
+        "diagnostic": true,
+        "train": {
+          "perCost": [
+            {
+              "bps": 5,
+              "net": 27558.3455420357,
+              "exTop5": 17308.751315996433,
+              "blockP": 0.016698330166983303
+            },
+            {
+              "bps": 10,
+              "net": 24189.209706191243,
+              "exTop5": 14049.296768580594,
+              "blockP": 0.030596940305969402
+            }
+          ],
+          "plateau": {
+            "neighbors": [
+              "orb5/2/k1/gap/range/2",
+              "orb5/2.5/k1/none/range/2",
+              "orb5/2.5/k1/gap/range/5",
+              "orb5/2.5/k1/spy/range/2",
+              "orb5/2.5/k3/gap/range/2",
+              "orb5/3/k1/gap/range/2",
+              "orb15/2.5/k1/gap/range/2"
+            ],
+            "passing": ["orb5/2/k1/gap/range/2", "orb5/2.5/k1/none/range/2", "orb5/3/k1/gap/range/2"],
+            "pass": false
+          },
+          "pass": false
+        },
+        "validation": {
+          "perCost": [
+            {
+              "bps": 5,
+              "net": 7272.18225112667,
+              "exTop5": -2164.1681712799846,
+              "blockP": 0.1693830616938306
+            },
+            {
+              "bps": 10,
+              "net": 5521.199756640265,
+              "exTop5": -3803.81743485306,
+              "blockP": 0.23427657234276572
+            }
+          ],
+          "plateau": {
+            "neighbors": [
+              "orb5/2/k1/gap/range/2",
+              "orb5/2.5/k1/none/range/2",
+              "orb5/2.5/k1/gap/range/5",
+              "orb5/2.5/k1/spy/range/2",
+              "orb5/2.5/k3/gap/range/2",
+              "orb5/3/k1/gap/range/2",
+              "orb15/2.5/k1/gap/range/2"
+            ],
+            "passing": [],
+            "pass": false
+          },
+          "pass": false
+        }
+      },
+      "noise": {
+        "trial": {
+          "engine": "noise",
+          "id": "noise/pair/30/1.2/opposite",
+          "universe": "pair",
+          "checkpoint": 6,
+          "band": 1.2,
+          "exit": "opposite"
+        },
+        "diagnostic": true,
+        "train": {
+          "perCost": [
+            {
+              "bps": 5,
+              "net": 11444.612952931364,
+              "exTop5": 1754.675515835077,
+              "blockP": 0.07479252074792521
+            },
+            {
+              "bps": 10,
+              "net": 4820.5599975042705,
+              "exTop5": -4692.703921853307,
+              "blockP": 0.2592740725927407
+            }
+          ],
+          "plateau": {
+            "neighbors": [
+              "noise/pair/30/1/opposite",
+              "noise/pair/30/1.2/atr",
+              "noise/pair/60/1.2/opposite",
+              "noise/sectors/30/1.2/opposite"
+            ],
+            "passing": [],
+            "pass": false
+          },
+          "pass": false
+        },
+        "validation": {
+          "perCost": [
+            {
+              "bps": 5,
+              "net": 981.2124563687929,
+              "exTop5": -5142.092526460274,
+              "blockP": 0.41655834416558346
+            },
+            {
+              "bps": 10,
+              "net": -2937.969627716325,
+              "exTop5": -8862.586069664463,
+              "blockP": 0.7185281471852815
+            }
+          ],
+          "plateau": {
+            "neighbors": [
+              "noise/pair/30/1/opposite",
+              "noise/pair/30/1.2/atr",
+              "noise/pair/60/1.2/opposite",
+              "noise/sectors/30/1.2/opposite"
+            ],
+            "passing": [],
+            "pass": false
+          },
+          "pass": false
+        }
+      },
+      "combo": {
+        "trial": {
+          "id": "combo/0.5",
+          "engine": "combo",
+          "orb": {
+            "engine": "orb",
+            "id": "orb5/2.5/k1/gap/range/2",
+            "rangeBars": 1,
+            "rvol": 2.5,
+            "top": 1,
+            "filter": "gap",
+            "stop": "range",
+            "target": 2
+          },
+          "noise": {
+            "engine": "noise",
+            "id": "noise/pair/30/1.2/opposite",
+            "universe": "pair",
+            "checkpoint": 6,
+            "band": 1.2,
+            "exit": "opposite"
+          },
+          "orbWeight": 0.5
+        },
+        "diagnostic": false,
+        "train": {
+          "perCost": [
+            {
+              "bps": 5,
+              "net": 19440.93567909867,
+              "exTop5": 12404.003321478333,
+              "blockP": 0.0059994000599940004
+            },
+            {
+              "bps": 10,
+              "net": 14461.715226015622,
+              "exTop5": 7538.895972210643,
+              "blockP": 0.029897010298970104
+            }
+          ],
+          "plateau": {
+            "neighbors": ["combo/0.25", "combo/0.75"],
+            "passing": ["combo/0.75"],
+            "pass": false
+          },
+          "pass": false
+        },
+        "validation": {
+          "perCost": [
+            {
+              "bps": 5,
+              "net": 4066.672019661669,
+              "exTop5": -1673.7986052244787,
+              "blockP": 0.1743825617438256
+            },
+            {
+              "bps": 10,
+              "net": 1244.4237894492012,
+              "exTop5": -4349.475404923098,
+              "blockP": 0.38666133386661333
+            }
+          ],
+          "plateau": {
+            "neighbors": ["combo/0.25", "combo/0.75"],
+            "passing": [],
+            "pass": false
+          },
+          "pass": false
+        }
+      }
+    }
+  }
+}

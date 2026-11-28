@@ -68,9 +68,14 @@ Set `runs-on` to one of these labels to run on memory-backed scratch.
 | `arc-amd64-tmpfs` | `arc-arm64-tmpfs` | 16 GiB | 18 GiB |
 | `arc-amd64-tmpfs-large` | `arc-arm64-tmpfs-large` | 24 GiB | 28 GiB |
 
-Each label scales from zero to two workers and each worker requests 8 GiB of memory. Scratch and job processes share
-the memory limit. Bootstrap allows up to 4 GiB for the seed and verifies the copy and remaining capacity. Jobs with
-larger scratch requirements, such as the Restate Cargo cache export, use the default 64 GiB Ceph labels.
+The standard labels scale from zero to ten workers on AMD64 and eight on ARM64. The large labels scale from zero to six.
+Each worker requests 8 GiB of memory. Scratch and job processes share the memory limit. Bootstrap allows up to
+4 GiB for the seed and verifies the copy and remaining capacity. Jobs with larger scratch requirements, such as
+the Restate Cargo cache export, use the default 64 GiB Ceph labels.
+
+OpenCode release images, the main Bayn image and the Bayn broker-feed image use the standard tmpfs labels through
+`nix-oci-build-common.yml`. These families accounted for 812 of 2,030 ARC build jobs in the 14 days ending
+2026-11-27 UTC. Their observed concurrency at job start was three at p95 on each architecture.
 
 After promotion, dispatch `ARC tmpfs acceptance` to verify both limits, placement, scratch mounts, Nix and BuildKit on
 all four labels.

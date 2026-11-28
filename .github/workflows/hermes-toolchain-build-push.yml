@@ -52,6 +52,7 @@ jobs:
     with:
       image_name: hermes-toolchain
       package_attr: hermes-toolchain-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}

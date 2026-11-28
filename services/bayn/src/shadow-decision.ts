@@ -314,7 +314,7 @@ const validateBindings = (
   if (
     isFlatExecutionTarget(decision) &&
     (input.submissionCutoffAt === undefined ||
-      input.submissionCutoffAt <= cycle.window.submissionCutoffAt ||
+      input.submissionCutoffAt <= plannerInput.observedAt ||
       input.riskInputs.some(
         ({ state }) => state.closeOnly !== true || state.closeOnlyExpiresAt !== input.submissionCutoffAt,
       ))
