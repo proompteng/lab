@@ -97,12 +97,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(agents_agent_queue_depth_bucket[5m])) by (le))",
-          "legendFormat": "p95 queue depth",
+          "expr": "max by (namespace) (agents_agent_queue_depth{scope=\"namespace\",source=\"snapshot\"})",
+          "legendFormat": "{{namespace}}",
           "refId": "A"
         }
       ],
-      "title": "Agent Queue Depth (p95)",
+      "title": "Agent Queue Depth",
       "type": "timeseries"
     },
     {

@@ -646,6 +646,68 @@ data:
                 AgentRun step pods are active while agents-alloy has no available replicas.
                 Logs can be lost once Job pods terminate.
               runbook_url: docs/runbooks/agents-log-observability.md
+      - name: agents-fleet.rules
+        rules:
+          - alert: AgentsUntouchedBacklogHigh
+            expr: max by (namespace) (agents_agentrun_untouched_backlog{job="agents",service="agents-controllers"}) > 10
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents controller has a sustained untouched backlog
+              description: More than ten AgentRuns in {{ $labels.namespace }} have not been observed by the controller for five minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+          - alert: AgentsRunFailureRateHigh
+            expr: |
+              (
+                sum(increase(agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome="Failed"}[30m]))
+                / sum(increase(agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome=~"Succeeded|Failed"}[30m]))
+                > 0.20
+              )
+              and
+              (sum(increase(agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome=~"Succeeded|Failed"}[30m])) >= 5)
+            for: 5m
+            labels:
+              severity: warning
+              namespace: agents
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents run failure rate is elevated
+              description: More than 20% of non-cancelled runs are failing, with at least five completions in the last 30 minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+          - alert: AgentsQuotaNearLimit
+            expr: max by (limit_id) (agents_runner_quota_used_percent{job="agents",service="agents-controllers"}) > 85
+            for: 5m
+            labels:
+              severity: warning
+              namespace: agents
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents runner weekly quota is near its limit
+              description: The observed weekly quota for {{ $labels.limit_id }} has exceeded 85% for five minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+          - alert: AgentsControllerReconcileSlow
+            expr: |
+              histogram_quantile(0.95,
+                sum by (namespace, le) (rate(agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun"}[10m]))
+              ) > 5000
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents reconcile latency is elevated
+              description: The 10-minute p95 for AgentRun reconciliation in {{ $labels.namespace }} has exceeded five seconds for five minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
       - name: mimir-ingestion.rules
         rules:
           - alert: MimirSeriesCapacityHigh

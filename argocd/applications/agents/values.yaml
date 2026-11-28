@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: kargo-sha-00656ee59408e2acffa0c0182cb14358162be630-run-46100073762
-  digest: sha256:0c235306985d682c15f32b9b7cf1a2c162004f8da5ec5350f9da957461124390
+  tag: kargo-sha-2a59bec11d3ffe4f9987183440992ac4daa7b67f-run-46106542373
+  digest: sha256:b8e98dcb129f8f04a3b7de611b3ee9a9978387b674aec04faa67f8df5a1fc649
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -14,27 +14,28 @@ tolerations:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: kargo-sha-00656ee59408e2acffa0c0182cb14358162be630-run-46100073762
-    digest: sha256:78c68eb25bee388a3a8d01ca1177e820f64937576248dd2b7b01dc2f9a3fac51
+    tag: kargo-sha-2a59bec11d3ffe4f9987183440992ac4daa7b67f-run-46106542373
+    digest: sha256:c263b968df06058c7258e439c561ad283c38bc4542b576d9138f694e0c1ebb7c
   env:
     vars:
+      AGENTS_DB_POOL_MAX: "16"
       AGENTS_RELAY_TARGETS_FILE: /etc/agents-relay/relay-targets.json
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 00656ee59408e2acffa0c0182cb14358162be630
-      AGENTS_GITOPS_REVISION: 00656ee59408e2acffa0c0182cb14358162be630
-      AGENTS_SOURCE_CI_RUN_ID: "46100073762"
+      AGENTS_SOURCE_HEAD_SHA: 2a59bec11d3ffe4f9987183440992ac4daa7b67f
+      AGENTS_GITOPS_REVISION: 2a59bec11d3ffe4f9987183440992ac4daa7b67f
+      AGENTS_SOURCE_CI_RUN_ID: "46106542373"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:78c68eb25bee388a3a8d01ca1177e820f64937576248dd2b7b01dc2f9a3fac51
-      AGENTS_SERVING_BUILD_COMMIT: 00656ee59408e2acffa0c0182cb14358162be630
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:78c68eb25bee388a3a8d01ca1177e820f64937576248dd2b7b01dc2f9a3fac51
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:c263b968df06058c7258e439c561ad283c38bc4542b576d9138f694e0c1ebb7c
+      AGENTS_SERVING_BUILD_COMMIT: 2a59bec11d3ffe4f9987183440992ac4daa7b67f
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:c263b968df06058c7258e439c561ad283c38bc4542b576d9138f694e0c1ebb7c
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: kargo-sha-00656ee59408e2acffa0c0182cb14358162be630-run-46100073762
-    digest: sha256:ee33cc84e5e1463e74d9d38e6ccea0b785d88d3f2f3e638556e277d1c04503ed
+    tag: kargo-sha-2a59bec11d3ffe4f9987183440992ac4daa7b67f-run-46106542373
+    digest: sha256:c22e6e04389fb020ddce382ae08d7c9b3ad1cc1a9e2886013468697ab574343d
 autoOntologyMcpGateway:
   enabled: true
 linearMcpGateway:
@@ -59,8 +60,8 @@ agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: kargo-sha-00656ee59408e2acffa0c0182cb14358162be630-run-46100073762
-    digest: sha256:35b1b186664bdc52e77a6c324009ae01a3e8156a3a83fcc6322300cbe9c594fa
+    tag: kargo-sha-2a59bec11d3ffe4f9987183440992ac4daa7b67f-run-46106542373
+    digest: sha256:32fcec90dedf5ec1b13962c3479d1b55dc81cd061eb5e1b235bed7e471c52d5a
     pullPolicy: IfNotPresent
   env:
     vars:
@@ -211,10 +212,20 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: kargo-sha-00656ee59408e2acffa0c0182cb14358162be630-run-46100073762
-    digest: sha256:0c235306985d682c15f32b9b7cf1a2c162004f8da5ec5350f9da957461124390
+    tag: kargo-sha-2a59bec11d3ffe4f9987183440992ac4daa7b67f-run-46106542373
+    digest: sha256:b8e98dcb129f8f04a3b7de611b3ee9a9978387b674aec04faa67f8df5a1fc649
   autoscaling:
     enabled: false
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      memory: "4Gi"
+  env:
+    vars:
+      AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH: /var/lib/agents-workspace-cache
+      AGENTS_DB_POOL_MAX: "24"
 swarm:
   enabled: true
 resources:
@@ -230,31 +241,55 @@ controller:
       - key: node-role.kubernetes.io/control-plane
         operator: Exists
         effect: NoSchedule
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values:
+                    - talos-192-168-1-194
+    topologySpreadConstraints:
+      - maxSkew: 16
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchExpressions:
+            - key: agents.proompteng.ai/agent-run
+              operator: Exists
     resources:
       requests:
-        cpu: "1"
-        memory: 4Gi
-        ephemeral-storage: 8Gi
+        cpu: "500m"
+        memory: "4Gi"
+        ephemeral-storage: "8Gi"
       limits:
-        memory: 16Gi
-        ephemeral-storage: 16Gi
+        memory: "32Gi"
+        ephemeral-storage: "16Gi"
   namespaces:
     - agents
     - synthesis
   concurrency:
-    perNamespace: 40
-    perAgent: 32
+    perNamespace: 112
+    perAgent: 96
+    cluster: 160
   queue:
-    perRepo: 200
+    perNamespace: 400
+    perRepo: 400
+    cluster: 1000
+  rate:
+    perNamespace: 240
+    perRepo: 120
+    cluster: 600
   agentRunRetentionSeconds: 604800
   agentRunRetentionMaxDeletesPerNamespace: 250
   agentRunRetentionZeroTtlMaxSeconds: 604800
-  jobTtlSeconds: 86400
-  jobTtlSecondsAfterFinished: 86400
+  jobTtlSeconds: 1800
+  jobTtlSecondsAfterFinished: 1800
   runtimeDebrisCleanup:
     mode: delete
-    orphanPodRetentionSeconds: 86400
-    maxDeletesPerNamespace: 25
+    orphanPodRetentionSeconds: 3600
+    maxDeletesPerNamespace: 100
   logRetentionSeconds: 604800
   authSecret:
     name: codex-auth
@@ -327,7 +362,6 @@ env:
     AGENTS_GRPC_HOST: 0.0.0.0
     AGENTS_GRPC_PORT: "50051"
     AGENTS_GITHUB_REPOS_ALLOWED: proompteng/lab
-    AGENTS_DB_POOL_MAX: "8"
     AGENTS_MEMORY_DB_POOL_MAX: "2"
     PGQUERY_TIMEOUT_MS: "90000"
     AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
@@ -352,3 +386,6 @@ extraVolumes:
 extraVolumeMounts:
   - name: relay-targets
     mountPath: /etc/agents-relay
+
+telemetry:
+  otlpEndpoint: http://observability-tempo-distributor.observability.svc.cluster.local:4318

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse, parseAllDocuments } from 'yaml'
 
+import { loadImpactMap } from '../../ci/impact-router'
 import { repoRoot } from '../../shared/cli'
 
 type JsonObject = Record<string, unknown>
@@ -250,8 +251,8 @@ describe('Agents documentation contracts', () => {
   it('runs the owning CI checks when maintained contract documents change', () => {
     const scriptsWorkflow = readRepoFile('.github/workflows/scripts-ci.yml')
     const agentctlWorkflow = readRepoFile('.github/workflows/agentctl-ci.yml')
-    const jangarWorkflow = readRepoFile('.github/workflows/jangar-ci.yml')
     const impactMap = readRepoFile('.github/ci/impact-map.yml')
+    const inventory = loadImpactMap(join(repoRoot, '.github/ci/impact-map.yml')).targets['jangar-inventory']
 
     for (const path of [
       "- 'docs/agents/primitives/**'",
@@ -267,25 +268,25 @@ describe('Agents documentation contracts', () => {
     expect(
       agentctlWorkflow.split('\n').filter((line) => line.trim() === "- 'docs/agents/agentctl-cli-design.md'"),
     ).toHaveLength(2)
-    expect(jangarWorkflow).toContain("- 'docs/jangar/architecture-inventory.md'")
+    expect(inventory.kind).toBe('validation')
     for (const path of [
-      "- 'services/agents/src/app-routes/**'",
-      "- 'services/agents/src/components/control-plane/**'",
-      "- 'services/agents/src/control-plane/**'",
-      "- 'services/agents/src/routes/**'",
-      "- 'services/agents/src/server/agents-controller/**'",
-      "- 'services/agents/src/server/control-plane*.ts'",
-      "- 'services/agents/src/server/v1/control-plane-*.ts'",
-      "- 'services/agents/src/server/health.ts'",
-      "- 'services/agents/src/server/orchestration-controller.ts'",
-      "- '!services/agents/src/**/*.test.ts'",
+      'docs/jangar/architecture-inventory.md',
+      'services/agents/src/app-routes/**',
+      'services/agents/src/components/control-plane/**',
+      'services/agents/src/control-plane/**',
+      'services/agents/src/routes/**',
+      'services/agents/src/server/agents-controller/**',
+      'services/agents/src/server/control-plane*.ts',
+      'services/agents/src/server/v1/control-plane-*.ts',
+      'services/agents/src/server/health.ts',
+      'services/agents/src/server/orchestration-controller.ts',
     ]) {
-      expect(jangarWorkflow).toContain(path)
+      expect(inventory.paths).toContain(path)
     }
+    expect(inventory.exclude).toContain('services/agents/src/**/*.test.ts')
     expect(scriptsWorkflow.split('\n').filter((line) => line.trim() === "- 'scripts/jangar/**'")).toHaveLength(2)
     expect(scriptsWorkflow).toContain('bun test scripts/jangar/validate-primitives.test.ts')
     expect(impactMap).toContain('- docs/agents/agentctl-cli-design.md')
-    expect(impactMap).toContain('- docs/jangar/architecture-inventory.md')
     expect(impactMap).toContain('- scripts/jangar/**')
   })
 })

@@ -659,7 +659,7 @@ describe('scheduled AgentRun templates', () => {
     expect(JSON.stringify(provider)).not.toContain('gpt-5.6-sol')
   })
 
-  it('configures default runner resource requests for swarm jobs', () => {
+  it('sizes default AgentRun jobs and spreads them away from the Ryzen node', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controller = objectAt(values, 'controller')
     const defaultWorkload = objectAt(controller, 'defaultWorkload')
@@ -667,11 +667,34 @@ describe('scheduled AgentRun templates', () => {
     const requests = objectAt(resources, 'requests')
     const limits = objectAt(resources, 'limits')
 
-    expect(objectAt(requests, 'cpu')).toBe('1')
+    expect(objectAt(requests, 'cpu')).toBe('500m')
     expect(objectAt(requests, 'memory')).toBe('4Gi')
     expect(objectAt(requests, 'ephemeral-storage')).toBe('8Gi')
-    expect(objectAt(limits, 'memory')).toBe('16Gi')
+    expect(objectAt(limits, 'memory')).toBe('32Gi')
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
+    expect(objectAt(defaultWorkload, 'affinity')).toEqual({
+      nodeAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: {
+          nodeSelectorTerms: [
+            {
+              matchExpressions: [{ key: 'kubernetes.io/hostname', operator: 'NotIn', values: ['talos-192-168-1-194'] }],
+            },
+          ],
+        },
+      },
+    })
+    expect(objectAt(defaultWorkload, 'topologySpreadConstraints')).toEqual([
+      {
+        maxSkew: 16,
+        topologyKey: 'kubernetes.io/hostname',
+        whenUnsatisfiable: 'ScheduleAnyway',
+        labelSelector: { matchExpressions: [{ key: 'agents.proompteng.ai/agent-run', operator: 'Exists' }] },
+      },
+    ])
+    const concurrency = objectAt(controller, 'concurrency')
+    expect(objectAt(concurrency, 'perAgent')).toBe(96)
+    expect(objectAt(concurrency, 'perNamespace')).toBe(112)
+    expect(objectAt(concurrency, 'cluster')).toBe(160)
   })
 
   it('enables Swarm primitive RBAC for the live controllers while keeping domain admission env out of Agents', () => {

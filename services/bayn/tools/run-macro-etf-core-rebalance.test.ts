@@ -53,6 +53,7 @@ type Mock = {
   key?: string
   secret?: string
   count?: number
+  scopedAccountId?: string
   time?: string
   clockTimestamp?: string
   differentNextOpen?: boolean
@@ -292,8 +293,13 @@ const mock = (options: Mock = {}) => {
     TestClock.layer(),
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
-        BAYN_ALPACA_KEY_ID: testKey,
-        BAYN_ALPACA_SECRET_KEY: testSecret,
+        ...(options.scopedAccountId === undefined
+          ? { BAYN_ALPACA_KEY_ID: testKey, BAYN_ALPACA_SECRET_KEY: testSecret }
+          : {
+              BAYN_MACRO_CORE_ALPACA_ACCOUNT_ID: options.scopedAccountId,
+              BAYN_MACRO_CORE_ALPACA_KEY_ID: testKey,
+              BAYN_MACRO_CORE_ALPACA_SECRET_KEY: testSecret,
+            }),
         ...(options.origin === undefined ? {} : { BAYN_ALPACA_BASE_URL: options.origin }),
       }),
     ),
@@ -356,7 +362,7 @@ const targets = (receipt: Effect.Success<ReturnType<typeof runRebalance>>) => {
   return receipt.allocation.targets
 }
 
-test('closed CLI inputs, safe defaults and permanent QQQ/SMH coexistence', () => {
+test('closed CLI inputs and default QQQ/SMH coexistence', () => {
   expect(Result.getOrThrow(parseOptions(['--output', 'new.json']))).toMatchObject({
     mode: Mode.Shadow,
     tif: TimeInForce.Open,
@@ -370,8 +376,8 @@ test('closed CLI inputs, safe defaults and permanent QQQ/SMH coexistence', () =>
   const rejected = [
     ['--profile', 'f4'],
     ['--profile', 'O1'],
-    ['--exclude-symbols', ''],
     ['--exclude-symbols', 'QQQ,'],
+    ['--mode', 'paper-submit', '--confirm-paper-account', accountId, '--exclude-symbols', ''],
     ['--mode', 'live'],
     ['--mode', 'paper-submit'],
     ['--confirm-paper-account', accountId],
@@ -385,6 +391,32 @@ test('closed CLI inputs, safe defaults and permanent QQQ/SMH coexistence', () =>
   for (const flags of rejected) expect(Result.isFailure(parseOptions(['--output', 'r.json', ...flags]))).toBe(true)
   expect(Result.isFailure(parseOptions([]))).toBe(true)
 })
+
+test('allows the full F4 allocation only on a verified isolated shadow account', () =>
+  inDirectory(async (dir) => {
+    const flags = ['--mode', 'shadow', '--exclude-symbols', '', '--capital-budget-usd', '10000']
+    const broker = mock({ scopedAccountId: accountId })
+    const receipt = success(await broker.run(join(dir, 'isolated.json'), flags))
+    expect(receipt.configuredExclusions).toEqual([])
+    const signal = receipt.allocation.components[0]?.signal
+    if (signal == null) throw new Error('Expected an F4 review signal')
+    const qqq = targets(receipt).find(({ symbol }) => symbol === 'QQQ')?.weight
+    expect(qqq).toBeGreaterThan(0)
+    expect(qqq).toBe(signal.weights[universe.indexOf('QQQ')])
+    expect(broker.posts).toEqual([])
+
+    const unscoped = mock()
+    failure(await unscoped.run(join(dir, 'unscoped.json'), flags), 'require a verified isolated shadow account')
+    expect(unscoped.calls).toEqual([])
+
+    const mismatched = mock({ scopedAccountId: 'ffffffff-ffff-ffff-ffff-ffffffffffff' })
+    failure(
+      await mismatched.run(join(dir, 'mismatch.json'), flags),
+      'Paper account ID does not match the expected account',
+    )
+    expect(mismatched.calls.map(({ url, method }) => [url.pathname, method])).toEqual([['/v2/account', 'GET']])
+    expect(await readdir(dir)).toEqual(['isolated.json'])
+  }))
 
 // Frozen unmodified Wave 5C signalModel digests also used by Wave 8A's golden-replay test.
 // Exercise the actual SIP-to-evidence adapter and a 50/50 blend over the same five review closes.

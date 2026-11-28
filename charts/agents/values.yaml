@@ -323,6 +323,10 @@ metrics:
     labels:
       grafana_dashboard: '1'
 
+telemetry:
+  # Optional OTLP/HTTP protobuf base URL (the runtime appends /v1/traces).
+  otlpEndpoint: ''
+
 cors:
   allowedOrigins: []
 
