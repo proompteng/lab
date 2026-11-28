@@ -63,7 +63,7 @@ export type ControlPlaneCacheStore = {
   ready: Promise<void>
   close: () => Promise<void>
   getDbNow: () => Promise<Timestamp>
-  upsertResource: (input: UpsertControlPlaneCacheResourceInput) => Promise<void>
+  upsertResources: (inputs: UpsertControlPlaneCacheResourceInput[], observedBefore?: Timestamp) => Promise<void>
   markDeleted: (key: ControlPlaneCacheKey) => Promise<void>
   markNotSeenSince: (input: { cluster: string; kind: string; namespace: string; since: Timestamp }) => Promise<void>
   getResource: (key: ControlPlaneCacheKey) => Promise<ControlPlaneCacheResourceRow | null>
@@ -79,6 +79,8 @@ type StoreOptions = {
 }
 
 type DbJsonValue = Record<string, unknown>
+
+export const CONTROL_PLANE_CACHE_BATCH_SIZE = 25
 
 const toJsonb = (value: unknown) => sql<DbJsonValue>`${JSON.stringify(value ?? {})}::jsonb`
 
@@ -110,65 +112,72 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
     return value
   }
 
-  const upsertResource: ControlPlaneCacheStore['upsertResource'] = async (input) => {
+  const upsertResources: ControlPlaneCacheStore['upsertResources'] = async (inputs, observedBefore) => {
     await ready
 
-    const { key } = input
-    await db
-      .insertInto('agents_control_plane.resources_current')
-      .values({
-        cluster: key.cluster,
-        kind: key.kind,
-        namespace: key.namespace,
-        name: key.name,
-        uid: input.uid,
-        api_version: input.apiVersion,
-        resource_version: input.resourceVersion,
-        generation: input.generation,
-        labels: toJsonb(input.labels),
-        annotations: toJsonb(input.annotations),
-        resource: toJsonb(input.resource),
-        fingerprint: input.fingerprint,
-        resource_created_at: input.resourceCreatedAt,
-        resource_updated_at: input.resourceUpdatedAt,
-        status_phase: input.statusPhase,
-        spec_runtime_type: input.specRuntimeType,
-        spec_agent_ref_name: input.specAgentRefName,
-        spec_implementation_spec_ref_name: input.specImplementationSpecRefName,
-        spec_source_provider: input.specSourceProvider,
-        spec_source_external_id: input.specSourceExternalId,
-        spec_summary: input.specSummary,
-        spec_labels: input.specLabels,
-        last_seen_at: sql`now()`,
-        deleted_at: null,
-        updated_at: sql`now()`,
-      })
-      .onConflict((oc) =>
-        oc.columns(['cluster', 'kind', 'namespace', 'name']).doUpdateSet({
-          uid: input.uid,
-          api_version: input.apiVersion,
-          resource_version: input.resourceVersion,
-          generation: input.generation,
-          labels: toJsonb(input.labels),
-          annotations: toJsonb(input.annotations),
-          resource: toJsonb(input.resource),
-          fingerprint: input.fingerprint,
-          resource_created_at: input.resourceCreatedAt,
-          resource_updated_at: input.resourceUpdatedAt,
-          status_phase: input.statusPhase,
-          spec_runtime_type: input.specRuntimeType,
-          spec_agent_ref_name: input.specAgentRefName,
-          spec_implementation_spec_ref_name: input.specImplementationSpecRefName,
-          spec_source_provider: input.specSourceProvider,
-          spec_source_external_id: input.specSourceExternalId,
-          spec_summary: input.specSummary,
-          spec_labels: input.specLabels,
-          last_seen_at: sql`now()`,
-          deleted_at: null,
-          updated_at: sql`now()`,
-        }),
-      )
-      .execute()
+    for (let offset = 0; offset < inputs.length; offset += CONTROL_PLANE_CACHE_BATCH_SIZE) {
+      await db
+        .insertInto('agents_control_plane.resources_current')
+        .values(
+          inputs.slice(offset, offset + CONTROL_PLANE_CACHE_BATCH_SIZE).map((input) => ({
+            cluster: input.key.cluster,
+            kind: input.key.kind,
+            namespace: input.key.namespace,
+            name: input.key.name,
+            uid: input.uid,
+            api_version: input.apiVersion,
+            resource_version: input.resourceVersion,
+            generation: input.generation,
+            labels: toJsonb(input.labels),
+            annotations: toJsonb(input.annotations),
+            resource: toJsonb(input.resource),
+            fingerprint: input.fingerprint,
+            resource_created_at: input.resourceCreatedAt,
+            resource_updated_at: input.resourceUpdatedAt,
+            status_phase: input.statusPhase,
+            spec_runtime_type: input.specRuntimeType,
+            spec_agent_ref_name: input.specAgentRefName,
+            spec_implementation_spec_ref_name: input.specImplementationSpecRefName,
+            spec_source_provider: input.specSourceProvider,
+            spec_source_external_id: input.specSourceExternalId,
+            spec_summary: input.specSummary,
+            spec_labels: input.specLabels,
+            last_seen_at: sql`now()`,
+            deleted_at: null,
+            updated_at: sql`now()`,
+          })),
+        )
+        .onConflict((oc) => {
+          const update = oc.columns(['cluster', 'kind', 'namespace', 'name']).doUpdateSet((eb) => ({
+            uid: eb.ref('excluded.uid'),
+            api_version: eb.ref('excluded.api_version'),
+            resource_version: eb.ref('excluded.resource_version'),
+            generation: eb.ref('excluded.generation'),
+            labels: eb.ref('excluded.labels'),
+            annotations: eb.ref('excluded.annotations'),
+            resource: eb.ref('excluded.resource'),
+            fingerprint: eb.ref('excluded.fingerprint'),
+            resource_created_at: eb.ref('excluded.resource_created_at'),
+            resource_updated_at: eb.ref('excluded.resource_updated_at'),
+            status_phase: eb.ref('excluded.status_phase'),
+            spec_runtime_type: eb.ref('excluded.spec_runtime_type'),
+            spec_agent_ref_name: eb.ref('excluded.spec_agent_ref_name'),
+            spec_implementation_spec_ref_name: eb.ref('excluded.spec_implementation_spec_ref_name'),
+            spec_source_provider: eb.ref('excluded.spec_source_provider'),
+            spec_source_external_id: eb.ref('excluded.spec_source_external_id'),
+            spec_summary: eb.ref('excluded.spec_summary'),
+            spec_labels: eb.ref('excluded.spec_labels'),
+            last_seen_at: eb.ref('excluded.last_seen_at'),
+            deleted_at: eb.ref('excluded.deleted_at'),
+            updated_at: eb.ref('excluded.updated_at'),
+          }))
+          // Relists must not overwrite watch writes or deletions made after the list started.
+          return observedBefore === undefined
+            ? update
+            : update.where('agents_control_plane.resources_current.last_seen_at', '<', observedBefore)
+        })
+        .execute()
+    }
   }
 
   const markNotSeenSince: ControlPlaneCacheStore['markNotSeenSince'] = async ({ cluster, kind, namespace, since }) => {
@@ -276,5 +285,5 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
     }
   }
 
-  return { ready, close, getDbNow, upsertResource, markDeleted, markNotSeenSince, getResource, listResources }
+  return { ready, close, getDbNow, upsertResources, markDeleted, markNotSeenSince, getResource, listResources }
 }
