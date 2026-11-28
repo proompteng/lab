@@ -93,6 +93,26 @@
       ]
     },
     {
+      "name": "OrderChurn",
+      "description": "Counts distinct broker orders at their latest retained status, grouped by the New York date of their first retained update. Cancel ratio is canceled divided by filled plus canceled. Orders per filled intent divides intent-bound orders by distinct bound intents with any broker-reported execution. No eligible denominator means unknown.",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/73e477dce9d8f9827cb5ff6c9943f87142524edb/services/bayn/migrations/0206_durable_broker_source_events.ts"
+      ]
+    },
+    {
+      "name": "ExecutionSlippage",
+      "description": "Realized adverse price difference versus the admitted decision reference, in basis points, weighted by benchmark notional. Positive is worse for either side. Limit price improvement uses the opposite sign versus the first retained matching broker limit. The reference is not a measured arrival quote; missing benchmarks remain unknown.",
+      "sources": ["https://github.com/proompteng/lab/pull/16392"]
+    },
+    {
+      "name": "FillFeeDrag",
+      "description": "Recorded fill fees divided by executed notional, multiplied by 10,000. Both amounts use USD micros. This excludes separately posted account-level cash fees, which cannot be attributed to a strategy or symbol from the cash deltas.",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/ee59e457aea8fac882d97807307cf252be4a07e2/services/bayn/migrations/0105_crypto_cash_fee_settlement.ts",
+        "https://github.com/proompteng/lab/pull/16392"
+      ]
+    },
+    {
       "name": "Bayn",
       "description": "Account-keyed quantitative evaluation and trading service with one mutation owner per account. PostgreSQL retains execution evidence and TigerBeetle retains exact accounting. Paper and live authority are separate; a ready pod, replay, or PASS grants zero broker or capital authority.",
       "sources": [
@@ -237,6 +257,33 @@
       "sources": [
         "https://github.com/proompteng/lab/pull/16392",
         "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/tools/live-profitability-audit-postgres.ts"
+      ]
+    },
+    {
+      "name": "Bayn: Daily execution order churn",
+      "description": "Use New York midnight bounds. Counts each broker order once by first retained update date, then classifies its latest status. Includes protective child orders. The partial fill rate includes terminal orders that executed only in part. Null strategy indicates no bound intent.",
+      "sql": "SELECT session_date, symbol, strategy_name, strategy_parameter_schema_version, order_count,\n  new_orders, pending_orders, partially_filled_orders, filled_orders, canceled_orders, expired_orders,\n  rejected_orders, partially_executed_orders, intent_order_count, filled_intents, cancel_ratio,\n  partial_fill_rate, orders_per_filled_intent\nFROM public.execution_order_churn_daily\nWHERE account_id = $1::text\n  AND session_date >= ($2::timestamptz AT TIME ZONE 'America/New_York')::date\n  AND session_date < ($3::timestamptz AT TIME ZONE 'America/New_York')::date\nORDER BY session_date, strategy_name, strategy_parameter_schema_version, symbol",
+      "referencedTables": ["public.execution_order_churn_daily"],
+      "sources": [
+        "https://github.com/proompteng/lab/blob/73e477dce9d8f9827cb5ff6c9943f87142524edb/services/bayn/migrations/0206_durable_broker_source_events.ts",
+        "https://github.com/proompteng/lab/pull/16392"
+      ]
+    },
+    {
+      "name": "Bayn: Daily execution fill slippage",
+      "description": "Use New York midnight bounds. Fill counts and USD-micro notional include all fills. Each price metric weights only the fills with its benchmark by benchmark notional. Positive limit improvement is favorable; positive decision-reference slippage is adverse. Coverage counts show which fills contribute; no benchmark yields null.",
+      "sql": "SELECT session_date, symbol, side, strategy_name, strategy_parameter_schema_version, fill_count,\n  total_notional_micros, limit_benchmark_fill_count, limit_price_improvement_bps,\n  reference_benchmark_fill_count, reference_slippage_bps, total_fill_fee_micros, fill_fee_bps\nFROM public.execution_fill_slippage_daily\nWHERE account_id = $1::text\n  AND session_date >= ($2::timestamptz AT TIME ZONE 'America/New_York')::date\n  AND session_date < ($3::timestamptz AT TIME ZONE 'America/New_York')::date\nORDER BY session_date, strategy_name, strategy_parameter_schema_version, symbol, side",
+      "referencedTables": ["public.execution_fill_slippage_daily"],
+      "sources": ["https://github.com/proompteng/lab/pull/16392"]
+    },
+    {
+      "name": "Bayn: Session fill fee drag",
+      "description": "Use New York midnight bounds. Sums both sides by session date, strategy, strategy parameter schema version, and symbol. Fee basis points divide recorded fill fees by executed notional, not an average of side-level ratios. This excludes separately posted cash fees; see Cash fee settlement by economic date for those.",
+      "sql": "SELECT session_date, symbol, strategy_name, strategy_parameter_schema_version, sum(fill_count) AS fill_count,\n  sum(total_notional_micros) AS total_notional_micros, sum(total_fill_fee_micros) AS total_fill_fee_micros,\n  sum(total_fill_fee_micros) / (sum(total_notional_micros) / 10000) AS fill_fee_bps\nFROM public.execution_fill_slippage_daily\nWHERE account_id = $1::text\n  AND session_date >= ($2::timestamptz AT TIME ZONE 'America/New_York')::date\n  AND session_date < ($3::timestamptz AT TIME ZONE 'America/New_York')::date\nGROUP BY session_date, symbol, strategy_name, strategy_parameter_schema_version\nORDER BY session_date, strategy_name, strategy_parameter_schema_version, symbol",
+      "referencedTables": ["public.execution_fill_slippage_daily"],
+      "sources": [
+        "https://github.com/proompteng/lab/blob/ee59e457aea8fac882d97807307cf252be4a07e2/services/bayn/migrations/0105_crypto_cash_fee_settlement.ts",
+        "https://github.com/proompteng/lab/pull/16392"
       ]
     }
   ]
