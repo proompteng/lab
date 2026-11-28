@@ -168,7 +168,7 @@ jobs:
       - build
       - validate
     runs-on: arc-amd64
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -217,14 +217,10 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
         run: |
           set -euo pipefail
-          directory="$(mktemp -d)"
-          trap 'rm -rf "$directory"' EXIT
           for architecture in amd64 arm64; do
             guest="$NANOAGENT_IMAGE:sha-$SOURCE_SHA-$architecture"
-            crane export --platform "linux/$architecture" "$guest" - | tar -xf - -C "$directory" guest/
-            sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
-            (cd "$directory" && sha256sum --check SHA256SUMS)
-            rm -r "$directory/guest"
+            crane export --platform "linux/$architecture" "$guest" - |
+              python3 services/nanoagent/verify-boot-archive.py
           done
 
       - name: Publish, verify, and sign multi-architecture images
