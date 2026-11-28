@@ -1,15 +1,19 @@
 # Wave 10D: orthogonal ETF Pillar 3
 
 **Input blocked; Holdout has not been opened.** The [protocol](protocol.md) registers 34 trials across rates,
-commodities/FX, sector relative strength, and ensembles. The two requested frozen manifests list 27 primary ETFs
-and the DIA/UUP pair. Neither lists **TIP**, which is indispensable to the registered breakeven and combined
-rates signals. There is no development freeze, performance result, or promotion decision. Scoring the other
-families now would expose Holdout before the full grid can be frozen.
+commodities/FX, sector relative strength, and ensembles. The two requested frozen daily archives contain no
+**TIP**, which is required by eight Family A trials (breakeven and combined rates signals). There is no
+development freeze, performance result, or promotion decision. Scoring the other families now would expose
+Holdout before the full grid can be frozen.
 
-| Frozen `agents-artifacts/bayn-research-datasets/` prefix | Manifest SHA-256                                                   | TIP coverage          |
-| -------------------------------------------------------- | ------------------------------------------------------------------ | --------------------- |
-| `2026-11-27-sip-10yr-sp100/`                             | `ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e` | Not in the ETF roster |
-| `2026-11-27-sip-10yr-sp100-supplement-dia-uup/`          | `ea0324abff46b2a44ea718dfbac625b9c434a1d21addc77eb5491d0249a79355` | Only DIA and UUP      |
+Both manifests and gzip payloads matched the study's pinned SHA-256 digests. A count of exact `TIP` matches
+in the first TSV column of each authenticated payload confirmed the omission was not just a manifest error.
+This check did not decode any date or price columns.
+
+| Frozen `agents-artifacts/bayn-research-datasets/` prefix | Manifest SHA-256                                                   | Payload rows | TIP rows |
+| -------------------------------------------------------- | ------------------------------------------------------------------ | -----------: | -------: |
+| `2026-11-27-sip-10yr-sp100/`                             | `ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e` |      450,712 |        0 |
+| `2026-11-27-sip-10yr-sp100-supplement-dia-uup/`          | `ea0324abff46b2a44ea718dfbac625b9c434a1d21addc77eb5491d0249a79355` |        5,482 |        0 |
 
 ## Development-only comparator verification
 
