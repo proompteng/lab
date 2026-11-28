@@ -58,6 +58,7 @@ describe('Kargo release smoke verification', () => {
   it('waits for connectivity, rejects bad HTTP responses, and accepts a valid empty 204', async () => {
     const container = templates.find((t) => t.metadata.name === 'kargo-http-smoke')!.spec.metrics[0].provider.job.spec
       .template.spec.containers[0]
+    let failedRequests = 0
     const server = Bun.serve({
       port: 0,
       fetch(request) {
@@ -68,8 +69,11 @@ describe('Kargo release smoke verification', () => {
             return new Response('not initialized')
           case '/empty':
             return new Response(null, { status: 204 })
+          case '/failed':
+            // Prove curl retries a transient error, then end the retry window with a terminal error.
+            return new Response('ready', { status: ++failedRequests === 1 ? 503 : 404 })
           default:
-            return new Response('ready', { status: 503 })
+            return new Response('not found', { status: 404 })
         }
       },
     })
@@ -85,6 +89,7 @@ describe('Kargo release smoke verification', () => {
       expect(await run('/ready', '^ready$')).toBe(0)
       expect(await run('/wrong', '^ready$')).not.toBe(0)
       expect(await run('/failed', '^ready$')).not.toBe(0)
+      expect(failedRequests).toBe(2)
       expect(await run('/empty', 'HTTP_STATUS_ONLY')).toBe(0)
       expect(await run('/empty', '^ready$')).not.toBe(0)
       const reservation = Bun.serve({ port: 0, fetch: () => new Response('ready') })

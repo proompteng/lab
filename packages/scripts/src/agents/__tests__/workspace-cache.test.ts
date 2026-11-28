@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -152,13 +152,17 @@ describe('Agents workspace cache', () => {
         'https://github.com/proompteng/lab.git',
       )
       expect(readFileSync(join(mirror, 'config'), 'utf8')).not.toContain('extraHeader')
-      expect(ok(['git', '--git-dir', mirror, 'rev-parse', 'refs/heads/retired'])).toBe(ok(['git', 'rev-parse', 'HEAD']))
+      const retired = ok(['git', 'rev-parse', 'HEAD'])
+      expect(ok(['git', '--git-dir', mirror, 'rev-parse', 'refs/heads/retired'])).toBe(retired)
 
       ok(['git', 'branch', '-D', 'retired'])
       ok(refresh)
       const secondMirror = readlinkSync(mirror)
       expect(secondMirror).not.toBe(firstMirror)
       expect(run(['git', '--git-dir', mirror, 'rev-parse', '--verify', 'refs/heads/retired']).exitCode).not.toBe(0)
+      expect(ok(['git', '--git-dir', join(dirname(mirror), firstMirror), 'rev-parse', 'refs/heads/retired'])).toBe(
+        retired,
+      )
       expect(readlinkSync(cache)).toBe(firstCache)
 
       routeTo(join(dir, 'missing-upstream'))
@@ -174,6 +178,7 @@ describe('Agents workspace cache', () => {
       const secondCache = readlinkSync(cache)
       expect(secondCache).not.toBe(firstCache)
       expect(readFileSync(join(cache, '.key'), 'utf8')).not.toBe(firstKey)
+      expect(readFileSync(join(root, firstCache, '.key'), 'utf8')).toBe(firstKey)
       expect(ok(['git', '--git-dir', mirror, 'rev-parse', 'refs/heads/main'])).toBe(ok(['git', 'rev-parse', 'HEAD']))
 
       writeFileSync(join(upstream, 'bun.lock'), 'invalid lockfile')

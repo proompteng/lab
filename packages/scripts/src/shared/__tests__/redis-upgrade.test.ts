@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parse, parseAllDocuments } from 'yaml'
@@ -151,8 +151,8 @@ for (const [namespace, filename, claim] of [
       temporaryDirectories.push(directory)
       const items = await resources(namespace, 'redis-upgrade-backup.yaml')
       const job = requireResource(items, 'Job', '-v2-save')
-      const command = job.spec?.template?.spec.containers[0].command
-      if (!command) throw new Error('Missing save command')
+      const [shell, flags, script] = job.spec?.template?.spec.containers[0].command ?? []
+      if (!shell || !flags || !script) throw new Error('Missing save command')
       await writeFile(
         join(directory, 'redis-cli'),
         `#!/bin/sh
@@ -176,10 +176,10 @@ case "$*" in
   *) exit 93 ;;
 esac
 `,
+        { mode: 0o755 },
       )
-      await writeFile(join(directory, 'sleep'), '#!/bin/sh\nexit 0\n')
-      await Promise.all(['redis-cli', 'sleep'].map((name) => chmod(join(directory, name), 0o755)))
-      const process = Bun.spawn(command, {
+      // BusyBox sh can dispatch the sleep applet without consulting PATH.
+      const process = Bun.spawn([shell, flags, `sleep() { :; }\n${script}`], {
         env: {
           ...Bun.env,
           PATH: `${directory}:${Bun.env.PATH}`,
@@ -191,12 +191,18 @@ esac
         stdout: 'pipe',
         stderr: 'pipe',
       })
-      const [status, output] = await Promise.all([process.exited, new Response(process.stdout).text()])
+      const [status, output, error] = await Promise.all([
+        process.exited,
+        new Response(process.stdout).text(),
+        new Response(process.stderr).text(),
+      ])
       const calls = await readFile(join(directory, 'calls'), 'utf8')
       expect(status === 0).toBe(scenario === 'delayed-ready')
       expect(output.includes('SAVE completed')).toBe(scenario === 'delayed-ready')
-      if (scenario === 'unreachable') expect(calls).not.toContain('SAVE')
-      else expect(calls.split('\n').filter((line) => line.endsWith(' SAVE'))).toHaveLength(1)
+      if (scenario === 'unreachable') {
+        expect(error).toContain('Redis did not become reachable before the backup deadline')
+        expect(calls).not.toContain('SAVE')
+      } else expect(calls.split('\n').filter((line) => line.endsWith(' SAVE'))).toHaveLength(1)
     })
   }
 }
