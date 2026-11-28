@@ -593,6 +593,9 @@ export const runAgyCliAdapter = async (
         killTimer.unref()
       }
       options.abortSignal?.addEventListener('abort', onAbort, { once: true })
+      if (options.abortSignal?.aborted) {
+        onAbort()
+      }
 
       child.stdin?.on('error', (error: NodeJS.ErrnoException) => {
         if (error.code !== 'EPIPE' && error.code !== 'ERR_STREAM_DESTROYED') {
@@ -658,11 +661,13 @@ export const runAgyCliAdapter = async (
       throw new Error(terminalResult?.error ?? `agy-cli cancelled${exitSignal ? ` (${exitSignal})` : ''}`)
     }
 
-    if (exitCode !== 0 || (terminalResult && terminalResult.status !== 'SUCCESS')) {
+    if (exitCode !== 0 || !terminalResult || terminalResult.status !== 'SUCCESS') {
       const detail =
         terminalResult?.error ??
         (terminalResult?.status ? `agy-cli finished with status ${terminalResult.status}` : null) ??
-        (stderrTail.trim() ? stderrTail.trim() : `agy-cli exited with code ${exitCode}`)
+        (exitCode === 0
+          ? stderrTail.trim() || 'agy-cli exited without emitting a terminal result event'
+          : stderrTail.trim() || `agy-cli exited with code ${exitCode}`)
       exitCode = exitCode === 0 ? 1 : exitCode
       throw new Error(detail)
     }

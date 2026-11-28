@@ -464,4 +464,46 @@ console.log(JSON.stringify({ event: 'result', result: { conversation_id: 'conv-l
     expect(sent.message.content).not.toContain('TOP_SECRET_PRIVATE_KEY')
     expect(sent.message.content).not.toContain('ghp_super_secret_should_not_expand')
   })
+
+  it('fails the run when agy exits 0 without emitting a terminal SUCCESS result event', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-agy-no-result-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const resultPath = join(dir, 'result.json')
+    const statusPath = join(dir, 'status.json')
+    const logPath = join(dir, 'runner.log')
+    const fakeAgyPath = join(dir, 'fake-agy-truncated')
+
+    await writeFile(runPath, JSON.stringify({ implementation: { text: 'Truncated stream test' } }))
+    await writeFile(
+      fakeAgyPath,
+      `#!/usr/bin/env bun
+console.log(JSON.stringify({ event: 'init', conversation_id: 'conv-truncated' }))
+console.log('{malformed-json-terminal-line')
+`,
+      'utf8',
+    )
+    await chmod(fakeAgyPath, 0o755)
+
+    await expect(
+      runAgyCliAdapter(
+        {
+          provider: 'gemini-neon',
+          payloads: { eventFilePath: runPath },
+          artifacts: { resultPath, statusPath, logPath },
+        },
+        { binaryPath: fakeAgyPath, model: 'gemini-4-neon', prompt: 'Truncated stream test' },
+        { uploadArtifacts: async (artifacts) => artifacts, env: { ...process.env, HOME: join(dir, 'home') } },
+      ),
+    ).rejects.toThrow('agy-cli exited without emitting a terminal result event')
+
+    expect(existsSync(resultPath)).toBe(false)
+    const status = JSON.parse(await readFile(statusPath, 'utf8'))
+    expect(status).toMatchObject({
+      adapter: 'agy-cli',
+      status: 'failed',
+      exitCode: 1,
+      error: 'agy-cli exited without emitting a terminal result event',
+    })
+  })
 })
