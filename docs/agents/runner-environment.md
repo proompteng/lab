@@ -7,6 +7,11 @@ The image includes the official Codex executable and app-server adapter, Bun and
 Rust compiler/Cargo/rustfmt/Clippy, Buf, the C/C++ compiler, CMake, protobuf compiler, OpenSSL, UUID tools, ripgrep,
 the existing patch helper and standard `/usr/bin/env` interpreter path.
 
+The runner shares the pinned `pstack` bundle from agents-shell at `/opt/agents-shell/pstack`. Before starting Codex
+app-server it links the bundled skills into the pod's writable `$CODEX_HOME/skills` (normally `~/.codex/skills`),
+preserving any existing entries. The runner uses the bundle when present. `AGENTS_RUNNER_PSTACK_ENABLED=true`
+requires the bundle at startup; `false` skips linking.
+
 Headless Chromium is pinned to Playwright 1.59.1 and revision 1217 on AMD64 and ARM64. Browser archives are hash-checked
 and their ELF dependencies are resolved at build time. The image provides fonts and fontconfig, the Playwright browser
 cache path and `PLATFORM_UI_CHROMIUM`. Browser downloads are disabled. Update both architecture hashes and the version

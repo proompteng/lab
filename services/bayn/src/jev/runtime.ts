@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { jevProfitTargetCrossed } from './profit-target'
@@ -26,6 +27,7 @@ import {
 } from '../cycle/runner/readiness'
 import {
   IntradaySnapshotPurpose,
+  sameIntradaySource,
   type IntradaySnapshotQuery,
   type IntradayMarketDataService,
 } from '../market-data/intraday/model'
@@ -463,9 +465,13 @@ export const compileJevEntry = (
   pricingSnapshot: StrategyMarketSnapshot,
 ) =>
   Result.gen(function* () {
+    if (!sameIntradaySource(decisionSnapshot.manifest, pricingSnapshot.manifest))
+      return yield* Result.fail(
+        new JevContractError({ message: 'Entry pricing must use the same market source as its signal' }),
+      )
     const symbols = [...decision.selectedSymbols].sort()
     const planningTargetWeights = jevPlanningTargetWeights(decision)
-    const isIntradayAlpha = decision.schemaVersion === 'bayn.intraday-alpha-target.v2'
+    const isIntradayAlpha = isIntradayAlphaTarget(decision)
     const quotePrices = isIntradayAlpha
       ? yield* Result.gen(function* () {
           const expectedBarMs = Date.parse(decisionSnapshot.manifest.rangeEndAt) - 60_000
@@ -535,6 +541,21 @@ export const compileJevEntry = (
       const originalQuote = decisionSnapshot.latestQuotes[symbol]
       if (plan === undefined || quote === undefined || originalQuote === undefined)
         return yield* Result.fail(new JevContractError({ message: `Jev target ${symbol} lacks execution pricing` }))
+      const maximumAgeMs = jevEntryQuoteMaximumAgeMs(
+        decision,
+        quote.eventAt,
+        pricingSnapshot.manifest.maximumQuoteAgeMs,
+      )
+      if (
+        pricingSnapshot.manifest.purpose === IntradaySnapshotPurpose.EntryPricing &&
+        !jevProtectiveQuoteIsFresh(quote, pricingSnapshot.manifest.observedAt, maximumAgeMs)
+      )
+        return yield* Result.fail(
+          new JevAwaitingEvidence({
+            message: `Jev target ${symbol} has no fresh execution quote`,
+            readiness: DecisionReadinessReason.SnapshotStale,
+          }),
+        )
       const short = isShortExitPlan(plan)
       const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
       const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
@@ -583,7 +604,7 @@ export const compileJevEntry = (
         )
       entryQuotes[symbol] = {
         eventAt: quote.eventAt,
-        maximumAgeMs: jevEntryQuoteMaximumAgeMs(decision, quote.eventAt, pricingSnapshot.manifest.maximumQuoteAgeMs),
+        maximumAgeMs,
       }
     }
     const dedicated = pricingSnapshot.manifest.purpose === IntradaySnapshotPurpose.EntryPricing

@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import unittest
 from unittest.mock import patch
 
@@ -69,11 +70,18 @@ class PreflightTest(unittest.TestCase):
             },
         }
 
-    def result(self, migrated=False):
-        return evaluate(self.nodes, self.pods, self.ceph, "turin", migrated)
+    def result(self, **kwargs):
+        return evaluate(self.nodes, self.pods, self.ceph, "turin", **kwargs)
 
     def set_cidr(self, index, value):
         self.nodes[index]["spec"].update(podCIDR=value, podCIDRs=[value])
+
+    def set_slash22_topology(self):
+        self.set_cidr(0, "10.244.8.0/22")
+        self.set_cidr(2, "10.244.4.0/23")
+        self.pods[0]["status"]["podIPs"][0]["ip"] = "10.244.11.10"
+        for node in self.nodes[1:]:
+            node["status"]["capacity"]["pods"] = "500"
 
     def test_distinct_parent_blocks_and_scrubbing_are_safe(self):
         self.assertEqual(self.result()["failures"], [])
@@ -96,6 +104,92 @@ class PreflightTest(unittest.TestCase):
         self.assertTrue(self.result(migrated=True)["failures"])
         self.nodes[0]["status"]["capacity"]["pods"] = "500"
         self.assertEqual(self.result(migrated=True)["failures"], [])
+
+    def test_slash22_acceptance_requires_both_address_space_and_kubelet_limit(self):
+        self.set_slash22_topology()
+        self.nodes[0]["status"]["capacity"]["pods"] = "500"
+        options = {"migrated": True, "allocator_prefix": 22}
+        self.assertEqual(
+            self.result(**options)["failures"],
+            ["turin: expected maxPods 1000, found 500"],
+        )
+        self.nodes[0]["status"]["capacity"]["pods"] = "1000"
+        report = self.result(**options)
+        self.assertEqual(report["failures"], [])
+        self.assertEqual(report["nodes"]["turin"]["podIPs"], 1)
+        self.assertEqual(
+            report["warnings"],
+            ["talos-192-168-1-194: maxPods 500 exceeds CNI address capacity"],
+        )
+
+        self.set_cidr(0, "10.244.10.0/23")
+        self.assertIn(
+            "turin: migrated node must have a /22 PodCIDR",
+            self.result(**options)["failures"],
+        )
+
+    def test_slash22_rollback_preparation_requires_250_pods(self):
+        self.set_slash22_topology()
+        self.assertEqual(self.result(allocator_prefix=22)["failures"], [])
+        self.nodes[0]["status"]["capacity"]["pods"] = "1000"
+        self.assertEqual(
+            self.result(allocator_prefix=22)["failures"],
+            ["turin: expected maxPods 250, found 1000"],
+        )
+
+    def test_narrower_nonoverlapping_cidrs_cannot_share_one_slash22_block(self):
+        self.set_cidr(0, "10.244.0.0/23")
+        self.set_cidr(2, "10.244.4.0/23")
+        self.assertEqual(self.result()["failures"], [])
+        failures = self.result(allocator_prefix=22)["failures"]
+        self.assertEqual(len(failures), 1)
+        self.assertIn("allocator /22", failures[0])
+
+    def test_slash22_reserves_both_halves_under_a_slash23_allocator(self):
+        self.set_slash22_topology()
+        self.set_cidr(2, "10.244.10.0/23")
+        self.pods[1]["status"]["podIPs"][0]["ip"] = "10.244.10.10"
+        failures = self.result()["failures"]
+        self.assertEqual(len(failures), 1)
+        self.assertIn("allocator /23", failures[0])
+
+    def test_unsupported_prefix_and_out_of_cluster_slash22_fail(self):
+        for cidr, diagnostic in (
+            ("10.244.8.0/21", "unexpected prefix /21"),
+            ("10.244.8.0/25", "unexpected prefix /25"),
+            ("10.245.8.0/22", "PodCIDR is outside 10.244.0.0/16"),
+            ("fd00::/22", "PodCIDR is outside 10.244.0.0/16"),
+        ):
+            with self.subTest(cidr=cidr):
+                self.set_cidr(0, cidr)
+                self.assertIn(f"turin: {diagnostic}", self.result()["failures"])
+
+    def test_slash22_migrated_cli(self):
+        self.set_slash22_topology()
+        self.nodes[0]["status"]["capacity"]["pods"] = "1000"
+        arguments = [
+            "podcidr_preflight.py",
+            "--node",
+            "turin",
+            "--migrated",
+            "--allocator-prefix",
+            "22",
+        ]
+        stdout = io.StringIO()
+        with (
+            patch("sys.argv", arguments),
+            patch(
+                "podcidr_preflight.kubectl",
+                side_effect=[{"items": self.nodes}, {"items": self.pods}, self.ceph],
+            ),
+            contextlib.redirect_stdout(stdout),
+            self.assertRaises(SystemExit) as result,
+        ):
+            main()
+        self.assertEqual(result.exception.code, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue())["nodes"]["turin"]["maxPods"], 1000
+        )
 
     def test_stale_ip_after_new_assignment_is_rejected(self):
         self.set_cidr(0, "10.244.6.0/23")

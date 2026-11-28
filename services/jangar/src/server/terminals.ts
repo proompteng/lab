@@ -224,21 +224,6 @@ const recordSessionStatus = async (
   return record
 }
 
-export const markTerminalSessionError = async (sessionId: string, message: string) => {
-  const record = await getTerminalSessionRecord(sessionId)
-  if (!record || record.status === 'closed') return null
-  return updateTerminalSessionRecord(sessionId, {
-    status: 'error',
-    worktreeName: record.worktreeName,
-    worktreePath: record.worktreePath,
-    tmuxSocket: record.tmuxSocket,
-    errorMessage: message,
-    readyAt: record.readyAt,
-    closedAt: record.closedAt,
-    metadata: record.metadata,
-  })
-}
-
 const resolveBackendMetadata = () => ({
   backendUrl: publicTerminalUrl,
   backendId: getManager()?.getInstanceId() ?? null,
@@ -684,5 +669,3 @@ export const getTerminalSnapshot = async (sessionId: string) => {
 export const getTerminalRuntime = (sessionId: string) => getManager()?.getSession(sessionId) ?? null
 
 export const formatSessionId = (raw: string) => raw.trim()
-
-export const isTerminalSessionId = (raw: string) => SESSION_ID_PATTERN.test(raw.trim())

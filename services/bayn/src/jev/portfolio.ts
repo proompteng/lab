@@ -18,7 +18,8 @@ import {
   ReconciliationStatus,
 } from '../execution/contracts'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
-import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { actualAlphaProtectionPrices } from '../strategy/intraday-alpha/exit-plan'
+import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
 import {
   isIntradayAlphaExitPlan,
@@ -59,6 +60,7 @@ const Base = Schema.Union([
   Schema.Struct({
     purpose: Schema.Literal(JevPurpose.Manage),
     protectionEvidenceVersion: Schema.optionalKey(Schema.Literal(currentProtectionEvidenceVersion)),
+    managedSymbol: Schema.optionalKey(SymbolSchema),
     brokerState: ReconciledStateSchema,
     entryDecisionHash: Sha256Schema,
     exitPolicy: JevPositionExitPolicySchema,
@@ -119,13 +121,25 @@ export const JevPortfolioSchema = Base.check(
         if (protectionPlan === undefined) {
           return isMultiLegManage ? !isKnownProtectionOrderForHeldPosition(order, heldBySymbol) : true
         }
-        return !(
-          order.side === (isShortExitPlan(protectionPlan) ? OrderSide.Buy : OrderSide.Sell) &&
-          context.protectionIntentIds.includes(order.intentId) &&
-          (order.limitPriceMicros === protectionPlan.levels.profitLimitPriceMicros ||
-            (order.stopPriceMicros === protectionPlan.levels.stopPriceMicros &&
-              order.limitPriceMicros === protectionPlan.levels.stopLimitPriceMicros))
+        if (
+          order.side !== (isShortExitPlan(protectionPlan) ? OrderSide.Buy : OrderSide.Sell) ||
+          !context.protectionIntentIds.includes(order.intentId)
         )
+          return true
+        const matches = (
+          prices: Pick<
+            typeof protectionPlan.levels,
+            'profitLimitPriceMicros' | 'stopPriceMicros' | 'stopLimitPriceMicros'
+          >,
+        ) =>
+          (order.orderType === OrderType.Limit && order.limitPriceMicros === prices.profitLimitPriceMicros) ||
+          (order.orderType === OrderType.StopLimit &&
+            order.stopPriceMicros === prices.stopPriceMicros &&
+            order.limitPriceMicros === prices.stopLimitPriceMicros)
+        if (matches(protectionPlan.levels)) return false
+        if (!isIntradayAlphaExitPlan(protectionPlan) || protectionPlan.levels.fillAnchored === undefined) return true
+        const anchored = actualAlphaProtectionPrices(protectionPlan, context.entryFills)
+        return Result.isFailure(anchored) || !matches(anchored.success)
       })
     )
       issues.push({ path: ['brokerState', 'orders'], issue: 'unsettled orders prevent a new model decision' })
@@ -163,6 +177,16 @@ export const JevPortfolioSchema = Base.check(
       }
       return issues
     }
+    const scopedPlan = context.managedSymbol === undefined ? undefined : context.exitPolicy.plans[context.managedSymbol]
+    if (
+      context.managedSymbol !== undefined &&
+      (scopedPlan === undefined ||
+        !isIntradayAlphaExitPlan(scopedPlan) ||
+        scopedPlan.levels.fillAnchored === undefined ||
+        context.protectionEvidenceVersion !== currentProtectionEvidenceVersion ||
+        !heldBySymbol.has(context.managedSymbol))
+    )
+      issues.push({ path: ['managedSymbol'], issue: 'per-leg management requires a held fill-anchored ETF plan' })
     const isMultiLeg = isMultiLegManage
     const plannedSymbols = new Set(Object.keys(context.exitPolicy.plans))
     const ownedHeld = isMultiLeg ? held.filter((position) => plannedSymbols.has(position.symbol)) : held
@@ -293,6 +317,7 @@ export interface JevPositionStoreShape {
     readonly cycleId: string
     readonly entryDecisionHash: string
     readonly brokerState: ReconciledBrokerState
+    readonly managedSymbol?: string
   }) => Effect.Effect<JevManagedPortfolio, OperationalError>
 }
 

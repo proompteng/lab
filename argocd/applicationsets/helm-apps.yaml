@@ -108,6 +108,10 @@ spec:
                         limits:
                           cpu: "1"
                           memory: 512Mi
+                    garbageCollector:
+                      successfulJobsHistoryLimit: 1
+                      failedJobsHistoryLimit: 1
+                      ttlSecondsAfterFinished: 1800
                     webhooksServer:
                       resources:
                         requests:

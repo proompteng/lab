@@ -97,7 +97,6 @@ test('coalesces only a verified identical nested/standalone child regardless of 
   ]) {
     const input = { ...snapshot, history: { ...snapshot.history, orders: { ...snapshot.history.orders, rows } } }
     expect(Result.getOrThrow(normalizeSnapshot(input, bindings))).toEqual(expected)
-    expect(Result.getOrThrow(normalizeSnapshot(input, bindings))).toEqual(expected)
   }
 })
 

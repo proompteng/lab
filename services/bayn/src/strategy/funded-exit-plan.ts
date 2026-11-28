@@ -25,7 +25,16 @@ export const isShortExitPlan = (
   plan.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ||
   plan.schemaVersion === 'bayn.intraday-alpha-short-funded-exit-plan.v1'
 
-export const isIntradayAlphaExitPlan = (plan: FundedEntryExitPlan): boolean =>
+export const isIntradayAlphaExitPlan = (
+  plan: FundedEntryExitPlan,
+): plan is Extract<
+  FundedEntryExitPlan,
+  {
+    readonly schemaVersion:
+      | 'bayn.intraday-alpha-long-funded-exit-plan.v1'
+      | 'bayn.intraday-alpha-short-funded-exit-plan.v1'
+  }
+> =>
   plan.schemaVersion === 'bayn.intraday-alpha-long-funded-exit-plan.v1' ||
   plan.schemaVersion === 'bayn.intraday-alpha-short-funded-exit-plan.v1'
 

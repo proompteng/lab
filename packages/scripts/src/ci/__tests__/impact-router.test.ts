@@ -14,9 +14,9 @@ const yaml = (filename: string) =>
       {
         if?: string
         uses?: string
-        needs?: string[]
+        needs?: string | string[]
         secrets?: string
-        steps?: { run?: string; env?: Record<string, string> }[]
+        steps?: { if?: string; run?: string; env?: Record<string, string> }[]
       }
     >
   }
@@ -127,6 +127,97 @@ test('queued service validation joins the required gate without duplicate or mut
   }
 })
 
+const prServices = {
+  jangar: 'jangar-ci.yml',
+  bumba: 'bumba-ci.yml',
+  froussard: 'froussard-ci.yml',
+  ofz: 'ofz.yaml',
+  oirat: 'oirat-ci.yml',
+  'signal-publisher': 'signal-publisher-ci.yml',
+}
+const prJob = (target: string) => (target === 'ofz' ? 'ofz-pr' : target)
+
+test('ci-pr rejects missing decisions and unsuccessful selected PR services', () => {
+  const gate = yaml('pull-request.yml').jobs['ci-pr']
+  const step = gate.steps?.find(({ env }) => env?.AFFECTED !== undefined)
+  if (!step?.run || !step.env?.RESULTS) throw new Error('PR service result enforcement is missing')
+  expect(step.if).toBe("github.event_name == 'pull_request'")
+  expect(step.env.AFFECTED).toBe('${{ needs.plan.outputs.pr_affected }}')
+  const command = step.run
+  const jobs = Object.keys(prServices)
+  expect(step.env.RESULTS.split('\n').sort()).toEqual(
+    jobs.map((job) => `${job}=\${{ needs.${prJob(job)}.result }}`).sort(),
+  )
+  const run = (target: string, affected: boolean | string | undefined, result: string) =>
+    Bun.spawnSync(['bash', '-c', command], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        AFFECTED: JSON.stringify(Object.fromEntries(jobs.map((job) => [job, job === target ? affected : false]))),
+        RESULTS: jobs.map((job) => `${job}=${job === target ? result : 'skipped'}`).join('\n'),
+      },
+    })
+  for (const job of jobs) {
+    expect(run(job, true, 'success').exitCode).toBe(0)
+    expect(run(job, false, 'skipped').exitCode).toBe(0)
+    for (const affected of [undefined, 'true']) {
+      const missing = run(job, affected, 'skipped')
+      expect(missing.exitCode).not.toBe(0)
+      expect(missing.stderr.toString()).toContain(`Missing PR impact decision: ${job}`)
+    }
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      const rejected = run(job, true, result)
+      expect(rejected.exitCode).toBe(1)
+      expect(rejected.stderr.toString()).toContain(`PR service validation failed: ${job}=${result}`)
+    }
+    expect(run(job, false, 'success').exitCode).toBe(1)
+  }
+})
+
+test('PR service calls share the router and do not add a second queue caller', () => {
+  const router = yaml('pull-request.yml')
+  expect(router.on.pull_request).toBeNull()
+  expect(router.on.merge_group).toEqual({ types: ['checks_requested'] })
+  const gate = router.jobs['ci-pr']
+  expect(gate.if).toBe('${{ always() }}')
+  const groups = new Set<string>()
+  for (const [id, filename] of Object.entries(prServices)) {
+    const service = yaml(filename)
+    expect(service.on).toHaveProperty('workflow_call')
+    expect(service.on).not.toHaveProperty('pull_request')
+    expect(service.on).not.toHaveProperty('merge_group')
+    if (id !== 'jangar') {
+      const prefix = service.concurrency.group.split('${{')[0].toLowerCase()
+      expect(prefix).not.toBe('')
+      expect(groups.has(prefix)).toBe(false)
+      groups.add(prefix)
+    }
+    const job = prJob(id)
+    expect(router.jobs[job]).toMatchObject({ needs: 'plan', uses: `./.github/workflows/${filename}` })
+    expect(router.jobs[job].if).toContain(`.pr_affected || '{}').${id} == true`)
+    expect(router.jobs[job].if).toContain("github.event_name == 'pull_request' &&")
+    expect(gate.needs).toContain(job)
+    if (id === 'bumba' || id === 'froussard' || id === 'oirat') {
+      expect(service.on).toHaveProperty('push')
+      expect(service.on).toHaveProperty('workflow_dispatch')
+      expect(service.jobs.changes.if).toBe("github.event_name != 'pull_request'")
+    }
+  }
+  expect(Object.keys(yaml('jangar-ci.yml').jobs).sort()).toEqual([
+    'atlas-search-integration',
+    'dependency-closure',
+    'lint-and-typecheck',
+  ])
+  expect(yaml('queue-service-validation.yml').jobs['signal-publisher'].uses).toBe(
+    './.github/workflows/signal-publisher-ci.yml',
+  )
+  expect(router.jobs.ofz).toMatchObject({
+    if: "github.event_name == 'merge_group'",
+    uses: './.github/workflows/ofz.yaml',
+  })
+  expect(router.jobs.ofz.needs).toBeUndefined()
+  expect(gate.needs).toContain('ofz')
+})
+
 describe('root script ownership', () => {
   test.each([
     ['argocd/applications/tengri/network-policies.yaml', ['kube-router']],
@@ -202,10 +293,10 @@ describe('impact router', () => {
     ).toThrow('Full CI plan has no validation targets')
   })
 
-  test('routes a service change to its owner without image validation', () => {
+  test('Jangar source still validates the architecture inventory', () => {
     const plan = selectImpactPlan(['services/jangar/src/server.ts'], map)
-    expect(plan.validationTargets).toEqual(['planner'])
-    expect(plan.delegatedWorkflows).toEqual(['jangar-ci'])
+    expect(plan.validationTargets).toEqual(['jangar-inventory'])
+    expect(plan.delegatedWorkflows).toEqual([])
   })
 
   test('routes Olden changes to app validation', () => {
@@ -246,16 +337,20 @@ describe('impact router', () => {
 
   test('routes only inventory-owning Agents sources through Jangar inventory validation', () => {
     const sourcePlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.ts'], map)
-    expect(sourcePlan.validationTargets).toEqual(['planner'])
-    expect(sourcePlan.delegatedWorkflows).toEqual(['agents-ci', 'jangar-ci'])
+    expect(sourcePlan.validationTargets).toEqual(['jangar-inventory'])
+    expect(sourcePlan.delegatedWorkflows).toEqual(['agents-ci'])
 
     const uiPlan = selectImpactPlan(['services/agents/src/app-routes/primitives.tsx'], map)
-    expect(uiPlan.validationTargets).toEqual(['planner'])
-    expect(uiPlan.delegatedWorkflows).toEqual(['agents-ci', 'jangar-ci'])
+    expect(uiPlan.validationTargets).toEqual(['jangar-inventory'])
+    expect(uiPlan.delegatedWorkflows).toEqual(['agents-ci'])
 
     const testPlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.test.ts'], map)
     expect(testPlan.validationTargets).toEqual(['planner'])
     expect(testPlan.delegatedWorkflows).toEqual(['agents-ci'])
+
+    expect(selectImpactPlan(['docs/jangar/architecture-inventory.md'], map).validationTargets).toEqual([
+      'jangar-inventory',
+    ])
   })
 
   test('routes Agents chart changes to published-image smoke', () => {
@@ -276,16 +371,12 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes runtime package dependencies through their package and service consumers', () => {
+  test('routes runtime package dependencies through their owning delegated workflows', () => {
     expect(selectImpactPlan(['packages/otel/src/api.ts'], map).delegatedWorkflows).toEqual(['agents-ci', 'otel'])
     expect(selectImpactPlan(['packages/temporal-bun-sdk/src/index.ts'], map).delegatedWorkflows).toEqual([
       'agents-ci',
-      'jangar-ci',
       'temporal-bun-sdk',
     ])
-    for (const path of ['packages/temporal-bun-sdk/tests/client.test.ts', 'packages/temporal-bun-sdk/README.md']) {
-      expect(selectImpactPlan([path], map).delegatedWorkflows).not.toContain('jangar-ci')
-    }
   })
 
   test('does not fan agentctl changes into the broader agents workflow', () => {
@@ -377,8 +468,8 @@ describe('impact router', () => {
 
   test('keeps mixed service changes deterministic', () => {
     const plan = selectImpactPlan(['services/jangar/src/server.ts', 'services/torghut/src/main.py'], map)
-    expect(plan.validationTargets).toEqual(['planner'])
-    expect(plan.delegatedWorkflows).toEqual(['jangar-ci', 'torghut-ci'])
+    expect(plan.validationTargets).toEqual(['jangar-inventory'])
+    expect(plan.delegatedWorkflows).toEqual(['torghut-ci'])
   })
 
   test('routes workflow-only changes to actionlint', () => {

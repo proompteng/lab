@@ -41,7 +41,7 @@ describe('active strategy composition', () => {
       name: 'jev',
       behaviorHash: activeStrategyBehaviorHash,
       parameterHash,
-      parameterSchemaVersion: 'bayn.intraday-alpha-policy.v2',
+      parameterSchemaVersion: 'bayn.intraday-alpha-policy.v3',
     })
   })
 })

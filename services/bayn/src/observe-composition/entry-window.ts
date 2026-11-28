@@ -13,7 +13,8 @@ export const nextJevEntryWindowDueAt = (
   schemaVersion?:
     | 'bayn.jev-observation.v1'
     | 'bayn.intraday-alpha-observation.v1'
-    | 'bayn.intraday-alpha-observation.v2',
+    | 'bayn.intraday-alpha-observation.v2'
+    | 'bayn.intraday-alpha-observation.v3',
 ) =>
   CandidateObservationStore.pipe(
     Effect.flatMap((store) =>

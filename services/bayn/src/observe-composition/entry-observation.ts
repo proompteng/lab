@@ -1,3 +1,4 @@
+import { isPureEtfPolicy } from '../strategy/intraday-alpha/policy'
 import { Effect, Option, Schema } from 'effect'
 
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
@@ -169,14 +170,17 @@ export const observeNativeEntry: EntryObservation = (context) => {
         })
       // Preparation commits on the existing preopen wake even when the subsequent entry query is still warming up.
       const recorded = yield* preparation.value
-        .prepare({
-          cycleId: context.observation.cycleId,
-          authorityGenerationHash: context.observation.authorityGenerationHash,
-          accountId: context.observation.portfolio.brokerState.account.accountId,
-          sessionDate: context.sessionDate,
-          calendar: context.calendar,
-          policy,
-        })
+        .prepare(
+          {
+            cycleId: context.observation.cycleId,
+            authorityGenerationHash: context.observation.authorityGenerationHash,
+            accountId: context.observation.portfolio.brokerState.account.accountId,
+            sessionDate: context.sessionDate,
+            calendar: context.calendar,
+            policy,
+          },
+          isPureEtfPolicy(policy) ? (yield* BrokerRead).marketCalendar : undefined,
+        )
         .pipe(
           Effect.catchTag('TrailingBaselinePendingCoverage', (pending) =>
             Effect.fail(

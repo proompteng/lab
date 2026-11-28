@@ -10,6 +10,7 @@ vi.mock('crossws/adapters/bun', () => ({
 import wsAdapter from 'crossws/adapters/bun'
 
 import { createAgentsHttpRuntime } from './http-runtime'
+import { createFileRoute } from './server-route'
 
 const allowedBrowserOrigin = 'https://control-plane.example.test'
 let previousCorsAllowedOrigins: string | undefined
@@ -26,25 +27,20 @@ afterEach(() => {
 
 const buildRouteRuntime = () =>
   createAgentsHttpRuntime({
-    routeSources: {
-      './routes/v1/agent-runs/$id.ts': "export const Route = createFileRoute('/v1/agent-runs/$id')({ server: {} })",
-    },
-    routeModules: {
-      './routes/v1/agent-runs/$id.ts': async () => ({
-        Route: {
-          options: {
-            server: {
-              handlers: {
-                GET: ({ params }: { params: Record<string, string> }) =>
-                  new Response(JSON.stringify({ ok: true, id: params.id }), {
-                    headers: { 'content-type': 'application/json' },
-                  }),
-              },
+    routeModules: [
+      async () => ({
+        Route: createFileRoute('/v1/agent-runs/$id')({
+          server: {
+            handlers: {
+              GET: ({ params }) =>
+                new Response(JSON.stringify({ ok: true, id: params.id }), {
+                  headers: { 'content-type': 'application/json' },
+                }),
             },
           },
-        },
+        }),
       }),
-    },
+    ],
   })
 
 describe('Agents HTTP runtime', () => {
@@ -54,7 +50,7 @@ describe('Agents HTTP runtime', () => {
 
     const runtime = await createAgentsHttpRuntime({
       enableWebSocket: false,
-      routeModules: {},
+      routeModules: [],
     })
 
     expect(mockedAdapter).not.toHaveBeenCalled()
@@ -75,7 +71,7 @@ describe('Agents HTTP runtime', () => {
     })
   })
 
-  it('registers TanStack-style server route modules with decoded params', async () => {
+  it('registers server route modules with decoded params', async () => {
     const runtime = await buildRouteRuntime()
 
     const response = await runtime.handleRequest(new Request('http://agents.local/v1/agent-runs/run%201'))
@@ -86,23 +82,17 @@ describe('Agents HTTP runtime', () => {
 
   it('registers OPTIONS server route handlers', async () => {
     const runtime = await createAgentsHttpRuntime({
-      routeSources: {
-        './routes/v1/agent-messages.ts':
-          "export const Route = createFileRoute('/v1/agent-messages')({ server: { handlers: { OPTIONS: handler } } })",
-      },
-      routeModules: {
-        './routes/v1/agent-messages.ts': async () => ({
-          Route: {
-            options: {
-              server: {
-                handlers: {
-                  OPTIONS: () => new Response(JSON.stringify({ ok: true })),
-                },
+      routeModules: [
+        async () => ({
+          Route: createFileRoute('/v1/agent-messages')({
+            server: {
+              handlers: {
+                OPTIONS: () => new Response(JSON.stringify({ ok: true })),
               },
             },
-          },
+          }),
         }),
-      },
+      ],
     })
 
     const response = await runtime.handleRequest(
@@ -115,23 +105,17 @@ describe('Agents HTTP runtime', () => {
 
   it('answers CORS preflight for explicitly allowed browser calls to Agents routes', async () => {
     const runtime = await createAgentsHttpRuntime({
-      routeSources: {
-        './routes/v1/agent-runs.ts':
-          "export const Route = createFileRoute('/v1/agent-runs')({ server: { handlers: { POST: handler } } })",
-      },
-      routeModules: {
-        './routes/v1/agent-runs.ts': async () => ({
-          Route: {
-            options: {
-              server: {
-                handlers: {
-                  POST: () => new Response(JSON.stringify({ ok: true })),
-                },
+      routeModules: [
+        async () => ({
+          Route: createFileRoute('/v1/agent-runs')({
+            server: {
+              handlers: {
+                POST: () => new Response(JSON.stringify({ ok: true })),
               },
             },
-          },
+          }),
         }),
-      },
+      ],
     })
 
     const response = await runtime.handleRequest(
@@ -182,23 +166,17 @@ describe('Agents HTTP runtime', () => {
 
   it('does not add CORS headers to unrelated API routes', async () => {
     const runtime = await createAgentsHttpRuntime({
-      routeSources: {
-        './routes/api/internal.ts':
-          "export const Route = createFileRoute('/api/internal')({ server: { handlers: { GET: handler } } })",
-      },
-      routeModules: {
-        './routes/api/internal.ts': async () => ({
-          Route: {
-            options: {
-              server: {
-                handlers: {
-                  GET: () => new Response(JSON.stringify({ ok: true })),
-                },
+      routeModules: [
+        async () => ({
+          Route: createFileRoute('/api/internal')({
+            server: {
+              handlers: {
+                GET: () => new Response(JSON.stringify({ ok: true })),
               },
             },
-          },
+          }),
         }),
-      },
+      ],
     })
 
     const response = await runtime.handleRequest(
@@ -213,27 +191,21 @@ describe('Agents HTTP runtime', () => {
 
   it('adds CORS headers to AgentRun POST responses', async () => {
     const runtime = await createAgentsHttpRuntime({
-      routeSources: {
-        './routes/v1/agent-runs.ts':
-          "export const Route = createFileRoute('/v1/agent-runs')({ server: { handlers: { POST: handler } } })",
-      },
-      routeModules: {
-        './routes/v1/agent-runs.ts': async () => ({
-          Route: {
-            options: {
-              server: {
-                handlers: {
-                  POST: () =>
-                    new Response(JSON.stringify({ ok: false, error: 'Idempotency-Key header is required' }), {
-                      status: 400,
-                      headers: { 'content-type': 'application/json' },
-                    }),
-                },
+      routeModules: [
+        async () => ({
+          Route: createFileRoute('/v1/agent-runs')({
+            server: {
+              handlers: {
+                POST: () =>
+                  new Response(JSON.stringify({ ok: false, error: 'Idempotency-Key header is required' }), {
+                    status: 400,
+                    headers: { 'content-type': 'application/json' },
+                  }),
               },
             },
-          },
+          }),
         }),
-      },
+      ],
     })
 
     const response = await runtime.handleRequest(
@@ -254,26 +226,20 @@ describe('Agents HTTP runtime', () => {
 
   it('adds CORS headers to Agents SSE route responses', async () => {
     const runtime = await createAgentsHttpRuntime({
-      routeSources: {
-        './routes/v1/agent-events.ts':
-          "export const Route = createFileRoute('/v1/agent-events')({ server: { handlers: { GET: handler } } })",
-      },
-      routeModules: {
-        './routes/v1/agent-events.ts': async () => ({
-          Route: {
-            options: {
-              server: {
-                handlers: {
-                  GET: () =>
-                    new Response('event: ready\\n\\ndata: {}\\n\\n', {
-                      headers: { 'content-type': 'text/event-stream' },
-                    }),
-                },
+      routeModules: [
+        async () => ({
+          Route: createFileRoute('/v1/agent-events')({
+            server: {
+              handlers: {
+                GET: () =>
+                  new Response('event: ready\\n\\ndata: {}\\n\\n', {
+                    headers: { 'content-type': 'text/event-stream' },
+                  }),
               },
             },
-          },
+          }),
         }),
-      },
+      ],
     })
 
     const response = await runtime.handleRequest(
@@ -289,8 +255,7 @@ describe('Agents HTTP runtime', () => {
 
   it('serves injected Prometheus metrics before route fallback handling', async () => {
     const runtime = await createAgentsHttpRuntime({
-      routeSources: {},
-      routeModules: {},
+      routeModules: [],
       metrics: {
         enabled: () => true,
         path: () => '/metrics',

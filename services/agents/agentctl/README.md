@@ -30,6 +30,9 @@ brew install proompteng/tap/agentctl
 
 ```bash
 agentctl status
+agentctl diagnose
+agentctl fleet
+agentctl run list --active -o wide
 agentctl get agent
 agentctl get impl
 ```
@@ -170,14 +173,15 @@ agentctl apply -f workspace.yaml
 
 agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl init run --apply --wait
-agentctl run codex --prompt "Summarize repo" --agent <name> --runtime workflow --wait
+agentctl run codex --prompt-file task.md --repo owner/repo --base main --head codex/task --verify
+agentctl run list --stale -o wide
 agentctl get run
 agentctl get run <name>
 agentctl describe run <name>
 agentctl list run --phase Succeeded
 agentctl watch run --runtime workflow
-agentctl run wait <name>
-agentctl run logs <name> --follow
+agentctl run wait <name> --timeout 10m --interval 2s
+agentctl run logs <name> -f --tail 100 --timestamps
 agentctl run cancel <name>
 ```
 
@@ -190,7 +194,14 @@ Notes:
 
 By default, `agentctl` targets the Kubernetes API using your kube context. Use `--grpc` (or `AGENTCTL_MODE=grpc`) plus
 `--server` (or `--address`) to target the Agents gRPC endpoint. `--output` supports `table` (default), `wide`, `json`,
-`yaml`, `yaml-stream`, and `text`; `describe` defaults to `yaml` when `--output` is omitted.
+`yaml`, `yaml-stream`, and `text`. In kube mode `describe run` defaults to a human summary with Job/Pod details and
+recent Events; use `-o json` or `-o yaml` for the raw AgentRun. Other `describe` commands still default to YAML.
+
+In kube mode, `status` shows control-plane health and run/runtime desync counts; `diagnose` adds next steps.
+`fleet` (also `capacity`) shows namespace load, node capacity, and controller limits. For non-interactive Codex runs,
+use `--inline-prompt` or `--prompt-file` to submit the task verbatim. Do not pass `--param prompt=...`. `--verify` checks
+the Pod's inherited provider identity, projected MCP token mount, and rendered prompt; if verification fails after
+submission, inspect the reported run instead of resubmitting.
 
 Port-forward example:
 
@@ -209,7 +220,7 @@ agentctl --grpc --server 127.0.0.1:50051 status
 - `agentctl <resource> delete <name>` → `agentctl delete <resource> <name> --yes`
 - `agentctl impl init` → `agentctl init impl`
 - `agentctl impl create` → `agentctl create impl`
-- `agentctl run list/get/describe/watch` → `agentctl list|get|describe|watch run`
+- `agentctl run get/describe/watch` → `agentctl get|describe|watch run`; `run list` is an alias for `list run`.
 - `agentctl run init` → `agentctl init run`
 
 ## Build

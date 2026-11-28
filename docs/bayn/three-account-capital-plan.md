@@ -106,9 +106,10 @@ do not apply the cash result to an unverified margin account or use it to infer 
 
 1. **Identity and isolation.** Reuse the approved Paper UUIDs and maintain separate account writers, ledgers,
    balances and order journals per the [multi-account runbook](multi-account-sleeve-architecture.md). Verify
-   complete adjusted signal evidence and raw whole-share planning evidence for next-open trades. Before proposing
-   a live split, obtain broker confirmation of three approved isolated live books, each account's actual margin or
-   settled-cash rules, and handling of overlapping QQQ orders under its
+   complete adjusted signal evidence and raw whole-share planning evidence for next-open trades. Use the
+   [read-only corporate-action verifier](corporate-action-hygiene.md) to check these price bases and B0's gap and
+   short-borrow evidence. Before proposing a live split, obtain broker confirmation of three approved isolated live
+   books, each account's actual margin or settled-cash rules, and handling of overlapping QQQ orders under its
    [order protections](https://docs.alpaca.markets/us/docs/user-protection). Hold in Paper if that topology is
    unsupported; don't combine sleeves or change credential identities to approximate it.
 2. **Prospective Paper evidence.** Pin the protocol and register the eligible sessions, limits, comparator

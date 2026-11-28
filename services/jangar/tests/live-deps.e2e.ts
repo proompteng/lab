@@ -6,10 +6,10 @@ const isOkPayload = (value: unknown): value is { ok: true } => {
   return (value as { ok?: unknown }).ok === true
 }
 
-test.describe('live deps (Tilt / remote cluster)', () => {
+test.describe('live deps', () => {
   test.skip(
     process.env.PLAYWRIGHT_LIVE_DEPS !== '1',
-    'Set PLAYWRIGHT_LIVE_DEPS=1 to run tests that require real remote deps (eg via Tilt port-forwards).',
+    'Set PLAYWRIGHT_LIVE_DEPS=1 to run tests against Jangar configured with live dependencies.',
   )
 
   test('atlas search returns ok (no DB connection error)', async ({ page }) => {

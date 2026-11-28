@@ -4,6 +4,8 @@ This directory contains the Argo CD application resources for the `torghut` name
 
 ## Active runtime
 
+The shared Alpaca publisher `torghut-ws` runs in the `bayn` namespace so the provider credential stays with its owner. One subscription per market feed supplies the existing Kafka topics to all strategies. The publisher can reach Alpaca only through the market-data listener on the Bayn egress proxy. Each strategy keeps its private broker account for orders and fills. The SIP shadow deployment remains parked until its existing entitlement and capacity checks pass.
+
 This application retains `torghut-ws`, the `market-data-archive` Flink job, the live `torghut-ta` Flink job,
 ClickHouse and Keeper, notebooks, and their observability resources. Bayn consumes verified Kafka raw and feature
 streams and owns its PostgreSQL database and ledger in the `bayn` namespace.
