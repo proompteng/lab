@@ -56,8 +56,10 @@ bun services/bayn/tools/sync-auto-ontology.ts --mode dry-run
 ```
 
 Dry-run binds the SQL against a disposable migrated database; it needs no credentials and makes no HTTP requests.
-For an approved apply, inject `AUTO_ONTOLOGY_API_TOKEN` from the secret manager. Use the publisher token, not the
-sealed read-only gateway token, and use the HTTPS frontend, never the private backend:
+For an approved apply, inject `AUTO_ONTOLOGY_API_TOKEN` from the dedicated publisher secret
+(`agents/auto-ontology-publisher-token`) and use the HTTPS frontend. NVIDIA 1.3.0 authorizes API keys by
+the owner's role. Catalog publication requires admin. The nightly sync receives the publisher key and the AgentRun
+gateway receives a separate viewer-owned key from `agents/auto-ontology-mcp-token`.
 
 ```sh
 AUTO_ONTOLOGY_API_URL=https://auto-ontology.ide-newton.ts.net bun services/bayn/tools/sync-auto-ontology.ts --mode apply
@@ -88,6 +90,6 @@ reconcile the catalog before retrying.
    `agents/auto-ontology-mcp-token`, key `AUTO_ONTOLOGY_API_TOKEN`. Confirm the context and seal with tracing off.
    Commit only ciphertext, never the token, a rendered Secret, or a command argument containing either plaintext
    credentials or a password-bearing URI.
-3. Sync the reviewed SealedSecret through GitOps and roll the gateway through GitOps so both Pods read the new
-   environment variable. A Secret update alone does not refresh running containers. Confirm readiness and the canary
+3. Sync the reviewed SealedSecret through GitOps. The encrypted value is part of the gateway's pod template so both
+   pods roll when the key is replaced. Confirm readiness and the canary
    read above, then revoke the retired token if not already revoked. Never copy the API token into an AgentRun.
