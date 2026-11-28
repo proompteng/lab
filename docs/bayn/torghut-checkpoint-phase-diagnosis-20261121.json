@@ -1,0 +1,470 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "c217c1ddcce8f87d6c4306de27a1894cf8afe4ec",
+  "generatedRevision": "e65f6af4869304ff8d0893584da0e2ac88e069d9",
+  "flinkVersion": "2.2.1",
+  "flinkCommit": "450c63e961805a90aa18cb815d6b412f44303b9b",
+  "preparedAt": "2026-11-21T10:14:46.567299+00:00",
+  "scope": "Focused read-only diagnosis following the unchanged extended collector acceptance receipt.",
+  "phaseMeasurements": [
+    {
+      "pipeline": "market-data-archive",
+      "jobId": "922291431717b7c9126c515dc671082a",
+      "checkpointId": 99273,
+      "recordedTriggerTimestampMs": 1795254761495,
+      "pendingCheckpointTriggerLogAt": "2026-11-21T09:53:17.671218044Z",
+      "latestAcknowledgementTimestampMs": 1795254814726,
+      "coordinatorCompletionLogAt": "2026-11-21T09:56:24.404331688Z",
+      "subtasks": 224,
+      "acknowledgedSubtasks": 224,
+      "beforePendingCheckpointMs": 36176.218,
+      "pendingCheckpointToLastAcknowledgementMs": 17054.782,
+      "afterLastAcknowledgementToCompletionLogMs": 169678.331,
+      "restEndToEndDurationMs": 53231,
+      "loggedCheckpointDurationMs": 222908,
+      "loggedFinalizationTimeMs": 1
+    },
+    {
+      "pipeline": "torghut-ta",
+      "jobId": "d736507b3f398766862c3ee492c35014",
+      "checkpointId": 168675,
+      "recordedTriggerTimestampMs": 1795254222125,
+      "pendingCheckpointTriggerLogAt": "2026-11-21T09:47:25.764895377Z",
+      "latestAcknowledgementTimestampMs": 1795254477229,
+      "coordinatorCompletionLogAt": "2026-11-21T09:48:56.635191193Z",
+      "subtasks": 131,
+      "acknowledgedSubtasks": 131,
+      "beforePendingCheckpointMs": 223639.895,
+      "pendingCheckpointToLastAcknowledgementMs": 31464.105,
+      "afterLastAcknowledgementToCompletionLogMs": 59406.191,
+      "restEndToEndDurationMs": 255104,
+      "loggedCheckpointDurationMs": 314505,
+      "loggedFinalizationTimeMs": 4
+    },
+    {
+      "pipeline": "torghut-ta",
+      "jobId": "d736507b3f398766862c3ee492c35014",
+      "checkpointId": 168676,
+      "recordedTriggerTimestampMs": 1795254546635,
+      "pendingCheckpointTriggerLogAt": "2026-11-21T09:52:49.726075863Z",
+      "latestAcknowledgementTimestampMs": 1795254816335,
+      "coordinatorCompletionLogAt": "2026-11-21T09:56:45.379178266Z",
+      "subtasks": 131,
+      "acknowledgedSubtasks": 131,
+      "beforePendingCheckpointMs": 223091.075,
+      "pendingCheckpointToLastAcknowledgementMs": 46608.925,
+      "afterLastAcknowledgementToCompletionLogMs": 189044.178,
+      "restEndToEndDurationMs": 269700,
+      "loggedCheckpointDurationMs": 458741,
+      "loggedFinalizationTimeMs": 2
+    },
+    {
+      "pipeline": "torghut-ta",
+      "jobId": "d736507b3f398766862c3ee492c35014",
+      "checkpointId": 168677,
+      "recordedTriggerTimestampMs": 1795255015378,
+      "pendingCheckpointTriggerLogAt": "2026-11-21T10:00:02.362297867Z",
+      "latestAcknowledgementTimestampMs": 1795255225765,
+      "coordinatorCompletionLogAt": "2026-11-21T10:00:59.804448649Z",
+      "subtasks": 131,
+      "acknowledgedSubtasks": 131,
+      "beforePendingCheckpointMs": 186984.297,
+      "pendingCheckpointToLastAcknowledgementMs": 23402.703,
+      "afterLastAcknowledgementToCompletionLogMs": 34039.448,
+      "restEndToEndDurationMs": 210387,
+      "loggedCheckpointDurationMs": 244423,
+      "loggedFinalizationTimeMs": 3
+    }
+  ],
+  "phaseDefinitions": {
+    "beforePendingCheckpoint": "Recorded timestamp to creation/Triggering log. This includes planning, executor wait/checkpoint-ID allocation and timer scheduling before the timeout is installed. It is not an isolated measurement of queue time or S3-location initialization.",
+    "pendingCheckpointToLastAcknowledgement": "Starts before storage-location initialization, coordinator/master-hook work and actual task triggering; includes those operations plus barrier/alignment, task state work and acknowledgements. Not a pure alignment or task-latency measurement.",
+    "afterLastAcknowledgement": "Last recorded task acknowledgement to coordinator completion log. Includes metadata close/finalization and completed-checkpoint bookkeeping. A contemporaneous archive stack directly shows metadata finalization waiting for S3 multipart completion.",
+    "loggedFinalizationTime": "The small log field is measured after CompletedCheckpoint receives its completion timestamp, which is constructed after blocking metadata close. It does not measure the entire last-ACK-to-durable-completion interval."
+  },
+  "currentCheckpointAndThreadSnapshot": [
+    {
+      "pipeline": "market-data-archive",
+      "jobId": "922291431717b7c9126c515dc671082a",
+      "observedAt": "2026-11-21T10:03:18.418655+00:00",
+      "counts": {
+        "restored": 1,
+        "total": 66,
+        "in_progress": 1,
+        "completed": 64,
+        "failed": 1
+      },
+      "latestCompletedCheckpointId": 99279,
+      "latestCompletedLastAckAgeSeconds": 51.42965483665466,
+      "inProgress": [
+        {
+          "id": 99280,
+          "subtasks": 224,
+          "acknowledgedSubtasks": 224,
+          "latestAcknowledgementTimestampMs": 1795255391852
+        }
+      ],
+      "ioPoolOptionPresentInRuntimeConfiguration": false,
+      "observedJobManagerIoWorkerCount": 1,
+      "observedClusterIoWorkerCount": 4,
+      "jobManagerCpuRequestAndLimit": "500m",
+      "threadObservedAt": "2026-11-21T10:03:18.440148+00:00",
+      "jobManagerIoThreads": [
+        {
+          "name": "jobmanager-io-thread-1",
+          "state": "93 WAITING",
+          "selectedFrames": [
+            "at org.apache.flink.fs.s3.common.writer.RecoverableMultiPartUploadImpl.awaitPendingPartUploadToComplete(RecoverableMultiPartUploadImpl.java:233)",
+            "at org.apache.flink.fs.s3.common.writer.RecoverableMultiPartUploadImpl.snapshotAndGetCommitter(RecoverableMultiPartUploadImpl.java:122)",
+            "at org.apache.flink.fs.s3.common.writer.RecoverableMultiPartUploadImpl.snapshotAndGetCommitter(RecoverableMultiPartUploadImpl.java:56)",
+            "at org.apache.flink.fs.s3.common.writer.S3RecoverableFsDataOutputStream.closeForCommit(S3RecoverableFsDataOutputStream.java:177)",
+            "at app//org.apache.flink.runtime.state.filesystem.RecoverableStreamWrapper.closeForCommitAction(RecoverableStreamWrapper.java:46)",
+            "at app//org.apache.flink.runtime.state.filesystem.MetadataOutputStreamWrapper.closeForCommit(MetadataOutputStreamWrapper.java:63)",
+            "at app//org.apache.flink.runtime.state.filesystem.FsCheckpointMetadataOutputStream.closeAndFinalizeCheckpoint(FsCheckpointMetadataOutputStream.java:130)",
+            "at app//org.apache.flink.runtime.state.filesystem.FsCheckpointMetadataOutputStream.closeAndFinalizeCheckpoint(FsCheckpointMetadataOutputStream.java:39)",
+            "at app//org.apache.flink.runtime.checkpoint.PendingCheckpoint.finalizeCheckpoint(PendingCheckpoint.java:340)",
+            "at app//org.apache.flink.runtime.checkpoint.CheckpointCoordinator.completePendingCheckpoint(CheckpointCoordinator.java:1375)"
+          ]
+        }
+      ]
+    },
+    {
+      "pipeline": "torghut-ta",
+      "jobId": "d736507b3f398766862c3ee492c35014",
+      "observedAt": "2026-11-21T10:03:18.419573+00:00",
+      "counts": {
+        "restored": 1,
+        "total": 25,
+        "in_progress": 0,
+        "completed": 24,
+        "failed": 1
+      },
+      "latestCompletedCheckpointId": 168677,
+      "latestCompletedLastAckAgeSeconds": 172.6545729637146,
+      "inProgress": [],
+      "ioPoolOptionPresentInRuntimeConfiguration": false,
+      "observedJobManagerIoWorkerCount": 1,
+      "observedClusterIoWorkerCount": 4,
+      "jobManagerCpuRequestAndLimit": "500m",
+      "threadObservedAt": "2026-11-21T10:03:18.705689+00:00",
+      "jobManagerIoThreads": [
+        {
+          "name": "jobmanager-io-thread-1",
+          "state": "105 RUNNABLE (in native)",
+          "selectedFrames": [
+            "at com.amazonaws.services.s3.AmazonS3Client.listObjectsV2(AmazonS3Client.java:1007)",
+            "at org.apache.hadoop.fs.s3a.S3AFileSystem.lambda$listObjects$11(S3AFileSystem.java:2595)"
+          ]
+        }
+      ]
+    }
+  ],
+  "processingSnapshot": {
+    "pending": {
+      "market-data-archive-taskmanager-metrics": {
+        "series": 16,
+        "finite": 16,
+        "nonfinite": 0,
+        "nonzero": 0,
+        "finiteMax": 0.0
+      },
+      "torghut-ta-taskmanager-metrics": {
+        "series": 12,
+        "finite": 12,
+        "nonfinite": 0,
+        "nonzero": 0,
+        "finiteMax": 0.0
+      }
+    },
+    "backpressure": {
+      "market-data-archive-taskmanager-metrics": {
+        "series": 224,
+        "finite": 224,
+        "nonfinite": 0,
+        "nonzero": 0,
+        "finiteMax": 0.0
+      },
+      "torghut-ta-taskmanager-metrics": {
+        "series": 130,
+        "finite": 130,
+        "nonfinite": 0,
+        "nonzero": 0,
+        "finiteMax": 0.0
+      }
+    },
+    "kafkaLag": {
+      "market-data-archive-taskmanager-metrics": {
+        "series": 31,
+        "finite": 6,
+        "nonfinite": 25,
+        "nonzero": 0,
+        "finiteMax": 0.0
+      },
+      "torghut-ta-taskmanager-metrics": {
+        "series": 23,
+        "finite": 2,
+        "nonfinite": 21,
+        "nonzero": 0,
+        "finiteMax": 0.0
+      }
+    }
+  },
+  "alertHistory": {
+    "start": "2026-11-21T09:49:00Z",
+    "end": "2026-11-21T10:03:00Z",
+    "stepSeconds": 30,
+    "seriesSummary": [
+      {
+        "service": "torghut-ta-metrics",
+        "state": "firing",
+        "firstObserved": "2026-11-21T09:57:00+00:00",
+        "lastObserved": "2026-11-21T10:01:30+00:00",
+        "sampleCount": 10
+      },
+      {
+        "service": "market-data-archive-metrics",
+        "state": "pending",
+        "firstObserved": "2026-11-21T09:56:00+00:00",
+        "lastObserved": "2026-11-21T09:58:30+00:00",
+        "sampleCount": 6
+      },
+      {
+        "service": "torghut-ta-metrics",
+        "state": "pending",
+        "firstObserved": "2026-11-21T09:49:00+00:00",
+        "lastObserved": "2026-11-21T09:56:30+00:00",
+        "sampleCount": 12
+      }
+    ],
+    "currentAlertSeriesCount": 0,
+    "currentAlertObservedAt": "2026-11-21T10:03:18.393108+00:00",
+    "notificationDeliveryVerified": false
+  },
+  "ioPoolSemantics": {
+    "runtimeOption": "jobmanager.io-pool.size",
+    "explicitRuntimeValue": null,
+    "fallback": "Hardware.getNumberCPUCores(), which calls Runtime.getRuntime().availableProcessors()",
+    "implementation": "Fixed thread pool named jobmanager-io",
+    "separateClusterPool": "cluster-io defaults to four times the JVM-reported processor count",
+    "observedWorkerCountDoesNotProveMaximum": true,
+    "effectiveNumericMaximumDirectlyMeasured": false,
+    "cpuQuotaDoesNotProveJvmProcessorCount": true,
+    "cleanupUsesSuppliedIoExecutor": true
+  },
+  "remediationOptions": [
+    {
+      "priority": 1,
+      "option": "Prioritize the checkpoint S3 metadata/finalization latency path",
+      "evidence": "Both delayed checkpoints were fully acknowledged long before completion; the archive snapshot directly waits for S3 multipart completion. The longer TA pre-PendingCheckpoint interval is also on a path that submits work to the shared I/O executor.",
+      "boundary": "This does not isolate client queue, network, RGW or Ceph device latency for these exact operations. Use matching existing server/storage operation receipts before selecting a capacity or service-isolation change."
+    },
+    {
+      "priority": 2,
+      "option": "Retain the existing checkpoint-age alert and use phase-aware acceptance",
+      "evidence": "TA fired during the incident; the later empty alert state follows resumed completions. Failed counts did not increase, and millisecond finalizationTime log fields exclude the expensive metadata close.",
+      "boundary": "Do not treat zero new checkpoint failures or a completed rollout as proof of continuously fresh durability; no additional alert or timer adjustment is justified by this read."
+    },
+    {
+      "priority": 3,
+      "option": "Treat executor isolation or pool changes as unqualified candidates",
+      "evidence": "The option is unset; the fallback is JVM CPU count and blocking cleanup uses the supplied executor. One observed worker plus500m quota is not a measured pool maximum or queue depth.",
+      "boundary": "No pool-size tuning is recommended from this evidence. Confirm effective maximum and queued work, then compare phase and storage latency before considering a controlled source/config change; more concurrency may worsen the shared storage path."
+    }
+  ],
+  "limitations": [
+    "Only one current checkpoint/config/thread snapshot was taken, plus bounded existing logs and the authorized historical alert range. No collector sample was repeated and no runtime setting changed.",
+    "The original extended receipt remains unchanged. The subsequent checkpoint snapshot is a distinct diagnostic observation, not a replacement for the09:56 freshness failure.",
+    "The thread capture retained at most42 stack frames per selected thread. TA is observed in S3 listObjectsV2, but the retained frames do not identify its complete caller or bind that stack to a specific checkpoint.",
+    "Phase timestamps do not separate executor waiting from ID allocation/planning, or storage initialization from task barrier/alignment. Prior Ceph contention is context, not proof of the current operation-level cause.",
+    "Observed flow gauges remain zero only for finite covered series;46 Kafka lag series are nonfinite. Historical rule firing is not evidence that a notification was delivered.",
+    "No proposed option changes checkpoint interval/timeout, retention, executor size, S3 settings, durability, collectors, runners or deployments."
+  ],
+  "sourceProvenance": [
+    {
+      "name": "CheckpointCoordinator.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/CheckpointCoordinator.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/checkpoint/CheckpointCoordinator.java",
+      "sha256": "efb684b64343c96f2b8672b311b29958b0c5f36c3f9e8824bb40bc3efbb621b6",
+      "excerpts": [
+        {
+          "line": 659,
+          "text": "checkpointIdCounter.getAndIncrement();"
+        },
+        {
+          "line": 668,
+          "text": "createPendingCheckpoint("
+        },
+        {
+          "line": 684,
+          "text": "initializeCheckpointLocation("
+        },
+        {
+          "line": 941,
+          "text": "new CheckpointCanceller(checkpoint),"
+        },
+        {
+          "line": 952,
+          "text": "\"Triggering checkpoint {} (type={}) @ {} for job {}.\","
+        },
+        {
+          "line": 1454,
+          "text": "System.currentTimeMillis() - completedCheckpoint.getCompletionTimestamp());"
+        }
+      ]
+    },
+    {
+      "name": "PendingCheckpoint.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/PendingCheckpoint.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/checkpoint/PendingCheckpoint.java",
+      "sha256": "f2a36395155cf8c8f8d068ee405ce23f9d767eeb9240c1a1708004035940bf1f",
+      "excerpts": [
+        {
+          "line": 340,
+          "text": "finalizedLocation = out.closeAndFinalizeCheckpoint();"
+        },
+        {
+          "line": 348,
+          "text": "System.currentTimeMillis(),"
+        },
+        {
+          "line": 588,
+          "text": "checkpointsCleaner.cleanCheckpoint(this, releaseState, postCleanup, executor);"
+        }
+      ]
+    },
+    {
+      "name": "CheckpointsCleaner.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/CheckpointsCleaner.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/checkpoint/CheckpointsCleaner.java",
+      "sha256": "6f7aa18116ed064f0250e00d347ae75fd5393b3ccf6d4cce65d7b127ae356b5c",
+      "excerpts": [
+        {
+          "line": 95,
+          "text": "? discardObject.discardAsync(executor)"
+        },
+        {
+          "line": 96,
+          "text": ": FutureUtils.runAsync(discardObject::discard, executor);"
+        }
+      ]
+    },
+    {
+      "name": "JobManagerOptions.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/JobManagerOptions.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-core/src/main/java/org/apache/flink/configuration/JobManagerOptions.java",
+      "sha256": "225fed72f58328ce25521f4da3574a9e52ba694443ebd11551934bd6c34744f0",
+      "excerpts": [
+        {
+          "line": 398,
+          "text": "key(\"jobmanager.io-pool.size\")"
+        }
+      ]
+    },
+    {
+      "name": "JobManagerSharedServices.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/JobManagerSharedServices.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/jobmaster/JobManagerSharedServices.java",
+      "sha256": "7605c2f9651a24d11b472743238e048b923d73a328cd78f561874330ae2a3c37",
+      "excerpts": [
+        {
+          "line": 166,
+          "text": "final int numberCPUCores = Hardware.getNumberCPUCores();"
+        },
+        {
+          "line": 174,
+          "text": "config.get(JobManagerOptions.JOB_MANAGER_IO_POOL_SIZE, numberCPUCores);"
+        },
+        {
+          "line": 177,
+          "text": "jobManagerIoPoolSize, new ExecutorThreadFactory(\"jobmanager-io\"));"
+        }
+      ]
+    },
+    {
+      "name": "Hardware.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/Hardware.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/util/Hardware.java",
+      "sha256": "99acb52f7e096530ff705dfc1902c615121c600f08fd350249b49b5404e6debe",
+      "excerpts": [
+        {
+          "line": 56,
+          "text": "return Runtime.getRuntime().availableProcessors();"
+        }
+      ]
+    },
+    {
+      "name": "ClusterEntrypoint.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/ClusterEntrypoint.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/entrypoint/ClusterEntrypoint.java",
+      "sha256": "31869f10485b26ef35bccebeee8c12d38bb2ea80584c83811324b6d212bb9f5c",
+      "excerpts": [
+        {
+          "line": 382,
+          "text": "ClusterEntrypointUtils.getPoolSize(configuration),"
+        },
+        {
+          "line": 383,
+          "text": "new ExecutorThreadFactory(\"cluster-io\"));"
+        }
+      ]
+    },
+    {
+      "name": "ClusterEntrypointUtils.java",
+      "retainedPath": "/tmp/flink-2.2.1-source/ClusterEntrypointUtils.java",
+      "url": "https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/entrypoint/ClusterEntrypointUtils.java",
+      "sha256": "8a28a33075d438cf056a534bdaeef07f7cb7acbf3cc2f4cf64e6370dc8002abc",
+      "excerpts": [
+        {
+          "line": 117,
+          "text": "ClusterOptions.CLUSTER_IO_EXECUTOR_POOL_SIZE,"
+        },
+        {
+          "line": 118,
+          "text": "4 * Hardware.getNumberCPUCores());"
+        }
+      ]
+    }
+  ],
+  "inputProvenance": [
+    {
+      "name": "session-investigation-2026-11-20-operations-acceptance-c217-extended.json",
+      "bytes": 16219,
+      "sha256": "7c90546cd9cf024ff573d8674ae0e60cebb8a9172783147de7b18121759e0653"
+    },
+    {
+      "name": "torghut-checkpoint-diagnosis-20261121-current.json",
+      "bytes": 64321,
+      "sha256": "89514441507d67aba3aa3f792c67f00d96bfbd8cf6aebde99cdb32a6f90a1d60"
+    },
+    {
+      "name": "torghut-checkpoint-diagnosis-20261121-phases.json",
+      "bytes": 18296,
+      "sha256": "11b6fd5e132f0c0f2374e90b0dd5eb588901248704ebbc6a40025da51823b6c5"
+    },
+    {
+      "name": "torghut-checkpoint-diagnosis-alert-history-20261121.json",
+      "bytes": 3642,
+      "sha256": "06e69a124ed2262cc7d8c08efffeea9276d2dbec55a692db06e8ba6e46e4ddb2"
+    }
+  ],
+  "checkpointLogProvenance": [
+    {
+      "pod": "market-data-archive-f6cc5f955-jtcmz",
+      "jobId": "f67566a0-5c18-4ad4-83be-8dc73c8a4162",
+      "commandHash": "3b1cfae44d78535d6da2b0084dee63da62670c85848c41bf134eb64cc1439236",
+      "stdoutBytes": 51904,
+      "captureIncomplete": false,
+      "stdoutTruncated": false,
+      "selectedCheckpointLogLines": 46
+    },
+    {
+      "pod": "torghut-ta-6c4d5957c9-xjrpl",
+      "jobId": "2c558737-fd70-45a3-887a-f79d233c5175",
+      "commandHash": "db4aa03a5282af5601b6c3168eb4e9b6d2cd5c59a893120916139a557aff7cce",
+      "stdoutBytes": 12145,
+      "captureIncomplete": false,
+      "stdoutTruncated": false,
+      "selectedCheckpointLogLines": 10
+    }
+  ]
+}

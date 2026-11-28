@@ -1,0 +1,418 @@
+{
+  "schemaVersion": 1,
+  "scope": "Bounded Torghut deployment acceptance from retained evidence; no new runtime queries",
+  "release": {
+    "sourceCommit": "c217c1ddcce8f87d6c4306de27a1894cf8afe4ec",
+    "sourceUrl": "https://github.com/proompteng/lab/commit/c217c1ddcce8f87d6c4306de27a1894cf8afe4ec",
+    "freight": "cbe185544ab752b9813e8ec1a5a238393cab7d2c",
+    "selectedImageCount": 5,
+    "allSelectedImagesUseSourceCommit": true,
+    "generatedRevision": "e65f6af4869304ff8d0893584da0e2ac88e069d9",
+    "promotion": {
+      "name": "torghut.01m7ymgqjef4f1h0m1p6ygmyz6.cbe1855",
+      "phase": "Succeeded",
+      "finishedAt": "2026-11-21T08:51:33Z"
+    },
+    "argo": {
+      "sync": "Synced",
+      "health": "Healthy",
+      "healthTransitionAt": "2026-11-21T08:57:17Z",
+      "operationPhase": "Succeeded",
+      "operationStartedAt": "2026-11-21T08:46:43Z",
+      "operationFinishedAt": "2026-11-21T08:51:33Z",
+      "healthObservedAt": "2026-11-21T09:00:04.984837+00:00"
+    }
+  },
+  "workflow": {
+    "id": 44886462886,
+    "url": "https://github.com/proompteng/lab/actions/runs/44886462886",
+    "name": "torghut-post-deploy-verify",
+    "headBranch": "kargo/torghut",
+    "headSha": "e65f6af4869304ff8d0893584da0e2ac88e069d9",
+    "event": "push",
+    "attempt": 1,
+    "createdAt": "2026-11-21T08:46:45Z",
+    "conclusion": "success",
+    "job": {
+      "id": 136792698963,
+      "startedAt": "2026-11-21T08:47:19Z",
+      "completedAt": "2026-11-21T09:01:41Z",
+      "conclusion": "success"
+    },
+    "acceptanceSteps": [
+      {
+        "name": "Verify Argo convergence, retirement, and retained pipelines",
+        "started_at": "2026-11-21T08:49:12Z",
+        "completed_at": "2026-11-21T08:58:29Z",
+        "conclusion": "success"
+      },
+      {
+        "name": "Verify market-data freshness",
+        "started_at": "2026-11-21T08:58:29Z",
+        "completed_at": "2026-11-21T09:00:26Z",
+        "conclusion": "success"
+      },
+      {
+        "name": "Verify current streaming telemetry",
+        "started_at": "2026-11-21T09:00:26Z",
+        "completed_at": "2026-11-21T09:01:31Z",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "artifact": {
+    "id": 14700179852,
+    "name": "torghut-retained-pipeline-44886462886-1",
+    "sizeBytes": 44245,
+    "sha256": "10d0caf496b0f9a8c5786e425d666f81264606f6103c4c0bcf3f24fb56eee344",
+    "createdAt": "2026-11-21T09:01:33Z",
+    "expiresAt": "2027-02-19T08:46:45Z",
+    "applicationSnapshotHealth": {
+      "status": "Progressing",
+      "lastTransitionTime": "2026-11-21T08:51:34Z"
+    }
+  },
+  "pipelineSnapshotAt": "2026-11-21T09:00:04.984837+00:00",
+  "pipelines": [
+    {
+      "name": "market-data-archive",
+      "generation": 181,
+      "jobId": "922291431717b7c9126c515dc671082a",
+      "state": "RUNNING",
+      "lifecycle": "STABLE",
+      "checkpointCounts": {
+        "restored": 1,
+        "total": 8,
+        "in_progress": 1,
+        "completed": 6,
+        "failed": 1
+      },
+      "restored": {
+        "id": 99215,
+        "at": "2026-11-21T08:52:33.407Z",
+        "savepoint": true
+      },
+      "latestCompleted": {
+        "id": 99221,
+        "status": "COMPLETED",
+        "triggeredAt": "2026-11-21T08:58:50.522Z",
+        "latestAcknowledgedAt": "2026-11-21T08:59:07.541Z",
+        "endToEndDurationMs": 17019
+      },
+      "startupTriggerAbort": {
+        "observedCount": 1,
+        "times": ["2026-11-21T08:52:50.615800288Z"],
+        "reason": "Not all required tasks are currently running."
+      }
+    },
+    {
+      "name": "torghut-ta",
+      "generation": 250,
+      "jobId": "d736507b3f398766862c3ee492c35014",
+      "state": "RUNNING",
+      "lifecycle": "STABLE",
+      "checkpointCounts": {
+        "restored": 1,
+        "total": 3,
+        "in_progress": 0,
+        "completed": 2,
+        "failed": 1
+      },
+      "restored": {
+        "id": 168653,
+        "at": "2026-11-21T08:56:22.331Z",
+        "savepoint": true
+      },
+      "latestCompleted": {
+        "id": 168655,
+        "status": "COMPLETED",
+        "triggeredAt": "2026-11-21T08:58:52.946Z",
+        "latestAcknowledgedAt": "2026-11-21T08:59:16.930Z",
+        "endToEndDurationMs": 23984
+      },
+      "startupTriggerAbort": {
+        "observedCount": 1,
+        "times": ["2026-11-21T08:56:52.956547655Z"],
+        "reason": "Not all required tasks are currently running."
+      }
+    }
+  ],
+  "currentTaskManagers": {
+    "observedAt": "2026-11-21T09:00:04.984837+00:00",
+    "expectedByPipeline": {
+      "market-data-archive": 8,
+      "torghut-ta": 4
+    },
+    "readyCount": 12,
+    "runtimeImageBoundCount": 12,
+    "restartCount": 0,
+    "promotedIndexDigest": "sha256:d63c751ab59d18acab61809724908d7c458de0d124d319108376d1552353bb14",
+    "targetIdentitySetSha256": "5b67cbe3ce586e3a2dd42901b551638a00b21b2c2d59cc27583dfb654db00f8a",
+    "identityHashEncoding": "SHA-256 of compact ASCII JSON, sorted [service,pod,uid] tuples; no IP addresses",
+    "upSeries": 12,
+    "upSeriesSum": 12.0,
+    "currentJvmHeapSeries": 12,
+    "oldestUpAgeSeconds": 30.91366410255432,
+    "oldestJvmHeapAgeSeconds": 28.839663982391357,
+    "seriesCountObservedAt": "2026-11-21T09:04:06.134862+00:00",
+    "currentFlinkSeriesByPipeline": {
+      "market-data-archive": 23674,
+      "torghut-ta": 18020
+    },
+    "currentFlinkSeriesTotal": 41694
+  },
+  "processingSnapshot": {
+    "observedAt": "2026-11-21T09:00:04.984837+00:00",
+    "pendingRecords": {
+      "observedSeries": 28,
+      "maximum": 0.0
+    },
+    "backpressure": {
+      "observedSeries": 354,
+      "maximum": 0.0
+    },
+    "kafkaLag": [
+      {
+        "pipeline": "market-data-archive",
+        "totalSeries": 31,
+        "finiteSeries": 6,
+        "nonfiniteSeries": 25,
+        "finiteMax": 0.0
+      },
+      {
+        "pipeline": "torghut-ta",
+        "totalSeries": 23,
+        "finiteSeries": 2,
+        "nonfiniteSeries": 21,
+        "finiteMax": 0.0
+      }
+    ]
+  },
+  "telemetryGate": {
+    "complete": true,
+    "generatedRevision": "e65f6af4869304ff8d0893584da0e2ac88e069d9",
+    "collectorUid": "749193f0-1aea-47d9-918e-2803a3a9b648",
+    "processStartedAtSeconds": 1795250812.33,
+    "configSha256": "508994fdf02de19d8a1b279617e84616d7b6f63cfeae70877c3578c050497f83",
+    "configuredScrapeIntervalSeconds": 30,
+    "observations": [
+      {
+        "observedAt": "2026-11-21T09:00:26.784Z",
+        "targets": 12,
+        "postRelabelSamples": 41694,
+        "maximumScrapeSeconds": 0.21831798,
+        "oldestScrapeAgeSeconds": 30.988999843597412,
+        "remoteWrite": {
+          "highestObservedTimestampSeconds": 1795251626,
+          "highestSentTimestampSeconds": 1795251626,
+          "sentSamples": 1462279,
+          "failedSamples": 0,
+          "retriedSamples": 0,
+          "pendingSamples": 1229
+        }
+      },
+      {
+        "observedAt": "2026-11-21T09:00:57.377Z",
+        "targets": 12,
+        "postRelabelSamples": 41694,
+        "maximumScrapeSeconds": 0.227831086,
+        "oldestScrapeAgeSeconds": 30.078999996185303,
+        "remoteWrite": {
+          "highestObservedTimestampSeconds": 1795251656,
+          "highestSentTimestampSeconds": 1795251656,
+          "sentSamples": 1519907,
+          "failedSamples": 0,
+          "retriedSamples": 0,
+          "pendingSamples": 1246
+        }
+      },
+      {
+        "observedAt": "2026-11-21T09:01:31.380Z",
+        "targets": 12,
+        "postRelabelSamples": 41694,
+        "maximumScrapeSeconds": 0.171423324,
+        "oldestScrapeAgeSeconds": 31.06599998474121,
+        "remoteWrite": {
+          "highestObservedTimestampSeconds": 1795251690,
+          "highestSentTimestampSeconds": 1795251690,
+          "sentSamples": 1587500,
+          "failedSamples": 0,
+          "retriedSamples": 0,
+          "pendingSamples": 1774
+        }
+      }
+    ]
+  },
+  "collectorGcComparison": {
+    "pod": "torghut-alloy-8484c5c5bb-snd2s",
+    "uid": "749193f0-1aea-47d9-918e-2803a3a9b648",
+    "createdAt": "2026-11-21T08:46:51Z",
+    "resources": {
+      "memoryRequest": "256Mi",
+      "memoryLimit": "512Mi"
+    },
+    "restartCounts": [0],
+    "retainedTerminationStatesEmpty": true,
+    "sameUidAndProcess": true,
+    "observations": [
+      {
+        "at": "2026-11-21T09:02:49.147986+00:00",
+        "gcCount": 24,
+        "heapAllocatedBytes": 291517912,
+        "heapInUseBytes": 334020608,
+        "nextGcBytes": 409738241,
+        "goSystemBytes": 425281896,
+        "processResidentBytes": 465145856,
+        "goMemoryLimitBytes": 483183820,
+        "goGcPercent": 100,
+        "processStartedAtSeconds": 1795250812.33,
+        "sentSamples": 1728236,
+        "pendingSamples": 886,
+        "failedSamples": 0,
+        "retriedSamples": 0,
+        "highestObservedSeconds": 1795251767,
+        "highestSentSeconds": 1795251767
+      },
+      {
+        "at": "2026-11-21T09:04:11.638611+00:00",
+        "gcCount": 25,
+        "heapAllocatedBytes": 280144880,
+        "heapInUseBytes": 324632576,
+        "nextGcBytes": 407781007,
+        "goSystemBytes": 425281896,
+        "processResidentBytes": 465145856,
+        "goMemoryLimitBytes": 483183820,
+        "goGcPercent": 100,
+        "processStartedAtSeconds": 1795250812.33,
+        "sentSamples": 1895394,
+        "pendingSamples": 578,
+        "failedSamples": 0,
+        "retriedSamples": 0,
+        "highestObservedSeconds": 1795251849,
+        "highestSentSeconds": 1795251849
+      }
+    ],
+    "forcedGcOrAdditionalLoad": false
+  },
+  "runnerPolicy": {
+    "observedAt": "2026-11-21T08:44:08.932472+00:00",
+    "perArchitecture": {
+      "amd64": {
+        "minimum": 5,
+        "maximum": 10,
+        "readyPods": 6,
+        "pendingPods": 4
+      },
+      "arm64": {
+        "minimum": 5,
+        "maximum": 10,
+        "readyPods": 9,
+        "pendingPods": 1
+      }
+    },
+    "qualification": "Unchanged minimum 5 / maximum 10 per architecture; actual active counts vary. These ARC counts do not explain GitHub-hosted ubuntu-latest queues."
+  },
+  "limitations": [
+    "Acceptance is limited to this release, the fixed 65-second automatic telemetry step, fresh post-restore checkpoints, and an approximately 82-second natural GC comparison.",
+    "Both pipelines had one startup checkpoint trigger abort before required tasks were running; this is not a zero-failed-checkpoint claim.",
+    "Zero pending-record/backpressure values apply only to the listed observed series. Nonfinite Kafka lag values remain unavailable and are not converted to zero.",
+    "Stable process RSS across one GC cycle is not a long-term leak test or peak-market memory guarantee; process RSS is not total cgroup memory usage.",
+    "Current Pod state and the observed collector window cannot prove the absence of OOMs on previously deleted Pods; a reused collector cannot date historical drop counters before the window.",
+    "Kargo HTTP smoke verification is narrower than the separate successful post-deploy Argo, pipeline, market-data and telemetry checks.",
+    "The artifact application.json is an earlier Progressing snapshot; the later Healthy observation and its transition time come from the retained 09:00 acceptance capture.",
+    "This receipt makes no profitability, cost-saving, native-request-causality or long-term-reliability claim.",
+    "GitHub artifacts expire according to their configured retention. Source hashes identify retained originals but do not make those originals durable."
+  ],
+  "provenance": {
+    "hashAlgorithm": "SHA-256",
+    "sourceFiles": [
+      {
+        "name": "torghut-c217-verification/run.json",
+        "bytes": 13128,
+        "sha256": "8e53b06b394695c1ea1bd4864353c2a1f281c0429ec35d8149f7e17e9584df2e"
+      },
+      {
+        "name": "torghut-c217-verification/jobs.json",
+        "bytes": 4145,
+        "sha256": "6cfc525b42d6e3af373f29c174037c4ace0322762d03c162a3113276c08bf0c7"
+      },
+      {
+        "name": "torghut-c217-verification/artifacts.json",
+        "bytes": 827,
+        "sha256": "b9725d26e292dad3e0b57da4c126d299e31b337e6528250d0a75603ae670bfa4"
+      },
+      {
+        "name": "torghut-c217-verification/streaming-gate-summary.json",
+        "bytes": 1973,
+        "sha256": "906f7dd4c3fe825c4e1db2b1eabe2f777c2b20381f508fa973217b8105bc9020"
+      },
+      {
+        "name": "torghut-c217-verification/receipt-090408.json",
+        "bytes": 5297,
+        "sha256": "02387ff85af101cc0b7a66063ccf6beff9b7126b7c629a855c077cd39b3b8c48"
+      },
+      {
+        "name": "torghut-c217-acceptance-090005.json",
+        "bytes": 530372,
+        "sha256": "79842d9b88ee19bdfd41b0038ac9cb5886e8b65a2d55ed1dadbffeb046e0e379"
+      },
+      {
+        "name": "torghut-alloy-gc-090249.json",
+        "bytes": 2129,
+        "sha256": "4dc9a6d54e5ffd15dfbebbf7c2902becfac2d2697a3ec5bbaaffa540ec72fd65"
+      },
+      {
+        "name": "torghut-alloy-gc-090411.json",
+        "bytes": 2128,
+        "sha256": "212c14445d28f9d2483093da8cd9fd4374898b17dd25e2b433bb4de6c4896765"
+      },
+      {
+        "name": "torghut-c217-promotion-and-gate-084931.json",
+        "bytes": 33212,
+        "sha256": "6b4fa15fff2ff8e3eecb71970d5cbfb2cdf8ff2601ab01fdb047b201150e552e"
+      },
+      {
+        "name": "torghut-c217-gates-090058.json",
+        "bytes": 8275,
+        "sha256": "090e41cb543b6ea7f75ca48650c5528ba9addfcd64797bba741decda46f8c4fd"
+      },
+      {
+        "name": "torghut-c217-startup-checkpoints-0858.json",
+        "bytes": 6700,
+        "sha256": "f8ad859115e2e697d50ef80e253cbe2863127fe652671e1cc106a3975e559482"
+      },
+      {
+        "name": "nix-substitution-trial-20261121/arc-runner-count-0844.json",
+        "bytes": 41922,
+        "sha256": "61035d5f7933429bb4971d1844b75edaca7ef63375d2eee89d2888fa22bcb819"
+      },
+      {
+        "name": "torghut-c217-verification/artifact-14700179852.zip",
+        "bytes": 44245,
+        "sha256": "10d0caf496b0f9a8c5786e425d666f81264606f6103c4c0bcf3f24fb56eee344"
+      }
+    ],
+    "artifactMembers": [
+      {
+        "name": "application.json",
+        "bytes": 50717,
+        "sha256": "9c22daee7b9bbda06c68ab8d2b3de5d1d790fa081f76e4f532fd397f2ce8d11e"
+      },
+      {
+        "name": "streaming-telemetry.json",
+        "bytes": 17710,
+        "sha256": "4f8111c943a47b5d8f2702e69bf87ac516cba8157290a26fcd656ffa38a6337c"
+      },
+      {
+        "name": "market-data-archive-checkpoints.json",
+        "bytes": 4415,
+        "sha256": "1367b5d1feff33b4abe452e57b8084211914a90f81143169e67abe9da2083627"
+      },
+      {
+        "name": "torghut-ta-checkpoints.json",
+        "bytes": 2259,
+        "sha256": "2c8ac3b72fe051e6c06fd5ac63f2e23812b0e94cd80cbc481940b75b75c38045"
+      }
+    ]
+  }
+}

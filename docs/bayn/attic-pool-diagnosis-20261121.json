@@ -1,0 +1,246 @@
+{
+  "observedAt": "2026-11-21T10:28:53.512812+00:00",
+  "liveSourceRevision": "0e9b29ee77eaa836990a858e785bbcd608b8eb34",
+  "upstreamRevision": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+  "historicalWindow": {
+    "start": "2026-11-21T09:57:00Z",
+    "endExclusive": "2026-11-21T10:01:00Z"
+  },
+  "effectiveApplicationPool": {
+    "proof": "Pinned source call chain plus deployed config projection; not a runtime introspection API.",
+    "maxConnections": 10,
+    "minConnections": 0,
+    "acquireTimeoutSeconds": 30,
+    "idleTimeoutSeconds": 600,
+    "maxLifetimeSeconds": 1800,
+    "testBeforeAcquire": true,
+    "heartbeat": true,
+    "configuredPoolOverrides": false,
+    "seaOrmVersion": "1.1.13",
+    "sqlxVersion": "0.8.6"
+  },
+  "acquisitionInterpretation": {
+    "timeoutCovers": ["waiting_for_permit", "checking_idle_connection", "opening_connection"],
+    "allTenConnectionsBusyProved": false,
+    "statementTimeoutOrPostgresConnectionLimitProved": false
+  },
+  "historicalDatabaseLogs": {
+    "readStatus": "success",
+    "window": {
+      "start": "2026-11-21T09:57:00Z",
+      "endExclusive": "2026-11-21T10:01:00Z"
+    },
+    "databasePod": "attic-db-1",
+    "container": "postgres",
+    "bounds": {
+      "tailLines": 10000,
+      "limitBytes": 8388608,
+      "commandTimeoutSeconds": 30
+    },
+    "capture": {
+      "bytes": 7908,
+      "lines": 13,
+      "selectedJsonRecords": 3,
+      "discardedBeforeWindow": 0,
+      "discardedAfterWindow": 10,
+      "timestampParseFailures": 0,
+      "jsonParseFailuresInWindow": 0,
+      "byteCapReached": false,
+      "lineCapReached": false,
+      "rawLogSha256": "5b081dca4b4a553e77288377b995aacfcaaee55dd5dcfaec5f17162faa64c53a",
+      "firstSelectedAt": "2026-11-21T09:59:05.026138338Z",
+      "lastSelectedAt": "2026-11-21T10:00:31.116770294Z"
+    },
+    "categoryCounts": {
+      "checkpoint_complete": 2,
+      "checkpoint_start": 1
+    },
+    "severityCounts": {
+      "LOG": 3
+    },
+    "statementDurationSummary": {
+      "count": 0,
+      "maximumMs": null
+    },
+    "events": [
+      {
+        "at": "2026-11-21T09:59:05.026138338Z",
+        "category": "checkpoint_complete",
+        "severity": "LOG",
+        "sqlState": "00000",
+        "writeSeconds": 362.64,
+        "syncSeconds": 1.977,
+        "totalSeconds": 391.169,
+        "longestSeconds": 0.872,
+        "averageSeconds": 0.074,
+        "statementOperations": ["CHECKPOINT"]
+      },
+      {
+        "at": "2026-11-21T09:59:05.026170038Z",
+        "category": "checkpoint_start",
+        "severity": "LOG",
+        "sqlState": "00000",
+        "statementOperations": ["CHECKPOINT"]
+      },
+      {
+        "at": "2026-11-21T10:00:31.116770294Z",
+        "category": "checkpoint_complete",
+        "severity": "LOG",
+        "sqlState": "00000",
+        "writeSeconds": 66.436,
+        "syncSeconds": 6.01,
+        "totalSeconds": 86.091,
+        "longestSeconds": 4.672,
+        "averageSeconds": 0.251,
+        "statementOperations": ["CHECKPOINT"]
+      }
+    ],
+    "eventCap": 120,
+    "eventCapReached": false,
+    "connectionEventsAggregatedOnly": true,
+    "limits": [
+      "Database logs are historical observations, not a current activity sample.",
+      "No raw SQL, values, connection URLs, addresses, users, credentials or opaque error text is retained.",
+      "No database statement was executed."
+    ]
+  },
+  "transactionOwnership": [
+    {
+      "operation": "deduplicated_upload",
+      "remoteAwaitBeforeTransaction": true,
+      "source": "server/src/api/v1/upload_path.rs:193-247"
+    },
+    {
+      "operation": "chunk_upload",
+      "remoteAwaitBeforeTransaction": true,
+      "source": "server/src/api/v1/upload_path.rs:640-720"
+    },
+    {
+      "operation": "chunked_nar_finalization",
+      "remoteAwaitBeforeTransaction": true,
+      "source": "server/src/api/v1/upload_path.rs:405-457"
+    },
+    {
+      "operation": "unchunked_nar_finalization",
+      "remoteAwaitBeforeTransaction": true,
+      "source": "server/src/api/v1/upload_path.rs:485-559"
+    },
+    {
+      "operation": "garbage_collect_remote_chunks",
+      "databaseReadsCompleteBeforeRemoteAwait": true,
+      "noExplicitTransactionAcrossStorage": true,
+      "source": "server/src/gc.rs:186-249"
+    },
+    {
+      "operation": "logical_nar_and_chunk_guards",
+      "retainsPoolCloneNotCheckedOutConnection": true,
+      "source": "server/src/database/mod.rs:62-70,236-305,332-395"
+    }
+  ],
+  "boundedSettingsRead": {
+    "purpose": "Resolve logging coverage and actual PostgreSQL connection ceiling without reading user/account data.",
+    "transactionReadOnly": true,
+    "selectedRelation": "pg_settings",
+    "allowlistedSettingsCount": 15,
+    "statementTimeoutSeconds": 3,
+    "lockTimeoutSeconds": 1,
+    "result": "statement_timeout",
+    "rowsReturned": 0,
+    "retryPerformed": false,
+    "loggingSettingsEstablished": false,
+    "postgresMaxConnectionsEstablished": false,
+    "toolCommandHash": "83809644bf6f217649e28015bcda429c3adc61b2911133baaff3fc15d3b036ef"
+  },
+  "historicalMetricCheck": {
+    "at": "2026-11-21T09:58:30Z",
+    "query": "count by (__name__) ({namespace=\"attic\",__name__=~\"cnpg_.*(backends|activity|wait|database).*\"})",
+    "result": "Only cnpg_pg_database_size_bytes was returned; no matching backend/activity/wait family at this instant.",
+    "poolOccupancyOrWaitStateEstablished": false
+  },
+  "findings": [
+    "Database pool acquisition failure is established; its underlying resource or query cause is not.",
+    "No inspected upload or garbage-collection path holds a checked-out SQL transaction across remote-storage awaits.",
+    "Checkpoint elapsed times overlap the error window but do not identify a blocking query or establish storage causation.",
+    "The current bounded settings read also timed out, but it is not a historical connection-occupancy measurement."
+  ],
+  "limits": [
+    "The PostgreSQL log read contained only three checkpoint records and no statement-duration, lock-wait, deadlock or connection-limit records; effective logging settings could not be retrieved, so their absence is not proof that those conditions did not occur.",
+    "Checkpoint write time can include checkpoint pacing; it is not individual device latency.",
+    "No live connection counts, active SQL, user/account records or connection URL were collected.",
+    "No pool change, logging change, retry, upload, source change or workload mutation was performed."
+  ],
+  "inputReceipts": [
+    {
+      "path": "/tmp/attic-upload-error-window-corrected-20261121.json",
+      "sha256": "a70338f8897f359d2a1dcb4ce33570812fe2675f3de4469f2d5033ea92ea86ac"
+    },
+    {
+      "path": "/tmp/attic-db-upload-window-20261121.json",
+      "sha256": "d88a741b105fdfeff7a2c7ab3d21c5e3482eaa2e846f44f3fcd505d6d916a341"
+    },
+    {
+      "path": "/tmp/attic-deployed-pool-config-20261121.json",
+      "sha256": "80d57959f3317738b662f8f900f305dc98bd0c437700b8b3e4e45639428af06e"
+    },
+    {
+      "path": "/tmp/attic-db-historical-metric-inventory-20261121.json",
+      "sha256": "780a810c3eca8729d7ca6a7ba92b22cf9fc971dec63ecdc6fbe1ffac4aaefcc7"
+    }
+  ],
+  "sourceFiles": [
+    {
+      "path": "server/src/config.rs",
+      "lineSpans": "205-217",
+      "sha256": "67c85031be1dd39fe0a011d0dcb29ccc6fd5e80edfc86c95a84fe95e5e914d3b"
+    },
+    {
+      "path": "server/src/lib.rs",
+      "lineSpans": "106-112",
+      "sha256": "376e7307e1dabf7a970261773d377f233ec70e93c2082c8a94b52e454f59c2c8"
+    },
+    {
+      "path": "server/src/api/v1/upload_path.rs",
+      "lineSpans": "193-247,405-457,485-559,640-720",
+      "sha256": "24ceece13e11623e5faf1def3fa1f37f9b6ecfe75791c3a61fc325db340d2d84"
+    },
+    {
+      "path": "server/src/database/mod.rs",
+      "lineSpans": "62-70,236-305,332-395",
+      "sha256": "bb87ad56fbbe4141a76f13198f101a408b667ad62a249f699369967e6cd10c29"
+    },
+    {
+      "path": "server/src/gc.rs",
+      "lineSpans": "186-249",
+      "sha256": "ac2f62be3fc20ccf3eb5357a997780df528dcccfdf7c3dc7140acaf9c9e6b776"
+    },
+    {
+      "path": "dependencies/sea-orm-1.1.13/src/database/mod.rs",
+      "lineSpans": "156-173",
+      "sha256": "eb34475e6f25d08b273f7d0c30fb09180fbbfeda64ba52c484972f3c293e147d"
+    },
+    {
+      "path": "dependencies/sea-orm-1.1.13/src/driver/sqlx_common.rs",
+      "lineSpans": "38-64",
+      "sha256": "d34d12b0db0530740874af2c14040aaecbfc3d5a680a9a4b53ae04ba739b926b"
+    },
+    {
+      "path": "dependencies/sqlx-core-0.8.6/src/pool/options.rs",
+      "lineSpans": "143-165",
+      "sha256": "924cd57a062328b2e7c6ac55242eabb1706893d80ce1e8cb02fe643a592f4f83"
+    },
+    {
+      "path": "dependencies/sqlx-core-0.8.6/src/pool/inner.rs",
+      "lineSpans": "242-293",
+      "sha256": "6e80be032bd771bdc69406fbddf1c2422b9179c7ada6754f4e1ad49374ef5706"
+    },
+    {
+      "path": "dependencies/sqlx-core-0.8.6/src/error.rs",
+      "lineSpans": "99-104",
+      "sha256": "30ecee2fca8e8bf9c64b947cb6b23274931b78b05fb27b4b948a71a4fd25a58b"
+    }
+  ],
+  "crateChecksums": {
+    "sea-orm-1.1.13": "560ea59f07472886a236e7919b9425cf16914fee1d663d3c32f1af2e922b83f0",
+    "sqlx-core-0.8.6": "ee6798b1838b6a0f69c007c133b8df5866302197e404e8b6ee8ed3e3a5e68dc6"
+  }
+}

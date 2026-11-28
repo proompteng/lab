@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "sourcePath": "/tmp/bayn-native-process-diagnostic-recovered-validation-20261121.json",
+  "originalSha256": "893afa2c8177b851b6fca45b5f54ecc5088c7f13897928c1f4e95e1072c54f15",
+  "evidence": {
+    "schemaVersion": 1,
+    "source": "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+    "parent": "a53de4ffc1ac310118f57d5f722dc8968ca07e4e",
+    "tree": "54012a84d47e7581878d1a4eaf2e4c50c83769ce",
+    "purpose": "Reconstructed from retained pre-reset tool receipts and exact reviewed source payload; not a re-execution.",
+    "reviewedFiles": [
+      {
+        "path": "services/bayn/tools/test-native-process-diagnostics.ts",
+        "gitBlob": "ee7b18ed4dc6d854c69bdde857b3a23738b92e15",
+        "sha256": "3194d0bd7a254ee4d31d01828be272d6bf82f73a81fd671ea86947399cd9eb81"
+      },
+      {
+        "path": "services/bayn/src/opencode/native-process-diagnostics.test.ts",
+        "gitBlob": "2b5660843f4086691eb0f730bb2d6690a0ed6bbb",
+        "sha256": "d2ffb3c6889277b3d265b109fe082691ec3aa5933c69a7a73508389a9a9b53d3"
+      },
+      {
+        "path": "services/bayn/src/opencode/server.integration.test.ts",
+        "gitBlob": "ff01a25962cfea3bfcf441943e9dcb957d17e827",
+        "sha256": "eb9c34612b74bde50ccd130627617d82f59df6f9d01a48e13b5e83d5035d343e"
+      },
+      {
+        "path": "services/bayn/README.md",
+        "gitBlob": "ad26ed494de79699a503db572ad6c2489ba33129",
+        "sha256": "28929fdd50f6231118ba264066031487cecb50859d78ee9cf800f4927e37b836"
+      }
+    ],
+    "sourceRecovery": {
+      "transferPayloadSha256": "bf04e92ee7e10a601332e7f273c2e32470e2ed9b817fd53f51262825d691dfe4",
+      "reviewedReadJob": "be82be45-bbcf-4585-a2ce-2a9d06077870",
+      "restoreJobId": "c01e0db2-1481-4fa1-8808-5842ce6f7d95",
+      "verifiedAllFourGitBlobsAndSha256": true,
+      "lostUnpushedCommitPrefix": "fc357acdc2",
+      "replacementCommit": "13ea59cbabec32a5560ec0e52f543749166c9c8d"
+    },
+    "completedLocalChecks": {
+      "receiptJobId": "001c0d51-b886-439b-9719-df130b124bc4",
+      "commandHash": "0e91249f06550853539ea554f7755e21c1dd86ab9d980dc9c4e07496403f4e89",
+      "startedAt": "2026-11-21T12:34:04.657Z",
+      "finishedAt": "2026-11-21T12:34:26.683Z",
+      "exitCode": 0,
+      "checks": [
+        {
+          "name": "focused diagnostics",
+          "command": ["bun", "test", "services/bayn/src/opencode/native-process-diagnostics.test.ts"],
+          "exitCode": 0,
+          "passed": 36,
+          "failed": 0,
+          "assertions": 70,
+          "durationSeconds": 0.164
+        },
+        {
+          "name": "tsc",
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "tsc"],
+          "exitCode": 0,
+          "durationSeconds": 13.038,
+          "coverage": "all and production configurations"
+        },
+        {
+          "name": "format",
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint"],
+          "exitCode": 0,
+          "durationSeconds": 1.116
+        },
+        {
+          "name": "oxlint",
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint:oxlint"],
+          "exitCode": 0,
+          "durationSeconds": 0.223,
+          "warnings": 7,
+          "errors": 0
+        },
+        {
+          "name": "type-aware oxlint",
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "lint:oxlint:type"],
+          "exitCode": 0,
+          "durationSeconds": 7.183,
+          "warnings": 28,
+          "errors": 0
+        },
+        {
+          "name": "build",
+          "command": ["bun", "run", "--filter", "@proompteng/bayn", "build"],
+          "exitCode": 0,
+          "durationSeconds": 0.265
+        }
+      ],
+      "rawLogsAvailableAfterReset": false
+    },
+    "broadLocalSuite": {
+      "status": "INCOMPLETE_EXECUTION_WRAPPER_TIMEOUT",
+      "command": ["bun", "run", "--filter", "@proompteng/bayn", "test"],
+      "jobId": "29244d19-24da-4445-b9e1-59f5d94af95f",
+      "commandHash": "68cb4b33796915b3088fdba61000cc7516aa5a9b2d72c3bb6d063aa24e0b1f9c",
+      "startedAt": "2026-11-21T12:28:19.805Z",
+      "finishedAt": "2026-11-21T12:43:19.852Z",
+      "elapsedSeconds": 900.047,
+      "wrapperLimitSeconds": 900,
+      "terminalState": "exited",
+      "exitCode": 1,
+      "signal": null,
+      "exception": "subprocess.TimeoutExpired",
+      "passLogRecords": 5350,
+      "skipLogRecords": 1318,
+      "failureLogRecords": 0,
+      "testFilesSeen": 446,
+      "lastObservedFile": "src/cycle/store/decisions.test.ts",
+      "terminalTestSummaryPresent": false,
+      "nativeBinaryConfigured": false,
+      "childProcessIdCaptured": false,
+      "cleanupLimit": "No child PID was retained; no PID-based follow-up or unrelated process termination occurred. An unchanged log after termination is not process-absence proof.",
+      "originalLogSha256": "0271076f4311d266131301fc612ad72611088b1aaead71e5c4d5d4e1e11cde00",
+      "originalLogBytes": 2012235,
+      "rawLogAvailableAfterReset": false,
+      "originalValidationReceiptSha256": "5bb9e7147d81bbca885cfe2cf338f4c0fca22e8285c06bd063f3c879df20fd00",
+      "qualification": "Counts are observed log records, not a completed suite. Prior raw log and original /tmp receipt were lost in the backend replacement; the retained transcript supplied this reconstruction."
+    },
+    "recoveryValidation": {
+      "frozenInstallExitCode": 0,
+      "normalHookInstallationExitCode": 0,
+      "normalPreCommitAndCommitMessageHooksPassed": true,
+      "workingTreeCleanAfterCommit": true,
+      "noBroadOrNativeRerun": true,
+      "push": {
+        "jobId": "44a8da20-2e14-49b7-9f2a-fd61b20daafc",
+        "expectedOldHead": "a53de4ffc1ac310118f57d5f722dc8968ca07e4e",
+        "newHead": "13ea59cbabec32a5560ec0e52f543749166c9c8d",
+        "forced": false,
+        "exitCode": 0
+      }
+    },
+    "limitation": "The production startup cause remains unproved. This change adds failure-only evidence; all existing native deadlines and source/publication/financial gates are unchanged. Full normal exact-head CI is required before merge."
+  }
+}

@@ -1,0 +1,3721 @@
+{
+  "schemaVersion": 1,
+  "sourcePath": "/tmp/bayn-6d6600-live-acceptance-2026-11-21.json",
+  "originalSha256": "053acd5e1e8d677c63aeba1d67023947c80734975fe4dc209bde85280989d863",
+  "evidence": {
+    "schemaVersion": 1,
+    "kind": "bayn-live-release-acceptance",
+    "status": "ACCEPTED",
+    "evidenceCut": {
+      "runtimeInventoryAt": "2026-11-21T12:44:35.248734+00:00",
+      "apiObservations": [
+        {
+          "pod": "bayn-59b7c75b45-grj96",
+          "at": "2026-11-21T12:44:55.738Z"
+        },
+        {
+          "pod": "bayn-59b7c75b45-khknm",
+          "at": "2026-11-21T12:44:58.382Z"
+        }
+      ],
+      "researchIdentityAt": "2026-11-21T12:44:57.020Z"
+    },
+    "sourceLineage": {
+      "originalPr": 16111,
+      "originalPrHead": "437355b8cfdd2ce29578e670079244ddedd58886",
+      "originalMergedSource": "acc115c8082a00881fc3d1daef8af08b62458a85",
+      "acceptedRuntimeSource": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "ancestry": {
+        "aheadBy": 2,
+        "behindBy": 0,
+        "status": "ahead"
+      },
+      "originalPendingRun": {
+        "id": 44889463740,
+        "jobsStarted": 0,
+        "successorCreatedAt": "2026-11-21T09:46:11Z",
+        "canceledAt": "2026-11-21T09:46:12Z",
+        "qualification": "Cancellation timing is consistent with pending-slot replacement; no actor is asserted."
+      },
+      "composition": "The accepted source is two commits ahead of acc115c. Intervening Bayn changes are README and test/PG helper files; the Bayn production fixes are retained. Later publication-filter and queue changes are repository workflow changes, not claimed as part of this earlier image source."
+    },
+    "cohort": {
+      "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "runId": "44891137421",
+      "tradingDigest": "sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+      "researchDigest": "sha256:6a1ce86d4189a74092f4ae55caf97043fcaec2afe8b0f2a083c6571b8edb6d45",
+      "brokerFeedDigest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d"
+    },
+    "publicationArtifact": {
+      "id": 14706937744,
+      "name": "bayn-image-cohort",
+      "sizeBytes": 399,
+      "createdAt": "2026-11-21T12:33:27Z",
+      "rawCohortSha256": "fc70f054a301ddcd4ff67b05c3fb5c11ffcec3cdd6a42230beb90f63cf8bc64a"
+    },
+    "publicationRun": {
+      "id": 44891137421,
+      "url": "https://github.com/proompteng/lab/actions/runs/44891137421",
+      "headSha": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "event": "push",
+      "branch": "main",
+      "status": "completed",
+      "conclusion": "success",
+      "createdAt": "2026-11-21T09:46:11Z",
+      "updatedAt": "2026-11-21T12:39:42Z"
+    },
+    "publicationJobs": [
+      {
+        "id": 136812604509,
+        "name": "changes",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:09:39Z",
+        "completedAt": "2026-11-21T10:09:55Z",
+        "runnerName": "GitHub Actions 1000411885",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812677593,
+        "name": "broker-feed-validation / verify",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:09:57Z",
+        "completedAt": "2026-11-21T10:12:37Z",
+        "runnerName": "GitHub Actions 1000411886",
+        "labels": ["ubuntu-22.04"]
+      },
+      {
+        "id": 136812678031,
+        "name": "validation / changes",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:09:57Z",
+        "completedAt": "2026-11-21T10:09:59Z",
+        "runnerName": "GitHub Actions 1000411887",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694591,
+        "name": "validation / streaming-integration",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:01Z",
+        "completedAt": "2026-11-21T10:13:07Z",
+        "runnerName": "GitHub Actions 1000411888",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694614,
+        "name": "validation / gepa",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:11:39Z",
+        "completedAt": "2026-11-21T10:11:54Z",
+        "runnerName": "GitHub Actions 1000411903",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694620,
+        "name": "validation / unit-tests (3)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:01Z",
+        "completedAt": "2026-11-21T10:12:08Z",
+        "runnerName": "GitHub Actions 1000411889",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694626,
+        "name": "validation / archive-integration",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:02Z",
+        "completedAt": "2026-11-21T10:13:07Z",
+        "runnerName": "GitHub Actions 1000411890",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694650,
+        "name": "validation / replay-execution-observer",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:01Z",
+        "completedAt": "2026-11-21T10:12:00Z",
+        "runnerName": "GitHub Actions 1000411894",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694657,
+        "name": "validation / unit-tests (4)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:02Z",
+        "completedAt": "2026-11-21T10:14:57Z",
+        "runnerName": "GitHub Actions 1000411892",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694680,
+        "name": "validation / unit-tests (2)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:16:58Z",
+        "completedAt": "2026-11-21T10:21:20Z",
+        "runnerName": "GitHub Actions 1000411949",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694701,
+        "name": "validation / ledger-integration (backtest)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:01Z",
+        "completedAt": "2026-11-21T10:11:38Z",
+        "runnerName": "GitHub Actions 1000411891",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694712,
+        "name": "validation / postgres-integration (1)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:11:29Z",
+        "completedAt": "2026-11-21T10:15:37Z",
+        "runnerName": "GitHub Actions 1000411902",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694713,
+        "name": "validation / formal-verification / tla",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:05Z",
+        "completedAt": "2026-11-21T10:10:50Z",
+        "runnerName": "GitHub Actions 1000411895",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694714,
+        "name": "validation / postgres-integration (4)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:12:17Z",
+        "completedAt": "2026-11-21T10:21:11Z",
+        "runnerName": "GitHub Actions 1000411912",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694724,
+        "name": "validation / postgres-integration (2)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:11:03Z",
+        "completedAt": "2026-11-21T10:21:29Z",
+        "runnerName": "GitHub Actions 1000411899",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694725,
+        "name": "validation / formal-verification / verify",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:31Z",
+        "completedAt": "2026-11-21T10:22:06Z",
+        "runnerName": "GitHub Actions 1000411897",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694733,
+        "name": "validation / postgres-integration (3)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:12:21Z",
+        "completedAt": "2026-11-21T10:19:01Z",
+        "runnerName": "GitHub Actions 1000411913",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694737,
+        "name": "validation / market-data-replay",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:12:47Z",
+        "completedAt": "2026-11-21T10:15:48Z",
+        "runnerName": "GitHub Actions 1000411916",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694740,
+        "name": "validation / ledger-integration (latency-momentum)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:12:15Z",
+        "completedAt": "2026-11-21T10:13:41Z",
+        "runnerName": "GitHub Actions 1000411910",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694755,
+        "name": "validation / ledger-integration (runtime)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:12:09Z",
+        "completedAt": "2026-11-21T10:17:06Z",
+        "runnerName": "GitHub Actions 1000411908",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694764,
+        "name": "validation / ledger-integration (frozen-control)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:14:02Z",
+        "completedAt": "2026-11-21T10:20:27Z",
+        "runnerName": "GitHub Actions 1000411926",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694777,
+        "name": "validation / ledger-integration (inference)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:14:59Z",
+        "completedAt": "2026-11-21T10:22:02Z",
+        "runnerName": "GitHub Actions 1000411929",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694782,
+        "name": "validation / unit-tests (1)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:01Z",
+        "completedAt": "2026-11-21T10:13:05Z",
+        "runnerName": "GitHub Actions 1000411893",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694795,
+        "name": "validation / pr-checks / run",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:10:12Z",
+        "completedAt": "2026-11-21T10:11:27Z",
+        "runnerName": "GitHub Actions 1000411896",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694811,
+        "name": "validation / ledger-integration (latency-ablation)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:16:12Z",
+        "completedAt": "2026-11-21T10:17:22Z",
+        "runnerName": "GitHub Actions 1000411945",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694812,
+        "name": "validation / ledger-integration (restart)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:14:48Z",
+        "completedAt": "2026-11-21T10:15:39Z",
+        "runnerName": "GitHub Actions 1000411928",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694832,
+        "name": "validation / ledger-integration (latency-jev)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:14:58Z",
+        "completedAt": "2026-11-21T10:16:11Z",
+        "runnerName": "GitHub Actions 1000411930",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136812694913,
+        "name": "validation / ledger-integration (latency-momentum-trading)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:15:27Z",
+        "completedAt": "2026-11-21T10:19:11Z",
+        "runnerName": "GitHub Actions 1000411932",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136815656686,
+        "name": "validation / Bayn release gate",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:22:56Z",
+        "completedAt": "2026-11-21T10:22:59Z",
+        "runnerName": "GitHub Actions 1000412013",
+        "labels": ["ubuntu-latest"]
+      },
+      {
+        "id": 136815870815,
+        "name": "broker-feed-image / build-platform (linux/amd64, amd64, arc-amd64)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:29:30Z",
+        "completedAt": "2026-11-21T10:34:54Z",
+        "runnerName": "arc-amd64-runner-k4xrg",
+        "labels": ["arc-amd64"]
+      },
+      {
+        "id": 136815870838,
+        "name": "broker-feed-image / build-platform (linux/arm64, arm64, arc-arm64)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:42:02Z",
+        "completedAt": "2026-11-21T10:47:52Z",
+        "runnerName": "arc-arm64-runner-4zlsz",
+        "labels": ["arc-arm64"]
+      },
+      {
+        "id": 136815870854,
+        "name": "research-image / build-platform (linux/amd64, amd64, arc-amd64)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:34:39Z",
+        "completedAt": "2026-11-21T10:54:57Z",
+        "runnerName": "arc-amd64-runner-5895q",
+        "labels": ["arc-amd64"]
+      },
+      {
+        "id": 136815870857,
+        "name": "research-image / build-platform (linux/arm64, arm64, arc-arm64)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:50:16Z",
+        "completedAt": "2026-11-21T11:10:20Z",
+        "runnerName": "arc-arm64-runner-xvdjd",
+        "labels": ["arc-arm64"]
+      },
+      {
+        "id": 136815870870,
+        "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T11:02:24Z",
+        "completedAt": "2026-11-21T11:19:56Z",
+        "runnerName": "arc-arm64-runner-cfgkh",
+        "labels": ["arc-arm64"]
+      },
+      {
+        "id": 136815870941,
+        "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T10:52:18Z",
+        "completedAt": "2026-11-21T11:04:27Z",
+        "runnerName": "arc-amd64-runner-lt8tq",
+        "labels": ["arc-amd64"]
+      },
+      {
+        "id": 136821754271,
+        "name": "broker-feed-image / publish-index",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T11:02:36Z",
+        "completedAt": "2026-11-21T11:04:49Z",
+        "runnerName": "arc-amd64-runner-srnmf",
+        "labels": ["arc-amd64"]
+      },
+      {
+        "id": 136827127542,
+        "name": "research-image / publish-index",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T12:22:49Z",
+        "completedAt": "2026-11-21T12:25:13Z",
+        "runnerName": "arc-amd64-runner-mxxd8",
+        "labels": ["arc-amd64"]
+      },
+      {
+        "id": 136829442311,
+        "name": "image / publish-index",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T11:54:38Z",
+        "completedAt": "2026-11-21T11:57:02Z",
+        "runnerName": "arc-amd64-runner-pr6v2",
+        "labels": ["arc-amd64"]
+      },
+      {
+        "id": 136845036187,
+        "name": "publish-cohort",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T12:31:31Z",
+        "completedAt": "2026-11-21T12:39:41Z",
+        "runnerName": "arc-amd64-runner-kdv6r",
+        "labels": ["arc-amd64"]
+      }
+    ],
+    "publicationTimeline": {
+      "observers": [
+        {
+          "key": "bayn-6d6600-main-watcher-v1",
+          "jobId": "a0cff879-6efe-46ef-a826-ba12a29b62ce",
+          "commandHash": "9390548227c9806a68e29f3966efb93db0ea85542e3ad8100c61b82827b9e84b",
+          "state": "exited",
+          "exitCode": 0,
+          "from": "2026-11-21T09:50:30.161690+00:00",
+          "to": "2026-11-21T10:14:06.814890+00:00"
+        },
+        {
+          "key": "bayn-6d6600-main-watcher-v2",
+          "jobId": "99aa9259-769f-47d3-b36c-22fb0db6717d",
+          "commandHash": "9390548227c9806a68e29f3966efb93db0ea85542e3ad8100c61b82827b9e84b",
+          "state": "exited",
+          "exitCode": 0,
+          "from": "2026-11-21T10:21:11.107340+00:00",
+          "to": "2026-11-21T10:45:09.891237+00:00"
+        },
+        {
+          "key": "bayn-6d6600-main-watcher-v3",
+          "jobId": "eabb15ea-af1f-49c9-ba85-a8da5443e278",
+          "commandHash": "9390548227c9806a68e29f3966efb93db0ea85542e3ad8100c61b82827b9e84b",
+          "state": "exited",
+          "exitCode": 0,
+          "from": "2026-11-21T10:46:42.030542+00:00",
+          "to": "2026-11-21T11:10:45.776955+00:00"
+        },
+        {
+          "key": "bayn-6d6600-main-watcher-v4",
+          "jobId": "631a98af-2fbc-4519-8ff0-df7e52f78c01",
+          "commandHash": "9390548227c9806a68e29f3966efb93db0ea85542e3ad8100c61b82827b9e84b",
+          "state": "exited",
+          "exitCode": 0,
+          "from": "2026-11-21T11:12:22.495369+00:00",
+          "to": "2026-11-21T11:36:35.833083+00:00"
+        },
+        {
+          "key": "bayn-6d6600-main-watcher-v5",
+          "jobId": "7fd56ec9-65b5-4c50-8cc8-6f56b65a563d",
+          "commandHash": "9390548227c9806a68e29f3966efb93db0ea85542e3ad8100c61b82827b9e84b",
+          "state": "exited",
+          "exitCode": 0,
+          "from": "2026-11-21T11:41:33.117513+00:00",
+          "to": "2026-11-21T12:05:49.492907+00:00"
+        },
+        {
+          "key": "bayn-6d6600-main-watcher-v6",
+          "jobId": "6c1473de-7e65-4c38-b3a9-77174c089084",
+          "commandHash": "9390548227c9806a68e29f3966efb93db0ea85542e3ad8100c61b82827b9e84b",
+          "state": "exited",
+          "exitCode": 0,
+          "from": "2026-11-21T12:07:03.867076+00:00",
+          "to": "2026-11-21T12:31:46.022829+00:00"
+        },
+        {
+          "key": "bayn-6d6600-main-watcher-v7",
+          "jobId": "58cc8850-f4ca-4b92-ae61-95fe91768825",
+          "commandHash": "9390548227c9806a68e29f3966efb93db0ea85542e3ad8100c61b82827b9e84b",
+          "state": "exited",
+          "exitCode": 0,
+          "from": "2026-11-21T12:32:40.343635+00:00",
+          "to": "2026-11-21T12:40:30.897173+00:00"
+        }
+      ],
+      "jobs": [
+        {
+          "id": 136815870815,
+          "name": "broker-feed-image / build-platform (linux/amd64, amd64, arc-amd64)",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T10:23:30.088802+00:00",
+            "reportedStartedAt": "2026-11-21T10:23:00Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T10:29:41.099636+00:00",
+            "startedAt": "2026-11-21T10:29:30Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T10:29:30Z",
+            "completedAt": "2026-11-21T10:34:54Z"
+          }
+        },
+        {
+          "id": 136815870838,
+          "name": "broker-feed-image / build-platform (linux/arm64, arm64, arc-arm64)",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T10:23:30.088802+00:00",
+            "reportedStartedAt": "2026-11-21T10:23:00Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T10:42:04.061173+00:00",
+            "startedAt": "2026-11-21T10:42:02Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T10:42:02Z",
+            "completedAt": "2026-11-21T10:47:52Z"
+          }
+        },
+        {
+          "id": 136815870854,
+          "name": "research-image / build-platform (linux/amd64, amd64, arc-amd64)",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T10:23:30.088802+00:00",
+            "reportedStartedAt": "2026-11-21T10:23:00Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T10:35:05.992441+00:00",
+            "startedAt": "2026-11-21T10:34:39Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T10:34:39Z",
+            "completedAt": "2026-11-21T10:54:57Z"
+          }
+        },
+        {
+          "id": 136815870857,
+          "name": "research-image / build-platform (linux/arm64, arm64, arc-arm64)",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T10:23:30.088802+00:00",
+            "reportedStartedAt": "2026-11-21T10:23:00Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T10:50:34.471485+00:00",
+            "startedAt": "2026-11-21T10:50:16Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T10:50:16Z",
+            "completedAt": "2026-11-21T11:10:20Z"
+          }
+        },
+        {
+          "id": 136815870870,
+          "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T10:23:30.088802+00:00",
+            "reportedStartedAt": "2026-11-21T10:23:00Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T11:03:00.162756+00:00",
+            "startedAt": "2026-11-21T11:02:24Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T11:02:24Z",
+            "completedAt": "2026-11-21T11:19:56Z"
+          }
+        },
+        {
+          "id": 136815870941,
+          "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T10:23:30.088802+00:00",
+            "reportedStartedAt": "2026-11-21T10:23:00Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T10:52:53.963042+00:00",
+            "startedAt": "2026-11-21T10:52:18Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T10:52:18Z",
+            "completedAt": "2026-11-21T11:04:27Z"
+          }
+        },
+        {
+          "id": 136821754271,
+          "name": "broker-feed-image / publish-index",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T10:48:14.995419+00:00",
+            "reportedStartedAt": "2026-11-21T10:47:52Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T11:03:00.162756+00:00",
+            "startedAt": "2026-11-21T11:02:36Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T11:02:36Z",
+            "completedAt": "2026-11-21T11:04:49Z"
+          }
+        },
+        {
+          "id": 136827127542,
+          "name": "research-image / publish-index",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T11:10:45.776955+00:00",
+            "reportedStartedAt": "2026-11-21T11:10:20Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T12:23:08.167508+00:00",
+            "startedAt": "2026-11-21T12:22:49Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T12:22:49Z",
+            "completedAt": "2026-11-21T12:25:13Z"
+          }
+        },
+        {
+          "id": 136829442311,
+          "name": "image / publish-index",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T11:20:10.903520+00:00",
+            "reportedStartedAt": "2026-11-21T11:19:56Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T11:54:51.190065+00:00",
+            "startedAt": "2026-11-21T11:54:38Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:32:40.343635+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T11:54:38Z",
+            "completedAt": "2026-11-21T11:57:02Z"
+          }
+        },
+        {
+          "id": 136845036187,
+          "name": "publish-cohort",
+          "firstQueuedObservation": {
+            "observedAt": "2026-11-21T12:25:29.374916+00:00",
+            "reportedStartedAt": "2026-11-21T12:25:13Z"
+          },
+          "firstRunningObservation": {
+            "observedAt": "2026-11-21T12:31:46.022829+00:00",
+            "startedAt": "2026-11-21T12:31:31Z"
+          },
+          "terminal": {
+            "observedAt": "2026-11-21T12:40:30.897173+00:00",
+            "status": "completed",
+            "conclusion": "success",
+            "startedAt": "2026-11-21T12:31:31Z",
+            "completedAt": "2026-11-21T12:39:41Z"
+          }
+        }
+      ],
+      "qualification": "The queued timestamp is the API's started_at value while status was queued; first observation time is retained separately. The completed job's started_at is the assigned execution start."
+    },
+    "indexBinding": {
+      "path": "/tmp/bayn-6d6600-cohort-index-binding.json",
+      "sha256": "bf9de6d0a8cb512e5ab22629f4cd7b38d0c0762d04458c4b9006c27cd625b65f",
+      "receipt": {
+        "observedFrom": "2026-11-21T12:41:24.642296+00:00",
+        "observedTo": "2026-11-21T12:41:24.819457+00:00",
+        "source": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+        "runId": "44891137421",
+        "registryGetCount": 2,
+        "registryWrites": 0,
+        "addedCredentials": false,
+        "newIndexes": [
+          {
+            "member": "bayn",
+            "immutableDigest": "sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+            "http": 200,
+            "responseBytes": 768,
+            "contentDigestMatches": true,
+            "digestHeaderPresent": true,
+            "digestHeaderMatches": true,
+            "completeDescriptorCount": 2,
+            "descriptors": [
+              {
+                "digest": "sha256:4eda1d4f9b4387cc81edc58d8d1146eaeca2807e542f7a43f226a60aeded0b58",
+                "os": "linux",
+                "architecture": "amd64",
+                "variant": null
+              },
+              {
+                "digest": "sha256:3109ea8d0d32244ede1d08453d2bc0ae3bb9f38ace026197c3ab8edd0ae05d07",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": null
+              }
+            ],
+            "exactPreviouslyVerifiedChildrenMatch": true,
+            "annotations": {
+              "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+              "org.opencontainers.image.source": "https://github.com/proompteng/lab",
+              "ai.proompteng.github-actions-run-id": "44891137421",
+              "ai.proompteng.github-actions-build-conclusion": "success"
+            }
+          },
+          {
+            "member": "bayn-research",
+            "immutableDigest": "sha256:6a1ce86d4189a74092f4ae55caf97043fcaec2afe8b0f2a083c6571b8edb6d45",
+            "http": 200,
+            "responseBytes": 768,
+            "contentDigestMatches": true,
+            "digestHeaderPresent": true,
+            "digestHeaderMatches": true,
+            "completeDescriptorCount": 2,
+            "descriptors": [
+              {
+                "digest": "sha256:4f700adcd5a2044ef3a2a8622d2e25266d42c8b17f4f8db8504a1219b080c9a8",
+                "os": "linux",
+                "architecture": "amd64",
+                "variant": null
+              },
+              {
+                "digest": "sha256:41867d71b9082bf8130b4c3fb35461b9f26425a71ef1dc138ed33c5fca13419e",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": null
+              }
+            ],
+            "exactPreviouslyVerifiedChildrenMatch": true,
+            "annotations": {
+              "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+              "org.opencontainers.image.source": "https://github.com/proompteng/lab",
+              "ai.proompteng.github-actions-run-id": "44891137421",
+              "ai.proompteng.github-actions-build-conclusion": "success"
+            }
+          }
+        ],
+        "previousBrokerIndexMatchesCohort": true,
+        "priorMetadataSha256": "905a5e8475c5a2dab31ccd038909e9393ad8f0836d2aa1dbdcb496fea83a9b5e",
+        "limitations": [
+          "Only two immutable index manifests were fetched; the broker-feed index and six image configs are bound to the earlier digest-verified metadata receipt.",
+          "No image layers, provider inference, workload changes or registry writes."
+        ]
+      }
+    },
+    "kargo": {
+      "observedAt": "2026-11-21T12:44:15.336062+00:00",
+      "stage": {
+        "generation": 6,
+        "observedGeneration": 6,
+        "health": "Healthy",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "Verified",
+            "observedGeneration": 6,
+            "lastTransitionTime": "2026-11-12T10:52:00Z"
+          },
+          {
+            "type": "Healthy",
+            "status": "True",
+            "reason": "Healthy",
+            "observedGeneration": 6,
+            "lastTransitionTime": "2026-11-12T10:52:01Z"
+          },
+          {
+            "type": "Verified",
+            "status": "True",
+            "reason": "Verified",
+            "observedGeneration": 6,
+            "lastTransitionTime": "2026-11-12T10:56:23Z"
+          }
+        ]
+      },
+      "freight": {
+        "name": "440e162cd40929b10d4251cca3968749f2e796e2",
+        "createdAt": "2026-11-21T12:41:07Z",
+        "origin": {
+          "kind": "Warehouse",
+          "name": "bayn"
+        },
+        "images": [
+          {
+            "repoURL": "registry.ide-newton.ts.net/lab/bayn",
+            "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+            "digest": "sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+            "annotations": {
+              "ai.proompteng.github-actions-build-conclusion": "success",
+              "ai.proompteng.github-actions-run-id": "44891137421",
+              "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+              "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+            }
+          },
+          {
+            "repoURL": "registry.ide-newton.ts.net/lab/bayn-research",
+            "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+            "digest": "sha256:6a1ce86d4189a74092f4ae55caf97043fcaec2afe8b0f2a083c6571b8edb6d45",
+            "annotations": {
+              "ai.proompteng.github-actions-build-conclusion": "success",
+              "ai.proompteng.github-actions-run-id": "44891137421",
+              "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+              "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+            }
+          },
+          {
+            "repoURL": "registry.ide-newton.ts.net/lab/bayn-broker-feed",
+            "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+            "digest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+            "annotations": {
+              "ai.proompteng.github-actions-build-conclusion": "success",
+              "ai.proompteng.github-actions-run-id": "44891137421",
+              "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+              "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+            }
+          }
+        ],
+        "checks": {
+          "exactThreeImages": true,
+          "cohortDigestMapMatches": true,
+          "allSourceRunAndSuccessAnnotationsMatch": true
+        }
+      },
+      "lastPromotion": {
+        "name": "bayn.01m7z1zvmgs9g3mvjx64ypv369.440e162",
+        "freight": {
+          "name": "440e162cd40929b10d4251cca3968749f2e796e2",
+          "origin": {
+            "kind": "Warehouse",
+            "name": "bayn"
+          },
+          "images": [
+            {
+              "repoURL": "registry.ide-newton.ts.net/lab/bayn",
+              "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+              "digest": "sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+              "annotations": {
+                "ai.proompteng.github-actions-build-conclusion": "success",
+                "ai.proompteng.github-actions-run-id": "44891137421",
+                "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+                "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+              }
+            },
+            {
+              "repoURL": "registry.ide-newton.ts.net/lab/bayn-research",
+              "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+              "digest": "sha256:6a1ce86d4189a74092f4ae55caf97043fcaec2afe8b0f2a083c6571b8edb6d45",
+              "annotations": {
+                "ai.proompteng.github-actions-build-conclusion": "success",
+                "ai.proompteng.github-actions-run-id": "44891137421",
+                "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+                "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+              }
+            },
+            {
+              "repoURL": "registry.ide-newton.ts.net/lab/bayn-broker-feed",
+              "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+              "digest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+              "annotations": {
+                "ai.proompteng.github-actions-build-conclusion": "success",
+                "ai.proompteng.github-actions-run-id": "44891137421",
+                "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+                "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+              }
+            }
+          ]
+        },
+        "phase": "Succeeded",
+        "startedAt": "2026-11-21T12:41:08Z",
+        "finishedAt": "2026-11-21T12:43:36Z",
+        "currentStep": 18
+      },
+      "selectedFreightCollection": {
+        "id": "f6165bade2bf6d23c9504aa2db5de6090a339c01",
+        "items": {
+          "Warehouse/bayn": {
+            "name": "440e162cd40929b10d4251cca3968749f2e796e2",
+            "origin": {
+              "kind": "Warehouse",
+              "name": "bayn"
+            },
+            "images": [
+              {
+                "repoURL": "registry.ide-newton.ts.net/lab/bayn",
+                "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+                "digest": "sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                "annotations": {
+                  "ai.proompteng.github-actions-build-conclusion": "success",
+                  "ai.proompteng.github-actions-run-id": "44891137421",
+                  "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+                  "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+                }
+              },
+              {
+                "repoURL": "registry.ide-newton.ts.net/lab/bayn-research",
+                "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+                "digest": "sha256:6a1ce86d4189a74092f4ae55caf97043fcaec2afe8b0f2a083c6571b8edb6d45",
+                "annotations": {
+                  "ai.proompteng.github-actions-build-conclusion": "success",
+                  "ai.proompteng.github-actions-run-id": "44891137421",
+                  "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+                  "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+                }
+              },
+              {
+                "repoURL": "registry.ide-newton.ts.net/lab/bayn-broker-feed",
+                "tag": "kargo-sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-run-44891137421",
+                "digest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+                "annotations": {
+                  "ai.proompteng.github-actions-build-conclusion": "success",
+                  "ai.proompteng.github-actions-run-id": "44891137421",
+                  "org.opencontainers.image.revision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+                  "org.opencontainers.image.source": "https://github.com/proompteng/lab"
+                }
+              }
+            ]
+          }
+        },
+        "verificationHistory": [
+          {
+            "analysisRun": {
+              "name": "bayn.01m7z24n4g4qv5j6b3t61xc2k9.f6165ba",
+              "namespace": "bayn-release",
+              "phase": "Successful"
+            },
+            "finishTime": "2026-11-21T12:43:54Z",
+            "id": "1bd02359-f848-4a6e-ab3e-c328e19dae0d",
+            "phase": "Successful",
+            "startTime": "2026-11-21T12:43:45Z"
+          }
+        ]
+      },
+      "verificationBoundary": "The Stage verification history binds the new Freight collection to a Successful AnalysisRun. A separate optional direct AnalysisRun read returned a primary-tool Internal error without a receipt; no extra direct metric-result claim is made."
+    },
+    "argo": {
+      "revision": "4e051f9663063fd129b70f2a700226bcba6b7d35",
+      "sync": "Synced",
+      "health": "Healthy",
+      "reconciledAt": "2026-11-21T12:43:36Z",
+      "operation": {
+        "phase": "Succeeded",
+        "startedAt": "2026-11-21T12:42:17Z",
+        "finishedAt": "2026-11-21T12:43:36Z",
+        "syncRevision": "4e051f9663063fd129b70f2a700226bcba6b7d35",
+        "resources": [
+          {
+            "group": "apps",
+            "kind": "Deployment",
+            "namespace": "bayn",
+            "name": "bayn-broker-feed",
+            "status": "Synced",
+            "hookPhase": "Succeeded",
+            "syncPhase": "Sync"
+          },
+          {
+            "group": "restate.dev",
+            "kind": "RestateDeployment",
+            "namespace": "bayn",
+            "name": "bayn-execution-controller",
+            "status": "Synced",
+            "hookPhase": "Succeeded",
+            "syncPhase": "Sync"
+          },
+          {
+            "group": "batch",
+            "kind": "Job",
+            "namespace": "bayn",
+            "name": "bayn-execution-activate-6d6600bd98ca",
+            "status": "Synced",
+            "hookPhase": "Succeeded",
+            "syncPhase": "Sync"
+          },
+          {
+            "group": "apps",
+            "kind": "Deployment",
+            "namespace": "bayn",
+            "name": "bayn",
+            "status": "Synced",
+            "hookPhase": "Succeeded",
+            "syncPhase": "Sync"
+          },
+          {
+            "group": "restate.dev",
+            "kind": "RestateDeployment",
+            "namespace": "bayn",
+            "name": "bayn-research",
+            "status": "Synced",
+            "hookPhase": "Running",
+            "syncPhase": "Sync"
+          }
+        ]
+      },
+      "conditions": []
+    },
+    "activation": {
+      "events": [
+        {
+          "at": "2026-11-21T12:43:00.657928+00:00",
+          "kind": "activation-pod",
+          "pod": "bayn-execution-activate-6d6600bd98ca-zxxqx",
+          "source": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+          "phase": "Running",
+          "node": "turin",
+          "images": [
+            "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910"
+          ],
+          "states": [
+            {
+              "container": "activate",
+              "ready": true,
+              "restarts": 0,
+              "exitCode": null,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "at": "2026-11-21T12:43:21.405279+00:00",
+          "kind": "activation-pod",
+          "pod": "bayn-execution-activate-6d6600bd98ca-zxxqx",
+          "source": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+          "phase": "Running",
+          "node": "turin",
+          "images": [
+            "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910"
+          ],
+          "states": [
+            {
+              "container": "activate",
+              "ready": false,
+              "restarts": 0,
+              "exitCode": 0,
+              "reason": "Completed"
+            }
+          ]
+        },
+        {
+          "at": "2026-11-21T12:43:21.488956+00:00",
+          "kind": "activation-verified",
+          "pod": "bayn-execution-activate-6d6600bd98ca-zxxqx",
+          "message": "Bayn native Restate execution controller activation verified",
+          "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+          "planHash": "97e2dcb93e1a130ac27b6175be48eb937df0ea5dd6f3430bd249fead2f51807b",
+          "epoch": 455,
+          "nextSequence": 366341
+        },
+        {
+          "kind": "activation-complete",
+          "pod": "bayn-execution-activate-6d6600bd98ca-zxxqx"
+        }
+      ],
+      "observers": [
+        {
+          "key": "bayn-6d6600-activation-watcher-v1",
+          "jobId": "bfcc4f7b-37ef-40e4-8182-6425090ca35d",
+          "commandHash": "db939417428f7e39f95fad5258dea59bcdf6bed56da2fdc6f9f5f3079fddfd30",
+          "exitCode": 0,
+          "ok": true,
+          "captureIncomplete": false,
+          "outputCaptureError": null
+        },
+        {
+          "key": "bayn-6d6600-activation-watcher-v2",
+          "jobId": "f4d94886-3aee-4450-8290-25862c570605",
+          "commandHash": "db939417428f7e39f95fad5258dea59bcdf6bed56da2fdc6f9f5f3079fddfd30",
+          "exitCode": 0,
+          "ok": true,
+          "captureIncomplete": false,
+          "outputCaptureError": null
+        }
+      ],
+      "qualification": "Two bounded GET/log observers were used. The first ended normally before activation; the second captured the exact-source verified log and zero exit status. Neither invoked activation."
+    },
+    "runtimeInventory": {
+      "observedAt": "2026-11-21T12:44:35.248734+00:00",
+      "roles": [
+        {
+          "role": "bayn",
+          "ownerKind": "Deployment",
+          "generation": 1159,
+          "observedGeneration": 1159,
+          "desired": 2,
+          "readyReplicas": 2,
+          "availableReplicas": 2,
+          "labelSelector": "app.kubernetes.io/name=bayn",
+          "deploymentId": null,
+          "conditions": [
+            {
+              "type": "Available",
+              "status": "True",
+              "reason": "MinimumReplicasAvailable"
+            },
+            {
+              "type": "Progressing",
+              "status": "True",
+              "reason": "NewReplicaSetAvailable"
+            }
+          ],
+          "pods": [
+            {
+              "name": "bayn-59b7c75b45-grj96",
+              "uid": "ffff8977-dd08-4030-aa02-8746b1ff4810",
+              "node": "turin",
+              "deleting": false,
+              "phase": "Running",
+              "ready": true,
+              "containers": [
+                {
+                  "name": "bayn",
+                  "image": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "runtimeImage": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+                  "imageID": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "ready": true,
+                  "restarts": 0,
+                  "matchesCohort": true,
+                  "runtimeMatchesCohort": true
+                }
+              ],
+              "architecture": "amd64"
+            },
+            {
+              "name": "bayn-59b7c75b45-khknm",
+              "uid": "c4f3c60a-d7a1-4334-a326-9b84f8b778cf",
+              "node": "talos-192-168-1-85",
+              "deleting": false,
+              "phase": "Running",
+              "ready": true,
+              "containers": [
+                {
+                  "name": "bayn",
+                  "image": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "runtimeImage": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+                  "imageID": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "ready": true,
+                  "restarts": 0,
+                  "matchesCohort": true,
+                  "runtimeMatchesCohort": true
+                }
+              ],
+              "architecture": "arm64"
+            }
+          ]
+        },
+        {
+          "role": "bayn-broker-feed",
+          "ownerKind": "Deployment",
+          "generation": 80,
+          "observedGeneration": 80,
+          "desired": 1,
+          "readyReplicas": 1,
+          "availableReplicas": 1,
+          "labelSelector": "app.kubernetes.io/name=bayn-broker-feed",
+          "deploymentId": null,
+          "conditions": [
+            {
+              "type": "Available",
+              "status": "True",
+              "reason": "MinimumReplicasAvailable"
+            },
+            {
+              "type": "Progressing",
+              "status": "True",
+              "reason": "NewReplicaSetAvailable"
+            }
+          ],
+          "pods": [
+            {
+              "name": "bayn-broker-feed-d6c46f96f-8f49n",
+              "uid": "f63dddb8-b745-4a47-8d41-23dca65362dd",
+              "node": "turin",
+              "deleting": false,
+              "phase": "Running",
+              "ready": true,
+              "containers": [
+                {
+                  "name": "broker-feed",
+                  "image": "registry.ide-newton.ts.net/lab/bayn-broker-feed@sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+                  "runtimeImage": "sha256:2e2f38ef214aac79cbc93134a10b0dbfc6793c40f50f3c86e374e8546d7c1b72",
+                  "imageID": "registry.ide-newton.ts.net/lab/bayn-broker-feed@sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+                  "ready": true,
+                  "restarts": 0,
+                  "matchesCohort": true,
+                  "runtimeMatchesCohort": true
+                }
+              ],
+              "architecture": "amd64"
+            }
+          ]
+        },
+        {
+          "role": "bayn-execution-controller",
+          "ownerKind": "RestateDeployment",
+          "generation": 1073,
+          "observedGeneration": 1073,
+          "desired": 2,
+          "readyReplicas": 2,
+          "availableReplicas": 2,
+          "labelSelector": "app.kubernetes.io/name=bayn-execution-controller,pod-template-hash=cc89589c45",
+          "deploymentId": "dp_14x5DslcF8OprdJaUpY8SEp",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Deployed"
+            }
+          ],
+          "pods": [
+            {
+              "name": "bayn-execution-controller-cc89589c45-69r4c",
+              "uid": "e5f6c236-0127-4b59-b31d-2d1eef59c782",
+              "node": "talos-192-168-1-85",
+              "deleting": false,
+              "phase": "Running",
+              "ready": true,
+              "containers": [
+                {
+                  "name": "execution-controller",
+                  "image": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "runtimeImage": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+                  "imageID": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "ready": true,
+                  "restarts": 0,
+                  "matchesCohort": true,
+                  "runtimeMatchesCohort": true
+                }
+              ],
+              "architecture": "arm64"
+            },
+            {
+              "name": "bayn-execution-controller-cc89589c45-sptls",
+              "uid": "cf99df46-a73a-41f8-a580-d468341e00ce",
+              "node": "turin",
+              "deleting": false,
+              "phase": "Running",
+              "ready": true,
+              "containers": [
+                {
+                  "name": "execution-controller",
+                  "image": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "runtimeImage": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+                  "imageID": "registry.ide-newton.ts.net/lab/bayn@sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910",
+                  "ready": true,
+                  "restarts": 0,
+                  "matchesCohort": true,
+                  "runtimeMatchesCohort": true
+                }
+              ],
+              "architecture": "amd64"
+            }
+          ]
+        },
+        {
+          "role": "bayn-research",
+          "ownerKind": "RestateDeployment",
+          "generation": 474,
+          "observedGeneration": 474,
+          "desired": 1,
+          "readyReplicas": 1,
+          "availableReplicas": 1,
+          "labelSelector": "app.kubernetes.io/name=bayn-research,pod-template-hash=5779dc9fd6",
+          "deploymentId": "dp_12RxWU9z6lKpVaCuLeiy3Rf",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Deployed"
+            }
+          ],
+          "pods": [
+            {
+              "name": "bayn-research-5779dc9fd6-6qcsj",
+              "uid": "10c82370-bdb9-4c62-ac80-32767dd03f36",
+              "node": "turin",
+              "deleting": false,
+              "phase": "Running",
+              "ready": true,
+              "containers": [
+                {
+                  "name": "research",
+                  "image": "registry.ide-newton.ts.net/lab/bayn-research@sha256:6a1ce86d4189a74092f4ae55caf97043fcaec2afe8b0f2a083c6571b8edb6d45",
+                  "runtimeImage": "sha256:0eaa2a2b25880970bcca31a7e53dc2da019ed8596aeb2497b234091aeb98ce06",
+                  "imageID": "registry.ide-newton.ts.net/lab/bayn-research@sha256:6a1ce86d4189a74092f4ae55caf97043fcaec2afe8b0f2a083c6571b8edb6d45",
+                  "ready": true,
+                  "restarts": 0,
+                  "matchesCohort": true,
+                  "runtimeMatchesCohort": true
+                }
+              ],
+              "architecture": "amd64"
+            }
+          ]
+        }
+      ],
+      "nodeArchitectures": {
+        "talos-192-168-1-85": "arm64",
+        "turin": "amd64"
+      }
+    },
+    "apiStatuses": [
+      {
+        "pod": "bayn-59b7c75b45-grj96",
+        "architecture": "amd64",
+        "observedAt": "2026-11-21T12:44:55.738Z",
+        "http": 200,
+        "build": {
+          "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+          "image": {
+            "repository": "registry.ide-newton.ts.net/lab/bayn",
+            "digest": "sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910"
+          },
+          "verification": "embedded"
+        },
+        "operational": {
+          "status": "READY",
+          "ready": true,
+          "probeSequence": 3,
+          "checkedAt": "2026-11-21T12:44:32.017Z"
+        },
+        "broker": {
+          "configured": true,
+          "accountBound": true,
+          "readAvailable": true,
+          "checkedAt": "2026-11-21T12:44:32.017Z",
+          "executionEligible": true,
+          "reasonCode": null,
+          "errorPresent": false,
+          "executionDisabledReasonPresent": false
+        },
+        "accounting": {
+          "status": "EXACT"
+        },
+        "capitalActivation": {
+          "_tag": "Realized",
+          "grant": "Research",
+          "requestHash": "6856f071e54529227ea48fa7b077506209ffd887c939d7351e948d7e03020130",
+          "generationHash": "412430d571d9ab22e4f4cfcb747334d04306c7f860eec022149e1357be394571"
+        },
+        "authority": {
+          "brokerEnvironment": "sandbox",
+          "brokerAccess": "mutation",
+          "capitalAuthority": "granted-capital",
+          "brokerOrders": true,
+          "capitalPromotion": true,
+          "durable": {
+            "available": true,
+            "configured": true,
+            "maximum": "execution",
+            "effective": "execution",
+            "kill": "clear",
+            "updatedAt": "2026-11-21T08:22:44.908044Z",
+            "reasonPresent": false
+          }
+        },
+        "executionController": {
+          "configured": true,
+          "readAvailable": true,
+          "checkedAt": "2026-11-21T12:44:32.017Z",
+          "reasonCode": null,
+          "status": {
+            "active": true,
+            "planHash": "97e2dcb93e1a130ac27b6175be48eb937df0ea5dd6f3430bd249fead2f51807b",
+            "epoch": 455,
+            "lastSequence": 366342,
+            "lastOutcome": "Waiting",
+            "lastReceiptHash": "c0b71e83011062791b2e37bc92c8e2bc4205fcfd1b141e1e88255e19c040ad5e",
+            "completedAt": "2026-11-21T12:44:11.225Z",
+            "nextDueAt": "2026-11-23T13:01:02.000Z",
+            "lastPass": {
+              "result": "SUCCESS",
+              "observedAt": "2026-11-21T12:44:11.219Z",
+              "outcome": "WINDOW_CLOSED"
+            }
+          }
+        }
+      },
+      {
+        "pod": "bayn-59b7c75b45-khknm",
+        "architecture": "arm64",
+        "observedAt": "2026-11-21T12:44:58.382Z",
+        "http": 200,
+        "build": {
+          "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+          "image": {
+            "repository": "registry.ide-newton.ts.net/lab/bayn",
+            "digest": "sha256:2543500b35a4e56a26279b9f88ee0cc335caed45fbae223480cdb707db333910"
+          },
+          "verification": "embedded"
+        },
+        "operational": {
+          "status": "READY",
+          "ready": true,
+          "probeSequence": 3,
+          "checkedAt": "2026-11-21T12:44:35.545Z"
+        },
+        "broker": {
+          "configured": true,
+          "accountBound": true,
+          "readAvailable": true,
+          "checkedAt": "2026-11-21T12:44:35.545Z",
+          "executionEligible": true,
+          "reasonCode": null,
+          "errorPresent": false,
+          "executionDisabledReasonPresent": false
+        },
+        "accounting": {
+          "status": "EXACT"
+        },
+        "capitalActivation": {
+          "_tag": "Realized",
+          "grant": "Research",
+          "requestHash": "6856f071e54529227ea48fa7b077506209ffd887c939d7351e948d7e03020130",
+          "generationHash": "412430d571d9ab22e4f4cfcb747334d04306c7f860eec022149e1357be394571"
+        },
+        "authority": {
+          "brokerEnvironment": "sandbox",
+          "brokerAccess": "mutation",
+          "capitalAuthority": "granted-capital",
+          "brokerOrders": true,
+          "capitalPromotion": true,
+          "durable": {
+            "available": true,
+            "configured": true,
+            "maximum": "execution",
+            "effective": "execution",
+            "kill": "clear",
+            "updatedAt": "2026-11-21T08:22:44.908044Z",
+            "reasonPresent": false
+          }
+        },
+        "executionController": {
+          "configured": true,
+          "readAvailable": true,
+          "checkedAt": "2026-11-21T12:44:35.545Z",
+          "reasonCode": null,
+          "status": {
+            "active": true,
+            "planHash": "97e2dcb93e1a130ac27b6175be48eb937df0ea5dd6f3430bd249fead2f51807b",
+            "epoch": 455,
+            "lastSequence": 366342,
+            "lastOutcome": "Waiting",
+            "lastReceiptHash": "c0b71e83011062791b2e37bc92c8e2bc4205fcfd1b141e1e88255e19c040ad5e",
+            "completedAt": "2026-11-21T12:44:11.225Z",
+            "nextDueAt": "2026-11-23T13:01:02.000Z",
+            "lastPass": {
+              "result": "SUCCESS",
+              "observedAt": "2026-11-21T12:44:11.219Z",
+              "outcome": "WINDOW_CLOSED"
+            }
+          }
+        }
+      }
+    ],
+    "researchIdentity": {
+      "observedAt": "2026-11-21T12:44:57.020Z",
+      "http": 200,
+      "policyCount": 2,
+      "requiredFieldCount": 5,
+      "expected": {
+        "model": "qwen38-flamingo",
+        "checkpoint": "482ca0f3832238542f8f5295dde86b5f22711d80",
+        "tokenizerRevision": "482ca0f3832238542f8f5295dde86b5f22711d80",
+        "chatTemplateRevision": "482ca0f3832238542f8f5295dde86b5f22711d80",
+        "servingImage": "sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1"
+      },
+      "observed": {
+        "model": "qwen38-flamingo",
+        "checkpoint": "482ca0f3832238542f8f5295dde86b5f22711d80",
+        "tokenizerRevision": "482ca0f3832238542f8f5295dde86b5f22711d80",
+        "chatTemplateRevision": "482ca0f3832238542f8f5295dde86b5f22711d80",
+        "servingImage": "sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1"
+      },
+      "matches": {
+        "model": true,
+        "checkpoint": true,
+        "tokenizerRevision": true,
+        "chatTemplateRevision": true,
+        "servingImage": true
+      },
+      "allRequiredIdentityFieldsPresentAndMatch": true,
+      "advertisedModelMatches": true,
+      "openCodePolicy": {
+        "harness": "opencode",
+        "harnessVersion": "2.1.3",
+        "model": "glm-5.3-flash-free",
+        "configurationHash": "506c32b2aa303b15b15e3279a4f5f165c30d846d5d86f89a0bc80ae417a4257f",
+        "maximumModelCalls": 1,
+        "maximumInputBytes": 32768,
+        "temperature": 0.6,
+        "max_tokens": 4096
+      }
+    },
+    "financialAuthorityComparison": {
+      "baselineSource": "c217c1ddcce8f87d6c4306de27a1894cf8afe4ec",
+      "baselineEvidence": "bayn-c217-live-acceptance-2026-11-21.json",
+      "capitalActivationUnchanged": true,
+      "authorityUnchanged": true,
+      "authorityUpdatedAt": "2026-11-21T08:22:44.908044Z",
+      "regime": "Existing PAPER/sandbox; no mandate, grant, account, trading-mode or risk-policy mutation performed."
+    },
+    "openCodeBaseline": {
+      "documentedPolicy": {
+        "harness": "opencode",
+        "harnessVersion": "2.1.3",
+        "model": "glm-5.3-flash-free",
+        "configurationHash": "506c32b2aa303b15b15e3279a4f5f165c30d846d5d86f89a0bc80ae417a4257f",
+        "maximumModelCalls": 1,
+        "maximumInputBytes": 32768,
+        "max_tokens": 4096
+      },
+      "source": "Retained c217 acceptance Markdown records this identity and these limits; its JSON contains only the strict Flamingo identity projection. Current temperature 0.6 is reported separately rather than inferred from a missing historical JSON field."
+    },
+    "acceptanceChecks": {
+      "sourceAndTradingImageMatchBothApis": true,
+      "bothApisHttp200AndReady": true,
+      "bothBrokerEligibleAndAccountingExact": true,
+      "allOwnersObservedAndAtDesiredReadyCount": true,
+      "allSixCurrentPodsReadyWithZeroRestarts": true,
+      "allSixPodSpecAndRuntimeIndexesMatchCohort": true,
+      "allSixRuntimeConfigDigestsMatchVerifiedArchitecture": true,
+      "apiAndControllerActuallyRunBothArchitectures": true,
+      "activationExactSourceAndSuccessfulExit": true,
+      "durableControllerAdvancedAfterActivation": true,
+      "existingCapitalActivationUnchanged": true,
+      "existingAuthorityUnchanged": true,
+      "strictResearchIdentityMatch": true,
+      "documentedOpenCodeIdentityAndLimitsUnchanged": true
+    },
+    "retainedHistoricalReader": {
+      "boundary": "Exported source-function SELECT-only replay, not a deployed HTTP endpoint or new evaluation.",
+      "receiptsRead": 7,
+      "passed": 7,
+      "recordReads": 1650,
+      "uniqueArchives": 1608,
+      "outcomes": {
+        "INCONCLUSIVE": 6,
+        "REJECTED": 1
+      },
+      "retainedRejection": ["550 UNBOUND_CONTROLLER_BUILD", "INCOMPLETE_SAFETY_AUDIT"],
+      "qualification": "Existing hashes and outcomes were preserved. Current source/image acceptance carries that reviewed repair; no HTTP readback claim, new registration, assessment persistence or economic requalification is made.",
+      "capitalAssessment": "NOT_ASSESSED for all seven retained outcomes"
+    },
+    "toolReceipts": [
+      {
+        "key": "bayn-6d6600-cohort-download-v1",
+        "jobId": "8c0e26f5-2bef-4423-a6a8-9b22f1bf9f70",
+        "commandHash": "d6b3c0b07f910b259c3abc465aef26de001d3a5244c79c92df720ca05b3dbc1c",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d-cohort-current-step-receipt-v1",
+        "jobId": "2f2317db-f78d-402e-a2ba-e9a905f458ac",
+        "commandHash": "b9ac1a49c538c7906a51fa137d3b4d1c11efd984c9421676cbae0ccedfde6685",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d-cohort-index-binding-v1",
+        "jobId": "89bca8a6-b5be-450a-8cb6-cb762e55ea44",
+        "commandHash": "73bcae0a93888c7a5ec521eb7aee1d7edb6c49ec4445bd010d91836cdec753db",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d-freight-promotion-binding-v1",
+        "jobId": "f6a12ca5-9f23-4cc8-b9de-1f19eda5c0d6",
+        "commandHash": "e06c41c2e6662f2a22b2959b2f7641344d44b742fd5cc8959cf2e174ebaeb804",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d6600-kargo-argo-snapshot-v3",
+        "jobId": "d9b80af5-456b-44ca-a239-039a5ea5b1f4",
+        "commandHash": "a8dbde31a23b369c7c688c3575904cd677728945de816bc93e9fd1d255b3e5f0",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d-current-runtime-inventory-v1",
+        "jobId": "759291c7-1a45-4203-a236-d9f65460326c",
+        "commandHash": "713ce4810fcae7f762cda18c3df842c818d7eadb41e6fa4a8589aa870cf01a8f",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d-api-status-amd64-v1",
+        "jobId": "0ff85a69-8b1a-4ed9-a1d0-9f6aad632bce",
+        "commandHash": "5442bab036a248badcbf44c701d10ad9c12182d391de5596eeb115156ac2ab73",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d-api-status-arm64-v1",
+        "jobId": "a8ade11e-6044-40f9-808a-e20921e6c7b4",
+        "commandHash": "93febb627856bdb80530e8e88ad51611d8797598d4e1175e87e2ab050b293a24",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d-research-identity-v1",
+        "jobId": "617cc2f7-2e5e-46cc-8b75-c9a96f383a26",
+        "commandHash": "a26c5ef1bca4d4573e938a479b51bf92f63e5673d0574873a1e721b21975f08d",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d6600-activation-watcher-v1",
+        "jobId": "bfcc4f7b-37ef-40e4-8182-6425090ca35d",
+        "commandHash": "db939417428f7e39f95fad5258dea59bcdf6bed56da2fdc6f9f5f3079fddfd30",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      },
+      {
+        "key": "bayn-6d6600-activation-watcher-v2",
+        "jobId": "f4d94886-3aee-4450-8290-25862c570605",
+        "commandHash": "db939417428f7e39f95fad5258dea59bcdf6bed56da2fdc6f9f5f3079fddfd30",
+        "exitCode": 0,
+        "ok": true,
+        "captureIncomplete": false,
+        "outputCaptureError": null
+      }
+    ],
+    "limitations": [
+      "This is a timestamped acceptance cut, not a guarantee of future availability or profitability.",
+      "Actual live API and controller Pods cover amd64 and arm64. Research and broker-feed Pods at this cut are amd64; both image architectures are separately verified through immutable index and config metadata.",
+      "All 39 main publication jobs passed. Successful Nix gates do not establish that every native test was uncached or identify the cause of earlier intermittent timeouts.",
+      "The existing financial/economic fixed cuts remain unchanged; no additional fill, cash or P&L query was issued for this rollout acceptance.",
+      "The research identity check was a bounded GET /v1/models. A valid signed prospective registration remains required; no model inference, signing, grant rotation or new approval was performed.",
+      "No CI rerun, Kargo refresh/promotion, Argo retry, direct workload mutation, broker order or registry write was issued by these acceptance readers.",
+      "The automatic pipeline itself published images/tags and activated the controller through its existing GitOps path.",
+      "Argo's historical per-resource sync result is retained exactly; current research readiness is independently established by the selected RestateDeployment generation and Pod status."
+    ],
+    "serializationRecovery": {
+      "session": "repo-bayn-live-acceptance-recovery-96c35625",
+      "sessionHead": "575b6dbd7d56889e3873db35ec6fca8fff367f36",
+      "provenance": {
+        "path": "/tmp/bayn-6d6600-recovery-provenance.json",
+        "sha256": "44b7427865254c9b8ffebca299235413553a2db6c57756738f4ca96af8b8aae5",
+        "receipt": {
+          "recoveredAt": "2026-11-21T12:51:50.835170+00:00",
+          "method": "Reconstructed only from complete retained successful tool outputs with the original JSON writer format; every claimed restoration is checked against its pre-reset SHA-256.",
+          "newLiveQueries": 0,
+          "files": [
+            {
+              "path": "/tmp/bayn-6d6600-image-cohort.json",
+              "originalSha256": "fc70f054a301ddcd4ff67b05c3fb5c11ffcec3cdd6a42230beb90f63cf8bc64a",
+              "reconstructedSha256": "fc70f054a301ddcd4ff67b05c3fb5c11ffcec3cdd6a42230beb90f63cf8bc64a",
+              "byteIdentical": true,
+              "retained": true
+            },
+            {
+              "path": "/tmp/bayn-6d6600-main-publication.json",
+              "originalSha256": "dfdc60909435f17048728d8f05e06292a0ba30e2635a4718c7a2c86a80723b18",
+              "reconstructedSha256": "dfdc60909435f17048728d8f05e06292a0ba30e2635a4718c7a2c86a80723b18",
+              "byteIdentical": true,
+              "retained": true
+            },
+            {
+              "path": "/tmp/bayn-6d6600-cohort-steps-20261121T124024Z.json",
+              "originalSha256": "c20828ef89622976323dd9ae406d09d97fffcabc90a4d41c14ad5d5bc170c266",
+              "reconstructedSha256": "c20828ef89622976323dd9ae406d09d97fffcabc90a4d41c14ad5d5bc170c266",
+              "byteIdentical": true,
+              "retained": true
+            },
+            {
+              "path": "/tmp/bayn-cohort-6d-metadata-compatibility-20261121.json",
+              "originalSha256": "905a5e8475c5a2dab31ccd038909e9393ad8f0836d2aa1dbdcb496fea83a9b5e",
+              "reconstructedSha256": "905a5e8475c5a2dab31ccd038909e9393ad8f0836d2aa1dbdcb496fea83a9b5e",
+              "byteIdentical": true,
+              "retained": true
+            },
+            {
+              "path": "/tmp/bayn-6d-runner-assignment-20261121T114205Z.json",
+              "originalSha256": "f579dd54fffe6112175f43e7445f2dbefd0e636803e5bf9c789dce7eaa3dfb8b",
+              "reconstructedSha256": "f579dd54fffe6112175f43e7445f2dbefd0e636803e5bf9c789dce7eaa3dfb8b",
+              "byteIdentical": true,
+              "retained": true
+            },
+            {
+              "path": "/tmp/bayn-6d-runner-assignment-20261121T114205Z-provenance.json",
+              "originalSha256": "f6b2f923513f2e85b7e4a1e89a78edd4657c622133d40e13f0c624410ea64126",
+              "reconstructedSha256": "f6b2f923513f2e85b7e4a1e89a78edd4657c622133d40e13f0c624410ea64126",
+              "byteIdentical": true,
+              "retained": true
+            }
+          ]
+        }
+      },
+      "qualification": "Original observation timestamps are preserved. All six reconstructed input files are byte-identical to their pre-reset SHA-256. The live acceptance projections were retained in complete successful tool outputs and serialized after recovery; no successful live query was repeated."
+    },
+    "sealedAt": "2026-11-21T12:52:35.166081+00:00",
+    "cohortJobSteps": {
+      "originalPath": "/tmp/bayn-6d6600-cohort-steps-20261121T124024Z.json",
+      "sha256": "c20828ef89622976323dd9ae406d09d97fffcabc90a4d41c14ad5d5bc170c266",
+      "content": {
+        "observedAt": "2026-11-21T12:40:24.668694+00:00",
+        "source": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+        "run": 44891137421,
+        "job": {
+          "id": 136845036187,
+          "name": "publish-cohort",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-11-21T12:31:31Z",
+          "completedAt": "2026-11-21T12:39:41Z",
+          "runnerName": "arc-amd64-runner-kdv6r",
+          "labels": ["arc-amd64"],
+          "steps": [
+            {
+              "number": 1,
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:31:34Z",
+              "completedAt": "2026-11-21T12:32:08Z"
+            },
+            {
+              "number": 2,
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:32:08Z",
+              "completedAt": "2026-11-21T12:33:06Z"
+            },
+            {
+              "number": 3,
+              "name": "Run ./.github/actions/setup-nix-toolchain",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:33:06Z",
+              "completedAt": "2026-11-21T12:33:25Z"
+            },
+            {
+              "number": 4,
+              "name": "Verify every immutable image before making the cohort discoverable",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:33:25Z",
+              "completedAt": "2026-11-21T12:33:26Z"
+            },
+            {
+              "number": 5,
+              "name": "Run actions/upload-artifact@v6",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:33:26Z",
+              "completedAt": "2026-11-21T12:33:27Z"
+            },
+            {
+              "number": 6,
+              "name": "Verify publication source before discovery",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:33:27Z",
+              "completedAt": "2026-11-21T12:33:27Z"
+            },
+            {
+              "number": 7,
+              "name": "Publish the verified cohort for Kargo",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:33:27Z",
+              "completedAt": "2026-11-21T12:39:37Z"
+            },
+            {
+              "number": 14,
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:39:37Z",
+              "completedAt": "2026-11-21T12:39:40Z"
+            },
+            {
+              "number": 15,
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "startedAt": "2026-11-21T12:39:40Z",
+              "completedAt": "2026-11-21T12:39:40Z"
+            }
+          ]
+        }
+      }
+    },
+    "platformMetadata": {
+      "originalPath": "/tmp/bayn-cohort-6d-metadata-compatibility-20261121.json",
+      "sha256": "905a5e8475c5a2dab31ccd038909e9393ad8f0836d2aa1dbdcb496fea83a9b5e",
+      "content": {
+        "schemaVersion": 1,
+        "kind": "existing-image-metadata-compatibility",
+        "status": "COMPATIBLE",
+        "observedFrom": "2026-11-21T11:37:46.350749+00:00",
+        "reviewedCode": "a53de4ffc1ac310118f57d5f722dc8968ca07e4e",
+        "existingImageSource": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+        "existingWorkflowRunId": "44891137421",
+        "expectedCreatedLabel": "2026-11-21T01:46:08-08:00",
+        "readerSha256": "2687193ac20691e747614a93117cce59c3533b321c32905f3e531f9a8d49664d",
+        "publicationFlowExecuted": false,
+        "registryMutations": 0,
+        "ciOutputsWritten": false,
+        "limits": {
+          "maximumGetRequests": 14,
+          "maximumResponseBytes": 1048576,
+          "overallSeconds": 50,
+          "perRequestSeconds": 8,
+          "tlsVerification": "default",
+          "addedCredentials": false
+        },
+        "requests": [
+          {
+            "method": "GET",
+            "repository": "lab/bayn",
+            "resource": "manifests",
+            "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-amd64",
+            "startedAt": "2026-11-21T11:37:46.351082+00:00",
+            "httpStatus": 200,
+            "bytes": 3869,
+            "contentSha256": "sha256:4eda1d4f9b4387cc81edc58d8d1146eaeca2807e542f7a43f226a60aeded0b58",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "finishedAt": "2026-11-21T11:37:47.348598+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn",
+            "resource": "blobs",
+            "reference": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+            "startedAt": "2026-11-21T11:37:47.348950+00:00",
+            "httpStatus": 200,
+            "bytes": 6962,
+            "contentSha256": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "expectedContentDigestMatches": true,
+            "finishedAt": "2026-11-21T11:37:49.405383+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn",
+            "resource": "manifests",
+            "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-arm64",
+            "startedAt": "2026-11-21T11:37:49.406081+00:00",
+            "httpStatus": 200,
+            "bytes": 3869,
+            "contentSha256": "sha256:3109ea8d0d32244ede1d08453d2bc0ae3bb9f38ace026197c3ab8edd0ae05d07",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "finishedAt": "2026-11-21T11:37:49.426694+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn",
+            "resource": "blobs",
+            "reference": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+            "startedAt": "2026-11-21T11:37:49.426939+00:00",
+            "httpStatus": 200,
+            "bytes": 6962,
+            "contentSha256": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "expectedContentDigestMatches": true,
+            "finishedAt": "2026-11-21T11:37:50.760774+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-research",
+            "resource": "manifests",
+            "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-amd64",
+            "startedAt": "2026-11-21T11:37:50.762996+00:00",
+            "httpStatus": 200,
+            "bytes": 3889,
+            "contentSha256": "sha256:4f700adcd5a2044ef3a2a8622d2e25266d42c8b17f4f8db8504a1219b080c9a8",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "finishedAt": "2026-11-21T11:37:52.770875+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-research",
+            "resource": "blobs",
+            "reference": "sha256:0eaa2a2b25880970bcca31a7e53dc2da019ed8596aeb2497b234091aeb98ce06",
+            "startedAt": "2026-11-21T11:37:52.771260+00:00",
+            "httpStatus": 200,
+            "bytes": 14563,
+            "contentSha256": "sha256:0eaa2a2b25880970bcca31a7e53dc2da019ed8596aeb2497b234091aeb98ce06",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "expectedContentDigestMatches": true,
+            "finishedAt": "2026-11-21T11:37:53.204163+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-research",
+            "resource": "manifests",
+            "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-arm64",
+            "startedAt": "2026-11-21T11:37:53.205839+00:00",
+            "httpStatus": 200,
+            "bytes": 3889,
+            "contentSha256": "sha256:41867d71b9082bf8130b4c3fb35461b9f26425a71ef1dc138ed33c5fca13419e",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "finishedAt": "2026-11-21T11:37:55.314093+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-research",
+            "resource": "blobs",
+            "reference": "sha256:f8e4b39d142959d6fab2927925b0b8112a2948a5dafe97bac184b95c2af1c5ae",
+            "startedAt": "2026-11-21T11:37:55.314497+00:00",
+            "httpStatus": 200,
+            "bytes": 14563,
+            "contentSha256": "sha256:f8e4b39d142959d6fab2927925b0b8112a2948a5dafe97bac184b95c2af1c5ae",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "expectedContentDigestMatches": true,
+            "finishedAt": "2026-11-21T11:37:56.936218+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-broker-feed",
+            "resource": "manifests",
+            "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-amd64",
+            "startedAt": "2026-11-21T11:37:56.936803+00:00",
+            "httpStatus": 200,
+            "bytes": 3880,
+            "contentSha256": "sha256:8a1c63b3a2da454384814ab5ad534ebb8e64ae9f73decf1bf8145dfc7473e7fa",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "finishedAt": "2026-11-21T11:37:56.968243+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-broker-feed",
+            "resource": "blobs",
+            "reference": "sha256:2e2f38ef214aac79cbc93134a10b0dbfc6793c40f50f3c86e374e8546d7c1b72",
+            "startedAt": "2026-11-21T11:37:56.968731+00:00",
+            "httpStatus": 200,
+            "bytes": 11229,
+            "contentSha256": "sha256:2e2f38ef214aac79cbc93134a10b0dbfc6793c40f50f3c86e374e8546d7c1b72",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "expectedContentDigestMatches": true,
+            "finishedAt": "2026-11-21T11:37:59.088449+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-broker-feed",
+            "resource": "manifests",
+            "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-arm64",
+            "startedAt": "2026-11-21T11:37:59.089075+00:00",
+            "httpStatus": 200,
+            "bytes": 4037,
+            "contentSha256": "sha256:6ab46b44569e2425aad8963ce3f63f9f8aec8791d1018ca6d79d3bca5d6d4299",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "finishedAt": "2026-11-21T11:37:59.115163+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-broker-feed",
+            "resource": "blobs",
+            "reference": "sha256:f4b5ec75284e85a166b87eb25c85041260ed83f8d8f7d03af98e76279d2d96f6",
+            "startedAt": "2026-11-21T11:37:59.115604+00:00",
+            "httpStatus": 200,
+            "bytes": 11364,
+            "contentSha256": "sha256:f4b5ec75284e85a166b87eb25c85041260ed83f8d8f7d03af98e76279d2d96f6",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "expectedContentDigestMatches": true,
+            "finishedAt": "2026-11-21T11:38:05.184681+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-broker-feed",
+            "resource": "manifests",
+            "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "startedAt": "2026-11-21T11:38:05.186154+00:00",
+            "httpStatus": 200,
+            "bytes": 768,
+            "contentSha256": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "finishedAt": "2026-11-21T11:38:05.211339+00:00"
+          },
+          {
+            "method": "GET",
+            "repository": "lab/bayn-broker-feed",
+            "resource": "manifests",
+            "reference": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+            "startedAt": "2026-11-21T11:38:05.211712+00:00",
+            "httpStatus": 200,
+            "bytes": 768,
+            "contentSha256": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+            "digestHeaderPresent": true,
+            "digestHeaderMatchesContent": true,
+            "expectedContentDigestMatches": true,
+            "finishedAt": "2026-11-21T11:38:05.237429+00:00"
+          }
+        ],
+        "platforms": [
+          {
+            "member": "bayn",
+            "expectedArchitecture": "amd64",
+            "selectedPlatformDigest": "sha256:4eda1d4f9b4387cc81edc58d8d1146eaeca2807e542f7a43f226a60aeded0b58",
+            "configDigest": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+            "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "createdLabel": "2026-11-21T01:46:08-08:00",
+            "os": "linux",
+            "architecture": "amd64",
+            "checks": {
+              "sourceMatches": true,
+              "createdLabelMatchesExactly": true,
+              "linux": true,
+              "architectureMatches": true,
+              "configDigestMatches": true,
+              "singleImageManifest": true
+            }
+          },
+          {
+            "member": "bayn",
+            "expectedArchitecture": "arm64",
+            "selectedPlatformDigest": "sha256:3109ea8d0d32244ede1d08453d2bc0ae3bb9f38ace026197c3ab8edd0ae05d07",
+            "configDigest": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+            "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "createdLabel": "2026-11-21T01:46:08-08:00",
+            "os": "linux",
+            "architecture": "arm64",
+            "checks": {
+              "sourceMatches": true,
+              "createdLabelMatchesExactly": true,
+              "linux": true,
+              "architectureMatches": true,
+              "configDigestMatches": true,
+              "singleImageManifest": true
+            }
+          },
+          {
+            "member": "bayn-research",
+            "expectedArchitecture": "amd64",
+            "selectedPlatformDigest": "sha256:4f700adcd5a2044ef3a2a8622d2e25266d42c8b17f4f8db8504a1219b080c9a8",
+            "configDigest": "sha256:0eaa2a2b25880970bcca31a7e53dc2da019ed8596aeb2497b234091aeb98ce06",
+            "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "createdLabel": "2026-11-21T01:46:08-08:00",
+            "os": "linux",
+            "architecture": "amd64",
+            "checks": {
+              "sourceMatches": true,
+              "createdLabelMatchesExactly": true,
+              "linux": true,
+              "architectureMatches": true,
+              "configDigestMatches": true,
+              "singleImageManifest": true
+            }
+          },
+          {
+            "member": "bayn-research",
+            "expectedArchitecture": "arm64",
+            "selectedPlatformDigest": "sha256:41867d71b9082bf8130b4c3fb35461b9f26425a71ef1dc138ed33c5fca13419e",
+            "configDigest": "sha256:f8e4b39d142959d6fab2927925b0b8112a2948a5dafe97bac184b95c2af1c5ae",
+            "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "createdLabel": "2026-11-21T01:46:08-08:00",
+            "os": "linux",
+            "architecture": "arm64",
+            "checks": {
+              "sourceMatches": true,
+              "createdLabelMatchesExactly": true,
+              "linux": true,
+              "architectureMatches": true,
+              "configDigestMatches": true,
+              "singleImageManifest": true
+            }
+          },
+          {
+            "member": "bayn-broker-feed",
+            "expectedArchitecture": "amd64",
+            "selectedPlatformDigest": "sha256:8a1c63b3a2da454384814ab5ad534ebb8e64ae9f73decf1bf8145dfc7473e7fa",
+            "configDigest": "sha256:2e2f38ef214aac79cbc93134a10b0dbfc6793c40f50f3c86e374e8546d7c1b72",
+            "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "createdLabel": "2026-11-21T01:46:08-08:00",
+            "os": "linux",
+            "architecture": "amd64",
+            "checks": {
+              "sourceMatches": true,
+              "createdLabelMatchesExactly": true,
+              "linux": true,
+              "architectureMatches": true,
+              "configDigestMatches": true,
+              "singleImageManifest": true
+            }
+          },
+          {
+            "member": "bayn-broker-feed",
+            "expectedArchitecture": "arm64",
+            "selectedPlatformDigest": "sha256:6ab46b44569e2425aad8963ce3f63f9f8aec8791d1018ca6d79d3bca5d6d4299",
+            "configDigest": "sha256:f4b5ec75284e85a166b87eb25c85041260ed83f8d8f7d03af98e76279d2d96f6",
+            "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "createdLabel": "2026-11-21T01:46:08-08:00",
+            "os": "linux",
+            "architecture": "arm64",
+            "checks": {
+              "sourceMatches": true,
+              "createdLabelMatchesExactly": true,
+              "linux": true,
+              "architectureMatches": true,
+              "configDigestMatches": true,
+              "singleImageManifest": true
+            }
+          }
+        ],
+        "existingBrokerFeedIndex": {
+          "selectedDigest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+          "immutableDigest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+          "schemaVersion": 2,
+          "mediaType": "application/vnd.oci.image.index.v1+json",
+          "completeDescriptorCount": 2,
+          "descriptors": [
+            {
+              "digest": "sha256:8a1c63b3a2da454384814ab5ad534ebb8e64ae9f73decf1bf8145dfc7473e7fa",
+              "os": "linux",
+              "architecture": "amd64",
+              "variant": null,
+              "variantAllowed": true
+            },
+            {
+              "digest": "sha256:6ab46b44569e2425aad8963ce3f63f9f8aec8791d1018ca6d79d3bca5d6d4299",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": null,
+              "variantAllowed": true
+            }
+          ],
+          "checks": {
+            "exactTwoDescriptors": true,
+            "exactVerifiedChildSet": true,
+            "sourceMatches": true,
+            "publisherMatches": true,
+            "runMatches": true,
+            "buildSucceeded": true
+          }
+        },
+        "limitations": [
+          "Metadata compatibility only; the new preparation or publication flow was not executed.",
+          "No layer bytes, runtime workloads, jobs or discovery aliases were read or changed.",
+          "Only the already published broker-feed index is compared; the other two indexes were pending in the retained workflow observation."
+        ],
+        "observedTo": "2026-11-21T11:38:05.237911+00:00",
+        "elapsedSeconds": 18.887
+      }
+    },
+    "queueEvidence": {
+      "freshAssignment": {
+        "originalPath": "/tmp/bayn-6d-runner-assignment-20261121T114205Z.json",
+        "sha256": "f579dd54fffe6112175f43e7445f2dbefd0e636803e5bf9c789dce7eaa3dfb8b",
+        "content": {
+          "schemaVersion": "bayn.runner-assignment-projection.v2",
+          "observedAt": "2026-11-21T11:42:05.909716+00:00",
+          "context": {
+            "runId": 44891137421,
+            "expectedSource": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+            "jobStateSource": "Separate exact-source read-only release observer"
+          },
+          "reads": {
+            "runners": {
+              "at": "2026-11-21T11:42:05.475845+00:00",
+              "rawSha256": "aa2efa98d8639f0dd59dd4d2ff2ebf14d643adbd0686277b2fb08afd6d8f8c9b"
+            },
+            "pods": {
+              "at": "2026-11-21T11:42:05.476323+00:00",
+              "rawSha256": "875f341d66534ef5c8b4de2d4f34be8db4dc57c83e61cc34a002164ff417220a"
+            }
+          },
+          "summary": {
+            "amd64": {
+              "registered": 10,
+              "onlineBusy": 7,
+              "onlineIdle": 0,
+              "offline": 3,
+              "undeletedPods": 10,
+              "readyPods": 7,
+              "unreadyPods": 3,
+              "pendingPods": 3,
+              "selectorMismatchPods": 0
+            },
+            "arm64": {
+              "registered": 10,
+              "onlineBusy": 9,
+              "onlineIdle": 0,
+              "offline": 1,
+              "undeletedPods": 10,
+              "readyPods": 9,
+              "unreadyPods": 1,
+              "pendingPods": 1,
+              "selectorMismatchPods": 0
+            }
+          },
+          "runners": [
+            {
+              "name": "arc-amd64-runner-2jzkg",
+              "pool": "amd64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-4f5kw",
+              "pool": "amd64",
+              "status": "offline",
+              "busy": false,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-69qpw",
+              "pool": "amd64",
+              "status": "offline",
+              "busy": false,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-8xh7k",
+              "pool": "amd64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-9tjxx",
+              "pool": "amd64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-hvrhk",
+              "pool": "amd64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-nkjv8",
+              "pool": "amd64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-nwjqh",
+              "pool": "amd64",
+              "status": "offline",
+              "busy": false,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-qd7tp",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-b7hnj",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-vkg8q",
+              "pool": "amd64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-wqbld",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-zsc28",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-amd64-runner-v9ml2",
+              "pool": "amd64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-9f2z8",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-nbssc",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-8tj69",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-hpx89",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-sds5m",
+              "pool": "arm64",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-w6qrz",
+              "pool": "arm64",
+              "status": "offline",
+              "busy": false,
+              "labels": []
+            }
+          ],
+          "pods": [
+            {
+              "name": "arc-amd64-runner-2jzkg",
+              "uid": "73e9c21c-2e72-44e8-a042-5103b772172f",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T11:35:44Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:40:17Z",
+                  "finishedAt": "2026-11-21T11:41:43Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:41:44Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-amd64-runner-4f5kw",
+              "uid": "079a7f85-bfd7-42c3-8328-f5741ef901b5",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T11:35:44Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Pending",
+              "ready": false,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "False",
+                  "reason": "ContainersNotInitialized"
+                },
+                {
+                  "type": "Ready",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:41:16Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "waiting",
+                  "reason": "PodInitializing"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "offline",
+              "githubBusy": false
+            },
+            {
+              "name": "arc-amd64-runner-69qpw",
+              "uid": "de2c0e35-3754-4494-bed8-945299b06888",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T11:41:04Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Pending",
+              "ready": false,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "False",
+                  "reason": "PodSandboxNotReady"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "False",
+                  "reason": "ContainersNotInitialized"
+                },
+                {
+                  "type": "Ready",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "waiting",
+                  "reason": "PodInitializing"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "waiting",
+                  "reason": "PodInitializing"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "offline",
+              "githubBusy": false
+            },
+            {
+              "name": "arc-amd64-runner-8xh7k",
+              "uid": "3249aefb-aaa0-462d-877c-c33874de99f9",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T10:11:13Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T10:13:21Z",
+                  "finishedAt": "2026-11-21T10:14:42Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T10:14:43Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-amd64-runner-9tjxx",
+              "uid": "b227c11f-25b0-475a-8649-c99c429b8421",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T11:04:49Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:08:46Z",
+                  "finishedAt": "2026-11-21T11:10:02Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:10:03Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-amd64-runner-hvrhk",
+              "uid": "4971be1e-a548-4956-bbf2-86c20af10dac",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T11:28:52Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:38:46Z",
+                  "finishedAt": "2026-11-21T11:40:08Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:40:09Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-amd64-runner-nkjv8",
+              "uid": "59b526e4-6b88-4459-8e65-dd4af6af6d41",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T10:06:31Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T10:07:05Z",
+                  "finishedAt": "2026-11-21T10:08:15Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T10:08:16Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-amd64-runner-nwjqh",
+              "uid": "d14dee07-c128-4c06-85fe-5951f78dfd10",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T11:40:14Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Pending",
+              "ready": false,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "False",
+                  "reason": "PodSandboxNotReady"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "False",
+                  "reason": "ContainersNotInitialized"
+                },
+                {
+                  "type": "Ready",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "waiting",
+                  "reason": "PodInitializing"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "waiting",
+                  "reason": "PodInitializing"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "offline",
+              "githubBusy": false
+            },
+            {
+              "name": "arc-amd64-runner-v9ml2",
+              "uid": "9e8a72cc-1991-42f4-8194-13926bdb8bad",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T11:23:19Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:31:16Z",
+                  "finishedAt": "2026-11-21T11:32:34Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:32:36Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-amd64-runner-vkg8q",
+              "uid": "c5672252-bf6c-471c-82d6-01e692002c5d",
+              "pool": "amd64",
+              "createdAt": "2026-11-21T10:10:33Z",
+              "deleting": false,
+              "node": "turin",
+              "nodeSelectorArchitecture": "amd64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T10:12:12Z",
+                  "finishedAt": "2026-11-21T10:13:55Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T10:13:57Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-8tj69",
+              "uid": "d7cc40c0-b9e7-44c4-b105-5fd6364dbe17",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T11:33:59Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:35:51Z",
+                  "finishedAt": "2026-11-21T11:37:04Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:37:04Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-9f2z8",
+              "uid": "bb3610ca-c41e-4c59-8461-20a741b4f2b6",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T11:27:33Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:30:19Z",
+                  "finishedAt": "2026-11-21T11:31:34Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:31:35Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-b7hnj",
+              "uid": "a6fb5777-f76c-4dd2-b216-c1f7a209476d",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T10:08:25Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T10:10:50Z",
+                  "finishedAt": "2026-11-21T10:11:42Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T10:11:43Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-hpx89",
+              "uid": "b61e15eb-f2ab-4feb-a295-2c8edda615f5",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T11:34:49Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:37:47Z",
+                  "finishedAt": "2026-11-21T11:39:24Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:39:25Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-nbssc",
+              "uid": "fc1ef648-fc7e-4ad5-9d7c-9d90d3f6b7dc",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T11:33:59Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:38:10Z",
+                  "finishedAt": "2026-11-21T11:39:38Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:39:40Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-qd7tp",
+              "uid": "a0411729-f644-425b-8082-6d09e6cb3190",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T09:50:21Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T09:58:41Z",
+                  "finishedAt": "2026-11-21T10:00:14Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T10:00:15Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-sds5m",
+              "uid": "5b867a99-8324-4b99-8d81-e462dbc0ba3b",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T11:35:43Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:37:13Z",
+                  "finishedAt": "2026-11-21T11:38:27Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:38:28Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-w6qrz",
+              "uid": "67b90b91-b65d-4fe1-b099-689fd65c7a56",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T11:37:46Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Pending",
+              "ready": false,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "False",
+                  "reason": "ContainersNotInitialized"
+                },
+                {
+                  "type": "Ready",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "False",
+                  "reason": "ContainersNotReady"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:42:02Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": false,
+                  "restarts": 0,
+                  "state": "waiting",
+                  "reason": "PodInitializing"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "offline",
+              "githubBusy": false
+            },
+            {
+              "name": "arc-arm64-runner-wqbld",
+              "uid": "e34023ea-6da4-46e0-b651-5a9ea2901beb",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T10:55:21Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:01:09Z",
+                  "finishedAt": "2026-11-21T11:02:40Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:02:41Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-zsc28",
+              "uid": "43af8cc4-99d1-4177-87d4-484be3d3f09b",
+              "pool": "arm64",
+              "createdAt": "2026-11-21T11:21:23Z",
+              "deleting": false,
+              "node": "talos-192-168-1-85",
+              "nodeSelectorArchitecture": "arm64",
+              "selectorMatchesPool": true,
+              "phase": "Running",
+              "ready": true,
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "terminated",
+                  "reason": "Completed",
+                  "exitCode": 0,
+                  "startedAt": "2026-11-21T11:23:52Z",
+                  "finishedAt": "2026-11-21T11:26:30Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restarts": 0,
+                  "state": "running",
+                  "startedAt": "2026-11-21T11:26:33Z"
+                }
+              ],
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            }
+          ],
+          "excludedNonRunnerPods": [
+            {
+              "name": "arc-amd64-995c7d58-listener",
+              "ownerKinds": ["AutoscalingListener"],
+              "namePool": "amd64",
+              "nodeSelectorArchitecture": "amd64"
+            },
+            {
+              "name": "arc-arm64-995c7d58-listener",
+              "ownerKinds": ["AutoscalingListener"],
+              "namePool": "arm64",
+              "nodeSelectorArchitecture": "amd64"
+            }
+          ],
+          "limitations": [
+            "Only GitHub runners and EphemeralRunner-owned Pod assignment/init were refreshed; endpoint timestamps differ.",
+            "No events, logs, PVC/storage probes, configuration changes or new capacity policy read.",
+            "Unready/init state alone does not prove a current mount-failure cause."
+          ]
+        }
+      },
+      "freshReaderProvenance": {
+        "originalPath": "/tmp/bayn-6d-runner-assignment-20261121T114205Z-provenance.json",
+        "sha256": "f6b2f923513f2e85b7e4a1e89a78edd4657c622133d40e13f0c624410ea64126",
+        "content": {
+          "originalReceiptPath": "/tmp/bayn-6d-runner-assignment-20261121T114205Z.json",
+          "originalReceiptSha256": "f579dd54fffe6112175f43e7445f2dbefd0e636803e5bf9c789dce7eaa3dfb8b",
+          "readerPath": "/tmp/bayn-6d-runner-assignment-20261121T114205Z-reader.py",
+          "readerToolJobId": "c3342cfb-bfd3-46c5-8011-76fc706956bb",
+          "readerRequestKey": "bayn-6d-runner-assignment-fresh-v2",
+          "readerCommandHash": "4b9a6b4cd5b1901a748ed964c18f26b98a9581168814c1bd5b75794241212c30",
+          "readerStartedAt": "2026-11-21T11:42:05.438Z",
+          "readerFinishedAt": "2026-11-21T11:42:05.918Z",
+          "readerExitCode": 0,
+          "initialFailedAttempt": {
+            "jobId": "6b954d5a-13c5-404a-94db-da52f5f48c40",
+            "reason": "Name-prefix-only projection included AutoscalingListener control pods; no data from that aborted projection was used.",
+            "readScope": ["workflow run", "workflow jobs", "GitHub runners", "ARC Pods", "ARC scale sets"]
+          },
+          "successfulSnapshotScope": ["GitHub runners", "EphemeralRunner-owned ARC Pods"],
+          "storageOrEventQueries": false,
+          "readerSha256": "553296efe761a7a553f5c119976fbe348e04ed967ff1e6e8a6e52e832b826a15"
+        }
+      },
+      "qualification": "Complete fresh sanitized content is embedded with the original file hashes. The11:42 snapshot is not extrapolated to later times; old10:40 mount events are not attributed to this fresh observation."
+    }
+  },
+  "rootVerification": {
+    "method": "Independent relational checks over the retained publication, runtime and recovery projections; no new live query.",
+    "publicationJobs": 39,
+    "selectedPods": 6,
+    "apiArchitectures": ["amd64", "arm64"],
+    "controllerArchitectures": ["amd64", "arm64"],
+    "researchAndFeedLiveArchitecture": "amd64",
+    "allRequiredBindingsPassed": true,
+    "originalReceiptSha256": "053acd5e1e8d677c63aeba1d67023947c80734975fe4dc209bde85280989d863"
+  }
+}

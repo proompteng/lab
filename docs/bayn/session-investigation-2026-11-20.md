@@ -3,6 +3,9 @@
 Status: evidence for the active profitability and reliability investigation. This document records a bounded
 historical cut; source, GitOps and fresh runtime evidence remain authoritative.
 
+The [release acceptance companion](release-acceptance-2026-11-21.md) records later CI, publication and
+deployed-runtime evidence, with explicit observation windows and unresolved economic qualification.
+
 Later settlement evidence is recorded in [the November 21 addendum](#later-fee-settlement-and-runtime-recovery--november-21-2026).
 At its 08:35:10 UTC cut, all $64.03 of observed weekly broker fees were posted: gross trading less broker fees
 was -$1,416.03, or -$1,417.717284228 after the original-cut known inference estimate. Both API instances had
@@ -532,12 +535,16 @@ the next TA checkpoint's metadata path: an existence-probe HEAD took 6.952 secon
 checkpoint. This directly identifies slow S3 request completion on the checkpoint path.
 
 The exact live [Flink 2.2.1 checkpoint coordinator](https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/checkpoint/CheckpointCoordinator.java)
-records its trigger timestamp before queued initialization work and arms its timeout later, when creating the
-pending checkpoint. The [configured TA timeout](https://github.com/proompteng/lab/blob/87a8d928433f476530a2323b9afc8166e1c261a3/argocd/applications/torghut/ta/configmap.yaml)
-is 300,000 ms, also verified from the live ConfigMap and Flink REST. The approximately 553.8-second
-pre-initialization interval was outside that timer. Both initialization and old-checkpoint cleanup use the
-same observed single-worker JobManager I/O executor; slow cleanup is a supported amplification path, but
-the exact queued task count was not captured. No executor or timeout setting was changed.
+records its proposed timestamp before planning and queued coordinator work. It creates the pending checkpoint
+and timeout before storage-location initialization and actual task triggering. The [configured TA timeout](https://github.com/proompteng/lab/blob/87a8d928433f476530a2323b9afc8166e1c261a3/argocd/applications/torghut/ta/configmap.yaml)
+is 300,000 ms, also verified from the live ConfigMap and Flink REST. The approximately 553.8-second interval
+before the pending-checkpoint/Triggering log was outside that timer; it is not an isolated measurement of
+S3 initialization or executor queue time. Checkpoint-ID allocation and old-checkpoint cleanup use the
+JobManager I/O executor. The earlier dumps showed one such worker, but its configured default depends on
+the JVM processor count and the numeric pool maximum was not directly measured. Slow cleanup remains a
+possible amplification path, with no captured queue depth. No executor or timeout setting was changed.
+The [later phase diagnosis](release-acceptance-2026-11-21.md#measured-checkpoint-phases) records the explicit
+phase boundaries, recovered checkpoint ages and incident alert evidence.
 
 At 08:08, the observed source lag and task backpressure were zero despite slow checkpoint completion. The
 deployed `TorghutSignalPipelineCheckpointsStalled` age alert independently covered this case: the loaded Mimir
@@ -636,12 +643,12 @@ This addendum preserves the original 04:47 UTC evidence cut. New SELECT-only evi
 
 The broker cash view lagged those fee records. Retained cash/equity remained **$92,931.77** through **08:22:04.144**, then first reflected **$92,909.03** at **08:22:35.170**. The approximately 26-minute lag produced 127 retained DISCREPANCY reconciliation observations from **07:56:23.415** through **08:22:12.509**. The exact restriction-triggering receipt contains only a CASH discrepancy: expected 92,909,030,000 micros versus observed 92,931,770,000, a $22.74 difference. The first retained EXACT reconciliation followed at **08:22:41.438**. The safety audit shows effective OBSERVE with active kill at version 1875, a clear OBSERVE successor at 1876, then PAPER reactivation at 1877 only after a fresh exact reconciliation. These were the existing controller's durable recovery transitions; the investigation issued no writes.
 
-| November 16–20 economic bridge | USD |
-| --- | ---: |
-| Gross realized trading | -1,352.00 |
-| Canonically posted broker fees, ten records | -64.03 |
-| Broker cash/equity change, $94,325.06 to $92,909.03 | -1,416.03 |
-| Original-cut known inference tariff estimate | -1.687284228 |
+| November 16–20 economic bridge                             |                  USD |
+| ---------------------------------------------------------- | -------------------: |
+| Gross realized trading                                     |            -1,352.00 |
+| Canonically posted broker fees, ten records                |               -64.03 |
+| Broker cash/equity change, $94,325.06 to $92,909.03        |            -1,416.03 |
+| Original-cut known inference tariff estimate               |         -1.687284228 |
 | Gross less posted broker fees and known inference estimate | **-1,417.717284228** |
 
 The inference total was independently re-summed from 8,674 latest request/stage quotes at the original 04:47 cut: **1,687,284,228,000 pico-USD**, all bound to exactly one configured PAPER account with no missing request-generation binding. This is an estimate, not a provider invoice. Earlier-session unknown usage and unallocated infrastructure, data and research expense remain unresolved. The final row is therefore a known-cost result, not fully costed net profit or economic qualification. November 20 alone is now canonically **-$536.02 after broker fees**, or **-$536.253999892 including its original-cut known inference estimate**.

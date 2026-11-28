@@ -1,0 +1,1069 @@
+{
+  "schemaVersion": 1,
+  "preparedAt": "2026-11-21T10:43:28.079957+00:00",
+  "workflowRunId": 44891137421,
+  "expectedSourcePrefix": "6d6600",
+  "sourceIdentityProvenance": "Parent task identity; this bounded check did not reread workflow-run head metadata.",
+  "observationWindow": {
+    "githubSnapshotAt": "2026-11-21T10:40:36.793853+00:00",
+    "kubernetesSnapshots": "Sequential bounded scale-set, Pod, selected-init and selected-event GETs after the GitHub snapshot and before preparedAt; not atomic."
+  },
+  "summary": {
+    "architectures": {
+      "amd64": {
+        "registered": 10,
+        "onlineBusy": 7,
+        "onlineIdle": 0,
+        "offline": 3,
+        "podCount": 10,
+        "readyPods": 7,
+        "pendingPods": 3,
+        "scheduledPods": 10,
+        "terminatingPods": 0
+      },
+      "arm64": {
+        "registered": 10,
+        "onlineBusy": 8,
+        "onlineIdle": 0,
+        "offline": 2,
+        "podCount": 10,
+        "readyPods": 8,
+        "pendingPods": 2,
+        "scheduledPods": 10,
+        "terminatingPods": 0
+      }
+    },
+    "queuedImageJobs": 4,
+    "allQueuedLabelsMatchScaleSets": true,
+    "mountDeadlinePodCount": 4,
+    "mountDeadlinePods": [
+      "arc-amd64-runner-cj5wk",
+      "arc-amd64-runner-vvmcj",
+      "arc-arm64-runner-4zlsz",
+      "arc-arm64-runner-jsv8g"
+    ],
+    "classification": "Available-runner saturation compounded by observed volume-mount initialization delays; no architecture label mismatch demonstrated.",
+    "permanentDeadlockEstablished": false
+  },
+  "github": {
+    "jobs": {
+      "available": true,
+      "at": "2026-11-21T10:40:36.793853+00:00",
+      "totalCount": 35,
+      "returnedCount": 35,
+      "rawSha256": "24242a66261d7ee6895e8e22227b34223e8851952378f00fe99a7804ab8dde35",
+      "jobs": [
+        {
+          "id": 136815870815,
+          "name": "broker-feed-image / build-platform (linux/amd64, amd64, arc-amd64)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-11-21T10:29:30Z",
+          "completed_at": "2026-11-21T10:34:54Z",
+          "runner_name": "arc-amd64-runner-k4xrg",
+          "runner_id": 83305,
+          "runner_group_name": "Default",
+          "labels": ["arc-amd64"],
+          "steps": []
+        },
+        {
+          "id": 136815870838,
+          "name": "broker-feed-image / build-platform (linux/arm64, arm64, arc-arm64)",
+          "status": "queued",
+          "conclusion": null,
+          "started_at": "2026-11-21T10:23:00Z",
+          "completed_at": null,
+          "runner_name": "",
+          "runner_id": 0,
+          "runner_group_name": "",
+          "labels": ["arc-arm64"],
+          "steps": []
+        },
+        {
+          "id": 136815870854,
+          "name": "research-image / build-platform (linux/amd64, amd64, arc-amd64)",
+          "status": "in_progress",
+          "conclusion": null,
+          "started_at": "2026-11-21T10:34:39Z",
+          "completed_at": null,
+          "runner_name": "arc-amd64-runner-5895q",
+          "runner_id": 83312,
+          "runner_group_name": "Default",
+          "labels": ["arc-amd64"],
+          "steps": [
+            {
+              "name": "Build Nix image archive",
+              "status": "in_progress",
+              "conclusion": null,
+              "started_at": "2026-11-21T10:36:48Z",
+              "completed_at": null
+            }
+          ]
+        },
+        {
+          "id": 136815870857,
+          "name": "research-image / build-platform (linux/arm64, arm64, arc-arm64)",
+          "status": "queued",
+          "conclusion": null,
+          "started_at": "2026-11-21T10:23:00Z",
+          "completed_at": null,
+          "runner_name": "",
+          "runner_id": 0,
+          "runner_group_name": "",
+          "labels": ["arc-arm64"],
+          "steps": []
+        },
+        {
+          "id": 136815870870,
+          "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+          "status": "queued",
+          "conclusion": null,
+          "started_at": "2026-11-21T10:23:00Z",
+          "completed_at": null,
+          "runner_name": "",
+          "runner_id": 0,
+          "runner_group_name": "",
+          "labels": ["arc-arm64"],
+          "steps": []
+        },
+        {
+          "id": 136815870941,
+          "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+          "status": "queued",
+          "conclusion": null,
+          "started_at": "2026-11-21T10:23:00Z",
+          "completed_at": null,
+          "runner_name": "",
+          "runner_id": 0,
+          "runner_group_name": "",
+          "labels": ["arc-amd64"],
+          "steps": []
+        }
+      ]
+    },
+    "runners": {
+      "available": true,
+      "at": "2026-11-21T10:40:36.794278+00:00",
+      "totalCount": 20,
+      "returnedCount": 20,
+      "rawSha256": "4eeb8582e479b99aa0a7e7a7384512333927828866f15c6e5bb35ce9af5a1082",
+      "runners": [
+        {
+          "id": 83312,
+          "name": "arc-amd64-runner-5895q",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83299,
+          "name": "arc-amd64-runner-8xh7k",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83319,
+          "name": "arc-amd64-runner-cj5wk",
+          "os": "unknown",
+          "status": "offline",
+          "busy": false,
+          "labels": []
+        },
+        {
+          "id": 83318,
+          "name": "arc-amd64-runner-l52d6",
+          "os": "unknown",
+          "status": "offline",
+          "busy": false,
+          "labels": []
+        },
+        {
+          "id": 83303,
+          "name": "arc-amd64-runner-mj4t2",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83293,
+          "name": "arc-amd64-runner-nkjv8",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83314,
+          "name": "arc-amd64-runner-pvx96",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83298,
+          "name": "arc-amd64-runner-vkg8q",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83283,
+          "name": "arc-arm64-runner-qd7tp",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83286,
+          "name": "arc-arm64-runner-v6z9z",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83294,
+          "name": "arc-arm64-runner-b7hnj",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83302,
+          "name": "arc-arm64-runner-nwrk9",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83306,
+          "name": "arc-arm64-runner-kqnsc",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83307,
+          "name": "arc-arm64-runner-lw68k",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83308,
+          "name": "arc-amd64-runner-wk9nk",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83309,
+          "name": "arc-arm64-runner-4lm2q",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83313,
+          "name": "arc-arm64-runner-6znmw",
+          "os": "unknown",
+          "status": "online",
+          "busy": true,
+          "labels": []
+        },
+        {
+          "id": 83315,
+          "name": "arc-arm64-runner-jsv8g",
+          "os": "unknown",
+          "status": "offline",
+          "busy": false,
+          "labels": []
+        },
+        {
+          "id": 83316,
+          "name": "arc-arm64-runner-4zlsz",
+          "os": "unknown",
+          "status": "offline",
+          "busy": false,
+          "labels": []
+        },
+        {
+          "id": 83317,
+          "name": "arc-amd64-runner-vvmcj",
+          "os": "unknown",
+          "status": "offline",
+          "busy": false,
+          "labels": []
+        }
+      ]
+    }
+  },
+  "kubernetes": {
+    "scaleSets": [
+      {
+        "name": "arc-amd64",
+        "namespace": "arc",
+        "minimum": 5,
+        "maximum": 10,
+        "runnerScaleSetName": "arc-amd64",
+        "repository": "proompteng/lab",
+        "nodeArchitecture": "amd64",
+        "generation": 2,
+        "observedGeneration": 2,
+        "phase": "Running"
+      },
+      {
+        "name": "arc-arm64",
+        "namespace": "arc",
+        "minimum": 5,
+        "maximum": 10,
+        "runnerScaleSetName": "arc-arm64",
+        "repository": "proompteng/lab",
+        "nodeArchitecture": "arm64",
+        "generation": 2,
+        "observedGeneration": 2,
+        "phase": "Running"
+      }
+    ],
+    "runnerPods": [
+      {
+        "name": "arc-amd64-runner-5895q",
+        "uid": "5b9e6f43-84f4-460c-a984-d8fa224f9dc9",
+        "createdAt": "2026-11-21T10:30:41Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-5895q",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-amd64-runner-8xh7k",
+        "uid": "3249aefb-aaa0-462d-877c-c33874de99f9",
+        "createdAt": "2026-11-21T10:11:13Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-8xh7k",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-amd64-runner-cj5wk",
+        "uid": "36ea3c34-f57b-4128-b3a0-5e5c94f85a1e",
+        "createdAt": "2026-11-21T10:37:48Z",
+        "deletionTimestamp": null,
+        "phase": "Pending",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-cj5wk",
+        "ready": false,
+        "scheduled": true,
+        "conditionSummary": "Ready=False;reason=ContainersNotReady;PodScheduled=True;",
+        "containerSummary": "runner:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-amd64-runner-l52d6",
+        "uid": "117eaa9b-f324-48c6-baf1-e6a0e0ffe67b",
+        "createdAt": "2026-11-21T10:36:57Z",
+        "deletionTimestamp": null,
+        "phase": "Pending",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-l52d6",
+        "ready": false,
+        "scheduled": true,
+        "conditionSummary": "Ready=False;reason=ContainersNotReady;PodScheduled=True;",
+        "containerSummary": "runner:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-amd64-runner-mj4t2",
+        "uid": "234bf1cd-4344-4c23-a56d-855600fe8bd5",
+        "createdAt": "2026-11-21T10:14:24Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-mj4t2",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-amd64-runner-nkjv8",
+        "uid": "59b526e4-6b88-4459-8e65-dd4af6af6d41",
+        "createdAt": "2026-11-21T10:06:31Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-nkjv8",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-amd64-runner-pvx96",
+        "uid": "8ba76218-b8d9-4728-820f-ab09d59fe544",
+        "createdAt": "2026-11-21T10:34:13Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-pvx96",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-amd64-runner-vkg8q",
+        "uid": "c5672252-bf6c-471c-82d6-01e692002c5d",
+        "createdAt": "2026-11-21T10:10:33Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-vkg8q",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-amd64-runner-vvmcj",
+        "uid": "8535f9c6-703e-4676-aa21-6c13d5009e49",
+        "createdAt": "2026-11-21T10:35:46Z",
+        "deletionTimestamp": null,
+        "phase": "Pending",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-vvmcj",
+        "ready": false,
+        "scheduled": true,
+        "conditionSummary": "Ready=False;reason=ContainersNotReady;PodScheduled=True;",
+        "containerSummary": "runner:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-amd64-runner-wk9nk",
+        "uid": "32722106-b265-47c2-88a5-acda11d5be77",
+        "createdAt": "2026-11-21T10:17:12Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "amd64",
+        "owner": "EphemeralRunner:arc-amd64-runner-wk9nk",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-4lm2q",
+        "uid": "72812764-f3ed-4699-a29c-197c15f610ec",
+        "createdAt": "2026-11-21T10:18:02Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-4lm2q",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-4zlsz",
+        "uid": "8d478e8b-3f42-4e40-84ba-0999cd9ead42",
+        "createdAt": "2026-11-21T10:35:23Z",
+        "deletionTimestamp": null,
+        "phase": "Pending",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-4zlsz",
+        "ready": false,
+        "scheduled": true,
+        "conditionSummary": "Ready=False;reason=ContainersNotReady;PodScheduled=True;",
+        "containerSummary": "runner:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-arm64-runner-6znmw",
+        "uid": "ddd28787-8f0a-4e12-b8b8-b493fcbeb27d",
+        "createdAt": "2026-11-21T10:31:36Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-6znmw",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-b7hnj",
+        "uid": "a6fb5777-f76c-4dd2-b216-c1f7a209476d",
+        "createdAt": "2026-11-21T10:08:25Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-b7hnj",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-jsv8g",
+        "uid": "fa370b48-43b5-4eab-af30-46484f3c59f4",
+        "createdAt": "2026-11-21T10:34:32Z",
+        "deletionTimestamp": null,
+        "phase": "Pending",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-jsv8g",
+        "ready": false,
+        "scheduled": true,
+        "conditionSummary": "Ready=False;reason=ContainersNotReady;PodScheduled=True;",
+        "containerSummary": "runner:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-arm64-runner-kqnsc",
+        "uid": "f26c388c-a179-4cac-896f-307ecb5dfa38",
+        "createdAt": "2026-11-21T10:16:14Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-kqnsc",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-lw68k",
+        "uid": "db10d232-c0a8-44f5-ab3f-f1df411adc52",
+        "createdAt": "2026-11-21T10:16:14Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-lw68k",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-nwrk9",
+        "uid": "0318abc1-0a24-41b5-8103-1e8fc64a29bb",
+        "createdAt": "2026-11-21T10:13:16Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-nwrk9",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-qd7tp",
+        "uid": "a0411729-f644-425b-8082-6d09e6cb3190",
+        "createdAt": "2026-11-21T09:50:21Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-qd7tp",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-runner-v6z9z",
+        "uid": "0f77ca1b-5732-448c-889b-779f4c37711b",
+        "createdAt": "2026-11-21T09:59:53Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "architecture": "arm64",
+        "owner": "EphemeralRunner:arc-arm64-runner-v6z9z",
+        "ready": true,
+        "scheduled": true,
+        "conditionSummary": "Ready=True;PodScheduled=True;",
+        "containerSummary": "runner:ready=true,restarts=0;"
+      }
+    ],
+    "controlPods": [
+      {
+        "name": "arc-amd64-995c7d58-listener",
+        "phase": "Running",
+        "ready": true,
+        "scheduled": true,
+        "containerSummary": "listener:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-arm64-995c7d58-listener",
+        "phase": "Running",
+        "ready": true,
+        "scheduled": true,
+        "containerSummary": "listener:ready=true,restarts=0;"
+      },
+      {
+        "name": "arc-controller-gha-rs-controller-7894b59694-s8x8k",
+        "phase": "Running",
+        "ready": true,
+        "scheduled": true,
+        "containerSummary": "manager:ready=true,restarts=0;"
+      }
+    ],
+    "init": [
+      {
+        "name": "arc-amd64-runner-cj5wk",
+        "uid": "36ea3c34-f57b-4128-b3a0-5e5c94f85a1e",
+        "initStatus": "init-scratch:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-amd64-runner-l52d6",
+        "uid": "117eaa9b-f324-48c6-baf1-e6a0e0ffe67b",
+        "initStatus": "init-scratch:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-amd64-runner-vvmcj",
+        "uid": "8535f9c6-703e-4676-aa21-6c13d5009e49",
+        "initStatus": "init-scratch:ready=false,restarts=0,runningSince=2026-11-21T10:41:49Z;"
+      },
+      {
+        "name": "arc-arm64-runner-jsv8g",
+        "uid": "fa370b48-43b5-4eab-af30-46484f3c59f4",
+        "initStatus": "init-scratch:ready=false,restarts=0,waiting=PodInitializing;"
+      },
+      {
+        "name": "arc-arm64-runner-4zlsz",
+        "uid": "8d478e8b-3f42-4e40-84ba-0999cd9ead42",
+        "initStatus": "init-scratch:ready=false,restarts=0,runningSince=2026-11-21T10:40:37Z;"
+      }
+    ],
+    "events": [
+      {
+        "pod": "arc-amd64-runner-cj5wk",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "ephemeralPVCNotYetCreated",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-cj5wk",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-cj5wk",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-cj5wk",
+        "type": "Normal",
+        "reason": "Scheduled",
+        "classification": "Scheduled",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-cj5wk",
+        "type": "Normal",
+        "reason": "SuccessfulAttachVolume",
+        "classification": "SuccessfulAttachVolume",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:39:20Z",
+        "lastTimestamp": "2026-11-21T10:39:20Z"
+      },
+      {
+        "pod": "arc-amd64-runner-cj5wk",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceDeadlineExceeded",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:41:21Z",
+        "lastTimestamp": "2026-11-21T10:41:21Z"
+      },
+      {
+        "pod": "arc-amd64-runner-cj5wk",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceOperationAlreadyInProgress",
+        "count": 4,
+        "firstTimestamp": "2026-11-21T10:41:22Z",
+        "lastTimestamp": "2026-11-21T10:41:29Z"
+      },
+      {
+        "pod": "arc-amd64-runner-l52d6",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "ephemeralPVCNotYetCreated",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-l52d6",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-l52d6",
+        "type": "Normal",
+        "reason": "Scheduled",
+        "classification": "Scheduled",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-l52d6",
+        "type": "Normal",
+        "reason": "SuccessfulAttachVolume",
+        "classification": "SuccessfulAttachVolume",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:39:52Z",
+        "lastTimestamp": "2026-11-21T10:39:52Z"
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "ephemeralPVCNotYetCreated",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Normal",
+        "reason": "Scheduled",
+        "classification": "Scheduled",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Normal",
+        "reason": "SuccessfulAttachVolume",
+        "classification": "SuccessfulAttachVolume",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:37:10Z",
+        "lastTimestamp": "2026-11-21T10:37:10Z"
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceDeadlineExceeded",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:39:10Z",
+        "lastTimestamp": "2026-11-21T10:39:10Z"
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceOperationAlreadyInProgress",
+        "count": 7,
+        "firstTimestamp": "2026-11-21T10:39:10Z",
+        "lastTimestamp": "2026-11-21T10:40:14Z"
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Normal",
+        "reason": "AddedInterface",
+        "classification": "AddedInterface",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:41:48Z",
+        "lastTimestamp": "2026-11-21T10:41:48Z"
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Normal",
+        "reason": "Pulled",
+        "classification": "Pulled",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:41:49Z",
+        "lastTimestamp": "2026-11-21T10:41:49Z"
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Normal",
+        "reason": "Created",
+        "classification": "Created",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:41:49Z",
+        "lastTimestamp": "2026-11-21T10:41:49Z"
+      },
+      {
+        "pod": "arc-amd64-runner-vvmcj",
+        "type": "Normal",
+        "reason": "Started",
+        "classification": "Started",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:41:49Z",
+        "lastTimestamp": "2026-11-21T10:41:49Z"
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "ephemeralPVCNotYetCreated",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Normal",
+        "reason": "Scheduled",
+        "classification": "Scheduled",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Normal",
+        "reason": "SuccessfulAttachVolume",
+        "classification": "SuccessfulAttachVolume",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:36:49Z",
+        "lastTimestamp": "2026-11-21T10:36:49Z"
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceDeadlineExceeded",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:38:49Z",
+        "lastTimestamp": "2026-11-21T10:38:49Z"
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceOperationAlreadyInProgress",
+        "count": 5,
+        "firstTimestamp": "2026-11-21T10:38:50Z",
+        "lastTimestamp": "2026-11-21T10:39:05Z"
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Normal",
+        "reason": "AddedInterface",
+        "classification": "AddedInterface",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:40:36Z",
+        "lastTimestamp": "2026-11-21T10:40:36Z"
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Normal",
+        "reason": "Pulled",
+        "classification": "Pulled",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:40:36Z",
+        "lastTimestamp": "2026-11-21T10:40:36Z"
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Normal",
+        "reason": "Created",
+        "classification": "Created",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:40:36Z",
+        "lastTimestamp": "2026-11-21T10:40:36Z"
+      },
+      {
+        "pod": "arc-arm64-runner-4zlsz",
+        "type": "Normal",
+        "reason": "Started",
+        "classification": "Started",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:40:37Z",
+        "lastTimestamp": "2026-11-21T10:40:37Z"
+      },
+      {
+        "pod": "arc-arm64-runner-jsv8g",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "ephemeralPVCNotYetCreated",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-arm64-runner-jsv8g",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-arm64-runner-jsv8g",
+        "type": "Warning",
+        "reason": "FailedScheduling",
+        "classification": "unboundPVC",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-arm64-runner-jsv8g",
+        "type": "Normal",
+        "reason": "Scheduled",
+        "classification": "Scheduled",
+        "count": null,
+        "firstTimestamp": null,
+        "lastTimestamp": null
+      },
+      {
+        "pod": "arc-arm64-runner-jsv8g",
+        "type": "Normal",
+        "reason": "SuccessfulAttachVolume",
+        "classification": "SuccessfulAttachVolume",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:36:54Z",
+        "lastTimestamp": "2026-11-21T10:36:54Z"
+      },
+      {
+        "pod": "arc-arm64-runner-jsv8g",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceDeadlineExceeded",
+        "count": 1,
+        "firstTimestamp": "2026-11-21T10:38:54Z",
+        "lastTimestamp": "2026-11-21T10:38:54Z"
+      },
+      {
+        "pod": "arc-arm64-runner-jsv8g",
+        "type": "Warning",
+        "reason": "FailedMount",
+        "classification": "mountDeviceOperationAlreadyInProgress",
+        "count": 7,
+        "firstTimestamp": "2026-11-21T10:38:54Z",
+        "lastTimestamp": "2026-11-21T10:39:58Z"
+      }
+    ],
+    "ephemeralSetProjection": [
+      "arc-amd64\tAutoscalingRunnerSet:arc-amd64\treplicas=10\tmap[appliedActionableRevision:1 finishedRunnerCleanupPatchID:3129 phase:Running]",
+      "arc-amd64-8frlq\tAutoscalingRunnerSet:arc-amd64\treplicas=9\tmap[phase:Running]",
+      "arc-arm64\tAutoscalingRunnerSet:arc-arm64\treplicas=10\tmap[appliedActionableRevision:1 finishedRunnerCleanupPatchID:2898 phase:Running]",
+      "arc-arm64-9sm2n\tAutoscalingRunnerSet:arc-arm64\treplicas=8\tmap[phase:Running]"
+    ],
+    "sourceReads": [
+      {
+        "read": "scaleSets",
+        "toolJobId": "ae76919e-2f06-4a32-8086-911dae5a0891",
+        "commandSha256": "8468277340486718d407ce3a99bf0e2908e1258b47537ff8c39627b68e3521b3",
+        "exitCode": 0,
+        "stdoutTruncated": false,
+        "captureIncomplete": false
+      },
+      {
+        "read": "podProjection",
+        "toolJobId": "54d2a377-4a85-4820-b8b1-450d58c6dd65",
+        "commandSha256": "a16e33f196b52841729fd717517a0a4d7ef4c1dee53d5d13810bb4f0455faeb0",
+        "exitCode": 0,
+        "stdoutTruncated": false,
+        "captureIncomplete": false
+      },
+      {
+        "read": "ephemeralSetProjection",
+        "toolJobId": "6f468885-b555-4884-aaa7-43f5ce5fee18",
+        "commandSha256": "76a866c55d47eb167f73ba58ed0481c963bd94bca7d9bae3c2fecb253ccfaf80",
+        "exitCode": 0,
+        "stdoutTruncated": false,
+        "captureIncomplete": false
+      },
+      {
+        "read": "initProjection",
+        "toolJobId": "173f1340-9170-47e3-91d4-164193309dbc",
+        "commandSha256": "20d9a56178e73befca43febf83f36f8e8ec5077ece52b74f7e6b1145b4bff5c3",
+        "exitCode": 0,
+        "stdoutTruncated": false,
+        "captureIncomplete": false
+      },
+      {
+        "read": "eventProjection",
+        "toolJobId": "df08649d-ba42-4113-b802-7e24cdf245b2",
+        "commandSha256": "1365b4b0d1a416a7d8004d8a1cc0ce8acfa423bebc0827a923689627088856ef",
+        "exitCode": 0,
+        "stdoutTruncated": false,
+        "captureIncomplete": false
+      }
+    ]
+  },
+  "provenance": {
+    "githubProjectionFile": "bayn-6d-runner-diagnosis-github-20261121.json",
+    "githubProjectionFileSha256": "7cd7e8efeae58a1d8ec783ec91eadf2ecdcfbac0451af135f72afc526486079d"
+  },
+  "limitations": [
+    "The GitHub and Kubernetes snapshots are sequential and describe a changing fleet; they are not a single atomic state.",
+    "ARC runner objects returned empty per-runner label arrays and unknown OS; routing is bound through the requested labels, scale-set names, and Pod architecture selectors, not inferred from those empty fields.",
+    "All 20 runner Pods were scheduled. Earlier PVC-creation/unbound warnings are retained as history and do not establish a current scheduler blockage. Some historical scheduler events lacked timestamps in the retained field projection.",
+    "MountDevice DeadlineExceeded and Aborted/already-in-progress events establish initialization delay for four selected Pods. They do not identify the underlying Ceph/device/network cause.",
+    "Two affected Pods had progressed to running init-scratch by the last selected init read; no permanent initialization deadlock is established.",
+    "Initial full Pod JSON exceeded the output cap; conclusions use the subsequent complete bounded field projection, not truncated JSON.",
+    "No pipeline, collector, database, cache, CSI log or metric read, Pod exec, new job, runner-policy change, retry, cancellation, restart, or mutation was performed.",
+    "No promise of queue-drain time or future release success follows from this bounded check."
+  ]
+}

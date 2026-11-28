@@ -1,0 +1,138 @@
+{
+  "atticSource": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+  "findings": [
+    {
+      "fact": "The wrapper defaults to one upload worker and passes --jobs explicitly. Its 64-path batches are sequential, not 64 upload workers.",
+      "lines": [12, 13, 83, 86, 91],
+      "source": "nix/cache-push.sh"
+    },
+    {
+      "fact": "--build enumerates derivation requisites including outputs, omits .drv paths, and then sets --no-closure. Attic subsequently filters already cached and upstream-signed paths. Planned paths are not an actual-upload count.",
+      "sources": ["nix/cache-push.sh:36-52", "client/src/push.rs:451-492"]
+    },
+    {
+      "fact": "Each client worker awaits one path upload before taking another. The CLI default 5 is overridden by the wrapper observed at 1.",
+      "sources": ["client/src/command/push.rs:41-43,159-162", "client/src/push.rs:153-165,228-259"]
+    },
+    {
+      "fact": "Each chunked NAR request creates its own 10-permit semaphore. The receiver waits for a permit before spawning; the permit remains held through chunk upload and chunk-reference database insertion. This is not a process-wide upload cap.",
+      "source": "server/src/api/v1/upload_path.rs:53-56,346-390"
+    },
+    {
+      "fact": "The pinned server says its 10-chunk concurrency is not configurable. S3 files below 8MiB use one PutObject; multipart files spawn an upload task for each 8MiB part before join_all, with no separate part semaphore. Actual fanout depends on compressed chunk sizes, deduplication and concurrent clients.",
+      "sources": ["server/src/api/v1/upload_path.rs:53-56", "server/src/storage/s3.rs:25-26,169-188,238-273"]
+    },
+    {
+      "fact": "Warm upload command failures/timeouts are recorded as warnings then exit 0. This does not make warming asynchronous: publish-index needs the completed build-platform matrix, including warming and log-artifact steps.",
+      "source": ".github/workflows/nix-oci-build-common.yml:255-292,295-304"
+    },
+    {
+      "fact": "The failure-tolerant branch covers the wrapped upload command. Earlier test -n ATTIC_TOKEN/status-file setup and later summary/artifact failures are not covered by that branch and can still fail the job. The declared warm command budget is 30m plus 30s kill grace.",
+      "source": ".github/workflows/nix-oci-build-common.yml:82,263-277,281-292"
+    }
+  ],
+  "limits": [
+    "No attribution of the Flink checkpoint delay or earlier native timeout to cache warming is established.",
+    "The InternalServerError client class does not identify the server/database/S3 cause.",
+    "No new concurrency limit, deadline, retries, cache deletion, workload cancellation or storage mutation was made."
+  ],
+  "observedCurrentMain": {
+    "indexPublicationSucceededAt": "2026-11-21T10:05:39Z",
+    "nativeJobsSucceeded": true,
+    "nativeTests": {
+      "amd64": {
+        "assertions": 30,
+        "durationMs": 46384.32,
+        "passed": 1
+      },
+      "arm64": {
+        "assertions": 30,
+        "durationMs": 51335.04,
+        "passed": 1
+      }
+    },
+    "run": 44889463638,
+    "warmer": {
+      "amd64": {
+        "batchSize": 64,
+        "plannedPaths": 717,
+        "uploadFailureWarning": true,
+        "uploadJobs": 1
+      },
+      "arm64": {
+        "batchSize": 64,
+        "clientErrorClass": "InternalServerError",
+        "clientErrorObservedAt": ["2026-11-21T09:58:19.2240516Z", "2026-11-21T09:58:56.6932798Z"],
+        "plannedPaths": 716,
+        "uploadFailureWarning": true,
+        "uploadJobs": 1,
+        "wrapperExitCode": 1
+      }
+    }
+  },
+  "options": [
+    {
+      "option": "Remove demonstrably unnecessary main image-publication triggers for strictly test-only helpers while retaining PR/full validation and mixed-runtime-change publication.",
+      "status": "Parent-assigned independent work; supported by exact input boundaries; no cache-protocol change."
+    },
+    {
+      "option": "Lower ATTIC_PUSH_JOBS or batch size to reduce storage fanout.",
+      "status": "No supported lower positive worker setting: actual jobs already 1. Smaller batches change planning overhead, not the pinned per-NAR chunk/S3 part fanout; no immediate tuning recommendation."
+    },
+    {
+      "option": "Bound server chunk or multipart fanout.",
+      "status": "Technically possible in the pinned server, while retaining hashes/compression/order/error propagation, but needs explicit implementation, Rust regressions and a controlled measurement plan. No numeric limit or causal benefit is established; no change authorized here."
+    },
+    {
+      "option": "Move cache warming off the index-publication dependency.",
+      "status": "Requires a separate exact-source closure handoff or rebuild/queue design. Merely detaching the process loses runner lifetime guarantees; a fresh warmer can duplicate work. Preserve both native gates, archive/source/platform verification, credential restrictions and the full intended cache closure before considering such restructuring."
+    }
+  ],
+  "preparedAt": "2026-11-21T10:09:38.847635+00:00",
+  "scope": "read-only source and existing terminal build evidence; no trial, configuration change, upload, or induced workload",
+  "sourceFiles": [
+    {
+      "path": "nix/cache-push.sh",
+      "repository": "proompteng/lab",
+      "revision": "acc115c8082a00881fc3d1daef8af08b62458a85",
+      "sha256": "2d5bbd2570ad8fb1db1e5da26e5c053df018aecbd72d9561296a440334fd12a8"
+    },
+    {
+      "path": ".github/workflows/nix-oci-build-common.yml",
+      "repository": "proompteng/lab",
+      "revision": "acc115c8082a00881fc3d1daef8af08b62458a85",
+      "sha256": "0a1f10ae5e73919c2f566e53008022e0662f137d366acf72a700c801210a0111"
+    },
+    {
+      "path": "client/src/command/push.rs",
+      "repository": "zhaofengli/attic",
+      "revision": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+      "sha256": "55b3ed33b73bc5a11c223a426ef13d9ce6e9dcc9874221acd4912b479025df67"
+    },
+    {
+      "path": "client/src/push.rs",
+      "repository": "zhaofengli/attic",
+      "revision": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+      "sha256": "92353d97fd2aa20f598b48fce7756318e586934fb486f5b0933ab3eba5510262"
+    },
+    {
+      "path": "server/src/api/v1/upload_path.rs",
+      "repository": "zhaofengli/attic",
+      "revision": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+      "sha256": "24ceece13e11623e5faf1def3fa1f37f9b6ecfe75791c3a61fc325db340d2d84"
+    },
+    {
+      "path": "server/src/storage/s3.rs",
+      "repository": "zhaofengli/attic",
+      "revision": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+      "sha256": "90749d8ff8af55002354060da6fb222f23007b4ee421f84a8d1fcd35a286981e"
+    },
+    {
+      "path": "server/src/config.rs",
+      "repository": "zhaofengli/attic",
+      "revision": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+      "sha256": "67c85031be1dd39fe0a011d0dcb29ccc6fd5e80edfc86c95a84fe95e5e914d3b"
+    }
+  ],
+  "workflowSource": "acc115c8082a00881fc3d1daef8af08b62458a85"
+}

@@ -1,0 +1,902 @@
+{
+  "schemaVersion": 1,
+  "preparedAt": "2026-11-21T10:34:02.716639+00:00",
+  "scope": "Bounded checkpoint request attribution for the retained 2026-11-21 09:49\u201310:03 UTC incident; no new pipeline or collector observation.",
+  "sourceFiles": [
+    {
+      "filename": "torghut-checkpoint-storage-attribution-20261121.json",
+      "sha256": "c62854a0530b57598507291bd37b0909b53fbfb5e1a2eb80413668b9b6646ff0"
+    },
+    {
+      "filename": "torghut-checkpoint-phase-diagnosis-20261121.json",
+      "sha256": "b33a93af48f3509fb1459f8f786ce1c5cf8b39c95402dfdd552d7ecd27796180"
+    }
+  ],
+  "historicalStorageCorrelation": {
+    "observedAt": "2026-11-21T10:28:40.517968+00:00",
+    "logWindowStart": "2026-11-21T09:49:00+00:00",
+    "logWindowEndExclusive": "2026-11-21T10:04:00+00:00",
+    "metricWindowEnd": "2026-11-21T10:03:00+00:00",
+    "metricStepSeconds": 30,
+    "requestedCheckpoints": [99273, 99280, 168676],
+    "logQuery": "{namespace=\"rook-ceph\",pod=~\"rook-ceph-rgw-objectstore-.*\"} |~ \"chk-(99273|99280|168676)\"",
+    "logReadAvailable": true,
+    "logStatus": "success",
+    "matchingLogLines": 0,
+    "logLimit": 5000,
+    "logLimitReached": false,
+    "nonAccessMatchingLines": 0,
+    "unparsedAccessLines": 0,
+    "requestSelectionCapped": false,
+    "checkpointRequestSummary": {
+      "99273": {
+        "parsedRequests": 0,
+        "allJobIdsMatch": false,
+        "latencyFields": 0,
+        "maximumReportedSeconds": null
+      },
+      "99280": {
+        "parsedRequests": 0,
+        "allJobIdsMatch": false,
+        "latencyFields": 0,
+        "maximumReportedSeconds": null
+      },
+      "168676": {
+        "parsedRequests": 0,
+        "allJobIdsMatch": false,
+        "latencyFields": 0,
+        "maximumReportedSeconds": null
+      }
+    },
+    "requests": [],
+    "storageMetricAggregates": {
+      "dbWriteMean1m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "device": "nvme1n1"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.006070945583338579,
+            "median": 0.01722096902302764,
+            "maximum": 0.04193859897901978,
+            "maximumAt": "2026-11-21T09:58:30+00:00"
+          }
+        ]
+      },
+      "dbQueue1m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "device": "nvme1n1"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 2.806500000002173,
+            "median": 9.104600000001179,
+            "maximum": 11.87170000000236,
+            "maximumAt": "2026-11-21T09:58:30+00:00"
+          }
+        ]
+      },
+      "dbBusy1m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "device": "nvme1n1"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.7910666666653318,
+            "median": 0.9954666666667132,
+            "maximum": 0.999466666666558,
+            "maximumAt": "2026-11-21T09:57:00+00:00"
+          }
+        ]
+      },
+      "osdWriteMean5m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "ceph_daemon": "osd.3"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.9588796984266716,
+            "median": 1.770483843912076,
+            "maximum": 2.7791118449671597,
+            "maximumAt": "2026-11-21T10:03:00+00:00"
+          },
+          {
+            "labels": {
+              "ceph_daemon": "osd.4"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.8648686636539294,
+            "median": 1.0849385531069182,
+            "maximum": 2.879721386666442,
+            "maximumAt": "2026-11-21T09:58:00+00:00"
+          },
+          {
+            "labels": {
+              "ceph_daemon": "osd.5"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.9051522266683105,
+            "median": 1.5915606164399012,
+            "maximum": 2.6113686400402165,
+            "maximumAt": "2026-11-21T09:58:00+00:00"
+          }
+        ]
+      },
+      "osdQueueMean5m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "ceph_daemon": "osd.3"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.07143716744488515,
+            "median": 0.19605997425097232,
+            "maximum": 2.19040568589593,
+            "maximumAt": "2026-11-21T10:03:00+00:00"
+          },
+          {
+            "labels": {
+              "ceph_daemon": "osd.4"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.044712366661811886,
+            "median": 0.2803142269519603,
+            "maximum": 0.8195991633928785,
+            "maximumAt": "2026-11-21T10:03:00+00:00"
+          },
+          {
+            "labels": {
+              "ceph_daemon": "osd.5"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.05461577194790568,
+            "median": 0.3223991368166912,
+            "maximum": 1.4819380494647967,
+            "maximumAt": "2026-11-21T10:03:00+00:00"
+          }
+        ]
+      },
+      "turinDBWrite1m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "device": "nvme2n1"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.00020718609646298798,
+            "median": 0.04155201909687353,
+            "maximum": 0.09562901082211367,
+            "maximumAt": "2026-11-21T09:49:00+00:00"
+          }
+        ]
+      },
+      "turinDBQueue1m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "device": "nvme2n1"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.06893333333233992,
+            "median": 13.72766666666527,
+            "maximum": 17.876966666666945,
+            "maximumAt": "2026-11-21T09:49:00+00:00"
+          }
+        ]
+      },
+      "turinDBBusy1m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "device": "nvme2n1"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.03879999999965852,
+            "median": 0.9968000000003182,
+            "maximum": 1.0,
+            "maximumAt": "2026-11-21T09:56:00+00:00"
+          }
+        ]
+      },
+      "turinOSDWrite5m": {
+        "available": true,
+        "series": [
+          {
+            "labels": {
+              "ceph_daemon": "osd.0"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 1.6287201501743387,
+            "median": 3.1489880919749424,
+            "maximum": 7.768061850949588,
+            "maximumAt": "2026-11-21T09:57:00+00:00"
+          },
+          {
+            "labels": {
+              "ceph_daemon": "osd.1"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 0.9741680839810223,
+            "median": 2.2462141802388067,
+            "maximum": 8.762605108622632,
+            "maximumAt": "2026-11-21T09:58:00+00:00"
+          },
+          {
+            "labels": {
+              "ceph_daemon": "osd.2"
+            },
+            "finiteSamples": 29,
+            "nonfiniteSamples": 0,
+            "minimum": 1.323480933611608,
+            "median": 3.4907408506079394,
+            "maximum": 10.886931843078486,
+            "maximumAt": "2026-11-21T09:58:00+00:00"
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "earlierMetricExpressionFile": "dd-arm-native-aligned.json",
+      "earlierMetricExpressionFileSha256": "84dbebe83a3366da6d6c2c6417e0687faf692be8ccb976147583ab5c17889710",
+      "reads": [
+        {
+          "read": "dbQueue1m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.493871+00:00",
+          "bytes": 1141,
+          "sha256": "3e328f9c2bb995089d31e2babc88cf57a3f664e0c0fcc3b9aef64569ad67526b",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "dbBusy1m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.494166+00:00",
+          "bytes": 1168,
+          "sha256": "bba135a012b27850e7f6a02c0ff1eab419a42d1358d3fc113d8b9b6b7b34d110",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "osdWriteMean5m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.494708+00:00",
+          "bytes": 3403,
+          "sha256": "88d8b23134ad4c6dca93d391a991177f630abad82d3207586efbeba99bd036ad",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "dbWriteMean1m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.494999+00:00",
+          "bytes": 1221,
+          "sha256": "370bf3ba4c5c21c981ad6c6c3a0107f520d5e79b83a25d86233e3148d67a9854",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "osdQueueMean5m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.499355+00:00",
+          "bytes": 3487,
+          "sha256": "4b5d203311dd111c776b11a50b1a0e8ad807d94ad3bd55e3f4422f93bed97cfe",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "turinDBBusy1m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.500605+00:00",
+          "bytes": 1134,
+          "sha256": "f9bd939b1da94e6b9617f8e9ae7b2d9b1b059064cd030e4cd3d8df1710a902e7",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "turinDBQueue1m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.500867+00:00",
+          "bytes": 1145,
+          "sha256": "4e66fd5a7256f6a36742fc209bd16f8c51d93595c9a81431ee9c63a1cd371d14",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "turinDBWrite1m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.501220+00:00",
+          "bytes": 1199,
+          "sha256": "bfda6469b0f1a91420e91796daeba42fa08cfdc202c045a215735223cef40e64",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "turinOSDWrite5m",
+          "available": true,
+          "at": "2026-11-21T10:28:40.504512+00:00",
+          "bytes": 3326,
+          "sha256": "711a8f9ff6e93f3d2059b6e83db11fa3c66337ac03fdd734095d448b98d0fac8",
+          "reason": null,
+          "httpStatus": null
+        },
+        {
+          "read": "logs",
+          "available": true,
+          "at": "2026-11-21T10:28:40.516941+00:00",
+          "bytes": 3602,
+          "sha256": "812e018f27aaa93987abffc7751b39b75153d39e1cdaca87c6611178f75afc4f",
+          "reason": null,
+          "httpStatus": null
+        }
+      ]
+    },
+    "limitations": [
+      "Matching request evidence and concurrent device/OSD pressure are separate conclusions. Aggregate metric correlation alone does not prove request causality.",
+      "Only these checkpoint IDs and this window were queried; no pipeline or collector sample was repeated.",
+      "Request IDs are retained only when explicitly present in the log; an absent ID is not reconstructed from connection pointers.",
+      "Raw paths, URLs, upload IDs, headers, payloads and raw logs are not retained. Object-path and original-record hashes support internal matching.",
+      "The log window includes the10:03 minute so archive99280 can be observed; metrics use09:49\u201310:03."
+    ]
+  },
+  "directRgwLogRecovery": {
+    "schemaVersion": 1,
+    "window": {
+      "from": "2026-11-21T09:49:00Z",
+      "through": "2026-11-21T10:03:59.999999999Z"
+    },
+    "requestedCheckpoints": [
+      {
+        "pipeline": "archive",
+        "checkpointId": 99273
+      },
+      {
+        "pipeline": "archive",
+        "checkpointId": 99280
+      },
+      {
+        "pipeline": "ta",
+        "checkpointId": 168676
+      }
+    ],
+    "captureReceipts": [
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "requestedSince": "2026-11-21T09:52:00Z",
+        "serverLimitBytes": 1000000,
+        "returnedFirstTimestamp": "2026-11-21T10:02:59.545961895Z",
+        "returnedLastTimestamp": "2026-11-21T10:07:02.680266984Z",
+        "stdoutBytes": 1000000,
+        "stdoutTruncated": false,
+        "captureIncomplete": false,
+        "exitCode": 0,
+        "toolJobId": "443c7d6a-88b3-47a3-bf2d-d4bb32417436",
+        "commandSha256": "a32c9c8cdc28eeda6fac4e4d4ad99bdb081eb4d579fda060a6413b9b62914944",
+        "returnedStdoutSha256": "8ea9e0e8906d0eea2f6bf240adc6384904692f25d4e558307970d6b32a6ddb5f",
+        "priorToolLimitedCapture": {
+          "stdoutBytes": 4551980,
+          "stdoutTruncated": true,
+          "returnedStdoutBytes": 1048576,
+          "toolJobId": "7ed2ec5f-bdfb-45e6-b75e-0ba42c6652b9",
+          "commandSha256": "dacf0990a9eabfeb0b0c93afd4250cd2d3f060c9673c6357d85fe103a83b2889"
+        }
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-kqgs9",
+        "requestedSince": "2026-11-21T09:52:00Z",
+        "serverLimitBytes": 1000000,
+        "returnedFirstTimestamp": "2026-11-21T10:15:30.700172140Z",
+        "returnedLastTimestamp": "2026-11-21T10:23:04.047396437Z",
+        "stdoutBytes": 1000000,
+        "stdoutTruncated": false,
+        "captureIncomplete": false,
+        "exitCode": 0,
+        "toolJobId": "5ee6e8ba-2001-48e0-ae66-4a66636584fa",
+        "commandSha256": "9d75c297a2f1ada5909668fa67122d30e4a1cbac700881f09d5b494eda5d8276",
+        "returnedStdoutSha256": "6460c5a978bc20e1840cf8c39dd48f9a51b9ff5c13347a7b7d4a1c510fadbbd2",
+        "priorToolLimitedCapture": {
+          "stdoutBytes": 1764095,
+          "stdoutTruncated": true,
+          "returnedStdoutBytes": 1048576,
+          "toolJobId": "f4a92e5f-bd10-496d-83e4-2a4eee4f9904",
+          "commandSha256": "787a1e01ee18d2c33679ef7c7731444091189d42e64a4f4449555bf854eef82a"
+        }
+      }
+    ],
+    "exactMatches": [
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:02.521641886Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 3.147888899,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "89e008b357e5db57a0162ca0760f5401f78170c0257d7379eafa7d7cbd5418e2",
+        "sourceLogRecordSha256": "549542cccfa6903c5a9c92329f13095f2bc3162ab4e464f6e61250213e74f3eb"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:06.362907601Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 3.839864492,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "7bb4412501abfcf5a2c22fab1a7892188493e72f3a1c89ab12f2bf785c606c3e"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:06.366263199Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 0.003999859,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "c9dfa747bacd1e96ecc6482a8582e5affe48a2e391e5bcc88f0d478c8a635a84",
+        "sourceLogRecordSha256": "c4c230b86a819c1e43c42677501b7caad4ad8f37f9b2bff5240f77c3f0f24a98"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:07.399747828Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 1.031963587,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "c9dfa747bacd1e96ecc6482a8582e5affe48a2e391e5bcc88f0d478c8a635a84",
+        "sourceLogRecordSha256": "ad378ad3f21eb684a4f531c91bd06096fa0535cd06bc5874aa6308a74d96be67"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:08.960518856Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 1.559944987,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "bdd75fd685ecca8a58fd45de5d91f32bf6013ffb8164217a2aa3497a4d5053a2"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:08.964017100Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 0,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "a7fae0db0140b163c2a946014ab59b95db39bc8c10f3df2a5f812928f23746b1",
+        "sourceLogRecordSha256": "66a8544774559d0651e1fadb1294b8dfb0d27244ef02c3f6c04e1d93e840fca0"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:10.078494539Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 1.115960598,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "a7fae0db0140b163c2a946014ab59b95db39bc8c10f3df2a5f812928f23746b1",
+        "sourceLogRecordSha256": "bf0790dd6d0685ceb0e50fc28f12f35a0964e836d1c3cfe9be8c557718568639"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:11.640030571Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 1.559944987,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "096c67b5c61e7502847cf1cb993bc3165f7b96a77064009f06c493bf3c0b51a7"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:12.481916583Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 0.835970521,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "ea14566cab4217cb993056228993d2993b46d4b860efef06e00ba6ef0bda4efd",
+        "sourceLogRecordSha256": "19cdd790e468fcadd3f72d45824ee24a41649aff277a1c481456bc7836e85ce3"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:16.388269156Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 3.903862238,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "ea14566cab4217cb993056228993d2993b46d4b860efef06e00ba6ef0bda4efd",
+        "sourceLogRecordSha256": "809caa027aa4784f0ad6f42fa6f544a87ebbc49e375a1ecf56a3062c14ff7c41"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:18.973977637Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 2.583908796,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "2de5b834e949893495c300d14eddb1c761f91c7cafbc51deb8b176a56b6a6cd2"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:19.509648507Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 0.53198123,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "56a40e936418450aad7d0b49b97a1cb973df3b45032453e04f84ede193d028af",
+        "sourceLogRecordSha256": "f614516b136ec6d6cad661e45acdfc1c30ddb9dbbec71d378345383bddb0f697"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:23.272237314Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 3.75986743,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "56a40e936418450aad7d0b49b97a1cb973df3b45032453e04f84ede193d028af",
+        "sourceLogRecordSha256": "63edd4e5effe55c77f07187fc66895accd07a1b0611df42bc610e65cc5ad35cd"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:26.073686608Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 2.799901247,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "d32e1cf2548677316cf7320a95438fe3904f0e6a6dae761e9a999e2f20d9f582"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:26.077681246Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 0,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "c7c38878b92eb6d603b15f9187e832b317e120a43383d4f9dbe83b31ee7e8fdf",
+        "sourceLogRecordSha256": "78307728c2fb749843d0454d179e6848153bf22f0cec98d0323d2689b9fc2597"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:30.110868096Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 4.031857491,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "c7c38878b92eb6d603b15f9187e832b317e120a43383d4f9dbe83b31ee7e8fdf",
+        "sourceLogRecordSha256": "415df900d031a501f724634584530b906d1dcc0e9133d5467f617a01022d9cf8"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:32.173412029Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 2.059927225,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "e28839313e3c49add6a3ee4a21a40b2b086e36fa8712c6255c321440a05f7eb7"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:32.176681501Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 0,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "bd7d3eb0cdb22cb15e64d3dfbef0e066fb914fc5fc272be3e262d4de1913d513",
+        "sourceLogRecordSha256": "b24520cd3d3b26bbac91e014ca08bba920bb9c0dff2f2fd735b3b2293eab0581"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:32.479151746Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 0.303989291,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "bd7d3eb0cdb22cb15e64d3dfbef0e066fb914fc5fc272be3e262d4de1913d513",
+        "sourceLogRecordSha256": "48b3f8d85580e52eff8f324001a39c1cf3b20b73bda1896673fe805b2832b1cd"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:33.771880655Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 1.291954398,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "ec6eed2d388579d5824a9e727dbce587820db4768e51e226504d4773c503549d"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:34.849152188Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 1.071962118,
+        "requestId": null,
+        "objectRole": "checkpointMetadata",
+        "objectKeySha256": "a02bf6941534a89e2bccdeba73faf4b27d895f1cb0592160b37ed4ad49cd5429",
+        "sourceLogRecordSha256": "c0ba4c42405261dee0dc3d0891c5471fa840b4be110ea3bcc294501d2bc47f22"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:37.374335278Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 2.523910999,
+        "requestId": null,
+        "objectRole": "checkpointMetadata",
+        "objectKeySha256": "a02bf6941534a89e2bccdeba73faf4b27d895f1cb0592160b37ed4ad49cd5429",
+        "sourceLogRecordSha256": "4f2de3f8d712906a51d6d8c94f91204ada540cca52f03bea91c04d766f73d1b9"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:40.884091970Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 3.507876158,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "7969aa17349cce7b569528834bb9097b4be00e754e32730d16ce10138ad9c0f8"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:43.863266122Z",
+        "operation": "PutObject",
+        "httpMethod": "PUT",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 2.975894928,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "85d75cc17e23958bb953fb4b7f5ec0559748a4bfc32d51582875c3658ec0d326",
+        "sourceLogRecordSha256": "26eddaa8a9d707d864c76c832857577cc3d709f72d54fd0b0efaf60411e01464"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:47.230798606Z",
+        "operation": "HeadObject",
+        "httpMethod": "HEAD",
+        "httpStatus": 404,
+        "reportedLatencySeconds": 1.075961947,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "971c5c0e586462f396cd58cb6c9e04876045ba1a879eef675e1af4d8caf2141e",
+        "sourceLogRecordSha256": "40a68bfe5ab7d9cc83515b164eaf4d3841051482f7e5e4045c8825735a900219"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "query",
+        "logAt": "2026-11-21T10:03:48.148857228Z",
+        "operation": "ListObjectsV2",
+        "httpMethod": "GET",
+        "httpStatus": 200,
+        "reportedLatencySeconds": 0.915967703,
+        "requestId": null,
+        "objectRole": "checkpointPrefixListing",
+        "objectKeySha256": "4b9a1498309f53b1f2f681b78508cee985c64ca55e88f96669a46036e0cf243c",
+        "sourceLogRecordSha256": "2aa253bbf36494faf2f53ed32d2bac16dd514bc9792662875013e6ebf9520592"
+      },
+      {
+        "pod": "rook-ceph-rgw-objectstore-a-66dc949cfb-4lcz4",
+        "pipeline": "ta",
+        "checkpointId": 168676,
+        "jobIdMatches": true,
+        "checkpointMatchLocation": "path",
+        "logAt": "2026-11-21T10:03:48.998881678Z",
+        "operation": "DeleteObject",
+        "httpMethod": "DELETE",
+        "httpStatus": 204,
+        "reportedLatencySeconds": 0.847970068,
+        "requestId": null,
+        "objectRole": "checkpointOtherObject",
+        "objectKeySha256": "85d75cc17e23958bb953fb4b7f5ec0559748a4bfc32d51582875c3658ec0d326",
+        "sourceLogRecordSha256": "49fb17fab94000b062f14e9b66587cd68e074ffa9c6e6f313d44d3869efd6f52"
+      }
+    ],
+    "findings": [
+      "The retained RGW page contains exact TA 168676 path or prefix matches at 10:03:02\u201310:03:48, after its 09:56:45.379 completion; these later operations do not attribute the earlier 189.044-second last-ack-to-completion tail.",
+      "No exact archive 99273 or 99280 request was recovered from the returned pages.",
+      "The earlier 09:53\u201309:56 finalization interval is outside both returned page coverages. The captures do not establish why that earlier interval was unavailable.",
+      "The 09:49\u201310:03 historical device and OSD measurements in the companion source establish contemporaneous pressure, not attribution to any exact checkpoint request."
+    ],
+    "limitations": [
+      "Server-byte-limited reads returned exactly the cap and therefore do not establish complete coverage after each last timestamp.",
+      "Earlier unbounded-since reads exceeded the tool reply cap and returned only final bytes; those tails cannot prove absence in the incident window.",
+      "Empty Loki results do not establish absence because RGW ingestion and retention coverage were not verified.",
+      "Access-log latency is server-reported request latency. logAt is the emitted timestamp and is not asserted to be request start time.",
+      "No explicit request identifiers were present in matching access-log records; connection pointers were not substituted for request IDs.",
+      "Raw request URLs, object keys, query values, upload identifiers, headers, payloads and unrelated request inventories are omitted.",
+      "No new pipeline or collector observation, workload change, synthetic load, logging change or storage tuning was performed."
+    ],
+    "summary": {
+      "matchingRequestCount": 27,
+      "operationCounts": {
+        "DeleteObject": 9,
+        "ListObjectsV2": 9,
+        "HeadObject": 8,
+        "PutObject": 1
+      },
+      "statusCounts": {
+        "204": 9,
+        "200": 17,
+        "404": 1
+      },
+      "reportedLatencyMaximumSeconds": 4.031857491,
+      "explicitRequestIdCount": 0,
+      "matchedCheckpoints": [168676],
+      "allMatchesAfterKnownCheckpointCompletion": true,
+      "originalFinalizationTailRequestAttribution": "unresolved"
+    }
+  },
+  "conclusion": "The retained metric history establishes concurrent shared storage pressure. The recovered exact checkpoint operations are later TA 168676 activity and do not identify the request causing the earlier 169.678-second archive or 189.044-second TA finalization tail. Earlier RGW request coverage was not recovered; exact operation attribution remains unresolved."
+}

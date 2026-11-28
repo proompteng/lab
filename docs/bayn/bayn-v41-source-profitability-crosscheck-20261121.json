@@ -1,0 +1,586 @@
+{
+  "schemaVersion": "bayn.source-profitability-correctness-crosscheck.v1",
+  "scope": "Bounded source-only mechanical correctness review; no strategy modification or economic qualification.",
+  "revisions": {
+    "inspectedMain": "78dc7bd3d3b6b8a3f6d76ec72f81b4c4520a42b3",
+    "releasingBayn": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+    "previouslyDeployedBayn": "c217c1ddcce8f87d6c4306de27a1894cf8afe4ec"
+  },
+  "sourceContext": {
+    "expectedCommit": "78dc7bd3d3b6b8a3f6d76ec72f81b4c4520a42b3",
+    "indexedCommit": "78dc7bd3d3b6b8a3f6d76ec72f81b4c4520a42b3",
+    "snapshotVerified": true
+  },
+  "comparison": {
+    "method": "Git blob identity for each explicitly inspected production path at each of three immutable commits.",
+    "pathCount": 33,
+    "identicalToReleasingCount": 33,
+    "identicalToPreviouslyDeployedCount": 32,
+    "records": [
+      {
+        "path": "services/bayn/src/jev/protocol.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "5ad7cd26122077b7cf6822cd4e3cd7bfc80a5999",
+          "releasingBayn": "5ad7cd26122077b7cf6822cd4e3cd7bfc80a5999",
+          "previouslyDeployedBayn": "3a1c5cdb4c9b60b17cbb48bfbbebdce4df478a9d"
+        },
+        "sameReleasing": true,
+        "samePrevious": false
+      },
+      {
+        "path": "services/bayn/src/jev/markets.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "1c587435c45c88f66893f5ea3152309b1073e0ba",
+          "releasingBayn": "1c587435c45c88f66893f5ea3152309b1073e0ba",
+          "previouslyDeployedBayn": "1c587435c45c88f66893f5ea3152309b1073e0ba"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/runtime.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "c7f03db42b23d7ebddab1f678c322d8023644277",
+          "releasingBayn": "c7f03db42b23d7ebddab1f678c322d8023644277",
+          "previouslyDeployedBayn": "c7f03db42b23d7ebddab1f678c322d8023644277"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/decision.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "09b8a575b2b6ddca26164846ba68c916e24cd8a0",
+          "releasingBayn": "09b8a575b2b6ddca26164846ba68c916e24cd8a0",
+          "previouslyDeployedBayn": "09b8a575b2b6ddca26164846ba68c916e24cd8a0"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/trading-signals.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "8266111add34dd64f26a168754f2ef651741de1e",
+          "releasingBayn": "8266111add34dd64f26a168754f2ef651741de1e",
+          "previouslyDeployedBayn": "8266111add34dd64f26a168754f2ef651741de1e"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/entry-economics.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "ef60e07a995e02f479eb44f4ed022b8dc2bd93d0",
+          "releasingBayn": "ef60e07a995e02f479eb44f4ed022b8dc2bd93d0",
+          "previouslyDeployedBayn": "ef60e07a995e02f479eb44f4ed022b8dc2bd93d0"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/entry-sizing.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "6720954fc7e51688570943070b1265d0085f7aab",
+          "releasingBayn": "6720954fc7e51688570943070b1265d0085f7aab",
+          "previouslyDeployedBayn": "6720954fc7e51688570943070b1265d0085f7aab"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/entry-proposals.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "6a139b3189904ccae7de3f77ae1a9f055495fcf2",
+          "releasingBayn": "6a139b3189904ccae7de3f77ae1a9f055495fcf2",
+          "previouslyDeployedBayn": "6a139b3189904ccae7de3f77ae1a9f055495fcf2"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/liquidation-economics.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "927f8b1953113e8d9d6b00683540f7d5986022a9",
+          "releasingBayn": "927f8b1953113e8d9d6b00683540f7d5986022a9",
+          "previouslyDeployedBayn": "927f8b1953113e8d9d6b00683540f7d5986022a9"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/strategy-exit-plan.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "59a9767d11e847998a12ec87bb2a15dfb642d55f",
+          "releasingBayn": "59a9767d11e847998a12ec87bb2a15dfb642d55f",
+          "previouslyDeployedBayn": "59a9767d11e847998a12ec87bb2a15dfb642d55f"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/short-entry.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "e5eef4396eae80bd40e928d88e54851f9409ccdc",
+          "releasingBayn": "e5eef4396eae80bd40e928d88e54851f9409ccdc",
+          "previouslyDeployedBayn": "e5eef4396eae80bd40e928d88e54851f9409ccdc"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/short-exit-plan.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "027989de6828aaf66fef31b69b26a6f8362b2394",
+          "releasingBayn": "027989de6828aaf66fef31b69b26a6f8362b2394",
+          "previouslyDeployedBayn": "027989de6828aaf66fef31b69b26a6f8362b2394"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/exit.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "993b6a4f4042b105fd2a76d5aff9d8b4f94aaf97",
+          "releasingBayn": "993b6a4f4042b105fd2a76d5aff9d8b4f94aaf97",
+          "previouslyDeployedBayn": "993b6a4f4042b105fd2a76d5aff9d8b4f94aaf97"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/profit-target.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "19fe51c47f005bc93001f87044c63e7b16288394",
+          "releasingBayn": "19fe51c47f005bc93001f87044c63e7b16288394",
+          "previouslyDeployedBayn": "19fe51c47f005bc93001f87044c63e7b16288394"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/entry-questions.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "aa42a66974cc40cfb9bf8ed8b55dbaa7203af61c",
+          "releasingBayn": "aa42a66974cc40cfb9bf8ed8b55dbaa7203af61c",
+          "previouslyDeployedBayn": "aa42a66974cc40cfb9bf8ed8b55dbaa7203af61c"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/jev/judgment-policy.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "ed1dc11d5af5b80e08bf018bc6e05c4cd37376e3",
+          "releasingBayn": "ed1dc11d5af5b80e08bf018bc6e05c4cd37376e3",
+          "previouslyDeployedBayn": "ed1dc11d5af5b80e08bf018bc6e05c4cd37376e3"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/quantity.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "7465e07beaeaf88b69aa44981aab990a74917fcf",
+          "releasingBayn": "7465e07beaeaf88b69aa44981aab990a74917fcf",
+          "previouslyDeployedBayn": "7465e07beaeaf88b69aa44981aab990a74917fcf"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/strategy/execution-model/fixed-point.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "989d0eafca510fde82e8d762f1cf9e0a96d48d98",
+          "releasingBayn": "989d0eafca510fde82e8d762f1cf9e0a96d48d98",
+          "previouslyDeployedBayn": "989d0eafca510fde82e8d762f1cf9e0a96d48d98"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/strategy/execution-model/fees.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "14a6b5bca63f86651ff4578e70a06173890b2cf7",
+          "releasingBayn": "14a6b5bca63f86651ff4578e70a06173890b2cf7",
+          "previouslyDeployedBayn": "14a6b5bca63f86651ff4578e70a06173890b2cf7"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/strategy/runtime-decision.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "644404410ebe2173071684fbc05a5702e322558f",
+          "releasingBayn": "644404410ebe2173071684fbc05a5702e322558f",
+          "previouslyDeployedBayn": "644404410ebe2173071684fbc05a5702e322558f"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/target-planner/model.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "8f2a12885b9643bdf508fc7fd8fe41cc6fb7e132",
+          "releasingBayn": "8f2a12885b9643bdf508fc7fd8fe41cc6fb7e132",
+          "previouslyDeployedBayn": "8f2a12885b9643bdf508fc7fd8fe41cc6fb7e132"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/target-planner/facts.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "3d6bdc8fc657ae63378cea363e67b99ec71e186a",
+          "releasingBayn": "3d6bdc8fc657ae63378cea363e67b99ec71e186a",
+          "previouslyDeployedBayn": "3d6bdc8fc657ae63378cea363e67b99ec71e186a"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/target-planner/planning.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "51765fb450edfd4835827b2a96624737ffb1e6de",
+          "releasingBayn": "51765fb450edfd4835827b2a96624737ffb1e6de",
+          "previouslyDeployedBayn": "51765fb450edfd4835827b2a96624737ffb1e6de"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/execution/contracts.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "88075e386592373b5dce42d1c340f8148afaea73",
+          "releasingBayn": "88075e386592373b5dce42d1c340f8148afaea73",
+          "previouslyDeployedBayn": "88075e386592373b5dce42d1c340f8148afaea73"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/execution/position-protection.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "e4a745e941c395722f1189495d2bf6a0833b1422",
+          "releasingBayn": "e4a745e941c395722f1189495d2bf6a0833b1422",
+          "previouslyDeployedBayn": "e4a745e941c395722f1189495d2bf6a0833b1422"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/execution/intent-pricing.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "ab834b6497510bd0bcad1163e521d407af6db7f6",
+          "releasingBayn": "ab834b6497510bd0bcad1163e521d407af6db7f6",
+          "previouslyDeployedBayn": "ab834b6497510bd0bcad1163e521d407af6db7f6"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/execution/mutation-authority.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "a026a97a305305f8247ae74f32996cb4a34a748f",
+          "releasingBayn": "a026a97a305305f8247ae74f32996cb4a34a748f",
+          "previouslyDeployedBayn": "a026a97a305305f8247ae74f32996cb4a34a748f"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/broker/alpaca-price.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "08681c4344138f906623ce5985a79fb2cfaa0122",
+          "releasingBayn": "08681c4344138f906623ce5985a79fb2cfaa0122",
+          "previouslyDeployedBayn": "08681c4344138f906623ce5985a79fb2cfaa0122"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/broker/alpaca/protection-group.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "1fd16071965f72ccefbbe09f225a765b3dcc6a67",
+          "releasingBayn": "1fd16071965f72ccefbbe09f225a765b3dcc6a67",
+          "previouslyDeployedBayn": "1fd16071965f72ccefbbe09f225a765b3dcc6a67"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/broker/alpaca-mutations/decisions.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "9410ec591de71074e7e9f1c95338e532b7230bc1",
+          "releasingBayn": "9410ec591de71074e7e9f1c95338e532b7230bc1",
+          "previouslyDeployedBayn": "9410ec591de71074e7e9f1c95338e532b7230bc1"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/observe-composition/decision-builder.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "bd270156da0107cc60379dd5aa47bcbdb1533c1c",
+          "releasingBayn": "bd270156da0107cc60379dd5aa47bcbdb1533c1c",
+          "previouslyDeployedBayn": "bd270156da0107cc60379dd5aa47bcbdb1533c1c"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/observe-composition/mutation-intent-interpreter.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "729a334d8b668966e72ca714c9b8a475a859459b",
+          "releasingBayn": "729a334d8b668966e72ca714c9b8a475a859459b",
+          "previouslyDeployedBayn": "729a334d8b668966e72ca714c9b8a475a859459b"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      },
+      {
+        "path": "services/bayn/src/risk.ts",
+        "gitBlobHashes": {
+          "inspectedMain": "fffedeb023338fb464c62f015df658cb5db3eb68",
+          "releasingBayn": "fffedeb023338fb464c62f015df658cb5db3eb68",
+          "previouslyDeployedBayn": "fffedeb023338fb464c62f015df658cb5db3eb68"
+        },
+        "sameReleasing": true,
+        "samePrevious": true
+      }
+    ],
+    "exactPreviouslyDeployedToInspectedProtocolDiff": "diff --git a/services/bayn/src/jev/protocol.ts b/services/bayn/src/jev/protocol.ts\nindex 3a1c5cdb4c..5ad7cd2612 100644\n--- a/services/bayn/src/jev/protocol.ts\n+++ b/services/bayn/src/jev/protocol.ts\n@@ -319,6 +319,9 @@ export const RetainedJevProtocolV36Schema = Schema.Struct({\n   ),\n )\n \n+// Original default at 4467bce540bb135b96a59b1ee37396885914df0a; retained readers cannot substitute new parameters.\n+export const retainedJevProtocolV37ParameterHash = '4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6'\n+\n export const RetainedJevProtocolV37Schema = Schema.Struct({\n   ...CurrentProtocol.fields,\n   ...protocolFields(\n",
+    "protocolDeltaInterpretation": "Only a comment and the frozen retained-v37 parameter-hash export were added. The current v41 schema/default and inspected execution behavior were unchanged.",
+    "reproduction": {
+      "blobCommand": ["git", "rev-parse", "<revision>:<path>"],
+      "protocolDiffCommand": [
+        "git",
+        "diff",
+        "c217c1ddcce8f87d6c4306de27a1894cf8afe4ec",
+        "78dc7bd3d3b6b8a3f6d76ec72f81b4c4520a42b3",
+        "--",
+        "services/bayn/src/jev/protocol.ts"
+      ]
+    }
+  },
+  "result": "No reproducible mechanical profitability defect was found in the reviewed paths. No source-supported profitability correction is justified by this cross-check.",
+  "findings": [
+    {
+      "boundary": "ENTRY_AND_EXIT_DIRECTION",
+      "finding": "Short proposals receive negative target weights. Signed quantity deltas produce BUY or SELL; buys use ask references and sells use bid references. A flat target sells long inventory or buys to cover short inventory. Native protection validation checks the matching entry and opposite exit sides.",
+      "sourceReferences": [
+        {
+          "path": "services/bayn/src/jev/decision.ts",
+          "startLine": 129,
+          "endLine": 146
+        },
+        {
+          "path": "services/bayn/src/target-planner/facts.ts",
+          "startLine": 288,
+          "endLine": 327
+        },
+        {
+          "path": "services/bayn/src/target-planner/planning.ts",
+          "startLine": 79,
+          "endLine": 107
+        },
+        {
+          "path": "services/bayn/src/broker/alpaca/protection-group.ts",
+          "startLine": 17,
+          "endLine": 62
+        }
+      ]
+    },
+    {
+      "boundary": "STOP_AND_TARGET_DIRECTION",
+      "finding": "Long plans require stopLimit <= stop < entryCeiling < target; short plans require target < entryFloor < stop <= stopLimit. Position management uses the bid for long liquidation and ask for short covering. Refreshed entry quotes crossing the respective stop or target are rejected.",
+      "sourceReferences": [
+        {
+          "path": "services/bayn/src/jev/strategy-exit-plan.ts",
+          "startLine": 8,
+          "endLine": 29
+        },
+        {
+          "path": "services/bayn/src/jev/short-exit-plan.ts",
+          "startLine": 15,
+          "endLine": 38
+        },
+        {
+          "path": "services/bayn/src/jev/runtime.ts",
+          "startLine": 489,
+          "endLine": 526
+        },
+        {
+          "path": "services/bayn/src/jev/runtime.ts",
+          "startLine": 628,
+          "endLine": 643
+        },
+        {
+          "path": "services/bayn/src/jev/profit-target.ts",
+          "startLine": 6,
+          "endLine": 12
+        }
+      ]
+    },
+    {
+      "boundary": "PRICE_QUANTITY_AND_ROUNDING",
+      "finding": "Monetary arithmetic uses micro-USD and quantity uses 1000000000 atoms per share. Equity entry sizing floors to whole shares and retains the original funded quantity cap. Buy notionals round upward and sell notionals downward. Limit rounding preserves the buy ceiling or sell floor. Initial long ask and short bid bounds use their explicitly directed broker-tick rounding.",
+      "sourceReferences": [
+        {
+          "path": "services/bayn/src/quantity.ts",
+          "startLine": 3,
+          "endLine": 33
+        },
+        {
+          "path": "services/bayn/src/strategy/execution-model/fixed-point.ts",
+          "startLine": 64,
+          "endLine": 86
+        },
+        {
+          "path": "services/bayn/src/strategy/execution-model/fixed-point.ts",
+          "startLine": 116,
+          "endLine": 151
+        },
+        {
+          "path": "services/bayn/src/jev/entry-sizing.ts",
+          "startLine": 10,
+          "endLine": 99
+        },
+        {
+          "path": "services/bayn/src/execution/intent-pricing.ts",
+          "startLine": 85,
+          "endLine": 108
+        },
+        {
+          "path": "services/bayn/src/broker/alpaca-price.ts",
+          "startLine": 4,
+          "endLine": 19
+        }
+      ]
+    },
+    {
+      "boundary": "MODELED_FEE_APPLICATION",
+      "finding": "Long acquisition adds the buy cash fee once and liquidation subtracts the sell fee. Short sale proceeds deduct the sell fee once; covering adds the buy fee once. The conservative long liquidation estimate substitutes a linear bound plus rounding reserve for stepped variable fees; it does not add both estimates as separate expenses. These pure planning calculations do not post accounting expenses.",
+      "sourceReferences": [
+        {
+          "path": "services/bayn/src/jev/entry-economics.ts",
+          "startLine": 94,
+          "endLine": 122
+        },
+        {
+          "path": "services/bayn/src/jev/liquidation-economics.ts",
+          "startLine": 22,
+          "endLine": 55
+        },
+        {
+          "path": "services/bayn/src/jev/short-entry.ts",
+          "startLine": 109,
+          "endLine": 156
+        },
+        {
+          "path": "services/bayn/src/strategy/execution-model/fees.ts",
+          "startLine": 84,
+          "endLine": 153
+        }
+      ]
+    },
+    {
+      "boundary": "EVENT_TIME_ELIGIBILITY",
+      "finding": "The original source/batch and admission expiries are checked around refreshed pricing. Entry risk binds source quote eventAt, rejects an event later than its pricing snapshot, and requires evaluation strictly before expiry. Millisecond truncation moves the stored quote deadline earlier. The holding interval begins at the first actual fill.",
+      "sourceReferences": [
+        {
+          "path": "services/bayn/src/jev/runtime.ts",
+          "startLine": 294,
+          "endLine": 355
+        },
+        {
+          "path": "services/bayn/src/observe-composition/decision-builder.ts",
+          "startLine": 975,
+          "endLine": 1027
+        },
+        {
+          "path": "services/bayn/src/risk.ts",
+          "startLine": 259,
+          "endLine": 267
+        },
+        {
+          "path": "services/bayn/src/risk.ts",
+          "startLine": 336,
+          "endLine": 341
+        },
+        {
+          "path": "services/bayn/src/risk.ts",
+          "startLine": 867,
+          "endLine": 873
+        },
+        {
+          "path": "services/bayn/src/risk.ts",
+          "startLine": 1007,
+          "endLine": 1029
+        },
+        {
+          "path": "services/bayn/src/jev/exit.ts",
+          "startLine": 71,
+          "endLine": 77
+        }
+      ]
+    },
+    {
+      "boundary": "PROFIT_EXIT_RESTRICTIONS",
+      "finding": "Long profit exits retain the original target floor; short profit covers retain the original target ceiling. Existing stop-crossing or first-fill holding-deadline conditions release those restrictions. The restrictions are not inverted or applied to the wrong order side.",
+      "sourceReferences": [
+        {
+          "path": "services/bayn/src/jev/exit.ts",
+          "startLine": 294,
+          "endLine": 352
+        },
+        {
+          "path": "services/bayn/src/strategy/runtime-decision.ts",
+          "startLine": 110,
+          "endLine": 133
+        },
+        {
+          "path": "services/bayn/src/observe-composition/decision-builder.ts",
+          "startLine": 1218,
+          "endLine": 1232
+        }
+      ]
+    }
+  ],
+  "existingEvidenceUsed": {
+    "report": "docs/bayn/session-investigation-2026-11-20.md",
+    "executionQueries": "docs/bayn/sql/session-investigation-2026-11-20-execution.sql",
+    "observedCompletedEpisodes": 169,
+    "observedGrossTradingPnlMicros": "-1352000000",
+    "previouslyEstablishedObservedRowChecks": [
+      "Every observed entry fill stayed within its original funded long price ceiling or short price floor and maximum quantity.",
+      "Every observed episode realized gross loss within its original modeled stop budget.",
+      "Executable-side IEX entry quote comparisons were favorable on average, subject to the report's source, venue and PAPER execution limitations."
+    ],
+    "newlyReplayedHistoricalRows": false
+  },
+  "economicLimits": [
+    "This is source inspection and exact blob comparison, not a universal proof of correctness or a new native/end-to-end execution result.",
+    "Current-main findings apply to the identified releasing source because all 33 inspected files match; they are not causal proof for every historical November 16-20 source revision.",
+    "Observed-row bounds and stop-budget checks cover the retained cohort, not future fills, gap losses, or fee allocation to individual episodes.",
+    "A fee-inclusive positive modeled target and possible modeled stop loss do not establish positive expected value; structural judgment thresholds are not calibrated target-before-stop probabilities.",
+    "The retained cohort establishes poor observed economics. Favorable executable-IEX quote comparisons do not prove signal quality, consolidated best execution, or complete implementation shortfall.",
+    "The price diagnostic did not independently replay every held-source hash and leaves four of 450 historical closing fills unmeasured.",
+    "Known fees, partial inference-cost allocation and retained qualification outcomes were not reopened or recomputed by this cross-check. Complete operating-cost coverage and strategy qualification remain separate evidence requirements.",
+    "No source-supported parameter tuning, asset/side disabling, strategy registration, assessment, order, grant or provider dispatch was proposed."
+  ],
+  "actions": {
+    "strategyCodeEdits": false,
+    "newTests": false,
+    "liveDataQueries": false,
+    "providerCalls": false,
+    "registrationsOrAssessments": false,
+    "ordersOrAuthorityChanges": false,
+    "worktreeCleanAtReviewCompletion": true
+  },
+  "provenance": {
+    "ownedSession": "repo-bayn-v41-correctness-crosscheck-558cac02",
+    "comparisonRequestKey": "source-audit-v41-release-comparison-184",
+    "protocolDeltaRequestKey": "source-audit-v41-protocol-delta-185",
+    "reviewDateUtc": "2026-11-21"
+  }
+}

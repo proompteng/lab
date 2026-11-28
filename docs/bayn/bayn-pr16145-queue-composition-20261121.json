@@ -1,0 +1,411 @@
+{
+  "schemaVersion": 1,
+  "scope": "Prospective composition of reviewed PR16145 head a53de4f with merged queue-retention source601d546; temporary merge was validated and aborted back to the original clean reviewed tree.",
+  "qualification": "The affectedPaths list includes intervening main changes. The actual queue-retention squash modifies only its four owned files. This proves the recorded prospective source composition and focused checks; it is not the later diagnostics head or a deployed publisher.",
+  "input": {
+    "name": "bayn-pr16145-queue-composition-20261121.json",
+    "sourcePath": "/tmp/bayn-pr16145-queue-composition-20261121.json",
+    "originalSha256": "38b2b82af28fc687197621608448ed123a5448568cca18f01ff9e65e7617073f",
+    "evidence": {
+      "startedAt": "2026-11-21T11:49:17.066639+00:00",
+      "reviewedHead": "a53de4ffc1ac310118f57d5f722dc8968ca07e4e",
+      "queueMerge": "601d54608971a7f37421dec979d4e1465b68abd3",
+      "mergeBase": "8fa7ba0d71e60ab4d41269a5b548b35dbfa34417",
+      "originalHeadTree": "bfc96fa84878b02a0e17d79a306dc5eff3d3ad8f",
+      "queueMergeTree": "1dc592cdbdb45615e06bc97b58dccdfd38844e1f",
+      "originalWorkingTreeClean": true,
+      "affectedPaths": [
+        ".github/actionlint.yaml",
+        ".github/workflows/bayn-build-push.yml",
+        ".github/workflows/codex-ci.yml",
+        ".github/workflows/feature-flags-ci.yml",
+        ".github/workflows/flamingo-ci.yml",
+        ".github/workflows/golink-ci.yml",
+        ".github/workflows/jangar-guardrails.yml",
+        ".github/workflows/khoshut-ci.yml",
+        ".github/workflows/nix-oci-build-common.yml",
+        "apps/landing/playwright.config.ts",
+        "apps/landing/src/components/tengri/chrome-browser.e2e.test.ts",
+        "packages/scripts/src/bayn/image-cohort.test.ts",
+        "packages/scripts/src/bayn/prepare-image-cohort.test.ts",
+        "packages/scripts/src/bayn/prepare-image-cohort.ts",
+        "packages/scripts/src/bayn/publication-source.test.ts",
+        "packages/scripts/src/ci/__tests__/affected-inputs.test.ts",
+        "services/bayn/README.md",
+        "services/bayn/src/db/execution-store.integration.test.ts",
+        "services/nanoagent/browser-client.js"
+      ],
+      "status": "COMPOSITION_VALIDATED_ORIGINAL_HEAD_RESTORED",
+      "prospectiveTree": "d97b5d1027ab5fb31d90d44f32167158e4478b9d",
+      "mergeSucceededWithoutConflicts": true,
+      "affectedFileBlobs": {
+        ".github/actionlint.yaml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "ca2503f6793ec9d6a6d522773be0b2d3b0839c9f"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "296aed789081243e9d06869a1a4a298ef9a2c3fd"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "296aed789081243e9d06869a1a4a298ef9a2c3fd"
+          }
+        },
+        ".github/workflows/bayn-build-push.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "6bf9797556c568505b68b1295ec0cb13f2ee53ae"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "be5a9b2f1b992b3c43f48c896327b316e3f00bce"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "38bc70917dc6b38af0cab3852872e01ed3e3c416"
+          }
+        },
+        ".github/workflows/codex-ci.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "ceb6f70b1342febc156d44754ef09ca0879be3e1"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "d8ea672e10fac601dc1ffe6ee528d8b7b29eb329"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "d8ea672e10fac601dc1ffe6ee528d8b7b29eb329"
+          }
+        },
+        ".github/workflows/feature-flags-ci.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "7507a5b2b6295c58a6490149c19dbd1bd506e497"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "79f92e7e838ec316edf18389ae42c71259931ed7"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "79f92e7e838ec316edf18389ae42c71259931ed7"
+          }
+        },
+        ".github/workflows/flamingo-ci.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "1e1f8ede177c0d0cb520e9640616eb399739b53e"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "b3cb45f750cf76b105f13b1ecd90f0e39b3553c4"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "b3cb45f750cf76b105f13b1ecd90f0e39b3553c4"
+          }
+        },
+        ".github/workflows/golink-ci.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "27b066bb3eb6ec9bf8b818e5a0be8af841dcca42"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "7baa08ed90126ab543bf29917642015d3b2aabe8"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "7baa08ed90126ab543bf29917642015d3b2aabe8"
+          }
+        },
+        ".github/workflows/jangar-guardrails.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "9e4dd3b168145c5bdb415546afbe1c10c3b01168"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "aec6e1dd84a3771c9edb9d24441f4b674f46d625"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "aec6e1dd84a3771c9edb9d24441f4b674f46d625"
+          }
+        },
+        ".github/workflows/khoshut-ci.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "229267b0f223c92d40242579190fd02ee24ad6b1"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "b1ad66cb5538fadf2cbefad62090036ce8344dd5"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "b1ad66cb5538fadf2cbefad62090036ce8344dd5"
+          }
+        },
+        ".github/workflows/nix-oci-build-common.yml": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "f6813910ebafe4d154ef6a79ea9717f2a32ae814"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "c38283fa1fd2886b14044abf939075e15fe9b028"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "f6813910ebafe4d154ef6a79ea9717f2a32ae814"
+          }
+        },
+        "apps/landing/playwright.config.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "0aadb56df175d1eb2c9aebcd7625bf0a3ba324db"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "04859e94b2d0dfb41ca8bca0822249d2bb44bd90"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "04859e94b2d0dfb41ca8bca0822249d2bb44bd90"
+          }
+        },
+        "apps/landing/src/components/tengri/chrome-browser.e2e.test.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "ce760ea178a5540470155dd19c7df4b7a1b11976"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "a16889f9763e92029d637c85c29f89bfc59a5720"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "a16889f9763e92029d637c85c29f89bfc59a5720"
+          }
+        },
+        "packages/scripts/src/bayn/image-cohort.test.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "8be2410692302d913ac46913cb6fcacefc9c939b"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "79a8dc92fc8c0ed051b5bc3110fab91e718125b1"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "8be2410692302d913ac46913cb6fcacefc9c939b"
+          }
+        },
+        "packages/scripts/src/bayn/prepare-image-cohort.test.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "e45bd349dbcfef03419b42ce715a4fba66ca4843"
+          },
+          "queueMerge": null,
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "e45bd349dbcfef03419b42ce715a4fba66ca4843"
+          }
+        },
+        "packages/scripts/src/bayn/prepare-image-cohort.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "ffa931442e6428ce5aa0035906337b7fd344e8b9"
+          },
+          "queueMerge": null,
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "ffa931442e6428ce5aa0035906337b7fd344e8b9"
+          }
+        },
+        "packages/scripts/src/bayn/publication-source.test.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "047ae78920ea7dbbf837cbda884146c9162e2b3b"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "2ac8af635f8b8d9b8334e668f889ae415d03b60d"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "2ac8af635f8b8d9b8334e668f889ae415d03b60d"
+          }
+        },
+        "packages/scripts/src/ci/__tests__/affected-inputs.test.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "1e19fc0f539e94ae1006e482c273f7db7ae76e44"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "3a99ce35ad7f92b9c8094fcee71ecf55fc51d832"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "3647ef4686cc24e07d86093ed8a1d91d2af96d24"
+          }
+        },
+        "services/bayn/README.md": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "cea66ddb51b017d2750fdf21c78ea80e89cf273e"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "dd91d5938fb6e3f9893781af60c8956db3996f44"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "cea66ddb51b017d2750fdf21c78ea80e89cf273e"
+          }
+        },
+        "services/bayn/src/db/execution-store.integration.test.ts": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "8dc04d19c5e340d3446cbacb367534f13346c8e4"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "191f744ac3df2a2b4c873b414fa5d71542399af7"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "191f744ac3df2a2b4c873b414fa5d71542399af7"
+          }
+        },
+        "services/nanoagent/browser-client.js": {
+          "reviewedHead": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "d118a2842c31b443e5b534c391ae2c3f04c5ced6"
+          },
+          "queueMerge": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "a9ec044cf35af92397a7fab58cdc236794227933"
+          },
+          "prospective": {
+            "mode": "100644",
+            "kind": "blob",
+            "oid": "a9ec044cf35af92397a7fab58cdc236794227933"
+          }
+        }
+      },
+      "checks": [
+        {
+          "command": [
+            "bun",
+            "test",
+            "packages/scripts/src/bayn/prepare-image-cohort.test.ts",
+            "packages/scripts/src/bayn/image-cohort.test.ts",
+            "packages/scripts/src/bayn/publication-source.test.ts",
+            "packages/scripts/src/bayn/kargo.test.ts",
+            "packages/scripts/src/shared/__tests__/nix-oci-workflow.test.ts",
+            "packages/scripts/src/shared/__tests__/oci.test.ts",
+            "packages/scripts/src/ci/__tests__/affected-inputs.test.ts"
+          ],
+          "exitCode": 0,
+          "log": "/tmp/bayn-pr16145-queue-composition-check-0-20261121.log",
+          "tail": [
+            "(pass) native OCI build workflows > keeps Bumba image content independent from GitOps-only release commits [0.07ms]",
+            "(pass) native OCI build workflows > keeps Froussard Knative digest rollouts from respecting ignored live annotations during apply [0.05ms]",
+            "(pass) native OCI build workflows > disables AWS metadata lookups for the Attic S3 client without changing storage resources [0.03ms]",
+            "",
+            " 265 pass",
+            " 0 fail",
+            " 2839 expect() calls",
+            "Ran 265 tests across 7 files. [9.59s]"
+          ]
+        },
+        {
+          "command": [
+            "/tmp/bayn-queue-actionlint-20261121/actionlint-1.7.7",
+            "-shellcheck",
+            "",
+            "-pyflakes",
+            "",
+            ".github/workflows/bayn-build-push.yml",
+            ".github/workflows/nix-oci-build-common.yml"
+          ],
+          "exitCode": 0,
+          "log": "/tmp/bayn-pr16145-queue-composition-check-1-20261121.log",
+          "tail": []
+        }
+      ],
+      "validationFinishedAt": "2026-11-21T11:50:20.727156+00:00",
+      "restoration": {
+        "observedAt": "2026-11-21T11:51:59.677946+00:00",
+        "head": "a53de4ffc1ac310118f57d5f722dc8968ca07e4e",
+        "tree": "bfc96fa84878b02a0e17d79a306dc5eff3d3ad8f",
+        "workingTreeClean": true,
+        "mergeHeadAbsent": true,
+        "abortToolJobId": "9badcc0f-dcbb-4239-8677-98d85a361c94",
+        "abortExitCode": 0
+      }
+    }
+  }
+}
