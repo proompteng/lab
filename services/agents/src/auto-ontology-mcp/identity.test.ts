@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TokenReviewIdentity } from '../linear-mcp/identity'
 import { RESOURCE_MAP } from '../server/kube-types'
 
-import { createAutoOntologyIdentityVerifier } from './identity'
+import { createMcpRunIdentityVerifier } from '../server/mcp-run-identity'
 
 const config = {
   namespace: 'agents',
@@ -76,14 +76,23 @@ const fixture = (overrides: Partial<TokenReviewIdentity> = {}, name = 'run') => 
     ...overrides,
   }
   const reviewToken = vi.fn(async () => identity)
-  const verify = createAutoOntologyIdentityVerifier(config, { get }, reviewToken)
+  const verify = createMcpRunIdentityVerifier(
+    { ...config, serviceAccountsByProvider: { codex: config.expectedServiceAccount } },
+    { get },
+    reviewToken,
+  )
   return { pod, job, run, agent, provider, get, reviewToken, verify, resources, identity }
 }
 
 describe('Auto Ontology MCP projected identity', () => {
   it('authenticates any active AgentRun using the standard Codex provider', async () => {
     const { get, reviewToken, verify } = fixture()
-    await expect(verify('projected-token')).resolves.toBeUndefined()
+    await expect(verify('projected-token')).resolves.toEqual({
+      agentRun: 'run',
+      agentRunUid: 'run-uid',
+      namespace: 'agents',
+      serviceAccount: config.expectedServiceAccount,
+    })
     expect(reviewToken).toHaveBeenCalledWith('projected-token', config.audience)
     expect(get).toHaveBeenCalledWith(RESOURCE_MAP.AgentProvider, 'codex', config.namespace)
   })
@@ -178,7 +187,11 @@ describe('Auto Ontology MCP projected identity', () => {
       expect(namespace).toBe(config.namespace)
       return resources.get(`${kind}/${name}`) ?? null
     })
-    const verify = createAutoOntologyIdentityVerifier(config, { get }, reviewToken)
+    const verify = createMcpRunIdentityVerifier(
+      { ...config, serviceAccountsByProvider: { codex: config.expectedServiceAccount } },
+      { get },
+      reviewToken,
+    )
     const results = Promise.all(pods.map(([token]) => verify(token)))
     const concurrentReviews = reviewToken.mock.calls.length
     expect(get).not.toHaveBeenCalled()

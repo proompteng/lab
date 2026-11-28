@@ -343,6 +343,9 @@ type AgentProviderWorkloadSpec struct {
 	AutomountServiceAccountToken *bool `json:"automountServiceAccountToken,omitempty"`
 	// ServiceAccountToken projects a short-lived, audience-bound token into runner Jobs.
 	ServiceAccountToken *AgentProviderServiceAccountTokenSpec `json:"serviceAccountToken,omitempty"`
+	// AdditionalServiceAccountTokens project other audiences at distinct mount paths.
+	// +kubebuilder:validation:MaxItems=8
+	AdditionalServiceAccountTokens []AgentProviderServiceAccountTokenSpec `json:"additionalServiceAccountTokens,omitempty"`
 }
 
 type AgentProviderServiceAccountTokenSpec struct {

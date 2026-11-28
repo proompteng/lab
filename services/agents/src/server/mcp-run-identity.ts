@@ -1,8 +1,8 @@
 import { createKubernetesTokenReviewer, isActiveAgentRunPhase, type TokenReviewer } from '../linear-mcp/identity'
-import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '../server/kube-types'
-import { asRecord, asString, readNested } from '../server/primitives'
+import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from './kube-types'
+import { asRecord, asString, readNested } from './primitives'
 
-export class AutoOntologyIdentityError extends Error {
+export class McpRunIdentityError extends Error {
   constructor(
     readonly status: 401 | 403,
     readonly code: 'invalid_token' | 'identity_denied' | 'agent_run_inactive',
@@ -11,8 +11,8 @@ export class AutoOntologyIdentityError extends Error {
   }
 }
 
-const invalidToken = () => new AutoOntologyIdentityError(401, 'invalid_token')
-const denied = () => new AutoOntologyIdentityError(403, 'identity_denied')
+const invalidToken = () => new McpRunIdentityError(401, 'invalid_token')
+const denied = () => new McpRunIdentityError(403, 'identity_denied')
 
 const owner = (resource: Record<string, unknown>, apiVersion: string, kind: string) => {
   const refs = readNested(resource, ['metadata', 'ownerReferences'])
@@ -27,10 +27,12 @@ const owner = (resource: Record<string, unknown>, apiVersion: string, kind: stri
   throw denied()
 }
 
-type IdentityConfig = { namespace: string; audience: string; expectedServiceAccount: string }
+type IdentityConfig = { namespace: string; audience: string; serviceAccountsByProvider: Record<string, string> }
 
-export const createAutoOntologyIdentityVerifier = (
-  { namespace, audience, expectedServiceAccount }: IdentityConfig,
+export type McpRunIdentity = { agentRun: string; agentRunUid: string; namespace: string; serviceAccount: string }
+
+export const createMcpRunIdentityVerifier = (
+  { namespace, audience, serviceAccountsByProvider }: IdentityConfig,
   kube: Pick<KubernetesClient, 'get'> = createKubernetesClient(),
   reviewToken: TokenReviewer = createKubernetesTokenReviewer(),
 ) => {
@@ -41,12 +43,17 @@ export const createAutoOntologyIdentityVerifier = (
     return value
   }
 
-  return async (token: string) => {
+  const accounts = new Map(Object.entries(serviceAccountsByProvider))
+  const allowedUsernames = new Set(
+    Array.from(accounts.values(), (name) => `system:serviceaccount:${namespace}:${name}`),
+  )
+  return async (token: string): Promise<McpRunIdentity> => {
     if (!token || token.length > 16_384) throw invalidToken()
     const review = await reviewToken(token, audience)
     if (!review.authenticated || review.error || !review.audiences.includes(audience)) throw invalidToken()
     if (
-      review.username !== `system:serviceaccount:${namespace}:${expectedServiceAccount}` ||
+      !review.username ||
+      !allowedUsernames.has(review.username) ||
       !review.groups.includes(`system:serviceaccounts:${namespace}`)
     ) {
       throw denied()
@@ -57,34 +64,41 @@ export const createAutoOntologyIdentityVerifier = (
     if (!podName || !podUid) throw denied()
 
     const pod = await lookup('pod', podName, podUid)
-    if (readNested(pod, ['spec', 'serviceAccountName']) !== expectedServiceAccount) throw denied()
+    const serviceAccount = asString(readNested(pod, ['spec', 'serviceAccountName']))
+    if (!serviceAccount || review.username !== `system:serviceaccount:${namespace}:${serviceAccount}`) throw denied()
     const jobRef = owner(pod, 'batch/v1', 'Job')
     const job = await lookup('job', jobRef.name, jobRef.uid)
     const runRef = owner(job, 'agents.proompteng.ai/v1alpha1', 'AgentRun')
     const labels = asRecord(readNested(job, ['metadata', 'labels']))
+    const providerName = asString(labels?.['agents.proompteng.ai/provider'])
     if (
       labels?.['agents.proompteng.ai/agent-run'] !== runRef.name ||
-      labels['agents.proompteng.ai/provider'] !== 'codex'
+      !providerName ||
+      accounts.get(providerName) !== serviceAccount
     ) {
       throw denied()
     }
 
     const run = await lookup(RESOURCE_MAP.AgentRun, runRef.name, runRef.uid)
     if (!isActiveAgentRunPhase(readNested(run, ['status', 'phase']))) {
-      throw new AutoOntologyIdentityError(403, 'agent_run_inactive')
+      throw new McpRunIdentityError(403, 'agent_run_inactive')
     }
     const agentName = asString(readNested(run, ['spec', 'agentRef', 'name']))
     if (!agentName) throw denied()
     const [agent, provider] = await Promise.all([
       lookup(RESOURCE_MAP.Agent, agentName),
-      lookup(RESOURCE_MAP.AgentProvider, 'codex'),
+      lookup(RESOURCE_MAP.AgentProvider, providerName),
     ])
+    const workload = asRecord(readNested(provider, ['spec', 'workload']))
+    const additionalTokens = workload?.additionalServiceAccountTokens
+    const tokens = [workload?.serviceAccountToken, ...(Array.isArray(additionalTokens) ? additionalTokens : [])]
     if (
-      readNested(agent, ['spec', 'providerRef', 'name']) !== 'codex' ||
-      readNested(provider, ['spec', 'workload', 'serviceAccountName']) !== expectedServiceAccount ||
-      readNested(provider, ['spec', 'workload', 'serviceAccountToken', 'audience']) !== audience
+      readNested(agent, ['spec', 'providerRef', 'name']) !== providerName ||
+      workload?.serviceAccountName !== serviceAccount ||
+      !tokens.some((entry) => asRecord(entry)?.audience === audience)
     ) {
       throw denied()
     }
+    return { agentRun: runRef.name, agentRunUid: runRef.uid, namespace, serviceAccount }
   }
 }

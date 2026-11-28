@@ -9,6 +9,7 @@ resources:
   - codex-auth-externalsecret.yaml
   - codex-auth-refresher.yaml
   - google-adc-externalsecret.yaml
+  - colab-mcp-adc-externalsecret.yaml
   - workspace-cache-daemonset.yaml
   - hf-router-token-sealedsecret.yaml
   - agents-shell-tunnel-runtime-sealedsecret.yaml
@@ -60,6 +61,7 @@ resources:
   - auto-ontology-mcp-token-sealedsecret.yaml
   - ../../../docs/agents/ontology
   - auto-ontology-networkpolicy.yaml
+  - colab-mcp-networkpolicy.yaml
   - auto-ontology-db-networkpolicy.yaml
   - auto-ontology-sync-cronjob.yaml
   - health-probe-networkpolicy.yaml

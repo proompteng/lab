@@ -1,0 +1,50 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-colab-mcp-gateway-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agents-colab-mcp-gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # TCP 443 covers oauth2.googleapis.com, colaboratory.googleapis.com, and the Kubernetes API Service.
+    # kube-router cannot match hostnames; the gateway pins both Google HTTPS URLs and prohibits redirects.
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-colab-mcp-runner-egress
+spec:
+  # Preserve the Agents namespace's traffic-neutral policy for other runner traffic.
+  podSelector:
+    matchExpressions:
+      - key: agents.proompteng.ai/provider
+        operator: In
+        values: [codex, google]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agents-colab-mcp-gateway
+      ports:
+        - port: 8080
+          protocol: TCP

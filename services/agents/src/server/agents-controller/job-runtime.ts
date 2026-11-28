@@ -15,7 +15,13 @@ import { resolveParam, resolveParameters, resolveRunGoal } from './run-utils'
 import { buildRuntimeRef } from './runtime-resources'
 import type { SystemPromptRef } from './system-prompt'
 import { renderTemplate } from './template-hash'
-import { buildAuthSecretPath, type EnvVar, resolveAuthSecretConfig, type VcsResolution } from './vcs-context'
+import {
+  buildAuthSecretPath,
+  collectBlockedSecrets,
+  type EnvVar,
+  resolveAuthSecretConfig,
+  type VcsResolution,
+} from './vcs-context'
 import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
@@ -115,24 +121,33 @@ export const resolveRunnerServiceAccount = (
     resolveAgentRunnerDefaultsConfig(process.env).serviceAccount,
   )
 
-const resolveProviderServiceAccountToken = (provider: Record<string, unknown>) => {
-  const raw = asRecord(readNested(provider, ['spec', 'workload', 'serviceAccountToken']))
-  if (!raw) return null
+const parseProviderServiceAccountToken = (value: unknown) => {
+  const raw = asRecord(value)
+  if (!raw) throw new Error('AgentProvider workload service account token must be an object')
   const audience = asString(raw.audience)?.trim()
   const expirationSeconds = parseOptionalNumber(raw.expirationSeconds)
-  const mountPath = asString(raw.mountPath)?.trim()
+  const mountPath = asString(raw.mountPath)?.trim().replace(/\/+$/, '')
   if (!audience || audience.length > 253)
     throw new Error('AgentProvider workload serviceAccountToken.audience is invalid')
-  if (!expirationSeconds || expirationSeconds < 600 || expirationSeconds > 3600) {
+  if (
+    !expirationSeconds ||
+    !Number.isInteger(expirationSeconds) ||
+    expirationSeconds < 600 ||
+    expirationSeconds > 3600
+  ) {
     throw new Error('AgentProvider workload serviceAccountToken.expirationSeconds must be between 600 and 3600')
   }
-  if (!mountPath || !mountPath.startsWith('/') || mountPath === '/' || mountPath.split('/').includes('..')) {
+  if (
+    !mountPath ||
+    !/^\/(?:[^/]+\/)*[^/]+$/.test(mountPath) ||
+    mountPath.split('/').some((part) => part === '.' || part === '..')
+  ) {
     throw new Error('AgentProvider workload serviceAccountToken.mountPath must be an absolute non-root path')
   }
   return {
     audience,
-    expirationSeconds: Math.trunc(expirationSeconds),
-    mountPath: mountPath.replace(/\/+$/, ''),
+    expirationSeconds,
+    mountPath,
   }
 }
 
@@ -794,6 +809,21 @@ export const submitJobRun = async (
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
   const usesControllerAuthSecret = providerUsesControllerAuthSecret(provider)
   const authSecret = usesControllerAuthSecret ? resolveAuthSecretConfig() : null
+  const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
+  const blockedSecrets = collectBlockedSecrets(
+    [
+      ...runSecrets,
+      ...env.map((entry) => asString(readNested(entry, ['valueFrom', 'secretKeyRef', 'name']))),
+      ...[...volumeSpecs, ...(vcsRuntime?.volumes ?? [])].map((volume) =>
+        asString(readNested(volume.spec, ['secret', 'secretName'])),
+      ),
+      authSecret?.name,
+      options.systemPromptRef?.kind === 'Secret' ? options.systemPromptRef.name : null,
+    ].filter((name): name is string => Boolean(name)),
+  )
+  if (blockedSecrets.length > 0) {
+    throw new Error(`secrets blocked by controller policy: ${blockedSecrets.join(', ')}`)
+  }
 
   const inputEntries = inputFiles
     .map((file: Record<string, unknown>) => ({
@@ -835,12 +865,19 @@ export const submitJobRun = async (
       })
     : null
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig, provider)
-  const serviceAccountToken = resolveProviderServiceAccountToken(provider)
+  const primaryToken = readNested(provider, ['spec', 'workload', 'serviceAccountToken'])
+  const additionalTokens = readNested(provider, ['spec', 'workload', 'additionalServiceAccountTokens']) ?? []
+  if (!Array.isArray(additionalTokens) || additionalTokens.length > 8) {
+    throw new Error('AgentProvider workload additionalServiceAccountTokens must be an array of up to 8 projections')
+  }
+  const serviceAccountTokens = [...(primaryToken == null ? [] : [primaryToken]), ...additionalTokens].map(
+    parseProviderServiceAccountToken,
+  )
   const providerAutomount = readNested(provider, ['spec', 'workload', 'automountServiceAccountToken'])
   const automountServiceAccountToken =
     typeof providerAutomount === 'boolean' && serviceAccount === extractProviderServiceAccount(provider)
       ? providerAutomount
-      : serviceAccountToken
+      : serviceAccountTokens.length > 0
         ? false
         : undefined
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
@@ -946,8 +983,6 @@ export const submitJobRun = async (
     usesStandardLabRunner &&
     resourceQuantityBytes(resources.requests?.['ephemeral-storage']) >= 8 * GIB_BYTES &&
     resourceQuantityBytes(resources.limits?.['ephemeral-storage']) >= 16 * GIB_BYTES
-
-  const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
   const configVolumeMounts = [] as Record<string, unknown>[]
   const volumes = [...volumeSpecs]
@@ -1086,7 +1121,7 @@ export const submitJobRun = async (
         name: geminiHomeVolumeName,
         spec: { emptyDir: usesStandardRunner ? tmpfs(1) : {} },
       })
-      configVolumeMounts.push({
+      configVolumeMounts.unshift({
         name: geminiHomeVolumeName,
         mountPath: DEFAULT_GEMINI_HOME,
       })
@@ -1102,14 +1137,17 @@ export const submitJobRun = async (
     configVolumeMounts.push(...vcsRuntime.volumeMounts)
   }
 
-  if (serviceAccountToken) {
+  for (const [index, serviceAccountToken] of serviceAccountTokens.entries()) {
     if (
       hasVolumeMountAtPath(volumeMounts, serviceAccountToken.mountPath) ||
       hasVolumeMountAtPath(configVolumeMounts, serviceAccountToken.mountPath)
     ) {
       throw new Error(`projected service account token mountPath ${serviceAccountToken.mountPath} is already in use`)
     }
-    const identityVolumeName = makeName(providerName || runName, 'mcp-identity')
+    const identityVolumeName = makeName(providerName || runName, index === 0 ? 'mcp-identity' : `mcp-identity-${index}`)
+    if (volumes.some((volume) => volume.name === identityVolumeName)) {
+      throw new Error(`projected service account token volume ${identityVolumeName} is already in use`)
+    }
     volumes.push({
       name: identityVolumeName,
       spec: {
@@ -1132,10 +1170,12 @@ export const submitJobRun = async (
       mountPath: serviceAccountToken.mountPath,
       readOnly: true,
     })
-    env.push({
-      name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH',
-      value: `${serviceAccountToken.mountPath}/token`,
-    })
+    if (index === 0 && primaryToken != null) {
+      env.push({
+        name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH',
+        value: `${serviceAccountToken.mountPath}/token`,
+      })
+    }
   }
 
   const sharedCacheHostPath = runnerDefaultsConfig.sharedCacheHostPath
@@ -1154,7 +1194,7 @@ export const submitJobRun = async (
 
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount,
-    automountServiceAccountToken,
+    ...(automountServiceAccountToken === undefined ? {} : { automountServiceAccountToken }),
     restartPolicy: 'Never',
     containers: [
       {

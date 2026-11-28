@@ -495,7 +495,7 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(env, 'AGENTS_ARTIFACTS_ENDPOINT')).toBe('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80')
   })
 
-  it('gives the headless Codex provider a 60-second bootstrap budget and only the Auto Ontology MCP bridge', () => {
+  it('gives headless Codex a 60-second bootstrap budget and only the Auto Ontology and Colab bridges', () => {
     const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
     const spec = objectAt(provider, 'spec')
     const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
@@ -516,6 +516,15 @@ describe('scheduled AgentRun templates', () => {
           AUTO_ONTOLOGY_MCP_GATEWAY_URL: 'http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp',
         },
       },
+      colab: {
+        command: '/usr/local/bin/colab-mcp-bridge',
+        required: false,
+        startup_timeout_sec: 30,
+        tool_timeout_sec: 660,
+        env: {
+          COLAB_MCP_GATEWAY_URL: 'http://agents-colab-mcp-gateway.agents.svc.cluster.local:8080/mcp',
+        },
+      },
     })
     expect(objectAt(config, 'mcp_servers')).toEqual({})
     expect(objectAt(objectAt(config, 'features'), 'multi_agent')).toBeUndefined()
@@ -526,6 +535,63 @@ describe('scheduled AgentRun templates', () => {
       const runtime = JSON.parse(String(objectAt(objectAt(steps[0], 'with'), 'runtime')))
       expect(runtime.config.serviceAccountName).toBe('codex-auto-ontology-runner')
     }
+  })
+
+  it('mounts audience-bound tokens for both providers and configures agy without Colab ADC', () => {
+    const dir = 'argocd/applications/agents'
+    for (const name of ['codex', 'google']) {
+      const provider = readYamlObjects(`${dir}/${name}-agentprovider.yaml`)[0]
+      const spec = objectAt(provider, 'spec')
+      const workload = objectAt(spec, 'workload')
+      expect(objectAt(workload, 'serviceAccountToken')).toMatchObject({
+        audience: 'agents.proompteng.ai/auto-ontology-mcp',
+      })
+      expect(objectAt(workload, 'additionalServiceAccountTokens')).toEqual([
+        {
+          audience: 'agents.proompteng.ai/colab-mcp',
+          mountPath: '/var/run/secrets/agents-colab-mcp',
+          expirationSeconds: 600,
+        },
+      ])
+      expect(JSON.stringify(spec)).not.toContain('colab-mcp-adc')
+      if (name === 'google') {
+        const input = (objectAt(spec, 'inputFiles') as unknown[]).find(
+          (file) => objectAt(file, 'path') === '/root/.gemini/config/mcp_config.json',
+        )
+        expect(JSON.parse(String(objectAt(input, 'content')))).toEqual({
+          mcpServers: {
+            auto_ontology: {
+              command: '/usr/local/bin/auto-ontology-mcp-bridge',
+              env: {
+                AGENTS_MCP_IDENTITY_TOKEN_PATH: '/var/run/secrets/agents-auto-ontology-mcp/token',
+                AUTO_ONTOLOGY_MCP_GATEWAY_URL:
+                  'http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp',
+              },
+            },
+            colab: {
+              command: '/usr/local/bin/colab-mcp-bridge',
+              timeoutSeconds: 660,
+              env: { COLAB_MCP_GATEWAY_URL: 'http://agents-colab-mcp-gateway.agents.svc.cluster.local:8080/mcp' },
+            },
+          },
+        })
+        expect(objectAt(spec, 'secretEnv')).toEqual([
+          { name: 'GOOGLE_APPLICATION_CREDENTIALS_JSON', secretName: 'google-adc-auth', key: 'credentials.json' },
+        ])
+      }
+    }
+    const kustomization = readYamlObjects(`${dir}/kustomization.yaml`)[0]
+    expect(objectAt(kustomization, 'resources')).toEqual(
+      expect.arrayContaining(['colab-mcp-adc-externalsecret.yaml', 'colab-mcp-networkpolicy.yaml']),
+    )
+    expect(readYamlObjects(`${dir}/colab-mcp-adc-externalsecret.yaml`)[0]).toMatchObject({
+      metadata: { namespace: 'agents' },
+      spec: {
+        secretStoreRef: { kind: 'ClusterSecretStore', name: 'onepassword-infra' },
+        target: { name: 'colab-mcp-adc' },
+        data: [{ secretKey: 'credentials.json', remoteRef: { key: 'colab-mcp-adc/credentials.json' } }],
+      },
+    })
   })
 
   it('ends the default Codex worker task at a locally validated, ready-to-review PR', () => {

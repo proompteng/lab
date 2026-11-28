@@ -355,6 +355,34 @@ export const controlPlanePrimitiveRegistry = [
             workload: {
               description: 'Workload contains provider-owned defaults for AgentRuns that use this provider.',
               properties: {
+                additionalServiceAccountTokens: {
+                  description: 'AdditionalServiceAccountTokens project other audiences at distinct mount paths.',
+                  items: {
+                    properties: {
+                      audience: {
+                        maxLength: 253,
+                        minLength: 1,
+                        type: 'string',
+                      },
+                      expirationSeconds: {
+                        format: 'int64',
+                        maximum: 3600,
+                        minimum: 600,
+                        type: 'integer',
+                      },
+                      mountPath: {
+                        maxLength: 1024,
+                        minLength: 2,
+                        pattern: '^/',
+                        type: 'string',
+                      },
+                    },
+                    required: ['audience', 'expirationSeconds', 'mountPath'],
+                    type: 'object',
+                  },
+                  maxItems: 8,
+                  type: 'array',
+                },
                 automountServiceAccountToken: {
                   description:
                     'AutomountServiceAccountToken controls the Kubernetes API token when the Job uses\nServiceAccountName. Without an override, projecting a separate token disables automount.',

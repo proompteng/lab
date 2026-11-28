@@ -11,6 +11,10 @@ spec:
       audience: agents.proompteng.ai/auto-ontology-mcp
       expirationSeconds: 600
       mountPath: /var/run/secrets/agents-auto-ontology-mcp
+    additionalServiceAccountTokens:
+      - audience: agents.proompteng.ai/colab-mcp
+        expirationSeconds: 600
+        mountPath: /var/run/secrets/agents-colab-mcp
   adapter:
     type: codex-app-server
     codex:
@@ -30,6 +34,13 @@ spec:
             env_vars: [AGENTS_MCP_IDENTITY_TOKEN_PATH]
             env:
               AUTO_ONTOLOGY_MCP_GATEWAY_URL: http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp
+          colab:
+            command: /usr/local/bin/colab-mcp-bridge
+            required: false
+            startup_timeout_sec: 30
+            tool_timeout_sec: 660
+            env:
+              COLAB_MCP_GATEWAY_URL: http://agents-colab-mcp-gateway.agents.svc.cluster.local:8080/mcp
         web_search: live
   argsTemplate: []
   envTemplate:

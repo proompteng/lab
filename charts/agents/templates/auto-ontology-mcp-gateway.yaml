@@ -16,13 +16,6 @@ metadata:
   name: {{ $name }}
   namespace: {{ $namespace }}
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ $config.runnerServiceAccountName }}
-  namespace: {{ $namespace }}
-automountServiceAccountToken: false
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -62,7 +55,7 @@ rules:
     verbs: ["get"]
   - apiGroups: ["agents.proompteng.ai"]
     resources: ["agentproviders"]
-    resourceNames: ["codex"]
+    resourceNames: ["codex", "google"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -205,8 +198,10 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels:
-              agents.proompteng.ai/provider: codex
+            matchExpressions:
+              - key: agents.proompteng.ai/provider
+                operator: In
+                values: [codex, google]
       ports:
         - port: 8080
           protocol: TCP

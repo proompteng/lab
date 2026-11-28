@@ -108,8 +108,10 @@ describe('classifyAgentsImageMode', () => {
     }
   })
 
-  it('rebuilds every image that embeds the shared Linear MCP bridge contract', () => {
+  it('rebuilds every image that embeds shared MCP bridge sources', () => {
     for (const path of [
+      'services/agents/src/colab-mcp/bridge.ts',
+      'services/agents/src/colab-mcp/config.ts',
       'services/agents/src/linear-mcp/bridge-auth.ts',
       'services/agents/src/linear-mcp/config.ts',
       'services/agents/src/linear-mcp/contract.ts',

@@ -38,6 +38,10 @@ runner:
     digest: sha256:7b8a41fa0b957323dff2f0df427a3535dac944c67caf0048861a435ecf1f52ab
 autoOntologyMcpGateway:
   enabled: true
+colabMcpGateway:
+  enabled: true
+  quotaProject: proompteng
+  maxConcurrentRuntimes: 5
 linearMcpGateway:
   enabled: false
   replicaCount: 2
