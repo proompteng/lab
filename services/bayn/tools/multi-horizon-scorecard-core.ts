@@ -6,7 +6,9 @@ import { sipUniverse } from '../src/market-data/sip/universe'
 import { strictParseOptions } from '../src/schemas'
 import { IntradayAlphaPhase } from '../src/strategy/intraday-alpha/constants'
 import { Profile } from '../src/strategy/macro-etf-core/policy'
+import { accountTradingDate } from '../src/time'
 import { Side } from './macro-canary-runner/alpaca'
+import { Mode } from './macro-canary-runner/contract'
 import { cents, intradayCapCents, microsPerCent, overnightCapCents } from './macro-canary-runner/planner'
 import { intradaySymbols, RunnerProfile } from './macro-etf-core-runner/contract'
 import {
@@ -113,7 +115,13 @@ const max = (a: bigint, b: bigint) => (a > b ? a : b)
 const isIntraday = (symbol: string) => intradaySymbols.some((candidate) => candidate === symbol)
 const nonzero = (quantity: string | null) => quantity !== null && /[1-9]/.test(quantity)
 
-const validateMacroSession = (receipt: Macro, label: string, calendar?: Session, previous?: Session) => {
+const validateMacroSession = (
+  receipt: Macro,
+  label: string,
+  checkCoexistence: boolean,
+  calendar?: Session,
+  previous?: Session,
+) => {
   const { current, reportedCurrent, brokerGross, projected, buysAtLimit } = gross(receipt)
   const critical: string[] = []
   const missing: string[] = []
@@ -146,11 +154,15 @@ const validateMacroSession = (receipt: Macro, label: string, calendar?: Session,
       ? (receipt.allocation.targets ?? [])
       : receipt.plan.sizing.map(({ symbol, targetWeight }) => ({ symbol, weight: targetWeight }))
   const excluded = 'allocation' in receipt ? receipt.allocation.excludedSymbols : receipt.plan.excludedSymbols
-  for (const symbol of intradaySymbols) {
-    if (targets.some((row) => row.symbol === symbol && row.weight > 0) || orders.includes(symbol))
-      critical.push(`${label} overlaps intraday v3: ${symbol} has positive effective target weight or a planned order`)
-    else if (!excluded.includes(symbol))
-      missing.push(`${label} does not explicitly exclude ${symbol} from every overnight review`)
+  if (checkCoexistence) {
+    for (const symbol of intradaySymbols) {
+      if (targets.some((row) => row.symbol === symbol && row.weight > 0) || orders.includes(symbol))
+        critical.push(
+          `${label} overlaps intraday v3: ${symbol} has positive effective target weight or a planned order`,
+        )
+      else if (!excluded.includes(symbol))
+        missing.push(`${label} does not explicitly exclude ${symbol} from every overnight review`)
+    }
   }
   if ('allocation' in receipt) {
     const { components, targets } = receipt.allocation
@@ -372,18 +384,36 @@ const total = (values: readonly (bigint | null)[]) =>
     ? null
     : values.reduce<bigint>((sum, value) => sum + (value ?? 0n), 0n)
 
-export const buildScorecard = (input: unknown) =>
+type DailyScope = { readonly intradayAccountId: string; readonly date: string }
+
+export const buildScorecard = (input: unknown, daily?: DailyScope) =>
   Result.gen(function* () {
     const receipts = yield* decode(input).pipe(
       Result.mapError((cause) => scorecardError('Invalid scorecard receipt or qualification schema', cause)),
     )
+    const fresh = ({ timestamp }: Macro) => daily === undefined || accountTradingDate(timestamp) === daily.date
+    const macroCore = receipts.macroCore.filter(fresh)
+    const macroCanary = receipts.macroCanary.filter(fresh)
+    if (daily !== undefined) {
+      const coreAccounts = new Set(macroCore.map((row) => row.reconciliation.account.id))
+      if (
+        receipts.qualification !== undefined ||
+        [...macroCore, ...macroCanary].some(
+          (row) => row.mode !== Mode.Shadow || row.reconciliation.account.id === daily.intradayAccountId,
+        ) ||
+        macroCanary.some((row) => coreAccounts.has(row.reconciliation.account.id))
+      )
+        return yield* fail('Daily scorecard requires separate shadow accounts and no qualification inputs', {
+          _tag: 'InvalidDailyScope',
+        })
+    }
     const audits = yield* index(
       receipts.intraday.flatMap((audit) => audit.sessions),
       ({ date }) => date,
       'intraday audit',
     )
-    const cores = yield* index(receipts.macroCore, ({ executionSession }) => executionSession, 'macro ETF core')
-    const canaries = yield* index(receipts.macroCanary, ({ executionSession }) => executionSession, 'macro canary')
+    const cores = yield* index(macroCore, ({ executionSession }) => executionSession, 'macro ETF core')
+    const canaries = yield* index(macroCanary, ({ executionSession }) => executionSession, 'macro canary')
     const sip = yield* index(receipts.sip ?? [], (receipt) => receipt.session.date, 'SIP shadow')
     const calendar = yield* index(receipts.qualification?.calendar ?? [], ({ date }) => date, 'registered calendar')
     const proofs = yield* index(receipts.qualification?.proofs ?? [], ({ date }) => date, 'PAPER proof')
@@ -434,10 +464,11 @@ export const buildScorecard = (input: unknown) =>
       const critical: string[] = []
       const missing: string[] = []
       const paperDate = session !== undefined || audit !== undefined || core !== undefined || canary !== undefined
-      if (paperDate && session === undefined) missing.push('No registered PAPER session calendar binding')
+      if (daily === undefined && paperDate && session === undefined)
+        missing.push('No registered PAPER session calendar binding')
       const intraday = audit === undefined ? null : verifyAudit(audit, proof, session)
       if (intraday === null) {
-        if (paperDate) missing.push('Missing intraday audit')
+        if (daily === undefined ? paperDate : date === daily.date) missing.push('Missing intraday audit')
       } else {
         critical.push(...intraday.critical)
         missing.push(...intraday.missing)
@@ -447,9 +478,9 @@ export const buildScorecard = (input: unknown) =>
         [canary, 'Macro canary'],
       ] as const) {
         if (receipt === undefined) {
-          if (paperDate) missing.push(`Missing ${label} receipt`)
+          if (daily === undefined && paperDate) missing.push(`Missing ${label} receipt`)
         } else {
-          const checked = validateMacroSession(receipt, label, session, previous.get(date))
+          const checked = validateMacroSession(receipt, label, daily === undefined, session, previous.get(date))
           critical.push(...checked.critical)
           missing.push(...checked.missing)
         }
@@ -504,11 +535,21 @@ export const buildScorecard = (input: unknown) =>
     )
     const qualified = paperRows.filter((row) => row.registered)
     const clean = qualified.filter((row) => row.critical.length === 0 && row.missing.length === 0).length
-    const analyzed = receipts.qualification === undefined ? paperRows : qualified
+    const analyzed =
+      daily !== undefined
+        ? paperRows.filter(({ date }) => audits.has(date))
+        : receipts.qualification === undefined
+          ? paperRows
+          : qualified
     const slippage = summary(analyzed.flatMap((row) => row.samples))
     const adjusted = total(qualified.map((row) => row.adjusted))
     const critical = paperRows.flatMap((row) => row.critical.map((reason) => `${row.date}: ${reason}`))
     const missing = paperRows.flatMap((row) => row.missing.map((reason) => `${row.date}: ${reason}`))
+    if (daily !== undefined) {
+      missing.push('Daily isolated shadow evidence is not shared-account qualification evidence')
+      if (cores.size === 0) missing.push('Missing fresh macro ETF core receipt')
+      if (canaries.size === 0) missing.push('Missing fresh macro canary receipt')
+    }
     if (clean < sessionMinimum) missing.push(`Need ${sessionMinimum} clean PAPER sessions; observed ${clean}`)
     if (slippage.medianBps === null) missing.push('No measured B0 round trips in the selected sessions')
     else if (slippage.medianBps > promotionBps)

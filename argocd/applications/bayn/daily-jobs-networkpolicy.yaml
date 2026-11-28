@@ -1,0 +1,61 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-daily-jobs-dns
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [bayn-macro-daily-sleeves, bayn-daily-scorecard]
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-macro-daily-sleeves
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-macro-daily-sleeves
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-egress-proxy
+      ports:
+        - port: 3128
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-daily-scorecard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-daily-scorecard
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: bayn-db
+              cnpg.io/instanceRole: replica
+      ports:
+        - port: 5432
+          protocol: TCP
