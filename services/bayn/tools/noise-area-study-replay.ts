@@ -234,6 +234,7 @@ interface Leg {
   readonly entry: number
   readonly entrySlot: number
   readonly exit: number | undefined
+  readonly exitSlot: number
   readonly maxHigh: number
   readonly missingHeld: number
 }
@@ -308,7 +309,7 @@ const trace = (f: Features, spec: Trial, slots: number, conditioning?: Condition
       }
     }
     const exit = f.bars[exitSlot]?.open
-    return { leg: { side, entry, entrySlot, exit, maxHigh: Math.max(maxHigh, exit ?? 0), missingHeld } }
+    return { leg: { side, entry, entrySlot, exit, exitSlot, maxHigh: Math.max(maxHigh, exit ?? 0), missingHeld } }
   }
   return {}
 }
@@ -324,10 +325,22 @@ export interface Ledger {
 }
 export const netAt = (row: Ledger, bp: number) => (row.unresolved > 0 ? null : row.base - bp * row.slope)
 
+interface Allocation {
+  readonly budget: number
+  readonly blocked: (symbol: Symbol) => boolean
+  readonly onBlocked: () => void
+  readonly onFill: (fill: Omit<Leg, 'exit'> & { readonly exit: number; readonly quantity: number }) => void
+}
+
 // Paths do not depend on basket allocation; reuse them for same-day basket and omission diagnostics.
 export const createReplay = (day: Prepared) => {
   const paths = new Map<string, Path>()
-  return (spec: Trial, members: readonly Symbol[] = baskets[spec.basket], conditioning?: Conditioning): Ledger => {
+  return (
+    spec: Trial,
+    members: readonly Symbol[] = baskets[spec.basket],
+    conditioning?: Conditioning,
+    allocation?: Allocation,
+  ): Ledger => {
     const weighted = members.map((symbol) => ({ symbol, weight: weightOf(day.bySymbol.get(symbol), spec) }))
     const totalWeight = weighted.reduce((sum, { weight }) => sum + weight, 0)
     let grossScale = 1
@@ -375,10 +388,15 @@ export const createReplay = (day: Prepared) => {
         path = trace(features, spec, day.slots, conditioning)
         paths.set(key, path)
       }
+      if (allocation?.blocked(symbol) === true && (path.leg !== undefined || path.missingEntry === true)) {
+        allocation.onBlocked()
+        continue
+      }
       if (path.missingEntry === true) missingEntries++
       const { leg } = path
       if (leg === undefined) continue
-      const budget = spec.legacy === true ? 60_000 : (capital * weight * grossScale) / totalWeight
+      const budget =
+        spec.legacy === true ? 60_000 : ((allocation?.budget ?? capital) * weight * grossScale) / totalWeight
       const legacyAtr = features.legacyAtr
       const reference = features.bars[leg.entrySlot - 1]?.close
       const quantity = Math.floor(
@@ -395,6 +413,7 @@ export const createReplay = (day: Prepared) => {
         unresolved++
         continue
       }
+      allocation?.onFill({ ...leg, exit: leg.exit, quantity })
       const sell = leg.side === 1 ? leg.exit : leg.entry
       base += quantity * (leg.side * (leg.exit - leg.entry) - sell * sellFee)
       slope += (quantity * (leg.entry + leg.exit - sell * sellFee)) / 20_000
