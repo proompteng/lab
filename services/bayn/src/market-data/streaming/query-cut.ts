@@ -10,7 +10,8 @@ import { selectWebullBars } from './webull-projection'
 const selectedFeatures = <A>(
   histories: ReadonlyMap<string, readonly ObservedFeature<A>[]>,
   receipts: readonly StreamingFeatureReceipt<A>[],
-) => {
+): ReadonlyMap<string, readonly ObservedFeature<A>[]> => {
+  if (receipts.length === 0) return new Map()
   const values = new Set(receipts.map((receipt) => receipt.value))
   return new Map(
     [...histories].flatMap(([symbol, history]) => {

@@ -317,6 +317,10 @@ verification, and funding, pricing, authority and deadline checks remain unchang
 [native quote-projection benchmark](tools/benchmark-decision-quote-projection.md) records fixture measurements,
 exact-output comparisons and their limits; it does not establish live latency or a complete report's runtime.
 
+The [intraday execution audit](tools/benchmark-intraday-pricing.md) measures quote-only reads and the PostgreSQL
+submit-containment check. A retained signal and its execution pricing must bind the same feed and topics; a
+separately verified SIP cut cannot reprice an in-flight IEX signal.
+
 ## Runtime and research images
 
 `bayn` contains status, execution, activation, projection and operating diagnostics. It retains the private
