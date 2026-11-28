@@ -153,6 +153,40 @@ data:
     hs.status = "Progressing"
     hs.message = "Waiting for the sealed-secrets controller to report the current generation."
     return hs
+  # Allow optional ExternalSecrets (e.g. colab-mcp-adc before credentials are added to 1Password)
+  # to opt out of blocking sync waves and Kargo promotion health gates via ignore-healthcheck=true,
+  # while preserving standard ExternalSecret Ready/SecretSyncedError health semantics otherwise.
+  resource.customizations.health.external-secrets.io_ExternalSecret: |
+    hs = {}
+
+    local metadata = obj.metadata or {}
+    local annotations = metadata.annotations or {}
+    if annotations["argocd.argoproj.io/ignore-healthcheck"] == "true" then
+      hs.status = "Healthy"
+      hs.message = "Optional ExternalSecret health check ignored by annotation."
+      return hs
+    end
+
+    local status = obj.status or {}
+    if status.conditions ~= nil then
+      for _, condition in ipairs(status.conditions) do
+        if condition.type == "Ready" then
+          if condition.status == "True" then
+            hs.status = "Healthy"
+            hs.message = condition.message or "Secret was synced"
+            return hs
+          elseif condition.status == "False" then
+            hs.status = "Degraded"
+            hs.message = condition.message or condition.reason or "ExternalSecret sync failed"
+            return hs
+          end
+        end
+      end
+    end
+
+    hs.status = "Progressing"
+    hs.message = "Waiting for ExternalSecret to sync."
+    return hs
   resource.customizations.health.restate.dev_RestateDeployment: |
     hs = {}
 
