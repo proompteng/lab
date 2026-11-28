@@ -14,6 +14,9 @@ const trafficNeutralSafetyNamespaces = [
   'synthesis',
   'torghut',
 ]
+const agentsSafetySelector = {
+  matchExpressions: [{ key: 'app.kubernetes.io/name', operator: 'NotIn', values: ['auto-ontology-sync'] }],
+}
 const retiredSafetyNamespace = 'bayn'
 const safetyNamespaces = [...trafficNeutralSafetyNamespaces, retiredSafetyNamespace]
 const enforcedNamespaces = ['hermes']
@@ -294,7 +297,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
     if (
       !trafficNeutralSafetyNamespaces.includes(namespace) ||
-      JSON.stringify(policy.spec?.podSelector) !== '{}' ||
+      JSON.stringify(policy.spec?.podSelector) !== JSON.stringify(namespace === 'agents' ? agentsSafetySelector : {}) ||
       JSON.stringify(policy.spec?.ingress) !== '[{}]' ||
       JSON.stringify(policy.spec?.egress) !== '[{}]'
     ) {
@@ -344,7 +347,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
     'Hermes NetworkPolicies differ from the exact reviewed policy set.',
     "kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json",
-    '.spec.podSelector == {}',
+    'if $namespace == "agents" then',
+    JSON.stringify(agentsSafetySelector),
+    'else {} end',
     '.spec.ingress == [{}]',
     '.spec.egress == [{}]',
   ])

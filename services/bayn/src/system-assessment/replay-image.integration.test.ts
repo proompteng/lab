@@ -33,76 +33,78 @@ import { bindLatencyStressSources, verifyLatencyStressImages } from './latency-r
 
 const nativeTest = process.env['BAYN_TEST_REPLAY_IMAGE'] === '1' ? test : test.skip
 
-test.each([JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent])(
-  'explicit alpha %s binds its complete engine independently from a legacy Jev role',
-  (role) => {
-    const entries = Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayStrategyManifest))
-    const alpha = entries.find((entry) => entry.engine === ResearchStrategyEngine.IntradayAlpha)
-    const jev = entries.find((entry) => entry.engine === ResearchStrategyEngine.Jev)
-    const registered = nativeRegistrationFixture(registrationFixture()).policies.find((entry) => entry.policy === role)
-    if (alpha === undefined || jev === undefined || registered === undefined) throw new Error('Missing native fixture')
-    const policy = {
-      ...registered,
-      strategyBinding: alpha,
-      strategyHash: alpha.strategy.behaviorHash,
-      parametersHash: alpha.strategy.parameterHash,
-      protocolHash: alpha.protocolHash,
-    }
-    const receipt = Schema.decodeUnknownSync(JevCompilerDependencyReceiptV5Schema)({
-      schemaVersion: 'bayn.jev-compiler-dependencies.v5',
-      sourceRevision: policy.sourceRevision,
-      bunVersion: '1.4.2',
-      files: {},
-      controlFiles: {},
-      compilerFiles: {},
-      applicationStrategyBinding: alpha,
-      compiledReplayStrategies: entries,
-    })
-    const labels = {
-      'proompteng.ai/bayn.strategy-behavior-hash': alpha.strategy.behaviorHash,
-      'proompteng.ai/bayn.strategy-parameter-hash': alpha.strategy.parameterHash,
-      'proompteng.ai/bayn.strategy-protocol-hash': alpha.protocolHash,
-    }
-    expect(Result.isSuccess(bindReplayImagePolicy(receipt, labels, policy))).toBe(true)
-    const oldPolicy = {
-      ...registered,
-      strategyHash: jev.strategy.behaviorHash,
-      parametersHash: jev.strategy.parameterHash,
-      protocolHash: jev.protocolHash,
-    }
-    expect(Result.isSuccess(bindReplayImagePolicy(receipt, labels, oldPolicy))).toBe(true)
-    for (const changed of [
-      { ...policy, strategyBinding: jev },
-      { ...policy, strategyHash: jev.strategy.behaviorHash },
-      { ...policy, parametersHash: jev.strategy.parameterHash },
-      { ...policy, protocolHash: jev.protocolHash },
-      { ...policy, policy: JevResearchPolicy.Momentum },
-    ])
-      expect(Result.isFailure(bindReplayImagePolicy(receipt, labels, changed))).toBe(true)
-    for (const changed of [
-      { ...receipt, compiledReplayStrategies: entries.filter((entry) => entry.engine !== alpha.engine) },
-      { ...receipt, compiledReplayStrategies: entries.map((entry) => (entry.engine === jev.engine ? alpha : entry)) },
-      { ...receipt, applicationStrategyBinding: jev },
-      {
-        ...receipt,
-        compiledReplayStrategies: entries.map((entry) =>
-          entry.engine === alpha.engine ? { ...alpha, protocolHash: jev.protocolHash } : entry,
-        ),
-      },
-    ])
-      expect(Result.isFailure(bindReplayImagePolicy(changed, labels, policy))).toBe(true)
-    const oldReceipt = Schema.decodeUnknownSync(JevCompilerDependencyReceiptSchema)({
-      schemaVersion: 'bayn.jev-compiler-dependencies.v4',
-      sourceRevision: policy.sourceRevision,
-      bunVersion: '1.4.2',
-      files: {},
-      controlFiles: {},
-      compilerFiles: {},
-      nativeReplayPolicies: Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayPolicyManifest)),
-    })
-    expect(Result.isFailure(bindReplayImagePolicy(oldReceipt, labels, policy))).toBe(true)
-  },
-)
+test.each([
+  [JevResearchPolicy.Candidate, ResearchStrategyEngine.IntradayAlpha],
+  [JevResearchPolicy.Incumbent, ResearchStrategyEngine.IntradayAlpha],
+  [JevResearchPolicy.Candidate, ResearchStrategyEngine.PureEtf],
+  [JevResearchPolicy.Incumbent, ResearchStrategyEngine.PureEtf],
+] as const)('explicit alpha %s / %s binds its complete engine independently from a legacy Jev role', (role, engine) => {
+  const entries = Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayStrategyManifest))
+  const alpha = entries.find((entry) => entry.engine === engine)
+  const jev = entries.find((entry) => entry.engine === ResearchStrategyEngine.Jev)
+  const registered = nativeRegistrationFixture(registrationFixture()).policies.find((entry) => entry.policy === role)
+  if (alpha === undefined || jev === undefined || registered === undefined) throw new Error('Missing native fixture')
+  const policy = {
+    ...registered,
+    strategyBinding: alpha,
+    strategyHash: alpha.strategy.behaviorHash,
+    parametersHash: alpha.strategy.parameterHash,
+    protocolHash: alpha.protocolHash,
+  }
+  const receipt = Schema.decodeUnknownSync(JevCompilerDependencyReceiptV5Schema)({
+    schemaVersion: 'bayn.jev-compiler-dependencies.v5',
+    sourceRevision: policy.sourceRevision,
+    bunVersion: '1.4.2',
+    files: {},
+    controlFiles: {},
+    compilerFiles: {},
+    applicationStrategyBinding: alpha,
+    compiledReplayStrategies: entries,
+  })
+  const labels = {
+    'proompteng.ai/bayn.strategy-behavior-hash': alpha.strategy.behaviorHash,
+    'proompteng.ai/bayn.strategy-parameter-hash': alpha.strategy.parameterHash,
+    'proompteng.ai/bayn.strategy-protocol-hash': alpha.protocolHash,
+  }
+  expect(Result.isSuccess(bindReplayImagePolicy(receipt, labels, policy))).toBe(true)
+  const oldPolicy = {
+    ...registered,
+    strategyHash: jev.strategy.behaviorHash,
+    parametersHash: jev.strategy.parameterHash,
+    protocolHash: jev.protocolHash,
+  }
+  expect(Result.isSuccess(bindReplayImagePolicy(receipt, labels, oldPolicy))).toBe(true)
+  for (const changed of [
+    { ...policy, strategyBinding: jev },
+    { ...policy, strategyHash: jev.strategy.behaviorHash },
+    { ...policy, parametersHash: jev.strategy.parameterHash },
+    { ...policy, protocolHash: jev.protocolHash },
+    { ...policy, policy: JevResearchPolicy.Momentum },
+  ])
+    expect(Result.isFailure(bindReplayImagePolicy(receipt, labels, changed))).toBe(true)
+  for (const changed of [
+    { ...receipt, compiledReplayStrategies: entries.filter((entry) => entry.engine !== alpha.engine) },
+    { ...receipt, compiledReplayStrategies: entries.map((entry) => (entry.engine === jev.engine ? alpha : entry)) },
+    { ...receipt, applicationStrategyBinding: jev },
+    {
+      ...receipt,
+      compiledReplayStrategies: entries.map((entry) =>
+        entry.engine === alpha.engine ? { ...alpha, protocolHash: jev.protocolHash } : entry,
+      ),
+    },
+  ])
+    expect(Result.isFailure(bindReplayImagePolicy(changed, labels, policy))).toBe(true)
+  const oldReceipt = Schema.decodeUnknownSync(JevCompilerDependencyReceiptSchema)({
+    schemaVersion: 'bayn.jev-compiler-dependencies.v4',
+    sourceRevision: policy.sourceRevision,
+    bunVersion: '1.4.2',
+    files: {},
+    controlFiles: {},
+    compilerFiles: {},
+    nativeReplayPolicies: Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayPolicyManifest)),
+  })
+  expect(Result.isFailure(bindReplayImagePolicy(oldReceipt, labels, policy))).toBe(true)
+})
 
 test('the rebuilt frozen control binds its own compiler, original source tree and all registered policy material', () => {
   const policy = registrationFixture().policies.find((policy) => policy.policy === JevResearchPolicy.Deployed)!

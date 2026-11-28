@@ -1,5 +1,6 @@
 import { Result, Schema } from 'effect'
 
+import { MarketCalendarObservationSchema } from '../../broker/alpaca/model'
 import { operationalError } from '../../errors'
 import { canonicalHashV1Result } from '../../hash'
 import {
@@ -14,6 +15,7 @@ import {
   buildTrailingBaseline,
   IntradayAlphaTrailingBaselineSchema,
   noiseAreaCheckpointMinutes,
+  pureEtfCheckpointMinutes,
   type PriorSessionDailySummary,
 } from './trailing-baseline'
 
@@ -29,7 +31,7 @@ export const PriorSessionDailySummarySchema = Schema.Struct({
 export const PriorSessionCheckpointSummarySchema = Schema.Struct({
   symbol: SymbolSchema,
   sessionDate: IsoDateSchema,
-  minuteFromOpen: Schema.Literals(noiseAreaCheckpointMinutes),
+  minuteFromOpen: Schema.Literals([...noiseAreaCheckpointMinutes, ...pureEtfCheckpointMinutes]),
   close: PriceSchema,
 })
 export const TrailingBaselineQuerySchema = Schema.Struct({
@@ -38,6 +40,13 @@ export const TrailingBaselineQuerySchema = Schema.Struct({
   noiseAreaSymbols: Schema.Array(SymbolSchema).check(Schema.isMaxLength(6), Schema.isUnique()),
   lookbackSessions: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60)),
   minimumSessions: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60)),
+  checkpointMinutesFromOpen: Schema.optionalKey(
+    Schema.Array(Schema.Literals(pureEtfCheckpointMinutes)).check(
+      Schema.makeFilter(
+        (grid) => grid.join(',') === pureEtfCheckpointMinutes.join(',') || 'must match the pure ETF checkpoints',
+      ),
+    ),
+  ),
   sourceContract: Schema.Struct({
     provider: Schema.Literal('alpaca'),
     feed: Schema.Literal('iex'),
@@ -53,6 +62,7 @@ export const TrailingBaselineAcquisitionSchema = Schema.Struct({
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
   inputs: Schema.Struct({
+    historySessions: Schema.optionalKey(MarketCalendarObservationSchema.fields.sessions),
     intradayDailyRows: Schema.Array(PriorSessionDailySummarySchema),
     checkpointRows: Schema.Array(PriorSessionCheckpointSummarySchema),
     adjustedDailyFallback: Schema.NullOr(
@@ -126,6 +136,11 @@ export const reproduceTrailingBaselineAcquisition = (raw: unknown) =>
         return true
       })
     }
+    if (
+      (query.checkpointMinutesFromOpen === undefined) !== (inputs.historySessions === undefined) ||
+      (inputs.historySessions !== undefined && inputs.adjustedDailyFallback !== null)
+    )
+      return yield* invalid('Baseline source must use its matching history calendar and price lane')
     const fallback = inputs.adjustedDailyFallback?.dailyRows ?? []
     if (!verifyRows(inputs.intradayDailyRows) || !verifyRows(fallback))
       return yield* invalid('Baseline acquisition repeats, substitutes or postdates its daily source rows')
@@ -140,6 +155,15 @@ export const reproduceTrailingBaselineAcquisition = (raw: unknown) =>
       if (
         checkpointIdentities.has(identity) ||
         !query.noiseAreaSymbols.includes(row.symbol) ||
+        !(query.checkpointMinutesFromOpen ?? noiseAreaCheckpointMinutes).some(
+          (minute) => minute === row.minuteFromOpen,
+        ) ||
+        (inputs.historySessions !== undefined &&
+          !inputs.historySessions.some(
+            (session) =>
+              session.date === row.sessionDate &&
+              Date.parse(session.closeAt) - Date.parse(session.openAt) >= row.minuteFromOpen * 60_000,
+          )) ||
         row.sessionDate < lowerDate ||
         row.sessionDate >= query.sessionDate
       )
@@ -148,6 +172,7 @@ export const reproduceTrailingBaselineAcquisition = (raw: unknown) =>
     }
     const rebuilt = yield* buildTrailingBaseline({
       ...query,
+      ...(inputs.historySessions === undefined ? {} : { historySessions: inputs.historySessions }),
       dailyRows: acquiredTrailingBaselineDailyRows(inputs.intradayDailyRows, fallback, query.minimumSessions),
       checkpointRows: inputs.checkpointRows,
     })

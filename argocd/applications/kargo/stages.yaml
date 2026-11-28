@@ -2181,7 +2181,7 @@ spec:
                 newName: ${{ vars.brokerFeedImageRepo }}
                 digest: ${{ imageFrom(vars.brokerFeedImageRepo).Digest }}
         - uses: yaml-update
-          if: ${{ outputs.baynLineage.mandate != '' }}
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynDeployment.lineageIndex != '-1' }}
           config:
             path: ./out/argocd/applications/bayn/deployment.yaml
             updates:
@@ -2207,7 +2207,7 @@ spec:
               - name: digestIndex
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
         - uses: yaml-update
-          if: ${{ outputs.baynLineage.mandate != '' }}
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynController.lineageIndex != '-1' }}
           config:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
             updates:
@@ -2237,7 +2237,7 @@ spec:
               - name: generationIndex
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_EXECUTION_ACTIVATION_GENERATION'))
         - uses: yaml-update
-          if: ${{ outputs.baynLineage.mandate != '' }}
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynActivation.lineageIndex != '-1' }}
           config:
             path: ./out/argocd/applications/bayn/execution-activation.yaml
             updates:

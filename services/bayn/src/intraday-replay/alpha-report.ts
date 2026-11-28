@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -8,7 +9,7 @@ import {
   IntradayAlphaObservationSchema,
   reproduceIntradayAlphaObservation,
 } from '../strategy/intraday-alpha/observation'
-import { ResearchStrategyEngine, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
+import { isAlphaBinding, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
 import type { AlphaBaselineSource } from '../system-assessment/alpha-observation-witness'
 import type { PreparedAlphaBaselineSource } from '../system-assessment/alpha-baseline-witness'
 import { prepareReplayAlphaBaselineSources, selectReplayAlphaBaselineSource } from './alpha-baseline'
@@ -63,7 +64,7 @@ const verifyAlphaEvidence = (input: AlphaEvidenceInput & AlphaEvidenceSources) =
       input.sourceKind === 'preparation'
         ? yield* prepareReplayAlphaBaselinePreparations(binding, input.preparations)
         : []
-    if (binding.engine !== ResearchStrategyEngine.IntradayAlpha) {
+    if (!isAlphaBinding(binding)) {
       if (input.observations.length !== 0 || input.baselineGaps.length !== 0)
         return yield* fail('A different replay engine cannot claim alpha observations or baseline gaps')
       return []
@@ -159,12 +160,11 @@ const verifyAlphaEvidence = (input: AlphaEvidenceInput & AlphaEvidenceSources) =
     for (const raw of input.decisions) {
       const document = yield* decodeExecutionDecisionDocument(raw)
       const target = document.strategyDecision
-      const observationHash =
-        target?.schemaVersion === 'bayn.intraday-alpha-target.v2'
-          ? yield* canonicalHashV1Result(target.evidence.observation)
-          : null
+      const observationHash = isIntradayAlphaTarget(target)
+        ? yield* canonicalHashV1Result(target.evidence.observation)
+        : null
       if (
-        target?.schemaVersion !== 'bayn.intraday-alpha-target.v2' ||
+        !isIntradayAlphaTarget(target) ||
         decisions.has(document.contentHash) ||
         document.bindings.accountId !== accountId ||
         document.bindings.strategyProtocolHash !== binding.protocolHash ||

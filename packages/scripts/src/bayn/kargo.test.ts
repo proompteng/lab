@@ -85,28 +85,33 @@ test('binds PAPER authority to the sealed strategy and lineage, or requires expl
   const secret = read('argocd/applications/bayn/alpaca-sealedsecret.yaml')
   const encodedIdentity = secret.metadata.annotations?.['proompteng.ai/bayn.mandate-identity']
   const request = secret.spec.encryptedData['capital-activation-request']
-  for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
-    const environment = read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env
-    expect(environment.find((entry: { name: string }) => entry.name === 'BAYN_CAPITAL_ACTIVATION_REQUEST')).toEqual({
-      name: 'BAYN_CAPITAL_ACTIVATION_REQUEST',
-      valueFrom: {
-        secretKeyRef: { name: 'bayn-alpaca-auth', key: 'capital-activation-request', optional: true },
-      },
-    })
-  }
-  if (request === undefined) {
-    expect(encodedIdentity).toBeUndefined()
-    expect(steps.some((step: { uses: string; as?: string }) => step.uses === 'yaml-parse' && step.as === 'bayn')).toBe(
-      false,
-    )
-    for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
-      const environment = read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env
-      expect(environment.find((entry: { name: string }) => entry.name === 'BAYN_BROKER_ACCESS')?.value).toBe(
-        'read-only',
-      )
-      expect(environment.find((entry: { name: string }) => entry.name === 'BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
+  const environments = ['deployment', 'execution-controller', 'execution-activation'].map(
+    (file) => read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env,
+  )
+  const requests = environments.map((environment) =>
+    environment.find((entry: { name: string }) => entry.name === 'BAYN_CAPITAL_ACTIVATION_REQUEST'),
+  )
+  if (requests.every((entry) => entry === undefined)) {
+    for (const environment of environments) {
+      const named = (name: string) => environment.find((entry: { name: string }) => entry.name === name)
+      expect(named('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
+      expect(named('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
+      expect(named('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')).toBeUndefined()
     }
+    // A dormant request must remain internally consistent but is never mounted.
+    if (request === undefined) expect(encodedIdentity).toBeUndefined()
+    else expect(JSON.parse(encodedIdentity).ciphertextHash).toBe(createHash('sha256').update(request).digest('hex'))
     return
+  }
+  for (const [index, reference] of requests.entries()) {
+    expect(reference).toEqual({
+      name: 'BAYN_CAPITAL_ACTIVATION_REQUEST',
+      valueFrom: { secretKeyRef: { name: 'bayn-alpaca-auth', key: 'capital-activation-request', optional: true } },
+    })
+    expect(
+      environments[index].find((entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+        ?.value,
+    ).toBe('{}')
   }
   expect(typeof encodedIdentity).toBe('string')
   const identity = JSON.parse(encodedIdentity)
@@ -347,8 +352,11 @@ test('writes source, digest, and research lineage into the correct field in ever
       expect(assignments.has('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toBe(false)
     }
   }
-  expect(lineageValues).toHaveLength(3)
-  expect(new Set(lineageValues).size).toBe(1)
+  const configured = read('argocd/applications/bayn/deployment.yaml').spec.template.spec.containers[0].env.some(
+    (entry: { name: string }) => entry.name === 'BAYN_CAPITAL_ACTIVATION_REQUEST',
+  )
+  expect(lineageValues).toHaveLength(configured ? 3 : 0)
+  expect(new Set(lineageValues).size).toBe(configured ? 1 : 0)
 })
 
 test('gets the mandate lineage from the account Secret during promotion', () => {
@@ -364,10 +372,12 @@ test('gets the mandate lineage from the account Secret during promotion', () => 
   })
   const lineageUpdates = steps.filter(
     (step: { uses: string; if?: string }) =>
-      step.uses === 'yaml-update' && step.if === "${{ outputs.baynLineage.mandate != '' }}",
+      step.uses === 'yaml-update' && step.if?.startsWith("${{ outputs.baynLineage.mandate != '' && outputs.") === true,
   )
   expect(lineageUpdates).toHaveLength(3)
-  for (const step of lineageUpdates) {
+  for (const [index, step] of lineageUpdates.entries()) {
+    const owner = ['baynDeployment', 'baynController', 'baynActivation'][index]
+    expect(step.if).toBe(`\${{ outputs.baynLineage.mandate != '' && outputs.${owner}.lineageIndex != '-1' }}`)
     expect(step.config.updates).toHaveLength(1)
     expect(step.config.updates[0].value).toContain('fromJSON(outputs.baynLineage.mandate).requestHash')
     expect(step.config.updates[0].value).toContain('fromJSON(outputs.baynLineage.mandate).authoredActivation')

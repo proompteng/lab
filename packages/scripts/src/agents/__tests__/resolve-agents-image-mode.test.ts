@@ -81,6 +81,19 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
   })
 
+  it.each([
+    'docs/agents/ontology/agents-knowledge.json',
+    'packages/scripts/src/agents/ontology-bundle-sql.ts',
+    'packages/scripts/src/agents/sync-auto-ontology-bundle.ts',
+    'packages/scripts/src/agents/sync-auto-ontology-bundle-core.ts',
+  ])('checks the packaged catalog sync in the controller image when %s changes', (path) => {
+    expect(classifyAgentsImageMode([path])).toMatchObject({
+      tier: 'local-smoke',
+      imageTargets: ['controller'],
+      matchedPaths: [path],
+    })
+  })
+
   it('rebuilds the runner when its toolchain or acceptance command changes', () => {
     for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
       expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])

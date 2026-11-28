@@ -51,8 +51,10 @@ resources:
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
   - auto-ontology-mcp-token-sealedsecret.yaml
+  - ../../../docs/agents/ontology
   - auto-ontology-networkpolicy.yaml
   - auto-ontology-db-networkpolicy.yaml
+  - auto-ontology-sync-cronjob.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
@@ -67,6 +69,16 @@ replacements:
           name: agents-workspace-cache
         fieldPaths:
           - spec.template.spec.containers.[name=refresh].image
+  - source:
+      kind: Deployment
+      name: agents-controllers
+      fieldPath: spec.template.spec.containers.[name=agents-controllers].image
+    targets:
+      - select:
+          kind: CronJob
+          name: auto-ontology-sync
+        fieldPaths:
+          - spec.jobTemplate.spec.template.spec.containers.[name=sync].image
   - source:
       kind: SealedSecret
       name: agents-shell-tunnel-runtime
