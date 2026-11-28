@@ -34,6 +34,7 @@ Runbooks:
 - `devices/galactic/docs/bootstrap-argocd.md`
 - `devices/galactic/docs/troubleshooting-networking.md`
 - `devices/galactic/omni/README.md`
+- [Turin /22 PodCIDR upgrade plan](../../docs/runbooks/turin-slash22-podcidr-upgrade.md)
 - `devices/galactic/docs/tailscale.md` (Omni-owned Tailscale validation)
 - `docs/runbooks/talos-latest-upgrade-plan.md` (historical Talos 1.13.9 / Kubernetes 1.36.4 release)
 - `devices/galactic/extensions/kata/README.md`
