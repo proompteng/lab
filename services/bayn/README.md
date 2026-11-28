@@ -30,6 +30,7 @@ See the [Bayn documentation index](../../docs/bayn/README.md) for production run
 | Configure independent Alpaca Paper sleeves    | [Multi-account sleeve runbook](../../docs/bayn/multi-account-sleeve-architecture.md)                                                            |
 | Qualify daily multi-horizon PAPER evidence    | [Profitability master playbook](../../docs/bayn/profitability-master-playbook.md)                                                               |
 | Attribute weekly three-account PAPER results  | [Weekly attribution](#weekly-attribution)                                                                                                       |
+| Maintain the research knowledge catalog       | [Auto Ontology seed and standby onboarding](../../docs/bayn/ontology/README.md)                                                                 |
 | Build and validate a change                   | [Package scripts](package.json), [validation](#validation), [service guide](AGENTS.md)                                                          |
 
 ## Core contracts
