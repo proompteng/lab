@@ -1,10 +1,6 @@
 import { asRecord, asString, readNested } from '../primitives'
 import type { createKubernetesClient } from '../kube-types'
-import {
-  recordRuntimeDebrisDeletedPods,
-  recordRuntimeDebrisDeleteErrors,
-  recordRuntimeDebrisOrphanPods,
-} from '../metrics'
+import { recordRuntimeDebrisDeletedPods, recordRuntimeDebrisDeleteErrors } from '../metrics'
 
 import { logAgentsControllerInfo } from './operational-logging'
 import type { RuntimeDebrisCleanupConfig, RuntimeDebrisCleanupMode } from './runtime-config'
@@ -92,7 +88,6 @@ const selectRuntimeDebrisCandidate = (
 
 const recordRuntimeDebrisSummary = (summary: RuntimeDebrisCleanupSummary) => {
   const metricAttributes = { mode: summary.mode, namespace: summary.namespace }
-  recordRuntimeDebrisOrphanPods(summary.orphanTerminalPods, metricAttributes)
   recordRuntimeDebrisDeletedPods(summary.deletedPods, metricAttributes)
   recordRuntimeDebrisDeleteErrors(summary.deleteErrors, metricAttributes)
 

@@ -99,6 +99,14 @@ assert write_rules == [], write_rules
 PY
 rm -f "${runner_rbac_render}"
 
+for split in false true; do
+  run_with_helm3 helm template metrics-check "${CHART_DIR}" --namespace agents \
+    --set "controllers.enabled=${split},metrics.serviceMonitor.enabled=true" \
+    --set metrics.serviceMonitor.namespace=monitoring,metrics.service.type=NodePort \
+    --set metrics.service.port=9191,metrics.path=/internal/metrics |
+    python3 "${ROOT_DIR}/scripts/agents/check-metrics-monitoring.py" "${split}"
+done
+
 chart_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/Chart.yaml" | sed "s/[\"']//g")"
 artifacthub_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/artifacthub-pkg.yml" | sed "s/[\"']//g")"
 if [[ -z "${chart_version}" || -z "${artifacthub_version}" || "${chart_version}" != "${artifacthub_version}" ]]; then

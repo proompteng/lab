@@ -376,3 +376,6 @@ extraVolumes:
 extraVolumeMounts:
   - name: relay-targets
     mountPath: /etc/agents-relay
+
+telemetry:
+  otlpEndpoint: http://observability-tempo-distributor.observability.svc.cluster.local:4318
