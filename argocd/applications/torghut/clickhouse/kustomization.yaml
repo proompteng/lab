@@ -13,6 +13,7 @@ resources:
   - signal-publisher-sealed-secret.yaml
   - clickhouse-cluster.yaml
   - clickhouse-service.yaml
+  - auto-ontology-networkpolicy.yaml
   - ta-replicated-table-migration-job.yaml
   - signal-schema-job.yaml
   - bayn-universe-v2-configmap.yaml

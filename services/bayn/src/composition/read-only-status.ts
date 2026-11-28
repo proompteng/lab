@@ -1,3 +1,4 @@
+import { restateServicePrefixConfig } from '../restate/execution-service-names'
 import { PgClient } from '@effect/sql-pg'
 import { Config, Effect, Ref, Result, Schedule } from 'effect'
 import { HttpClient } from 'effect/http'
@@ -227,6 +228,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
               yield* Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN'),
               controllerStatus.read,
               observePlan.config.operationTimeoutMs,
+              yield* restateServicePrefixConfig,
             ),
           }
     const state = yield* Ref.make(

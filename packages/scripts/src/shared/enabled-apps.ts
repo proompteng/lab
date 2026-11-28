@@ -119,6 +119,7 @@ const appToDeployScriptPath = new Map<string, string>([
 
 const appToWorkflowPaths = new Map<string, string[]>([
   ['torghut-webull-feed', ['.github/workflows/torghut-webull-feed-build-push.yaml', 'argocd/applications/kargo']],
+  ['app', ['.github/workflows/product-nix-images.yml', 'argocd/applications/kargo']],
   ['arc', ['.github/workflows/arc-runner-build-push.yml', 'argocd/applications/kargo']],
   ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
@@ -146,6 +147,10 @@ const manifestOnlyRepoImageApps = new Map<string, string>([
   [
     'buzz',
     'relay source lives in the upstream block/buzz repository; lab builds a bounded Ceph RGW compatibility derivative and pins its image digest',
+  ],
+  [
+    'forgejo',
+    'Forgejo source lives at code.forgejo.org/forgejo/forgejo; lab mirrors the reviewed upstream image for Kargo and migration rehearsals',
   ],
   [
     'hermes',

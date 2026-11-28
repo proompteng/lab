@@ -2,7 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod connector;
 pub mod credentials;
-pub mod enrollment;
+mod enrollment;
 pub mod federation;
 pub mod http;
 pub mod kubernetes;

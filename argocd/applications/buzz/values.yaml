@@ -23,11 +23,12 @@ secrets:
 relay:
   requireAuthToken: true
   requireRelayMembership: true
-  requireMediaGetAuth: false
   allowNipOaAuth: true
   pubkeyAllowlist: false
   huddleAudioAvailable: false
   extraEnv:
+    - name: BUZZ_REQUIRE_MEDIA_GET_AUTH
+      value: "false"
     - name: BUZZ_GIT_S3_COMPATIBILITY
       value: ceph-rgw
     - name: BUZZ_ADMIN_HOST

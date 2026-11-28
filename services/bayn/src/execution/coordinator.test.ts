@@ -70,7 +70,6 @@ import {
   MutationStoreError,
   type MutationAuthoritySnapshot,
   type MutationEvent,
-  type MutationIntentTransition,
   type MutationIntentSnapshot,
   type MutationOutcomeDefinition,
   type MutationOutcomeInput,
@@ -586,269 +585,151 @@ describe('MutationStore decision algebra', () => {
     expect(malformedEvent.cause).toBe(malformedEvent.canonicalizationFailure?.cause)
   })
 
-  test('maps every public outcome to one closed transition decision', () => {
-    const cases: readonly [
-      MutationOutcomeDefinition,
-      MutationOperation,
-      MutationEventType,
-      MutationIntentTransition['_tag'],
-      IntentState | undefined,
-      TerminalOutcome | undefined,
-    ][] = [
-      [
-        { _tag: 'SubmitAccepted' },
-        MutationOperation.Submit,
-        MutationEventType.SubmitAccepted,
-        'TransitionFromIoStarted',
-        IntentState.Acknowledged,
-        undefined,
-      ],
-      [
-        { _tag: 'SubmitAccepted', terminalOutcome: TerminalOutcome.Filled },
-        MutationOperation.Submit,
-        MutationEventType.SubmitAccepted,
-        'TransitionFromIoStarted',
-        IntentState.Terminal,
-        TerminalOutcome.Filled,
-      ],
-      [
-        { _tag: 'SubmitRejected' },
-        MutationOperation.Submit,
-        MutationEventType.SubmitRejected,
-        'TransitionFromIoStarted',
-        IntentState.Terminal,
-        TerminalOutcome.Rejected,
-      ],
-      [
-        { _tag: 'SubmitUnknown' },
-        MutationOperation.Submit,
-        MutationEventType.SubmitUnknown,
-        'TransitionFromIoStarted',
-        IntentState.Unknown,
-        undefined,
-      ],
-      [
-        { _tag: 'CancelAccepted' },
-        MutationOperation.Cancel,
-        MutationEventType.CancelAccepted,
-        'KeepIntentState',
-        undefined,
-        undefined,
-      ],
-      [
-        { _tag: 'CancelUnknown' },
-        MutationOperation.Cancel,
-        MutationEventType.CancelUnknown,
-        'KeepIntentState',
-        undefined,
-        undefined,
-      ],
-      [
-        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
-        MutationOperation.Submit,
-        MutationEventType.RecoveryFound,
-        'RecoverSubmit',
-        IntentState.Acknowledged,
-        undefined,
-      ],
-      [
-        {
-          _tag: 'RecoveryFound',
-          operation: MutationOperation.Submit,
-          terminalOutcome: TerminalOutcome.Expired,
-        },
-        MutationOperation.Submit,
-        MutationEventType.RecoveryFound,
-        'RecoverSubmit',
-        IntentState.Terminal,
-        TerminalOutcome.Expired,
-      ],
-      [
-        { _tag: 'RecoveryFound', operation: MutationOperation.Cancel },
-        MutationOperation.Cancel,
-        MutationEventType.RecoveryFound,
-        'KeepIntentState',
-        undefined,
-        undefined,
-      ],
-      [
-        {
-          _tag: 'RecoveryFound',
-          operation: MutationOperation.Cancel,
-          terminalOutcome: TerminalOutcome.Canceled,
-        },
-        MutationOperation.Cancel,
-        MutationEventType.RecoveryFound,
-        'RecoverCancelTerminal',
-        IntentState.Terminal,
-        TerminalOutcome.Canceled,
-      ],
-      [
-        { _tag: 'RecoveryNotFound', operation: MutationOperation.Submit },
-        MutationOperation.Submit,
-        MutationEventType.RecoveryNotFound,
-        'KeepIntentState',
-        undefined,
-        undefined,
-      ],
-      [
-        { _tag: 'RecoveryUnknown', operation: MutationOperation.Cancel },
-        MutationOperation.Cancel,
-        MutationEventType.RecoveryUnknown,
-        'KeepIntentState',
-        undefined,
-        undefined,
-      ],
-    ]
+  const submitOperation = MutationOperation.Submit
+  const cancelOperation = MutationOperation.Cancel
+  const {
+    SubmitStarted,
+    SubmitAccepted,
+    SubmitRejected,
+    SubmitDenied,
+    SubmitUnknown,
+    CancelStarted,
+    CancelAccepted,
+    CancelUnknown,
+    RecoveryFound,
+    RecoveryNotFound,
+    RecoveryUnknown,
+  } = MutationEventType
 
-    for (const [definition, operation, eventType, tag, state, terminalOutcome] of cases) {
-      const previousType =
-        definition._tag === 'SubmitAccepted' ||
-        definition._tag === 'SubmitRejected' ||
-        definition._tag === 'SubmitUnknown'
-          ? MutationEventType.SubmitStarted
-          : definition._tag === 'CancelAccepted' || definition._tag === 'CancelUnknown'
-            ? MutationEventType.CancelStarted
-            : operation === MutationOperation.Submit
-              ? MutationEventType.SubmitUnknown
-              : MutationEventType.CancelUnknown
-      const brokerOrderId =
-        eventType === MutationEventType.SubmitRejected || eventType === MutationEventType.SubmitUnknown
-          ? undefined
-          : orderId
-      const status =
-        eventType === MutationEventType.CancelAccepted
-          ? 204
-          : eventType === MutationEventType.RecoveryNotFound
-            ? 404
-            : eventType === MutationEventType.SubmitRejected
-              ? 422
-              : 200
-      const previous = decisionEvent(
-        operation,
-        previousType,
-        operation === MutationOperation.Cancel ? { brokerOrderId: orderId } : {},
-      )
+  const eventFrom = (operation: MutationOperation, event: MutationEventType) =>
+    decisionEvent(operation, event, event === SubmitStarted ? {} : { brokerOrderId: orderId })
+
+  const submitOutcomes = [
+    ['SubmitAccepted', SubmitAccepted, 200, IntentState.Acknowledged, undefined],
+    ['SubmitAccepted', SubmitAccepted, 200, IntentState.Terminal, TerminalOutcome.Filled],
+    ['SubmitRejected', SubmitRejected, 422, IntentState.Terminal, TerminalOutcome.Rejected],
+    ['SubmitDenied', SubmitDenied, undefined, IntentState.Terminal, TerminalOutcome.Rejected],
+    ['SubmitUnknown', SubmitUnknown, 200, IntentState.Unknown, undefined],
+  ] as const
+
+  test.each(submitOutcomes)(
+    'records %s (%s) at HTTP %s as %s / %s',
+    (tag, eventType, status, nextState, terminalOutcome) => {
+      const outcome: MutationOutcomeDefinition =
+        tag === 'SubmitAccepted' && terminalOutcome !== undefined ? { _tag: tag, terminalOutcome } : { _tag: tag }
+      const brokerOrderId = tag === 'SubmitAccepted' ? orderId : undefined
       const decision = resultSuccess(
         decideMutationOutcome(
           decisionOutcomeInput({
             ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
-            evidence: evidence(status, decisionOutcomeAt),
+            ...(status === undefined ? {} : { evidence: evidence(status, decisionOutcomeAt) }),
           }),
-          definition,
-          previous,
-          decisionReplayIntent(
-            previousType === MutationEventType.SubmitStarted || previousType === MutationEventType.CancelStarted
-              ? IntentState.IoStarted
-              : IntentState.Unknown,
-          ),
+          outcome,
+          eventFrom(submitOperation, SubmitStarted),
+          decisionReplayIntent(IntentState.IoStarted),
         ),
       )
       expect(decision).toMatchObject({
         _tag: 'AppendMutation',
-        event: { operation, eventType },
-        transition: { _tag: tag },
+        event: { operation: submitOperation, eventType, ...(brokerOrderId === undefined ? {} : { brokerOrderId }) },
       })
       if (decision._tag !== 'AppendMutation') throw new Error('expected append decision')
-      if ('nextState' in decision.transition) {
-        if (state === undefined) throw new Error('expected a transition state')
-        expect(decision.transition.nextState).toBe(state)
-      } else {
-        expect(state).toBeUndefined()
-      }
-      if ('terminalOutcome' in decision.transition) {
-        if (terminalOutcome === undefined) throw new Error('expected a terminal outcome')
-        expect(decision.transition.terminalOutcome).toBe(terminalOutcome)
-      } else {
-        expect(terminalOutcome).toBeUndefined()
-      }
-    }
+      expect(decision.transition).toEqual({
+        _tag: 'TransitionFromIoStarted',
+        nextState,
+        ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
+      })
+    },
+  )
+
+  test.each([
+    ['CancelAccepted', CancelAccepted, 204],
+    ['CancelUnknown', CancelUnknown, 200],
+  ] as const)('records %s (%s) at HTTP %s without changing the intent', (tag, eventType, status) => {
+    const decision = resultSuccess(
+      decideMutationOutcome(
+        decisionOutcomeInput({ brokerOrderId: orderId, evidence: evidence(status, decisionOutcomeAt) }),
+        { _tag: tag },
+        eventFrom(cancelOperation, CancelStarted),
+        decisionReplayIntent(IntentState.IoStarted),
+      ),
+    )
+    expect(decision).toMatchObject({
+      _tag: 'AppendMutation',
+      event: { operation: cancelOperation, eventType, brokerOrderId: orderId },
+      transition: { _tag: 'KeepIntentState' },
+    })
+    if (decision._tag !== 'AppendMutation') throw new Error('expected append decision')
+    expect(decision.transition).toEqual({ _tag: 'KeepIntentState' })
   })
 
-  test('decides every durable event transition, exact replay, retained ID, and cancel-first containment', () => {
-    const allowed: readonly [MutationOperation, MutationEventType, MutationEventType][] = [
-      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitAccepted],
-      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitRejected],
-      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitDenied],
-      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitUnknown],
-      [MutationOperation.Cancel, MutationEventType.CancelStarted, MutationEventType.CancelAccepted],
-      [MutationOperation.Cancel, MutationEventType.CancelStarted, MutationEventType.CancelUnknown],
-      [MutationOperation.Submit, MutationEventType.SubmitAccepted, MutationEventType.RecoveryFound],
-      [MutationOperation.Submit, MutationEventType.SubmitUnknown, MutationEventType.RecoveryNotFound],
-      [MutationOperation.Cancel, MutationEventType.CancelAccepted, MutationEventType.RecoveryUnknown],
-      [MutationOperation.Cancel, MutationEventType.CancelUnknown, MutationEventType.RecoveryFound],
-      [MutationOperation.Submit, MutationEventType.RecoveryFound, MutationEventType.RecoveryNotFound],
-      [MutationOperation.Submit, MutationEventType.RecoveryNotFound, MutationEventType.RecoveryUnknown],
-      [MutationOperation.Cancel, MutationEventType.RecoveryUnknown, MutationEventType.RecoveryFound],
-    ]
-    for (const [operation, previousType, nextType] of allowed) {
+  test.each([
+    [
+      submitOperation,
+      SubmitUnknown,
+      RecoveryFound,
+      'RecoveryFound',
+      undefined,
+      { _tag: 'RecoverSubmit', nextState: IntentState.Acknowledged },
+    ],
+    [
+      submitOperation,
+      SubmitUnknown,
+      RecoveryFound,
+      'RecoveryFound',
+      TerminalOutcome.Expired,
+      { _tag: 'RecoverSubmit', nextState: IntentState.Terminal, terminalOutcome: TerminalOutcome.Expired },
+    ],
+    [cancelOperation, CancelUnknown, RecoveryFound, 'RecoveryFound', undefined, { _tag: 'KeepIntentState' }],
+    [
+      cancelOperation,
+      CancelUnknown,
+      RecoveryFound,
+      'RecoveryFound',
+      TerminalOutcome.Canceled,
+      { _tag: 'RecoverCancelTerminal', nextState: IntentState.Terminal, terminalOutcome: TerminalOutcome.Canceled },
+    ],
+    [submitOperation, SubmitUnknown, RecoveryNotFound, 'RecoveryNotFound', undefined, { _tag: 'KeepIntentState' }],
+    [cancelOperation, CancelUnknown, RecoveryUnknown, 'RecoveryUnknown', undefined, { _tag: 'KeepIntentState' }],
+    [submitOperation, SubmitAccepted, RecoveryFound, 'RecoveryFound', undefined, null],
+    [submitOperation, SubmitUnknown, RecoveryNotFound, 'RecoveryNotFound', undefined, null],
+    [cancelOperation, CancelAccepted, RecoveryUnknown, 'RecoveryUnknown', undefined, null],
+    [submitOperation, RecoveryFound, RecoveryNotFound, 'RecoveryNotFound', undefined, null],
+    [submitOperation, RecoveryNotFound, RecoveryUnknown, 'RecoveryUnknown', undefined, null],
+    [cancelOperation, RecoveryUnknown, RecoveryFound, 'RecoveryFound', undefined, null],
+  ] as const)(
+    'records %s recovery from %s to %s (%s / %s)',
+    (operation, previousType, eventType, tag, terminalOutcome, transition) => {
+      // Exercise both an unknown POST with no order ID and one that retained its broker ID.
       const previous =
-        previousType === MutationEventType.SubmitStarted
+        previousType === SubmitUnknown && transition !== null
           ? decisionEvent(operation, previousType)
-          : decisionEvent(operation, previousType, { brokerOrderId: orderId })
-      const brokerOrderId =
-        nextType === MutationEventType.SubmitRejected ||
-        nextType === MutationEventType.SubmitDenied ||
-        nextType === MutationEventType.SubmitUnknown
-          ? undefined
-          : orderId
-      const status =
-        nextType === MutationEventType.CancelAccepted
-          ? 204
-          : nextType === MutationEventType.RecoveryNotFound
-            ? 404
-            : nextType === MutationEventType.SubmitRejected
-              ? 422
-              : 200
-      const definition: MutationOutcomeDefinition = (() => {
-        switch (nextType) {
-          case MutationEventType.SubmitAccepted:
-            return { _tag: 'SubmitAccepted' }
-          case MutationEventType.SubmitRejected:
-            return { _tag: 'SubmitRejected' }
-          case MutationEventType.SubmitDenied:
-            return { _tag: 'SubmitDenied' }
-          case MutationEventType.SubmitUnknown:
-            return { _tag: 'SubmitUnknown' }
-          case MutationEventType.CancelAccepted:
-            return { _tag: 'CancelAccepted' }
-          case MutationEventType.CancelUnknown:
-            return { _tag: 'CancelUnknown' }
-          case MutationEventType.RecoveryFound:
-            return { _tag: 'RecoveryFound', operation }
-          case MutationEventType.RecoveryNotFound:
-            return { _tag: 'RecoveryNotFound', operation }
-          case MutationEventType.RecoveryUnknown:
-            return { _tag: 'RecoveryUnknown', operation }
-          case MutationEventType.SubmitStarted:
-          case MutationEventType.CancelStarted:
-            throw new Error('STARTED is not an outcome definition')
-        }
-      })()
-      const result = resultSuccess(
+          : eventFrom(operation, previousType)
+      const definition: MutationOutcomeDefinition =
+        tag === 'RecoveryFound' && terminalOutcome !== undefined
+          ? { _tag: tag, operation, terminalOutcome }
+          : { _tag: tag, operation }
+      const decision = resultSuccess(
         decideMutationOutcome(
           decisionOutcomeInput({
-            ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
-            ...(nextType === MutationEventType.SubmitDenied ? {} : { evidence: evidence(status, decisionOutcomeAt) }),
+            brokerOrderId: orderId,
+            evidence: evidence(eventType === RecoveryNotFound ? 404 : 200, decisionOutcomeAt),
           }),
           definition,
           previous,
-          decisionReplayIntent(
-            previousType === MutationEventType.SubmitStarted || previousType === MutationEventType.CancelStarted
-              ? IntentState.IoStarted
-              : IntentState.Unknown,
-          ),
+          decisionReplayIntent(IntentState.Unknown),
         ),
       )
-      expect(result).toMatchObject({
+      expect(decision).toMatchObject({
         _tag: 'AppendMutation',
-        event: {
-          eventType: nextType,
-          ...(brokerOrderId === undefined ? {} : { brokerOrderId: orderId }),
-        },
+        event: { operation, eventType, brokerOrderId: orderId },
       })
-    }
+      if (decision._tag !== 'AppendMutation') throw new Error('expected append decision')
+      if (transition !== null) expect(decision.transition).toEqual(transition)
+    },
+  )
 
+  test('retains the order identity and classifies exact replay without appending another durable mutation', () => {
     const replayEvidence = evidence(404, decisionOutcomeAt)
     const replayed = decisionEvent(MutationOperation.Submit, MutationEventType.RecoveryNotFound, {
       sequence: 2,
@@ -2470,6 +2351,9 @@ describe('execution coordinator', () => {
             const cached = yield* makeProjectedBrokerRead(fresh).pipe(
               Effect.provideService(BrokerObservations, {
                 read: observed,
+                readForReconciliation: observed.pipe(
+                  Effect.map((observation) => ({ observation, complete: Effect.void })),
+                ),
                 readState: observed,
                 readForSubmit: () => observed,
                 invalidate: Effect.sync(() => {

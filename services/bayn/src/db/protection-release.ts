@@ -110,9 +110,9 @@ const readReleaseFrontier = (
       (SELECT jsonb_build_object('intentId', x.intent_id, 'accountId', x.account_id, 'brokerOrderId', x.broker_order_id,
                'requestedAt', to_char(x.requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
        FROM native_protection_cancel_commands x JOIN intents i USING (intent_id, account_id)
-       WHERE x.account_id = ${accountId} AND i.cycle_id = ${cycleId}
+       WHERE x.account_id = ${accountId} AND i.cycle_id = ${cycleId} AND NOT x.reanchor
        ORDER BY x.requested_at DESC, x.intent_id, x.broker_order_id LIMIT 1) AS "latestCommand",
-      (SELECT count(*)::text FROM broker_notification_receipts WHERE account_id = ${accountId}
+      (SELECT count(*)::text FROM broker_source_events WHERE account_id = ${accountId}
         AND recorded_at >= ${reconciledAt}::timestamptz) AS notifications
     FROM authority_state a CROSS JOIN autonomous_cycles c
     WHERE a.singleton AND c.account_id = ${accountId} AND c.cycle_id = ${cycleId} AND c.state = 'ACTIVE'
@@ -129,7 +129,7 @@ export const readProtectionReleaseBasis = (accountId: string, cycleId: string) =
     const [latch] = yield* sql`
       WITH latest AS (
         SELECT c.* FROM native_protection_cancel_commands c JOIN intents i USING (intent_id, account_id)
-        WHERE c.account_id = ${accountId} AND i.cycle_id = ${cycleId}
+        WHERE c.account_id = ${accountId} AND i.cycle_id = ${cycleId} AND NOT c.reanchor
         ORDER BY c.requested_at DESC, c.intent_id, c.broker_order_id
         LIMIT 1
       )
@@ -359,6 +359,10 @@ export const readProtectionSubmit = (
       (submitExpiresAt !== undefined && row.databaseAt >= submitExpiresAt)
     )
       return undefined
+    if (phase === 'admission') {
+      // Serialize the scoped start with capture reservation until the intent becomes durably IO_STARTED.
+      yield* sql`SELECT account_id FROM broker_observations WHERE account_id = ${row.accountId} FOR UPDATE`
+    }
     return yield* withCurrentProtectionReleaseProof(
       {
         proofId,

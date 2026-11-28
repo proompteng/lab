@@ -14,10 +14,15 @@ on:
       - 'services/golink/**'
       - 'packages/scripts/src/golink/**'
       - 'argocd/applications/golink/**'
+      - '.github/workflows/golink-ci.yml'
+  workflow_call:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: golink-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,4 +35,3 @@ jobs:
       oxlint-type-command: bun run --cwd services/golink lint:oxlint:type
       test-command: bun run test:golink
       build-command: bun run build:golink
-    secrets: inherit

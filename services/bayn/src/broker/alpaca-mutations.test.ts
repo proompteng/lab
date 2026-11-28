@@ -143,7 +143,7 @@ const projectedSession = (
       ...session.read,
       projection: {
         fresh: session.read,
-        snapshot: unexpectedRead('cached snapshot'),
+        reconciliationSnapshot: unexpectedRead('cached snapshot'),
         submissionSnapshot: () => unexpectedRead('unused submit projection'),
         invalidate: unexpectedRead('unguarded cache invalidation'),
         withMutation: (effect) =>

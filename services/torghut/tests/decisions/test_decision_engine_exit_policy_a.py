@@ -1,26 +1,26 @@
 from __future__ import annotations
 
-from tests.decisions.support import (
-    Decimal,
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+from unittest.mock import patch
+
+from app.config import settings
+from app.trading.decisions import (
     DecisionEngine,
-    SignalEnvelope,
-    Strategy,
-    StrategyConfig,
-    StrategyDecision,
-    StrategyRegistry,
-    StrategyRuntime,
-    TestCase,
-    _BuyPlugin,
-    _SellPlugin,
-    _compose_strategy_description,
     passes_runtime_trade_policy,
     record_runtime_trade_policy_decision,
     resolve_strategy_time_in_force,
-    datetime,
-    patch,
-    settings,
-    timezone,
-    uuid,
+)
+from app.trading.models import SignalEnvelope, StrategyDecision
+from app.trading.strategy_runtime import StrategyRegistry, StrategyRuntime
+from tests.trading_fixtures import (
+    _BuyPlugin,
+    _SellPlugin,
+    make_catalog_strategy,
+    make_runtime_strategy,
+    make_signal,
 )
 
 
@@ -39,57 +39,28 @@ class TestDecisionEngineExitPolicyA(TestCase):
                 }
             )
         )
-        buy_strategy = Strategy(
+        buy_strategy = make_catalog_strategy(
             id=buy_strategy_id,
             name="isolated-buy",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="isolated-buy",
-                    strategy_id="isolated-buy",
-                    strategy_type="buy_plugin",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"position_isolation_mode": "per_strategy"},
-                )
-            ),
-            enabled=True,
+            strategy_type="buy_plugin",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("1000"),
+            params={"position_isolation_mode": "per_strategy"},
         )
-        sell_strategy = Strategy(
+        sell_strategy = make_catalog_strategy(
             id=sell_strategy_id,
             name="isolated-sell",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="isolated-sell",
-                    strategy_id="isolated-sell",
-                    strategy_type="sell_plugin",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="breakout_continuation_long_v1",
-                    universe_symbols=["AAPL"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"position_isolation_mode": "per_strategy"},
-                )
-            ),
-            enabled=True,
+            strategy_type="sell_plugin",
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("1000"),
+            params={"position_isolation_mode": "per_strategy"},
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -125,11 +96,9 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom",
             description="version=1.1.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["NVDA"],
@@ -172,11 +141,9 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom",
             description="version=1.1.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["NVDA"],
@@ -223,11 +190,9 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="intraday-tsmom",
             description="version=1.1.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
@@ -276,29 +241,17 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-profit-protect",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-profit-protect",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"require_positive_price_for_signal_exit": "true"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"require_positive_price_for_signal_exit": "true"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 17, 14, 29, 1, tzinfo=timezone.utc),
@@ -341,29 +294,17 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-profit-protect",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-profit-protect",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"require_positive_price_for_signal_exit": "true"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"require_positive_price_for_signal_exit": "true"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 18, 29, 10, tzinfo=timezone.utc),
@@ -407,29 +348,17 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="intraday-tsmom-profit-protect",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="intraday-tsmom-profit-protect",
-                    strategy_id="intraday_tsmom_v1@prod",
-                    strategy_type="intraday_tsmom_v1",
-                    version="1.1.0",
-                    base_timeframe="1Sec",
-                    universe_type="intraday_tsmom_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("0.08"),
-                    max_notional_per_trade=Decimal("1000"),
-                    params={"require_positive_price_for_signal_exit": "true"},
-                )
-            ),
-            enabled=True,
+            strategy_id="intraday_tsmom_v1@prod",
+            strategy_type="intraday_tsmom_v1",
+            version="1.1.0",
             base_timeframe="1Sec",
             universe_type="intraday_tsmom_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("0.08"),
             max_notional_per_trade=Decimal("1000"),
+            params={"require_positive_price_for_signal_exit": "true"},
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 18, 29, 10, tzinfo=timezone.utc),
@@ -473,11 +402,9 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="breakout-continuation",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
             universe_symbols=["META"],
@@ -515,11 +442,9 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="washout-rebound",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="washout_rebound_long_v1",
             universe_symbols=["MSFT"],
@@ -561,20 +486,16 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="late-day-continuation",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 26, 19, 8, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 26, 19, 8, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -603,20 +524,16 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="end-of-day-reversal",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="end_of_day_reversal_long_v1",
-            universe_symbols=["AAPL"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("14000"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 27, 19, 40, 3, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 3, 27, 19, 40, 3, tzinfo=timezone.utc),
             timeframe="1Sec",
             seq=1,
             payload={
@@ -652,11 +569,9 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="mean-reversion-exhaustion-short",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="mean_reversion_exhaustion_short_v1",
             universe_symbols=["META"],
@@ -700,11 +615,9 @@ class TestDecisionEngineExitPolicyA(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="mean-reversion-exhaustion-short",
             description="version=1.0.0",
-            enabled=True,
             base_timeframe="1Sec",
             universe_type="mean_reversion_exhaustion_short_v1",
             universe_symbols=["META"],
@@ -761,32 +674,19 @@ class TestDecisionEngineExitPolicyA(TestCase):
     def test_scheduler_runtime_mean_reversion_exhaustion_short_sell_respects_entry_policy(
         self,
     ) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_catalog_strategy(
             name="mean-reversion-exhaustion-short",
-            description=_compose_strategy_description(
-                StrategyConfig(
-                    name="mean-reversion-exhaustion-short",
-                    strategy_id="mean_reversion_exhaustion_short_v1@policy",
-                    strategy_type="sell_plugin",
-                    version="1.0.0",
-                    base_timeframe="1Sec",
-                    universe_type="mean_reversion_exhaustion_short_v1",
-                    universe_symbols=["META"],
-                    max_position_pct_equity=Decimal("1.0"),
-                    max_notional_per_trade=Decimal("12000"),
-                    params={
-                        "max_entries_per_session": "1",
-                        "entry_time_in_force": "ioc",
-                    },
-                )
-            ),
-            enabled=True,
+            strategy_id="mean_reversion_exhaustion_short_v1@policy",
+            strategy_type="sell_plugin",
             base_timeframe="1Sec",
             universe_type="mean_reversion_exhaustion_short_v1",
             universe_symbols=["META"],
             max_position_pct_equity=Decimal("1.0"),
             max_notional_per_trade=Decimal("12000"),
+            params={
+                "max_entries_per_session": "1",
+                "entry_time_in_force": "ioc",
+            },
         )
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 17, 18, 12, tzinfo=timezone.utc),

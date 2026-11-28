@@ -17,6 +17,10 @@
       "pattern": "^runner-image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "smoke-runner-image",
+      "pattern": "^smoke-runner-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "write-values",
       "pattern": "^write-values(?: \\(.*\\))?$"
     }
@@ -37,7 +41,17 @@
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "arc-tmpfs-acceptance.yml": [
+    {
+      "id": "verify",
+      "pattern": "^Verify .*(?: \\(.*\\))?$"
+    }
+  ],
   "attic-build-push.yaml": [
+    {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
+    },
     {
       "id": "build-and-push",
       "pattern": "^build-and-push(?: \\(.*\\))?(?: /.*)?$"
@@ -77,6 +91,10 @@
     {
       "id": "changes",
       "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "fast-checks",
+      "pattern": "^fast-checks(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "formal-verification",
@@ -157,6 +175,12 @@
     {
       "id": "publish-index",
       "pattern": "^publish-index(?: \\(.*\\))?$"
+    }
+  ],
+  "buzz-relay-cache.yml": [
+    {
+      "id": "seed",
+      "pattern": "^seed(?: \\(.*\\))?$"
     }
   ],
   "codex-devbox.yml": [
@@ -295,6 +319,10 @@
   ],
   "ofz.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validate",
       "pattern": "^validate(?: \\(.*\\))?$"
     },
@@ -322,6 +350,10 @@
     }
   ],
   "opencode-build-push.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
@@ -361,6 +393,96 @@
     {
       "id": "build-docs",
       "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "pull-request.yml": [
+    {
+      "id": "plan",
+      "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
+    },
+    {
+      "id": "landing",
+      "pattern": "^PR validation \\(landing\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate",
+      "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "agents",
+      "pattern": "^Agents CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "agents-full",
+      "pattern": "^Agents full CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "jangar",
+      "pattern": "^Jangar CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bumba",
+      "pattern": "^Bumba CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "froussard",
+      "pattern": "^Froussard CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "oirat",
+      "pattern": "^Oirat CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "signal-publisher",
+      "pattern": "^Signal publisher CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ofz-pr",
+      "pattern": "^Ofz PR authorization(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bayn",
+      "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ofz",
+      "pattern": "^Ofz authorization(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "relay",
+      "pattern": "^Relay platform(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "tengri",
+      "pattern": "^Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "buf",
+      "pattern": "^Protobuf validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "scripts",
+      "pattern": "^Repository scripts(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut",
+      "pattern": "^Torghut CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-schema",
+      "pattern": "^Torghut ClickHouse schema(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-notebooks",
+      "pattern": "^Torghut notebooks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "queue-services",
+      "pattern": "^Queue service validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ci-pr",
+      "pattern": "^ci-pr(?: \\(.*\\))?$"
     }
   ],
   "relay.yml": [
@@ -429,12 +551,12 @@
   ],
   "tengri-images.yml": [
     {
-      "id": "validate-tengri",
-      "pattern": "^Validate Tengri(?: \\(.*\\))?$"
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
     },
     {
-      "id": "validate-nanoagent",
-      "pattern": "^Validate Nanoagent(?: \\(.*\\))?$"
+      "id": "validate",
+      "pattern": "^Validate Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "build",
@@ -446,6 +568,10 @@
     }
   ],
   "torghut-build-push.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
@@ -459,11 +585,19 @@
   ],
   "torghut-notebook-build-push.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
   "torghut-ta-build-push.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
@@ -476,6 +610,10 @@
     }
   ],
   "torghut-ws-build-push.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"

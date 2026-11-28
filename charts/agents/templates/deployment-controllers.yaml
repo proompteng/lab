@@ -9,14 +9,17 @@
   "AGENTS_CONTROL_PLANE_CACHE_ENABLED"
   "AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED"
   "AGENTS_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS"
-  "AGENTS_AGENTRUN_ARTIFACTS_MAX"
-  "AGENTS_AGENTRUN_ARTIFACTS_STRICT"
 }}
 {{- $controllersSharedEnvVars := deepCopy (.Values.env.vars | default dict) -}}
 {{- range $reservedKey := $sharedReservedControllersEnvVars }}
 {{- $_ := unset $controllersSharedEnvVars $reservedKey -}}
 {{- end }}
 {{- $envVars := merge $controllersSharedEnvVars (deepCopy $controllersEnvVars) -}}
+{{- $_ := set $envVars "AGENTS_PROMETHEUS_METRICS_ENABLED" (toString .Values.metrics.enabled) -}}
+{{- $_ := set $envVars "AGENTS_PROMETHEUS_METRICS_PATH" (.Values.metrics.path | default "/metrics") -}}
+{{- with .Values.telemetry.otlpEndpoint -}}
+{{- $_ := set $envVars "OTEL_EXPORTER_OTLP_ENDPOINT" . -}}
+{{- end -}}
 {{- if not (hasKey $envVars "AGENTS_MIGRATIONS") -}}
 {{- $_ := set $envVars "AGENTS_MIGRATIONS" "skip" -}}
 {{- end -}}
@@ -31,12 +34,6 @@
 {{- end -}}
 {{- if not (hasKey $envVars "AGENTS_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS") -}}
 {{- $_ := set $envVars "AGENTS_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS" "30" -}}
-{{- end -}}
-{{- if not (hasKey $envVars "AGENTS_AGENTRUN_ARTIFACTS_MAX") -}}
-{{- $_ := set $envVars "AGENTS_AGENTRUN_ARTIFACTS_MAX" (.Values.controller.agentRunArtifacts.max | default 50) -}}
-{{- end -}}
-{{- if not (hasKey $envVars "AGENTS_AGENTRUN_ARTIFACTS_STRICT") -}}
-{{- $_ := set $envVars "AGENTS_AGENTRUN_ARTIFACTS_STRICT" (.Values.controller.agentRunArtifacts.strict | default false) -}}
 {{- end -}}
 {{- $imageRepo := $controllersImage.repository | default .Values.image.repository -}}
 {{- $imageTag := $controllersImage.tag | default .Values.image.tag -}}
@@ -209,10 +206,7 @@ spec:
             - name: AGENTS_GITOPS_REVISION
               value: {{ $imageTag | quote }}
             {{- end }}
-            {{- if hasKey .Values.controller "jobTtlSecondsAfterFinished" }}
-            - name: AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS
-              value: {{ .Values.controller.jobTtlSecondsAfterFinished | quote }}
-            {{- end }}
+            {{- include "agents.runnerRetentionEnv" (dict "root" . "envVars" $envVars) | nindent 12 }}
             - name: AGENTS_SERVICE_ACCOUNT_NAME
               value: {{ include "agents.serviceAccountName" . | quote }}
             {{- $runnerServiceAccount := include "agents.runnerServiceAccountName" . }}
@@ -303,91 +297,11 @@ spec:
             {{- if .Values.controller.enabled }}
             - name: AGENTS_CONTROLLER_ENABLED
               value: "1"
-            - name: AGENTS_CONTROLLER_NAMESPACES
-              value: {{ include "agents.controllerNamespaces" . | quote }}
-            - name: AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE
-              value: {{ .Values.controller.concurrency.perNamespace | default 10 | quote }}
-            - name: AGENTS_CONTROLLER_CONCURRENCY_AGENT
-              value: {{ .Values.controller.concurrency.perAgent | default 5 | quote }}
-            - name: AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
-              value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
-            - name: AGENTS_CONTROLLER_QUEUE_NAMESPACE
-              value: {{ .Values.controller.queue.perNamespace | default 200 | quote }}
-            - name: AGENTS_CONTROLLER_QUEUE_REPO
-              value: {{ .Values.controller.queue.perRepo | default 50 | quote }}
-            - name: AGENTS_CONTROLLER_QUEUE_CLUSTER
-              value: {{ .Values.controller.queue.cluster | default 1000 | quote }}
-            - name: AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
-              value: {{ .Values.controller.rate.windowSeconds | default 60 | quote }}
-            - name: AGENTS_CONTROLLER_RATE_NAMESPACE
-              value: {{ .Values.controller.rate.perNamespace | default 120 | quote }}
-            - name: AGENTS_CONTROLLER_RATE_REPO
-              value: {{ .Values.controller.rate.perRepo | default 30 | quote }}
-            - name: AGENTS_CONTROLLER_RATE_CLUSTER
-              value: {{ .Values.controller.rate.cluster | default 600 | quote }}
-            - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-              value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
-            - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
-              value: {{ .Values.controller.agentRunRetentionMaxDeletesPerNamespace | default 100 | quote }}
-            - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
-              value: {{ .Values.controller.agentRunRetentionZeroTtlMaxSeconds | default 0 | quote }}
-            {{- $runtimeDebrisCleanup := .Values.controller.runtimeDebrisCleanup | default dict }}
-            - name: AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE
-              value: {{ $runtimeDebrisCleanup.mode | default "disabled" | quote }}
-            - name: AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS
-              value: {{ $runtimeDebrisCleanup.orphanPodRetentionSeconds | default 86400 | quote }}
-            - name: AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE
-              value: {{ $runtimeDebrisCleanup.maxDeletesPerNamespace | default 25 | quote }}
-            {{- if and .Values.controller.admissionPolicy.labels.required (gt (len .Values.controller.admissionPolicy.labels.required) 0) }}
-            - name: AGENTS_CONTROLLER_LABELS_REQUIRED
-              value: {{ .Values.controller.admissionPolicy.labels.required | toJson | quote }}
-            {{- end }}
-            {{- if and .Values.controller.admissionPolicy.labels.allowed (gt (len .Values.controller.admissionPolicy.labels.allowed) 0) }}
-            - name: AGENTS_CONTROLLER_LABELS_ALLOWED
-              value: {{ .Values.controller.admissionPolicy.labels.allowed | toJson | quote }}
-            {{- end }}
-            {{- if and .Values.controller.admissionPolicy.labels.denied (gt (len .Values.controller.admissionPolicy.labels.denied) 0) }}
-            - name: AGENTS_CONTROLLER_LABELS_DENIED
-              value: {{ .Values.controller.admissionPolicy.labels.denied | toJson | quote }}
-            {{- end }}
-            {{- if and .Values.controller.admissionPolicy.images.allowed (gt (len .Values.controller.admissionPolicy.images.allowed) 0) }}
-            - name: AGENTS_CONTROLLER_IMAGES_ALLOWED
-              value: {{ .Values.controller.admissionPolicy.images.allowed | toJson | quote }}
-            {{- end }}
-            {{- if and .Values.controller.admissionPolicy.images.denied (gt (len .Values.controller.admissionPolicy.images.denied) 0) }}
-            - name: AGENTS_CONTROLLER_IMAGES_DENIED
-              value: {{ .Values.controller.admissionPolicy.images.denied | toJson | quote }}
-            {{- end }}
-            {{- if and .Values.controller.admissionPolicy.secrets.blocked (gt (len .Values.controller.admissionPolicy.secrets.blocked) 0) }}
-            - name: AGENTS_CONTROLLER_BLOCKED_SECRETS
-              value: {{ .Values.controller.admissionPolicy.secrets.blocked | toJson | quote }}
-            {{- end }}
-            {{- $vcsProvidersEnabled := true }}
-            {{- if and (hasKey .Values "controller") (hasKey .Values.controller "vcsProviders") (hasKey .Values.controller.vcsProviders "enabled") }}
-            {{- $vcsProvidersEnabled = .Values.controller.vcsProviders.enabled }}
-            {{- end }}
-            - name: AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
-              value: {{ $vcsProvidersEnabled | quote }}
-            {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
-            - name: AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
-              value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}
-            {{- end }}
-            {{- if and .Values.controller.vcsProviders.prRateLimits (gt (len .Values.controller.vcsProviders.prRateLimits) 0) }}
-            - name: AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
-              value: {{ .Values.controller.vcsProviders.prRateLimits | toJson | quote }}
-            {{- end }}
-            {{- if .Values.controller.authSecret.name }}
-            - name: AGENTS_CONTROLLER_AUTH_SECRET_NAME
-              value: {{ .Values.controller.authSecret.name | quote }}
-            - name: AGENTS_CONTROLLER_AUTH_SECRET_KEY
-              value: {{ .Values.controller.authSecret.key | default "auth.json" | quote }}
-            - name: AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
-              value: {{ .Values.controller.authSecret.mountPath | default "/root/.codex" | quote }}
-            {{- end }}
             {{- else }}
             - name: AGENTS_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
+            {{- include "agents.controllerEnv" (dict "root" . "envVars" $envVars) | nindent 12 }}
             {{- if .Values.orchestrationController.enabled }}
             - name: AGENTS_ORCHESTRATION_CONTROLLER_ENABLED
               value: "1"

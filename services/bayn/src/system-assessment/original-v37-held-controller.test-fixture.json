@@ -1,0 +1,594 @@
+{
+  "sourceRevision": "0506c9d7eec58844f78e893158dd9027ab69b86d",
+  "parameterHash": "4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6",
+  "recordHash": "99e0d5b4c990b1ae56c1f3dfa76266ba611c8f27a2d32e4291fd1ec9844a92ca",
+  "controllerReceiptHash": "85d23414f840d3503e3495ad9ed49f23c3fa5e1242d15b30de206d2b5802e2c8",
+  "holdHash": "bc9cfde0e0cd08f274a1ddd4611fa9ef945f513f6ab7ad88f0d4571c94b40972",
+  "sourceCutHash": "b93b4a7dcc94617f6f6ac3f3f7ed28d05dc2ae10c04d68424a69345f58c78073",
+  "assessmentHash": "9d5ee2aa0513fd1087a17242cd4b01bcc30c2c8d2a8aef956f431b6ce7d941dd",
+  "verdict": "REJECTED",
+  "economicQualification": "NOT_ASSESSED",
+  "missing": ["INCOMPLETE_FILL_ACCOUNTING", "INCOMPLETE_MUTATION_SOURCE_COVERAGE", "INCOMPLETE_SAFETY_AUDIT"],
+  "pass": {
+    "controllerKey": "db0002138b2f773ad0ddfb5e8c4852a73fa91a275f0f0cd5327fe0e67d5f1583",
+    "planHash": "a2b8e264d0657a407d483840eab0158fb674b00334ff9d32cb6d1cb122038a3a",
+    "epoch": 1,
+    "sequence": 1,
+    "completedAt": "2026-09-04T14:30:33.000Z",
+    "observation": {
+      "result": "SUCCESS",
+      "executionIssuedAt": "2026-09-04T14:30:33.000Z",
+      "executionBuild": {
+        "sourceRevision": "0506c9d7eec58844f78e893158dd9027ab69b86d",
+        "imageRepository": "registry.example.test/lab/bayn",
+        "imageDigest": "sha256:e5b57dadf3667b4466796b56fb4b7e5e0bd8c5a765cce52c0cf22437cc930ccd"
+      },
+      "observedAt": "2026-09-04T14:30:33.000Z",
+      "outcome": "RECOVERED",
+      "recoveryAction": "WAITING",
+      "waitReason": "JEV_POSITION_HELD",
+      "positionHold": {
+        "schemaVersion": "bayn.jev-position-hold.v1",
+        "entryDecisionHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "validUntil": "2026-09-04T14:30:42.000Z",
+        "evidence": {
+          "cycleId": "1987367a575e533d968f1ee9c59aac32f249f354f4feef010d91795c3506a4b6",
+          "sessionDate": "2026-09-04",
+          "protocol": {
+            "entrySizingPolicy": "capital-weighted-session-limit",
+            "entryFeePolicy": "broker-tier-buy-and-maximum-sell",
+            "entrySelectionPolicy": "source-anchored-proposal-judgments",
+            "entryQuestionPolicyHash": "0dd4b9c1a0b98df2878ad7fbbe3a1bac11571a50138cb1f0c883f89e3fedf9c5",
+            "maximumEntryQuoteDriftBps": 10,
+            "maximumEntryLimitSlippageBps": 10,
+            "entrySignalPolicy": "jev-only",
+            "model": "jev-1.13.0",
+            "marketProfiles": [
+              {
+                "market": "EQUITY",
+                "maximumEntrySpreadBps": 5,
+                "estimatedTakerFeeBps": 0,
+                "universeId": "torghut-core-equity-v2",
+                "universeSymbolHash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+                "universe": [
+                  "AAPL",
+                  "AMD",
+                  "AMZN",
+                  "AVGO",
+                  "COHR",
+                  "CRDO",
+                  "IWM",
+                  "LITE",
+                  "MRVL",
+                  "MU",
+                  "NVDA",
+                  "QQQ",
+                  "SMH",
+                  "SNDK",
+                  "SPY",
+                  "WDC"
+                ],
+                "candidateSymbols": [
+                  "AAPL",
+                  "AMD",
+                  "AMZN",
+                  "AVGO",
+                  "COHR",
+                  "CRDO",
+                  "IWM",
+                  "LITE",
+                  "MRVL",
+                  "MU",
+                  "NVDA",
+                  "QQQ",
+                  "SMH",
+                  "SNDK",
+                  "WDC"
+                ],
+                "feed": "iex",
+                "delayClass": "real_time_exchange_only",
+                "sourceTopics": {
+                  "bars": "torghut.bars.1m.v1",
+                  "quotes": "torghut.quotes.v1",
+                  "trades": "torghut.trades.v1"
+                },
+                "streamingInput": {
+                  "schemaVersion": "bayn.streaming-strategy-input.v1",
+                  "snapshotSchemaVersion": "bayn.streaming-market-snapshot.v1",
+                  "featureTopic": "torghut.market-features.v1",
+                  "featureSchemaVersion": "dorvud.market-feature.v1",
+                  "requiredDefinitionId": "dorvud.observed-price-window.v2",
+                  "requiredDefinitionHash": "3ae356af1526d69047af3a773606433a0da7c46c71b377c5133257c7a7ce1590",
+                  "clockSkewAllowanceMs": 5000,
+                  "bootstrapTimestampPolicy": "dorvud.producer-clock.v1",
+                  "bootstrapDeadlineMs": 300000,
+                  "freshness": "exact-completed-window-and-matching-raw-inputs"
+                }
+              },
+              {
+                "market": "CRYPTO",
+                "maximumEntrySpreadBps": 25,
+                "estimatedTakerFeeBps": 25,
+                "universeId": "alpaca.crypto.us.v1",
+                "universeSymbolHash": "67d925f973bcc80b5fccaf83a1ad71e3f72b85cfeefcea0ed1b93dfacd83091b",
+                "universe": ["BTC/USD", "ETH/USD", "SOL/USD"],
+                "candidateSymbols": ["BTC/USD", "ETH/USD", "SOL/USD"],
+                "feed": "us",
+                "benchmarkEvidencePolicy": "bayn.benchmark-evidence.completed-bars.v1",
+                "delayClass": "real_time_crypto",
+                "sourceTopics": {
+                  "bars": "bayn.market-data.crypto.v1",
+                  "quotes": "bayn.market-data.crypto.v1",
+                  "trades": "bayn.market-data.crypto.v1"
+                },
+                "streamingInput": {
+                  "featureTopic": "bayn.market-data.crypto.features.v1",
+                  "requiredDefinitionId": "dorvud.crypto-continuous-1m.v2",
+                  "requiredDefinitionHash": "eb2568eb1debf5a0897afe76a6c8e9566d9d6730227dbf0632a37afba852ba7c"
+                }
+              }
+            ],
+            "universe": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "BTC/USD",
+              "COHR",
+              "CRDO",
+              "ETH/USD",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SOL/USD",
+              "SPY",
+              "WDC"
+            ],
+            "candidateSymbols": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "BTC/USD",
+              "COHR",
+              "CRDO",
+              "ETH/USD",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SOL/USD",
+              "WDC"
+            ],
+            "positionPolicy": "long-only",
+            "decisionDelaySeconds": 2,
+            "maximumDecisionLagMs": 60000,
+            "maximumQuoteAgeMs": 10000,
+            "candidateEvidencePolicy": "bayn.candidate-evidence.market-quotes.v2",
+            "warmupMinutesAfterOpen": 0,
+            "entryCutoffMinutesBeforeClose": 5,
+            "flattenBeforeCloseMinutes": 5,
+            "hardFlatBeforeCloseMinutes": 0,
+            "maximumPositions": 1,
+            "maximumGrossWeight": 0.2,
+            "maximumSymbolWeight": 0.2,
+            "inferenceValidityMs": 10000,
+            "horizonMinutes": 15,
+            "maximumHoldingMinutes": 15,
+            "allocation": "equal-weight",
+            "executionModel": {
+              "schemaVersion": "bayn.execution-model.v6",
+              "venue": "alpaca-cash-spot",
+              "assetClass": "cash-spot",
+              "precision": {
+                "quantityIncrementAtoms": "1",
+                "priceIncrementMicros": "100",
+                "minimumBuyNotionalMicros": "1000000"
+              },
+              "priceImpact": {
+                "halfSpreadBps": 2.5,
+                "slippageBps": 2.5
+              },
+              "fees": {
+                "scheduleVersion": "alpaca-brokerage-effective-dated-2026-10-12",
+                "commissionBps": 0,
+                "secSellBps": 0.206,
+                "tafSellPerShareMicros": "195",
+                "tafMaximumPerOrderMicros": "9790000",
+                "catPerShareMicros": "3",
+                "aggregation": "session-by-fee-type",
+                "roundingIncrementMicros": "10000"
+              },
+              "cash": {
+                "annualYieldBps": 0,
+                "dayCount": "actual-365",
+                "accrual": "session-open"
+              },
+              "partialFills": {
+                "policy": "deterministic-hash",
+                "probabilityPpm": 100000,
+                "filledFractionPpm": 500000,
+                "remainder": "cancel"
+              },
+              "doubleCostMultiplier": 2,
+              "order": {
+                "type": "limit",
+                "timeInForce": "asset-session",
+                "extendedHours": "equity-data-session",
+                "planAfter": "verified-intraday-window",
+                "submitAfter": "plan-committed",
+                "submitBefore": "intraday-entry-cutoff",
+                "planningPriceReference": "verified-adverse-top-of-book",
+                "planningBrokerStateReference": "reconciled-pre-plan-broker-state",
+                "fillPriceReference": "limit-or-better",
+                "buyingPowerPolicy": "pre-submit-cash-without-sell-proceeds",
+                "warmupAfterOpenMs": 0,
+                "submissionCutoffBeforeCloseMs": 300000
+              }
+            },
+            "inputDefinition": "bayn.jev-entry-state.v23",
+            "schemaVersion": "bayn.jev.protocol.v37",
+            "lookbackMinutes": {
+              "equity": 30,
+              "crypto": 120
+            }
+          },
+          "portfolio": {
+            "purpose": "MANAGE",
+            "brokerState": {
+              "account": {
+                "schemaVersion": "bayn.paper-account-snapshot.v2",
+                "accountId": "retained-v37-hold-test",
+                "status": "ACTIVE",
+                "currency": "USD",
+                "cashMicros": "99500000000",
+                "equityMicros": "100010000000",
+                "buyingPowerMicros": "99500000000",
+                "cryptoFeeTier": null,
+                "observedAt": "2026-09-04T14:30:33.000Z"
+              },
+              "positions": [
+                {
+                  "schemaVersion": "bayn.position.v2",
+                  "accountId": "retained-v37-hold-test",
+                  "symbol": "AAPL",
+                  "quantityAtoms": "5000000000",
+                  "averageEntryPriceMicros": "100000000",
+                  "costBasisMicros": "500000000",
+                  "marketPriceMicros": "102000000",
+                  "marketValueMicros": "510000000",
+                  "unrealizedPnlMicros": "10000000",
+                  "observedAt": "2026-09-04T14:30:33.000Z"
+                }
+              ],
+              "positionsObservedAt": "2026-09-04T14:30:33.000Z",
+              "orders": [
+                {
+                  "schemaVersion": "bayn.order.v3",
+                  "accountId": "retained-v37-hold-test",
+                  "brokerOrderId": "entry-order",
+                  "clientOrderId": "entry-client",
+                  "intentId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "symbol": "AAPL",
+                  "side": "BUY",
+                  "orderType": "LIMIT",
+                  "timeInForce": "IOC",
+                  "quantityAtoms": "10000000000",
+                  "filledQuantityAtoms": "5000000000",
+                  "limitPriceMicros": "100000000",
+                  "status": "CANCELED",
+                  "observedAt": "2026-09-04T14:30:33.000Z"
+                }
+              ],
+              "ordersObservedAt": "2026-09-04T14:30:33.000Z",
+              "accountingHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "reconciliation": {
+                "schemaVersion": "bayn.paper-reconciliation.v1",
+                "reconciliationId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "accountId": "retained-v37-hold-test",
+                "expectedHash": "d46357a039d38247c5c45e5d96efdc665909e9b0b993c0dd325e0f04d792c370",
+                "observedHash": "d46357a039d38247c5c45e5d96efdc665909e9b0b993c0dd325e0f04d792c370",
+                "contentHash": "29712b70bb3dab0cd5299ebcbe887dde8328da57ab1dbd46b5ce6a39029a67b2",
+                "status": "EXACT",
+                "discrepancies": [],
+                "reconciledAt": "2026-09-04T14:30:33.000Z"
+              },
+              "unknownOrderCount": 0
+            },
+            "entryDecisionHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "exitPolicy": {
+              "schemaVersion": "bayn.position-exit-policy.v5",
+              "maximumPriceCheckIntervalMs": 5000,
+              "maximumHoldingMinutes": 15,
+              "plans": {
+                "AAPL": {
+                  "schemaVersion": "bayn.jev-funded-exit-plan.v4",
+                  "levels": {
+                    "schemaVersion": "bayn.jev-strategy-exit-plan.v4",
+                    "rule": "source-anchored-complete-plan",
+                    "proposalId": "930c3b8ffcecbcfd9fd466d3c96b2b30872585373332099c0a6ac84d23fd62e7",
+                    "source": {
+                      "setup": "SUPPORT_RECOVERY",
+                      "supportBarId": "bar_2026-09-04T14:00:00.000Z",
+                      "resistanceBarId": "bar_2026-09-04T14:25:00.000Z",
+                      "targetBasis": "OBSERVED_RESISTANCE"
+                    },
+                    "symbol": "AAPL",
+                    "sourceStartAt": "2026-09-04T14:00:00.000Z",
+                    "sourceEndAt": "2026-09-04T14:27:00.000Z",
+                    "maximumHoldingMinutes": 15,
+                    "maximumEntryPriceMicros": "102010000",
+                    "stopPriceMicros": "99000000",
+                    "stopLimitPriceMicros": "98910000",
+                    "profitLimitPriceMicros": "105000000"
+                  },
+                  "maximumQuantityAtoms": "196000000000",
+                  "acquisitionCostMicros": "19993970000",
+                  "estimatedStopNetMicros": "19385900641",
+                  "estimatedTargetNetMicros": "20579516052"
+                }
+              }
+            },
+            "protectionIntentIds": [],
+            "exitRequestedAt": null,
+            "profitExitRequested": false,
+            "entryIntentIds": ["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],
+            "entryFills": [
+              {
+                "schemaVersion": "bayn.fill.v2",
+                "accountId": "retained-v37-hold-test",
+                "fillId": "fill-0",
+                "brokerOrderId": "entry-order",
+                "clientOrderId": "entry-client",
+                "intentId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "symbol": "AAPL",
+                "side": "BUY",
+                "quantityAtoms": "3000000000",
+                "priceAtoms": "100000000000",
+                "feeMicros": "0",
+                "occurredAt": "2026-09-04T14:27:33.000Z"
+              },
+              {
+                "schemaVersion": "bayn.fill.v2",
+                "accountId": "retained-v37-hold-test",
+                "fillId": "fill-1",
+                "brokerOrderId": "entry-order",
+                "clientOrderId": "entry-client",
+                "intentId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "symbol": "AAPL",
+                "side": "BUY",
+                "quantityAtoms": "2000000000",
+                "priceAtoms": "100000000000",
+                "feeMicros": "0",
+                "occurredAt": "2026-09-04T14:27:33.000Z"
+              }
+            ],
+            "entryInventoryDebit": {
+              "quantityAtoms": "0",
+              "costBasisMicros": "0"
+            },
+            "protectionDisposals": {
+              "quantityAtoms": "0",
+              "costBasisMicros": "0"
+            }
+          },
+          "observedAt": "2026-09-04T14:30:33.000Z",
+          "authorityGenerationHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "source": {
+            "manifest": {
+              "schemaVersion": "bayn.streaming-market-snapshot.v1",
+              "sessionDate": "2026-09-04",
+              "calendar": {
+                "schemaVersion": "bayn.alpaca-market-calendar-observation.v2",
+                "source": "alpaca-v2-calendar",
+                "requestedRange": {
+                  "start": "2026-09-04",
+                  "end": "2026-09-04"
+                },
+                "timeZone": "UTC",
+                "sessions": [
+                  {
+                    "date": "2026-09-04",
+                    "openAt": "2026-09-04T13:30:00.000Z",
+                    "closeAt": "2026-09-04T20:00:00.000Z"
+                  }
+                ],
+                "providerSessions": [
+                  {
+                    "date": "2026-09-04",
+                    "regularOpenAt": "2026-09-04T13:30:00.000Z",
+                    "regularCloseAt": "2026-09-04T20:00:00.000Z",
+                    "sessionOpenAt": "2026-09-04T13:30:00.000Z",
+                    "sessionCloseAt": "2026-09-04T20:00:00.000Z"
+                  }
+                ],
+                "normalizedResponseHash": "b4d9b6569a4b2de9f7020f511134a326ca98127c360def2cb0a9e8aea4badf5e"
+              },
+              "rangeStartAt": "2026-09-04T14:29:00.000Z",
+              "rangeEndAt": "2026-09-04T14:30:00.000Z",
+              "observedAt": "2026-09-04T14:30:33.000Z",
+              "universeId": "torghut-core-equity-v2",
+              "universeSymbolHash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+              "universe": [
+                "AAPL",
+                "AMD",
+                "AMZN",
+                "AVGO",
+                "COHR",
+                "CRDO",
+                "IWM",
+                "LITE",
+                "MRVL",
+                "MU",
+                "NVDA",
+                "QQQ",
+                "SMH",
+                "SNDK",
+                "SPY",
+                "WDC"
+              ],
+              "symbols": ["AAPL"],
+              "purpose": "LIQUIDATION",
+              "feed": "iex",
+              "delayClass": "real_time_exchange_only",
+              "sourceTopics": {
+                "bars": "torghut.bars.1m.v1",
+                "quotes": "torghut.quotes.v1",
+                "trades": "torghut.trades.v1"
+              },
+              "maximumQuoteAgeMs": 10000,
+              "minimumWatermarkLagMs": 0,
+              "barCount": 0,
+              "quoteCount": 1,
+              "tradeCount": 0,
+              "barsContentHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "quotesContentHash": "de6d71c0123fac4f611516c28fbb8f1fa10cee5d82df0e0dc68ff2f2ea08f430",
+              "tradesContentHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "lineage": [
+                {
+                  "sourceTopic": "torghut.quotes.v1",
+                  "sourcePartition": 0,
+                  "firstOffset": "1",
+                  "lastOffset": "1",
+                  "recordCount": 1
+                }
+              ],
+              "streaming": {
+                "schemaVersion": "bayn.streaming-input-cut.v1",
+                "bootstrap": {
+                  "schemaVersion": "bayn.kafka-bootstrap.v1",
+                  "epoch": "fixture-epoch",
+                  "observedAtMs": 1788532232000,
+                  "lowerTimestampMs": 1788532135000,
+                  "timestampPolicy": "dorvud.producer-clock.v1",
+                  "partitions": [
+                    {
+                      "topic": "torghut.bars.1m.v1",
+                      "partition": 0,
+                      "logStartOffset": "0",
+                      "startOffset": "0",
+                      "endOffset": "0"
+                    },
+                    {
+                      "topic": "torghut.market-features.v1",
+                      "partition": 0,
+                      "logStartOffset": "0",
+                      "startOffset": "0",
+                      "endOffset": "0"
+                    },
+                    {
+                      "topic": "torghut.quotes.v1",
+                      "partition": 0,
+                      "logStartOffset": "0",
+                      "startOffset": "0",
+                      "endOffset": "2"
+                    },
+                    {
+                      "topic": "torghut.trades.v1",
+                      "partition": 0,
+                      "logStartOffset": "0",
+                      "startOffset": "0",
+                      "endOffset": "0"
+                    }
+                  ]
+                },
+                "barPublicationPolicy": "observed-completed-history.v1",
+                "positions": [
+                  {
+                    "topic": "torghut.bars.1m.v1",
+                    "partition": 0,
+                    "offset": "0"
+                  },
+                  {
+                    "topic": "torghut.market-features.v1",
+                    "partition": 0,
+                    "offset": "0"
+                  },
+                  {
+                    "topic": "torghut.quotes.v1",
+                    "partition": 0,
+                    "offset": "2"
+                  },
+                  {
+                    "topic": "torghut.trades.v1",
+                    "partition": 0,
+                    "offset": "0"
+                  }
+                ],
+                "sequence": 1,
+                "records": [
+                  {
+                    "sourceTopic": "torghut.quotes.v1",
+                    "sourcePartition": 0,
+                    "sourceOffset": "1",
+                    "availableAtMs": 1788532233000,
+                    "sequence": 1,
+                    "contentHash": "072d4ac19572a032b88f32df6797fc3ebe7284dc215e74ec35a764755750087a"
+                  }
+                ],
+                "features": []
+              },
+              "contentHash": "9a2a28e478aedbcf70deee55228ed346fd7692653b7ca61e357236aba343db5d",
+              "snapshotId": "71118bbf5336e794ee5c94d5b9260758c7c188de5e19b2a789f2f7fa6c4dc43d"
+            },
+            "rows": {
+              "bars": [],
+              "quotes": [
+                {
+                  "provider": "alpaca",
+                  "universe_id": "torghut-core-equity-v2",
+                  "universe_symbol_hash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+                  "feed": "iex",
+                  "market_session": "regular",
+                  "delay_class": "real_time_exchange_only",
+                  "symbol": "AAPL",
+                  "event_at": "2026-09-04T14:30:32.000Z",
+                  "ingested_at": "2026-09-04T14:30:32.000Z",
+                  "source_topic": "torghut.quotes.v1",
+                  "source_partition": 0,
+                  "source_offset": "1",
+                  "schema_version": 1,
+                  "bid_price": 100.19,
+                  "bid_size": 100,
+                  "ask_price": 100.21000000000001,
+                  "ask_size": 100
+                }
+              ],
+              "trades": []
+            }
+          }
+        }
+      }
+    },
+    "receiptHash": "85d23414f840d3503e3495ad9ed49f23c3fa5e1242d15b30de206d2b5802e2c8"
+  },
+  "cut": {
+    "schemaVersion": "bayn.operational-source-cut.v1",
+    "registrationHash": "798905a53b45350690627b0d3240d432293d95211c4034e3e321cc4b8aca1186",
+    "asOf": "2026-11-04T00:03:00.000Z",
+    "runtimeConfigurationHash": "3b41af9492fd8d17dfb6022294e55377c681ee4a5de16e44da68290ec3bb4cb5",
+    "financial": [],
+    "records": [
+      {
+        "kind": "CONTROLLER",
+        "sourceId": "85d23414f840d3503e3495ad9ed49f23c3fa5e1242d15b30de206d2b5802e2c8",
+        "recordHash": "99e0d5b4c990b1ae56c1f3dfa76266ba611c8f27a2d32e4291fd1ec9844a92ca"
+      }
+    ],
+    "protectionIntents": [],
+    "decisionAdmissions": [],
+    "mutations": [],
+    "durableObservations": [],
+    "sourceMaterial": {},
+    "sourceMaterialHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  }
+}

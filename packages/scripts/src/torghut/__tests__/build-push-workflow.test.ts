@@ -137,8 +137,12 @@ describe('torghut build-push workflow', () => {
     expect(testsExclude).toBeGreaterThan(scriptsInclude)
     expect(testFilesExclude).toBeGreaterThan(scriptsInclude)
     expect(updaterExclude).toBeGreaterThan(scriptsInclude)
-    expect(ciPathPatternIndex('.github/workflows/torghut-ci.yml')).toBe(-1)
     expect(ciPathPatternIndex('.github/workflows/torghut-build-push.yaml')).toBe(-1)
+  })
+
+  it('validates changes to the Torghut CI workflow on pull requests', () => {
+    expect(ciPathPatternIndex('.github/workflows/torghut-ci.yml')).toBeGreaterThan(-1)
+    expect(pushPathPatterns(ciWorkflow)).not.toContain('.github/workflows/torghut-ci.yml')
   })
 
   it('does not use actions/cache on the ARC-backed build runner', () => {
@@ -322,23 +326,9 @@ describe('torghut build-push workflow', () => {
     expect(kubeconformInput).toBeGreaterThan(manifestValidation)
   })
 
-  it('scopes Convex admin secrets to landing validation only', () => {
-    const validateJob = pullRequestWorkflow.indexOf('  validate:')
-    const landingStep = pullRequestWorkflow.indexOf('- name: Run landing validation')
-    const validationStep = pullRequestWorkflow.indexOf('- name: Run selected validation')
-    const validationEnv = pullRequestWorkflow.indexOf('CONVEX_SELF_HOSTED_ADMIN_KEY:', landingStep)
-    const validationRun = pullRequestWorkflow.indexOf('run: |', validationStep)
-    const jobEnv = pullRequestWorkflow.indexOf('env:\n      CHANGED_FILES_JSON:', validateJob)
-
-    expect(validateJob).toBeGreaterThan(-1)
-    expect(landingStep).toBeGreaterThan(-1)
-    expect(validationStep).toBeGreaterThan(-1)
-    expect(validationEnv).toBeGreaterThan(landingStep)
-    expect(validationEnv).toBeLessThan(validationStep)
-    expect(pullRequestWorkflow.slice(landingStep, validationStep)).toContain("if: ${{ matrix.target == 'landing' }}")
-    expect(pullRequestWorkflow.slice(validationStep, validationRun)).not.toContain('CONVEX_SELF_HOSTED_ADMIN_KEY:')
-    expect(jobEnv).toBeGreaterThan(-1)
-    expect(pullRequestWorkflow.slice(jobEnv, landingStep)).not.toContain('CONVEX_SELF_HOSTED_ADMIN_KEY:')
+  it('keeps Convex admin credentials out of pull-request validation', () => {
+    expect(pullRequestWorkflow).not.toContain('CONVEX_SELF_HOSTED_URL')
+    expect(pullRequestWorkflow).not.toContain('CONVEX_SELF_HOSTED_ADMIN_KEY')
   })
 
   it('runs the landing Playwright accessibility suite in pull-request validation', () => {
@@ -574,7 +564,7 @@ describe('torghut build-push workflow', () => {
 
   it('does not cancel main source CI while release promotion verifies the image contract', () => {
     expect(ciWorkflow).toContain(
-      "group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",
+      "group: torghut-ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",
     )
     expect(ciWorkflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")
   })

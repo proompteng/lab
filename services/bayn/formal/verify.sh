@@ -11,7 +11,7 @@ if [[ "$(uname -s)" != Linux ]]; then
   echo 'Formal verification requires Linux with bubblewrap. Run this command in a Linux VM or container.' >&2
   exit 1
 fi
-for tool in lean bun bwrap git; do
+for tool in lean bun bwrap findmnt git; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "Formal verification requires $tool on PATH." >&2
     exit 1
@@ -28,8 +28,6 @@ case "$(lean --version)" in
     exit 1
     ;;
 esac
-lean_prefix="$(lean --print-prefix)"
-"$lean_prefix/bin/lake" -q build
 bash check.sh
 
 export BAYN_FORMAL_EXECUTABLE="$project_dir/.lake/build/bin/bayn-model"

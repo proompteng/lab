@@ -5,6 +5,8 @@ import { Result, Schema } from 'effect'
 
 import { canonicalJsonEqualV1 } from '../hash'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
+import { resolveAlphaRegularSession, noiseAreaBands } from '../strategy/intraday-alpha/signals'
+import { pureEtfCheckpointMinutes } from '../market-data/intraday/trailing-baseline'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { intradayAgeNanos, millisecondsAsNanos } from '../market-data/intraday/time'
@@ -18,19 +20,21 @@ import { JevObservationSchema } from './observation-contract'
 import { JevPortfolioSchema, JevPurpose, jevManagedExitPlan } from './portfolio'
 import type { JevStrategyExitPlan } from './strategy-exit-plan'
 import { JevProtocolSchema } from './protocol'
-import { isShortExitPlan } from '../strategy/funded-exit-plan'
+import { isIntradayAlphaExitPlan, isShortExitPlan } from '../strategy/funded-exit-plan'
+import { intradayAlphaCandidateSymbols } from '../strategy/intraday-alpha/constants'
 
 export enum JevExitReason {
   ProfitTarget = 'PROFIT_TARGET',
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
   ProtectionReleased = 'PROTECTION_RELEASED',
+  OppositeBandExit = 'OPPOSITE_BAND_EXIT',
 }
 
 const TriggerSchema = Schema.Union([
   Schema.Struct({ reason: Schema.Literals([JevExitReason.MaximumHold, JevExitReason.ProtectionReleased]) }),
   Schema.Struct({
-    reason: Schema.Literals([JevExitReason.ProtectiveStop, JevExitReason.ProfitTarget]),
+    reason: Schema.Literals([JevExitReason.ProtectiveStop, JevExitReason.ProfitTarget, JevExitReason.OppositeBandExit]),
     manifest: JevObservationSchema.fields.manifest,
     rows: JevObservationSchema.fields.rows,
   }),
@@ -42,6 +46,7 @@ export const JevPositionEvidenceSchema = Schema.Struct({
   protocol: JevProtocolSchema,
   portfolio: JevPortfolioSchema,
   observedAt: UtcInstantSchema,
+  symbol: Schema.optionalKey(SymbolSchema),
 })
 export const JevExitEvidenceSchema = Schema.Struct({
   ...JevPositionEvidenceSchema.fields,
@@ -94,10 +99,12 @@ type PriceExitSource = {
   readonly rows: typeof JevObservationSchema.fields.rows.Type
 }
 
-export const verifiedPositionQuote = (
+/** Reproduce source identity and prices without treating transient quote availability as a contract failure. */
+export const reproducePositionQuote = (
   input: Pick<JevExitEvidenceMaterial, 'protocol' | 'sessionDate' | 'observedAt'> & {
     readonly symbol: string
     readonly positionSide?: 'SHORT'
+    readonly checkpoint?: true
   },
   source: PriceExitSource,
 ) =>
@@ -114,7 +121,10 @@ export const verifiedPositionQuote = (
       ? undefined
       : exchangeSessions(m.calendar).find(({ date }) => date === sessionDate)
     if (
-      m.purpose !== IntradaySnapshotPurpose.Liquidation ||
+      m.purpose !==
+        (input.checkpoint === true
+          ? IntradaySnapshotPurpose.PositionCheckpoint
+          : IntradaySnapshotPurpose.Liquidation) ||
       m.observedAt !== observedAt ||
       m.sessionDate !== sessionDate ||
       m.symbols.length !== 1 ||
@@ -133,33 +143,53 @@ export const verifiedPositionQuote = (
     )
       return yield* invalid('Price exit requires a fresh reproduced liquidation quote from the exact market source')
     const quote = snapshot.latestQuotes[symbol]
-    if (
-      quote === undefined ||
-      (input.positionSide === 'SHORT' ? quote.askSize <= 0 : quote.bidSize <= 0) ||
-      !jevProtectiveQuoteIsFresh(quote, observedAt, protocol.maximumQuoteAgeMs)
-    )
-      return yield* invalid('Price exit has no fresh executable bid')
+    if (quote === undefined) return yield* invalid('Price exit has no fresh executable bid')
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-    return { bid, ask, quote }
+    return { bid, ask, quote, snapshot }
+  })
+
+export const verifiedPositionQuote = (input: Parameters<typeof reproducePositionQuote>[0], source: PriceExitSource) =>
+  Result.gen(function* () {
+    const evidence = yield* reproducePositionQuote(input, source)
+    const { quote } = evidence
+    if (
+      (input.positionSide === 'SHORT' ? quote.askSize <= 0 : quote.bidSize <= 0) ||
+      !jevProtectiveQuoteIsFresh(quote, input.observedAt, input.protocol.maximumQuoteAgeMs)
+    )
+      return yield* invalid('Price exit has no fresh executable bid')
+    return evidence
   })
 
 export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMaterial, 'trigger'>) =>
   Result.gen(function* () {
     const { portfolio, protocol } = evidence
     if (portfolio.purpose !== JevPurpose.Manage) return yield* invalid('Exit requires an accounted held position')
-    if (!equal(portfolio.exitPolicy, jevPositionExitPolicy(protocol, portfolio.exitPolicy.plans)))
-      return yield* invalid('Exit policy differs from the policy sealed into the entry decision')
+    if (portfolio.managedSymbol !== undefined && portfolio.managedSymbol !== evidence.symbol)
+      return yield* invalid('Position evidence must manage the exact bound ETF leg')
     const state = portfolio.brokerState
-    const position = state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
-    const firstFill = portfolio.entryFills[0]
-    const entryPlan = yield* jevManagedExitPlan(portfolio)
+    const position =
+      evidence.symbol === undefined
+        ? (state.positions.find(
+            (entry) => BigInt(entry.quantityAtoms) !== 0n && entry.symbol in portfolio.exitPolicy.plans,
+          ) ?? state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n))
+        : state.positions.find((entry) => entry.symbol === evidence.symbol && BigInt(entry.quantityAtoms) !== 0n)
+    const entryPlan = yield* jevManagedExitPlan(portfolio, evidence.symbol ?? position?.symbol)
+    const alphaPlan = isIntradayAlphaExitPlan(entryPlan)
+    if (!alphaPlan && !equal(portfolio.exitPolicy, jevPositionExitPolicy(protocol, portfolio.exitPolicy.plans)))
+      return yield* invalid('Exit policy differs from the policy sealed into the entry decision')
+    const symbolFills =
+      position === undefined ? [] : portfolio.entryFills.filter((fill) => fill.symbol === position.symbol)
+    const firstFill = symbolFills[0] ?? portfolio.entryFills[0]
     if (position === undefined || firstFill === undefined)
       return yield* invalid('Exit requires a long position with cost basis and its first fill')
     const market = jevMarketForSymbol(position.symbol)
     const now = Date.parse(evidence.observedAt)
+    const symbolAllowed = alphaPlan
+      ? intradayAlphaCandidateSymbols.some((candidate) => candidate === position.symbol)
+      : protocol.candidateSymbols.includes(position.symbol)
     if (
-      !protocol.candidateSymbols.includes(position.symbol) ||
+      !symbolAllowed ||
       (market.feed !== 'us' &&
         (firstFill.occurredAt.slice(0, 10) !== evidence.sessionDate ||
           evidence.observedAt.slice(0, 10) !== evidence.sessionDate)) ||
@@ -175,6 +205,38 @@ export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMateri
     return { portfolio, position, firstFill, entryPlan, now }
   })
 
+/** A zero width is a real observation: the gap-aware open and prior close remain the bands. */
+export const oppositeAlphaBandCrossed = (
+  snapshot: import('../market-data/streaming/snapshot').StrategyMarketSnapshot,
+  plan: import('../strategy/intraday-alpha/exit-plan').IntradayAlphaFundedExitPlan,
+) =>
+  Result.gen(function* () {
+    const { fillAnchored, symbol } = plan.levels
+    if (fillAnchored === undefined) return false
+    const { calendar, sessionDate, rangeEndAt } = snapshot.manifest
+    const regular = yield* resolveAlphaRegularSession(calendar, sessionDate)
+    const end = Date.parse(rangeEndAt)
+    const minute = (end - regular.openMs) / 60_000
+    if (
+      !pureEtfCheckpointMinutes.some((cp) => cp === minute) ||
+      end > regular.closeMs - 30 * 60_000 ||
+      rangeEndAt <= plan.levels.sourceEndAt
+    )
+      return false
+    const width = fillAnchored.checkpointSwings[String(minute)]
+    if (width === undefined) return false
+    const bar = snapshot.bars.find((record) => record.symbol === symbol && Date.parse(record.eventAt) === end - 60_000)
+    if (bar === undefined || intradayAgeNanos(bar.ingestedAt, bar.eventAt) < millisecondsAsNanos(60_000))
+      return yield* invalid('Opposite-band exit requires the completed checkpoint bar')
+    const { upperBand, lowerBand } = noiseAreaBands(
+      fillAnchored.sessionOpen,
+      fillAnchored.previousClose,
+      width,
+      fillAnchored.bandMultiplier,
+    )
+    return isShortExitPlan(plan) ? bar.close > upperBand : bar.close < lowerBand
+  })
+
 export const deriveJevExitTargetMaterial = <Evidence extends JevExitEvidenceMaterial>(evidence: Evidence) =>
   Result.gen(function* () {
     const { protocol, trigger } = evidence
@@ -186,21 +248,31 @@ export const deriveJevExitTargetMaterial = <Evidence extends JevExitEvidenceMate
           return yield* invalid('Protection release requires a durable exit request or an accounted protective fill')
         break
       case JevExitReason.MaximumHold:
-        if (now < Date.parse(firstFill.occurredAt) + protocol.maximumHoldingMinutes * 60_000)
+        if (now < Date.parse(firstFill.occurredAt) + entryPlan.levels.maximumHoldingMinutes * 60_000)
           return yield* invalid('Maximum holding time has not elapsed since the actual first fill')
         break
       case JevExitReason.ProtectiveStop:
-      case JevExitReason.ProfitTarget: {
+      case JevExitReason.ProfitTarget:
+      case JevExitReason.OppositeBandExit: {
         const short = isShortExitPlan(entryPlan)
-        const { bid, ask, quote } = yield* verifiedPositionQuote(
-          { ...evidence, symbol: position.symbol, ...(short ? { positionSide: 'SHORT' as const } : {}) },
+        const { bid, ask, quote, snapshot } = yield* verifiedPositionQuote(
+          {
+            ...evidence,
+            symbol: position.symbol,
+            ...(short ? { positionSide: 'SHORT' as const } : {}),
+            ...(trigger.reason === JevExitReason.OppositeBandExit ? { checkpoint: true as const } : {}),
+          },
           trigger,
         )
         const exitPrice = short ? ask : bid
         const crossed =
           trigger.reason === JevExitReason.ProtectiveStop
             ? jevProtectiveStopCrossed(exitPrice, entryPlan.levels)
-            : yield* jevProfitTargetCrossed(portfolio, exitPrice)
+            : trigger.reason === JevExitReason.OppositeBandExit
+              ? portfolio.managedSymbol === position.symbol &&
+                isIntradayAlphaExitPlan(entryPlan) &&
+                (yield* oppositeAlphaBandCrossed(snapshot, entryPlan))
+              : yield* jevProfitTargetCrossed(portfolio, exitPrice, position.symbol)
         if (!crossed) return yield* invalid('The verified bid has not crossed its entry-bound exit threshold')
         commitDeadlineAt = new Date(Date.parse(quote.eventAt) + protocol.maximumQuoteAgeMs).toISOString()
         break
@@ -271,7 +343,7 @@ export const jevProfitTargetStopCrossed = (
     const portfolio = target.evidence.portfolio
     if (portfolio.purpose !== JevPurpose.Manage)
       return yield* invalid('A profit limit requires the entry-bound managed portfolio')
-    const plan = yield* jevManagedExitPlan(portfolio)
+    const plan = yield* jevManagedExitPlan(portfolio, target.symbols[0])
     const short = isShortExitPlan(plan)
     const { bid, ask, quote } = yield* verifiedPositionQuote(
       {
@@ -301,14 +373,14 @@ export const jevProfitTargetLimitFloors = (
     const portfolio = target.evidence.portfolio
     if (portfolio.purpose !== JevPurpose.Manage)
       return yield* invalid('A profit limit requires the entry-bound managed portfolio')
-    const plan = yield* jevManagedExitPlan(portfolio)
+    const plan = yield* jevManagedExitPlan(portfolio, target.symbols[0])
     if (isShortExitPlan(plan)) return {}
-    const firstFill = portfolio.entryFills[0]
+    const firstFill = portfolio.entryFills.find((fill) => fill.symbol === plan.levels.symbol) ?? portfolio.entryFills[0]
     const reference = references.find(({ symbol }) => symbol === plan.levels.symbol)
     if (firstFill === undefined || reference === undefined)
       return yield* invalid('A profit limit requires its first fill and current close reference')
     if (
-      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, target.evidence.protocol.maximumHoldingMinutes) ||
+      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, plan.levels.maximumHoldingMinutes) ||
       jevProtectiveStopCrossed(BigInt(reference.referencePriceMicros), plan.levels)
     )
       return {}
@@ -320,11 +392,13 @@ export const jevProfitTargetHoldingDeadlineAt = (
 ): Result.Result<string | undefined, JevContractError> => {
   if (!isProfitExit(target)) return Result.succeed(undefined)
   const portfolio = target.evidence.portfolio
-  if (portfolio.purpose !== JevPurpose.Manage || portfolio.entryFills[0] === undefined)
-    return invalid('A profit limit requires the entry-bound first fill')
-  return Result.succeed(
-    jevMaximumHoldDueAt(portfolio.entryFills[0].occurredAt, target.evidence.protocol.maximumHoldingMinutes),
-  )
+  if (portfolio.purpose !== JevPurpose.Manage) return invalid('A profit limit requires the entry-bound first fill')
+  const plan = jevManagedExitPlan(portfolio, target.symbols[0])
+  if (Result.isFailure(plan)) return Result.fail(plan.failure)
+  const firstFill =
+    portfolio.entryFills.find((fill) => fill.symbol === plan.success.levels.symbol) ?? portfolio.entryFills[0]
+  if (firstFill === undefined) return invalid('A profit limit requires the entry-bound first fill')
+  return Result.succeed(jevMaximumHoldDueAt(firstFill.occurredAt, plan.success.levels.maximumHoldingMinutes))
 }
 
 export const jevProfitTargetLimitCeilings = (
@@ -337,14 +411,14 @@ export const jevProfitTargetLimitCeilings = (
     const portfolio = target.evidence.portfolio
     if (portfolio.purpose !== JevPurpose.Manage)
       return yield* invalid('A profit cover requires the entry-bound short portfolio')
-    const plan = yield* jevManagedExitPlan(portfolio)
+    const plan = yield* jevManagedExitPlan(portfolio, target.symbols[0])
     if (!isShortExitPlan(plan)) return {}
-    const firstFill = portfolio.entryFills[0]
+    const firstFill = portfolio.entryFills.find((fill) => fill.symbol === plan.levels.symbol) ?? portfolio.entryFills[0]
     const reference = references.find((value) => value.symbol === plan.levels.symbol)
     if (firstFill === undefined || reference === undefined)
       return yield* invalid('A profit cover requires its first fill and current ask reference')
     if (
-      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, target.evidence.protocol.maximumHoldingMinutes) ||
+      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, plan.levels.maximumHoldingMinutes) ||
       jevProtectiveStopCrossed(BigInt(reference.referencePriceMicros), plan.levels)
     )
       return {}

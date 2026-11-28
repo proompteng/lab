@@ -1,9 +1,15 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import { isProtectedEntryTarget, protectedEntryExpiresAtMs } from '../strategy/runtime-decision'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
+import {
+  cyclePassObservationSchemaForHold,
+  RetainedAutonomousCyclePassObservationSchema,
+} from '../cycle/runner/pass-observation'
+import { JevPositionHoldSchema } from '../jev/hold'
+import { RetainedV37JevPositionHoldSchema } from '../jev/retained-v37-hold'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { jevSignalDueAtMs, jevSignalWindowEndMs } from '../jev/observation-query'
@@ -14,7 +20,8 @@ import {
   type RecordedExecutionDecisionDocument as ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import type { ScheduledEvaluation } from './policy'
+import { isNativeSystemRegistration, isStrategyBoundSystemRegistration, type ScheduledEvaluation } from './policy'
+import { isAlphaBinding, ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
 import type { RecordedProtectedEntryTarget as ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
@@ -38,7 +45,14 @@ export const ControllerPassEvidenceSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
   observation: RetainedAutonomousCyclePassObservationSchema,
 })
+export const RetainedV37ControllerPassEvidenceSchema = Schema.Struct({
+  ...ControllerPassEvidenceSchema.fields,
+  observation: cyclePassObservationSchemaForHold(
+    Schema.Union([JevPositionHoldSchema, RetainedV37JevPositionHoldSchema]),
+  ),
+})
 export type ControllerPassEvidence = typeof ControllerPassEvidenceSchema.Type
+export type RecordedControllerPassEvidence = typeof RetainedV37ControllerPassEvidenceSchema.Type
 
 const sourceMarketScopeSupported = (
   manifest: Readonly<Record<string, unknown>>,
@@ -69,8 +83,8 @@ const sourceMarketScopeSupported = (
     )
   )
     return false
-  if (native) return true
-  const calendar = qualificationCalendar(manifest['calendar'])
+  if (native && !isNativeSystemRegistration(registration)) return true
+  const calendar = qualificationCalendar(manifest['calendar'], registration.calendar.operatingHours)
   if (Result.isFailure(calendar)) return false
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
   return source !== undefined && source.openAt === registered.openAt && source.closeAt === registered.closeAt
@@ -114,7 +128,7 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
     sourceAt,
     correct:
       completedAt >= sourceAt &&
-      (strategy.schemaVersion === 'bayn.repeated-momentum-target.v1'
+      (strategy.schemaVersion === 'bayn.repeated-momentum-target.v1' || isIntradayAlphaTarget(strategy)
         ? exclusions === undefined || (Array.isArray(exclusions) && exclusions.length === 0)
         : strategy.evidence.batchPlan.candidates.every(
             (c) => c.status !== 'EXCLUDED' || (c.reason !== 'not-ready' && c.reason !== 'freshness'),
@@ -129,6 +143,32 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
   }
 }
 
+const entryMatchesRegisteredEngine = (target: ProtectedEntryTarget, registration: ScheduledEvaluation): boolean => {
+  if (!isStrategyBoundSystemRegistration(registration)) return true
+  const definition = registration.policies.find(
+    (policy) => policy.authorityGenerationHash === target.evidence.observation.authorityGenerationHash,
+  )
+  if (definition === undefined || !('strategyBinding' in definition)) return false
+  const checked = validateResearchStrategyBinding(definition.strategyBinding)
+  if (Result.isFailure(checked)) return false
+  const binding = checked.success
+  const parameters =
+    isAlphaBinding(binding) && isIntradayAlphaTarget(target)
+      ? target.policy
+      : binding.engine === ResearchStrategyEngine.Jev && target.schemaVersion === 'bayn.jev-entry-target.v7'
+        ? target.evidence.observation.protocol
+        : binding.engine === ResearchStrategyEngine.EntryAblation &&
+            target.schemaVersion === 'bayn.entry-ablation-target.v1'
+          ? target.policy
+          : binding.engine === ResearchStrategyEngine.RepeatedMomentum &&
+              target.schemaVersion === 'bayn.repeated-momentum-target.v1'
+            ? target.policy
+            : null
+  if (parameters === null) return false
+  const hash = canonicalHashV1Result(parameters)
+  return Result.isSuccess(hash) && hash.success === binding.strategy.parameterHash
+}
+
 export const decisionDocumentWork = (document: ExecutionDecisionDocument, registration: ScheduledEvaluation) => {
   const strategy = document.strategyDecision
   if (isProtectedEntryTarget(strategy)) {
@@ -137,6 +177,7 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
       ...work,
       correct:
         work.correct &&
+        entryMatchesRegisteredEngine(strategy, registration) &&
         sourceFitsRegisteredSession(
           strategy.evidence.observation.manifest,
           registration,
@@ -164,7 +205,10 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
   return undefined
 }
 
-export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence, registration: ScheduledEvaluation) => {
+export const controllerBuildMatchesRegistration = (
+  pass: RecordedControllerPassEvidence,
+  registration: ScheduledEvaluation,
+) => {
   const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
   const build = pass.observation.executionBuild
   return (
@@ -181,7 +225,7 @@ export type ControllerBuildBindingPolicy = 'CURRENT' | 'RETAINED_OPERATIONAL_V1'
 
 /** Frozen receipt reproduction only. New claims use controllerBuildMatchesRegistration. */
 const retainedOperationalV1ControllerBuildMatches = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
 ) => {
   const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
@@ -195,7 +239,7 @@ const retainedOperationalV1ControllerBuildMatches = (
 }
 
 const registeredControllerOwns = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   accountId: string,
   generationHash: string,
@@ -225,6 +269,23 @@ const registeredControllerOwns = (
       parameterHash: historicalParameters,
       parameterSchemaVersion: protocol.schemaVersion,
     })
+    const runtime = registration.obligations.configuration
+    const strategyBound = runtime.schemaVersion === 'bayn.qualification-runtime.v3'
+    const binding = strategyBound ? yield* validateResearchStrategyBinding(runtime.strategyBinding) : null
+    const strategyMatches =
+      binding === null
+        ? Schema.is(JevProtocolSchema)(protocol)
+          ? jevProtocolIdentityMatches(protocol, candidate?.protocolHash ?? '')
+          : historicalParameters === candidate?.parametersHash &&
+            historicalIdentity === candidate?.protocolHash &&
+            historicalBehavior === candidate?.strategyHash
+        : candidate !== undefined &&
+          'strategyBinding' in candidate &&
+          (yield* canonicalHashV1Result(candidate.strategyBinding)) === (yield* canonicalHashV1Result(binding)) &&
+          (yield* canonicalHashV1Result(protocol)) === (yield* canonicalHashV1Result(runtime.protocol)) &&
+          binding.strategy.behaviorHash === candidate.strategyHash &&
+          binding.strategy.parameterHash === candidate.parametersHash &&
+          binding.protocolHash === candidate.protocolHash
     return (
       candidate !== undefined &&
       (buildBinding === 'RETAINED_OPERATIONAL_V1'
@@ -234,11 +295,7 @@ const registeredControllerOwns = (
       pass.controllerKey === identity.identityHash &&
       candidate.accountBindingHash === accountHash &&
       candidate.authorityGenerationHash === generationHash &&
-      (Schema.is(JevProtocolSchema)(protocol)
-        ? jevProtocolIdentityMatches(protocol, candidate.protocolHash)
-        : historicalParameters === candidate.parametersHash &&
-          historicalIdentity === candidate.protocolHash &&
-          historicalBehavior === candidate.strategyHash)
+      strategyMatches
     )
   })
 
@@ -262,7 +319,7 @@ export const closedEntryWindowTimingSupported = (clock: {
 
 /** Reproduce an idle discovery result; a bare closed/healthy tick cannot supply decision evidence. */
 export const closedEntryWindowWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
   buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
@@ -327,7 +384,7 @@ export const closedEntryWindowWork = (
   })
 
 export const entryAbstentionWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
   buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
@@ -343,6 +400,7 @@ export const entryAbstentionWork = (
       ...work,
       correct:
         work.correct &&
+        entryMatchesRegisteredEngine(target, registration) &&
         target.selectedSymbols.length === 0 &&
         sourceFitsRegisteredSession(source.manifest, registration, source.observedAt) &&
         (yield* registeredControllerOwns(
@@ -376,7 +434,7 @@ export const holdCompletionSupported = (evidence: {
   evidence.witnessedAt < evidence.validUntil
 
 export const accountProtectionWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
   buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
@@ -424,7 +482,7 @@ export const accountProtectionWork = (
 
 /** A successful controller tick is insufficient: reproduce the retained strategy conclusion and its owner. */
 export const positionHoldWork = (
-  pass: ControllerPassEvidence,
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   decisions: readonly { readonly sessionDate: string; readonly document: ExecutionDecisionDocument }[],
   witnessedAt: string,

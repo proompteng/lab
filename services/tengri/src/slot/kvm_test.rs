@@ -443,6 +443,38 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
+
+    let fenced = runner::command_at(
+        &runner::sockets_directory().join("control.sock"),
+        &runner::CommandRequest::Fence {
+            claim: claim.clone(),
+        },
+    )
+    .await?;
+    ensure!(
+        fenced.state.lifecycle_fenced(),
+        "runner did not commit the execution fence"
+    );
+    ensure!(
+        firecracker_rss().await?.is_none(),
+        "execution fence left a live VMM"
+    );
+    ensure!(
+        client.fixture_restore(&foreign, fence).await.is_err(),
+        "a foreign allocation could cold-boot the retained disks"
+    );
+    client.fixture_restore(&claim, fence).await?;
+    ensure!(
+        client.status().await?.state.serves(&claim),
+        "cold boot did not restore the original slot"
+    );
+    let rpc = guest(&identity, &claim, &token, database.clone())?;
+    ensure!(
+        rpc.read_file("/workspace/continuity.txt").await?.content == b"private-home-continuity",
+        "cold boot lost the retained file"
+    );
+    rpc.codex_call("model/list", json!({})).await?;
+    eprintln!("real KVM fenced cold boot retained files and initialized Codex");
     client.lifecycle("stop", &claim, fence).await?;
     let mut sorted_timings = timings.clone();
     sorted_timings.sort_by(f64::total_cmp);

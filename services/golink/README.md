@@ -60,5 +60,5 @@ The Knative service is cluster-local with Tailscale exposure at host `go`.
 
 ## Testing
 
-- Vitest covers redirect lookup and CRUD handlers using an in-memory PGlite database (`createTestDb`).
+- Bun runs redirect lookup and CRUD tests in randomized order using an in-memory PGlite database (`createTestDb`).
 - UI behaviors rely on optimistic React Query mutations; manual QA: create/edit/delete rows and confirm slug redirect 302 and 404 for unknown slugs.

@@ -3,6 +3,7 @@ import { Effect, Result, Schema } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   BacktestInputSchema,
+  BacktestInputV11Schema,
   BacktestBuildEvidenceSchema,
   BacktestIssue,
   assessBacktestSession,
@@ -11,6 +12,14 @@ import {
   prepareBacktest,
 } from '../intraday-replay/backtest'
 import { ReplayBrokerCheckpointSchema } from '../intraday-replay/broker-checkpoint'
+import {
+  ReplayAlphaObservationSchema,
+  ReplayAlphaBaselineGapSchema,
+  verifyReplayAlphaEvidence,
+  PreparedReplayAlphaObservationSchema,
+  verifyPreparedReplayAlphaEvidence,
+} from '../intraday-replay/alpha-report'
+import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { replayDecisionReleaseAt } from '../intraday-replay/decision-latency'
 import { ReplayInferenceCallSchema } from '../intraday-replay/inference-timing'
 import { calculateReplayInferenceCosts, ReplayInferenceCostSummarySchema } from '../intraday-replay/inference-costs'
@@ -40,9 +49,10 @@ import { VerifiedReplayImage } from './replay-image'
 import type { ReplayExecutionReceiptSchema } from './replay-execution'
 import { FrozenControlReplaySchema, prepareFrozenControlReplay } from './frozen-control-replay'
 import { FrozenControlReportSchema, reproduceFrozenControlReport } from './frozen-control-report'
+import { isAlphaBinding } from './strategy-binding'
 
 // The complete report is hashed first; this projection decodes only fields used by this verifier.
-const LatencyReportSchema = Schema.Struct({
+const RetainedLatencyReportSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest-report.v9'),
   reportHash: Sha256Schema,
   runId: Sha256Schema,
@@ -98,7 +108,7 @@ const LatencyReportSchema = Schema.Struct({
   brokerState: Schema.Unknown,
   brokerCheckpoint: ReplayBrokerCheckpointSchema,
   inference: Schema.Struct({
-    definition: BacktestInputSchema.fields.inference,
+    definition: BacktestInputV11Schema.fields.inference,
     calls: Schema.Array(ReplayInferenceCallSchema),
     providerDispatchCount: NonNegativeIntegerSchema,
     retainedCallCount: NonNegativeIntegerSchema,
@@ -136,6 +146,24 @@ const LatencyReportSchema = Schema.Struct({
     ),
   }),
 })
+
+const StrategyBoundLatencyReportSchema = Schema.Struct({
+  ...RetainedLatencyReportSchema.fields,
+  schemaVersion: Schema.Literal('bayn.backtest-report.v10'),
+  alphaObservations: Schema.Array(ReplayAlphaObservationSchema),
+  alphaBaselineGaps: Schema.Array(ReplayAlphaBaselineGapSchema),
+  decisions: Schema.Array(Schema.Unknown),
+})
+const PreparedAlphaLatencyReportSchema = Schema.Struct({
+  ...StrategyBoundLatencyReportSchema.fields,
+  schemaVersion: Schema.Literal('bayn.backtest-report.v11'),
+  alphaObservations: Schema.Array(PreparedReplayAlphaObservationSchema),
+})
+const LatencyReportSchema = Schema.Union([
+  RetainedLatencyReportSchema,
+  StrategyBoundLatencyReportSchema,
+  PreparedAlphaLatencyReportSchema,
+])
 
 export const bindLatencyStressSources = (
   descriptors: typeof LatencyStressSourcesSchema.Type,
@@ -252,6 +280,14 @@ export const bindLatencyStressSources = (
       if (reportHash !== (yield* canonicalHashV1Result(material)))
         return yield* fail('Latency report hash differs from its complete contents')
       const report = yield* Schema.decodeUnknownResult(LatencyReportSchema)(raw)
+      const expectedReportVersion =
+        input.schemaVersion === 'bayn.backtest.v13'
+          ? 'bayn.backtest-report.v11'
+          : input.schemaVersion === 'bayn.backtest.v12'
+            ? 'bayn.backtest-report.v10'
+            : 'bayn.backtest-report.v9'
+      if (report.schemaVersion !== expectedReportVersion)
+        return yield* fail('Latency report version differs from its bound replay input')
       const image = images.get(descriptor.reportFileHash)?.receipt ?? null
       const execution =
         descriptor.executionReceiptHash === null ? null : (executions.get(descriptor.executionReceiptHash) ?? null)
@@ -307,7 +343,7 @@ export const bindLatencyStressSources = (
         report.inference.providerDispatchCount !== 0 ||
         report.inference.retainedCallCount !== report.inference.calls.length ||
         (input.policy === JevResearchPolicy.Ablation && report.inference.calls.some((call) => call.stage === 'JEV')) ||
-        (input.policy === JevResearchPolicy.Momentum && report.inference.calls.length !== 0) ||
+        (!prepared.requiresInference && report.inference.calls.length !== 0) ||
         report.latencyStress.protocolHash !== stress.protocolHash ||
         !(yield* same(report.latencyStress.protocol, stress.protocol)) ||
         !(yield* same(report.latencyStress.calibration, stress.calibration))
@@ -425,19 +461,64 @@ export const bindLatencyStressSources = (
         )
           return yield* fail('Latency release does not reproduce its original command, result and registered floor')
       }
-      const observations = new Map(report.momentumObservations.map((o) => [o.contentHash, o.payload]))
+      const alpha = isAlphaBinding(prepared.strategyBinding)
+      if (report.schemaVersion !== 'bayn.backtest-report.v9') {
+        if (prepared.strategyBinding === null)
+          return yield* fail('Native alpha report requires its independently verified strategy binding')
+        if (report.schemaVersion === 'bayn.backtest-report.v11')
+          yield* verifyPreparedReplayAlphaEvidence({
+            binding: prepared.strategyBinding,
+            preparations: prepared.alphaBaselinePreparations,
+            observations: report.alphaObservations,
+            baselineGaps: report.alphaBaselineGaps,
+            decisions: report.decisions,
+            runId: prepared.runId,
+            observationReleases: report.latencyStress.observationReceipts,
+          })
+        else
+          yield* verifyReplayAlphaEvidence({
+            binding: prepared.strategyBinding,
+            sources: prepared.alphaBaselineSources,
+            observations: report.alphaObservations,
+            baselineGaps: report.alphaBaselineGaps,
+            decisions: report.decisions,
+            runId: prepared.runId,
+            observationReleases: report.latencyStress.observationReceipts,
+          })
+        if (
+          (alpha && report.momentumObservations.length !== 0) ||
+          report.alphaBaselineGaps.length > 0 !== report.issues.includes(BacktestIssue.MissingCausalAlphaBaseline) ||
+          (report.completion === 'COMPLETE' && report.alphaBaselineGaps.length !== 0) ||
+          report.alphaBaselineGaps.some(
+            (gap) =>
+              gap.observedAt > report.brokerCheckpoint.observedAt ||
+              !registration.calendar.sessions.some(
+                (window) =>
+                  window.sessionDate === gap.sessionDate &&
+                  window.openAt <= gap.observedAt &&
+                  gap.observedAt <= window.closeAt,
+              ),
+          )
+        )
+          return yield* fail('Native alpha report hides, invents or moves a missing causal baseline')
+      }
+      const observationRows =
+        alpha && report.schemaVersion !== 'bayn.backtest-report.v9'
+          ? report.alphaObservations
+          : report.momentumObservations
+      const observations = new Map(observationRows.map((o) => [o.contentHash, o.payload]))
       const observationReleases = new Map(report.latencyStress.observationReceipts.map((r) => [r.observationHash, r]))
       const unreleasedObservations = new Set(report.latencyStress.unreleasedObservationHashes)
       if (
-        observations.size !== report.momentumObservations.length ||
+        observations.size !== observationRows.length ||
         observationReleases.size !== report.latencyStress.observationReceipts.length ||
         unreleasedObservations.size !== report.latencyStress.unreleasedObservationHashes.length ||
         observations.size !== report.latencyStress.admittedObservationCount ||
         observationReleases.size + unreleasedObservations.size !== observations.size ||
         [...unreleasedObservations].some((id) => !observations.has(id) || observationReleases.has(id)) ||
         [...observationReleases.keys()].some((id) => !observations.has(id)) ||
-        (input.policy !== JevResearchPolicy.Momentum && observations.size !== 0) ||
-        (input.policy === JevResearchPolicy.Momentum && batches.size !== 0)
+        (!alpha && input.policy !== JevResearchPolicy.Momentum && observations.size !== 0) ||
+        ((alpha || input.policy === JevResearchPolicy.Momentum) && batches.size !== 0)
       )
         return yield* fail('Latency observation inventory omits, substitutes or duplicates a native source')
       if (
@@ -447,7 +528,9 @@ export const bindLatencyStressSources = (
       )
         return yield* fail('Latency report completion hides or invents an unreleased admission')
       for (const [hash, payload] of observations) {
-        const source = yield* reproduceJevCandidateObservation(payload)
+        const source = alpha
+          ? yield* reproduceIntradayAlphaObservation(payload)
+          : yield* reproduceJevCandidateObservation(payload)
         if (
           source.contentHash !== hash ||
           source.portfolio.purpose !== JevPurpose.Entry ||

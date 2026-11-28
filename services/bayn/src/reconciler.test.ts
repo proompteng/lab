@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Result, Schema } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Logger, Metric, Result, Schema } from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from './effect-test-support'
@@ -25,6 +26,7 @@ import {
   type ReadEvidence,
 } from './broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from './broker/alpaca/failures'
+import { requireSettledCashFees } from './broker/alpaca/observed-snapshot'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { verifyProtectionGroup } from './broker/alpaca/protection-group'
 import { canonicalHashV1Result } from './hash'
@@ -55,6 +57,7 @@ import {
 } from './simulation-reconciliation/broker-history'
 import { decideAccountBaseline } from './simulation-reconciliation/broker-normalization'
 import { normalizeTimestamp } from './simulation-reconciliation/broker-reconciler-model'
+import { ExecutionStageTimings, type ExecutionStageTiming } from './telemetry'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const observedAt = '1970-01-01T00:00:00.000Z'
@@ -774,6 +777,91 @@ describe('reconciliation pure decisions', () => {
 })
 
 describe('execution reconciliation loop', () => {
+  test('records expected broker observation waits without completing or failing the snapshot stage', async () => {
+    const read = emptyRead()
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    const timings = new Map<string, ExecutionStageTiming>()
+    const metrics = await Effect.runPromise(
+      Effect.gen(function* () {
+        const feeWait = yield* Effect.flip(requireSettledCashFees({ pendingCashFeeCount: 1 }))
+        const mutationWait = new BrokerReadError({
+          operation: 'preflight',
+          kind: BrokerReadErrorKind.ObservationPending,
+          retryable: true,
+          message: 'Broker observation is awaiting a fresh post-mutation cut',
+        })
+        const expectSnapshotFailure = (...errors: BrokerReadError[]) =>
+          provide(
+            {
+              ...read,
+              projection: {
+                fresh: read,
+                invalidate: Effect.void,
+                reconciliationSnapshot: Effect.failCause(Cause.fromReasons(errors.map(Cause.makeFailReason))),
+                submissionSnapshot: () => Effect.die('unexpected submission snapshot'),
+                withMutation: (effect) => effect,
+              },
+            },
+            makeStore(control),
+          ).pipe(
+            Effect.exit,
+            Effect.map((exit) => {
+              if (Exit.isSuccess(exit)) throw new Error('Expected reconciliation to fail closed')
+              expect(
+                exit.cause.reasons.map((reason) => (Cause.isFailReason(reason) ? reason.error : reason._tag)),
+              ).toEqual(errors)
+            }),
+          )
+
+        for (const error of [feeWait, mutationWait]) {
+          yield* expectSnapshotFailure(error)
+        }
+        const transport = new BrokerReadError({
+          operation: 'fee-activities',
+          kind: BrokerReadErrorKind.Transport,
+          retryable: true,
+          message: 'Broker connection unavailable',
+          cause: { _tag: 'RedactedTransportFixture' },
+        })
+        yield* expectSnapshotFailure(feeWait, transport)
+        for (const [kind, status] of [
+          [BrokerReadErrorKind.RateLimited, 429],
+          [BrokerReadErrorKind.Authentication, 401],
+          [BrokerReadErrorKind.Server, 503],
+          [BrokerReadErrorKind.AccountMismatch, 200],
+        ] as const) {
+          const error = new BrokerReadError({
+            operation: 'account',
+            kind,
+            status,
+            retryable: status === 429 || status === 503,
+            message: 'Broker read failed',
+          })
+          yield* expectSnapshotFailure(error)
+        }
+        return yield* PrometheusMetrics.format()
+      }).pipe(
+        Effect.provideService(ExecutionStageTimings, timings),
+        Effect.provideService(Metric.MetricRegistry, new Map()),
+        Effect.provide(Logger.layer([])),
+      ),
+    )
+
+    expect(control).toEqual({
+      writes: 0,
+      reconciliations: [],
+      restrictions: ['reconciliation pass incomplete', 'reconciliation pass incomplete'],
+    })
+    const stage = 'bayn.reconciliation.broker-snapshot'
+    expect(timings.get(`${stage}:`)).toMatchObject({ count: 7, failures: 5, interruptions: 0 })
+    const counts = metrics
+      .split('\n')
+      .filter((line) => line.startsWith('bayn_operation_duration_seconds_count{') && line.includes(`stage="${stage}"`))
+    expect(counts).toHaveLength(2)
+    expect(counts.find((line) => line.includes('outcome="pending"'))).toMatch(/} 2$/)
+    expect(counts.find((line) => line.includes('outcome="failed"'))).toMatch(/} 5$/)
+  })
+
   test.each([false, true])('retains a clock failure when containment clock also fails: %s', async (persistent) => {
     const clockFailure = new ReconciliationError({
       operation: 'clock',
@@ -837,6 +925,55 @@ describe('execution reconciliation loop', () => {
     expect(control.reconciliations).toHaveLength(1)
     expect(control.restrictions).toEqual([])
   })
+
+  test.each([true, false])(
+    'advances projected stream coverage only after financially exact persistence: %s',
+    async (accountingExact) => {
+      const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+      const baseStore = makeStore(control)
+      const store: TestStore = accountingExact
+        ? baseStore
+        : {
+            ...baseStore,
+            reconcile: (accountId, snapshot) =>
+              baseStore.reconcile(accountId, snapshot).pipe(
+                Effect.map(({ snapshot: reconciled, persisted }) => ({
+                  snapshot: reconciled,
+                  persisted: {
+                    ...persisted,
+                    metrics: { ...persisted.metrics, accountingExact: false },
+                  },
+                })),
+              ),
+          }
+      const fresh = emptyRead()
+      const stable = {
+        account: { value: account, evidence: evidence('projected-account') },
+        positions: { value: [], evidence: evidence('projected-positions') },
+        history: { orders: { rows: [], observedAt }, fills: [], fees: [] },
+      }
+      let completions = 0
+      const read: BrokerReadShape = {
+        ...fresh,
+        projection: {
+          fresh,
+          reconciliationSnapshot: Effect.succeed({
+            snapshot: stable,
+            complete: Effect.sync(() => {
+              expect(control.reconciliations).toHaveLength(1)
+              completions += 1
+            }),
+          }),
+          submissionSnapshot: () => Effect.die('unexpected submission snapshot'),
+          invalidate: Effect.void,
+          withMutation: (effect) => effect,
+        },
+      }
+
+      await Effect.runPromise(provide(read, store))
+      expect(completions).toBe(accountingExact ? 1 : 0)
+    },
+  )
 
   test('captures a complete 500-order history when the newest order has different cache and database precision', async () => {
     const cut = '2026-10-18T21:33:41.010Z'

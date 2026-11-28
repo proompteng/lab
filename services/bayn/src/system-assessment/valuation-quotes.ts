@@ -16,8 +16,13 @@ import { Sha256Schema } from '../schemas'
 import type { SystemRegistration } from './policy'
 import { SystemAssessmentError } from './economics'
 
-interface ValuationQuote extends ObservedMarketValue<IntradayQuote> {
+type QuoteObservation = Omit<ObservedMarketValue<IntradayQuote>, 'recordHash'> & {
   readonly source: { readonly epoch: NativeArrivalEpoch; readonly chunk: string; readonly arrival: NativeArrival }
+}
+type ValuationQuote = ObservedMarketValue<IntradayQuote> & {
+  readonly source: QuoteObservation['source'] & {
+    readonly frontier: { readonly chunk: string; readonly availableAtMs: number; readonly consumerSequence: number }
+  }
 }
 
 export const executableValuationQuote = (
@@ -63,10 +68,9 @@ export const readValuationQuotes = (
     const symbolsAt = new Map<string, Set<string>>()
     for (const request of requests)
       symbolsAt.set(request.at, new Set([...(symbolsAt.get(request.at) ?? []), ...request.symbols]))
-    const instants = [...symbolsAt.keys()].sort()
+    const instants = [...symbolsAt.keys()].sort().map((at) => ({ at, ms: Date.parse(at) }))
     const selected = new Map<string, Map<string, ValuationQuote>>()
-    const last = instants.at(-1)
-    if (last === undefined) return selected
+    if (instants.length === 0) return selected
     const epochs = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ captureId: Sha256Schema })))(
       yield* sql`SELECT capture_id AS "captureId" FROM native_arrival_epochs
       WHERE payload::jsonb #>> '{build,sourceRevision}' = ${definition.sourceRevision}
@@ -77,27 +81,35 @@ export const readValuationQuotes = (
     )
     for (const { captureId } of epochs) {
       const epoch = yield* readNativeArrivalEpoch(sql, captureId)
-      const current = new Map<string, ValuationQuote>()
+      const current = new Map<string, QuoteObservation>()
       let nextInstant = 0
       let ordinal = -1
       let previousHash: string | null = null
       let previousSequence = 0
       let previousAvailableAtMs = 0
-      const retainBefore = (availableAtMs: number) => {
-        while (nextInstant < instants.length) {
-          const at = instants[nextInstant]
-          if (at === undefined || Date.parse(at) >= availableAtMs) break
-          const merged = selected.get(at) ?? new Map<string, ValuationQuote>()
-          for (const [symbol, quote] of current) {
-            if (symbolsAt.get(at)?.has(symbol) !== true) continue
-            const previous = merged.get(symbol)
-            if (previous === undefined || compareCurrentMarketRecord(quote.value, previous.value) > 0)
-              merged.set(symbol, quote)
+      const retainBefore = (frontier: ValuationQuote['source']['frontier']) =>
+        Effect.gen(function* () {
+          while (nextInstant < instants.length) {
+            const instant = instants[nextInstant]
+            if (instant === undefined || instant.ms >= frontier.availableAtMs) break
+            const { at } = instant
+            const merged = selected.get(at) ?? new Map<string, ValuationQuote>()
+            for (const [symbol, quote] of current) {
+              if (symbolsAt.get(at)?.has(symbol) !== true) continue
+              const previous = merged.get(symbol)
+              if (previous === undefined || compareCurrentMarketRecord(quote.value, previous.value) > 0) {
+                const source = { ...quote.source, frontier }
+                merged.set(symbol, {
+                  ...quote,
+                  source,
+                  recordHash: yield* Effect.fromResult(canonicalHashV1Result(source)),
+                })
+              }
+            }
+            selected.set(at, merged)
+            nextInstant++
           }
-          selected.set(at, merged)
-          nextInstant++
-        }
-      }
+        })
       while (nextInstant < instants.length) {
         const afterOrdinal = ordinal
         yield* streamNativeArrivalChunkPage(sql, epoch, ordinal).pipe(
@@ -111,7 +123,13 @@ export const readValuationQuotes = (
               )
                 return yield* new SystemAssessmentError({ message: 'Valuation quote journal has an incomplete prefix' })
               for (const arrival of chunk.records) {
-                retainBefore(arrival.availableAtMs)
+                const next = instants[nextInstant]
+                if (next !== undefined && next.ms < arrival.availableAtMs)
+                  yield* retainBefore({
+                    chunk: chunk.contentHash,
+                    availableAtMs: arrival.availableAtMs,
+                    consumerSequence: arrival.receipt.consumerSequence,
+                  })
                 if (nextInstant === instants.length) break
                 if (arrival.receipt.disposition !== CaptureDisposition.Accepted) continue
                 const source = marketSourceForTopic(epoch.sources, arrival.record.topic)
@@ -132,7 +150,6 @@ export const readValuationQuotes = (
                   value: event.value,
                   availableAtMs: arrival.availableAtMs,
                   sequence: arrival.receipt.consumerSequence,
-                  recordHash: yield* Effect.fromResult(canonicalHashV1Result(provenance)),
                 })
               }
               ordinal = chunk.header.ordinal
@@ -145,7 +162,7 @@ export const readValuationQuotes = (
         )
         if (ordinal === afterOrdinal) break
       }
-      retainBefore(Infinity)
+      // EOF can follow an incomplete capture. Only an archived arrival strictly after a mark proves its frontier.
     }
     return selected
   })

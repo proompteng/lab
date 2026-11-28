@@ -259,6 +259,23 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynEgressProxyReplicaTargetMissed`: compare the `bayn-egress-proxy` Deployment's desired and available replicas.
   Preserve both stateless proxy replicas and their hostname spread so one node loss does not remove broker read
   connectivity. Do not bypass the proxy or broaden broker egress.
+- `BaynBrokerFeedUnavailable`: verify the single `bayn-broker-feed` pod's account check, authenticated WebSocket,
+  exact source revision, and `bayn.broker-source-projection.v1` acknowledgement. Readiness proves connection and
+  durable source acceptance only; use PostgreSQL source/projection evidence and canonical reconciliation before
+  declaring order, fill, or accounting recovery. Do not restore the deleted Kafka adapter or add a second socket.
+- `BaynBrokerSourceProjectionFallbackHigh`: group `bayn_broker_source_projection_total` by `reason` for the exact
+  deployed source. Preserve fail-closed reconciliation for invalid, unsupported, unbound, conflicting, or gapped
+  events. Repair the responsible parser, binding, or session boundary; do not convert a fallback into fabricated
+  broker state or relax the gate to clear the ratio.
+- `BaynBrokerSourceProjectionLatencyHigh`: compare Restate projector queue time with PostgreSQL writer-fence spans and
+  database latency over the same completed-event window. The projector owns source evidence only and has no
+  TigerBeetle dependency. Remove the measured queue or database bottleneck; do not move money posting onto the
+  WebSocket path or claim a latency gain from a restarted or empty histogram.
+- `BaynBrokerSourceProjectionStalled`: inspect pending count, oldest age, and
+  `bayn_broker_source_projection_observation_success`. The query covers retained events from every source revision;
+  a zero or absent observation-success gauge means the backlog itself is unknown. Trace the exact immutable event into
+  its Restate projector invocation and first projection receipt, then repair or resume that owner. Do not delete the
+  event, forge a terminal receipt, or hide a retired-revision backlog.
 - `BaynExecutionWorkerObservationUnavailable`: the current worker count is **unknown**, not zero or healthy.
   Inspect the `bayn/bayn-execution-controller` RestateDeployment, its observed versus metadata generation, and the
   existing kube-state-metrics/Alloy path. All four scalar observations and scrape health must be less than 90 seconds
@@ -288,9 +305,11 @@ Confirm the current Restate registration's label selector before comparing worke
   source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
   recovery timer into the new epoch.
 
-- `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
-  `executionSession.condition`. From ten minutes before submission opens until its cutoff, readiness
-  requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
+- `BaynExecutionWindowUnready`: inspect `executionSession.condition` and the active cycle or the opening projected
+  from the controller's retained broker calendar. With a verified opening and no cycle, failed prerequisites can
+  alert from ten minutes before submission opens. If prerequisites are ready, allow the first observation and the
+  configured decision-lag budget before treating a missing cycle as unready. The window ends at submission cutoff.
+  Readiness requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
   covering the latest mutation, zero unresolved mutations, an account-bound/readable broker, and an active readable
   Restate controller with a matching plan and a durable completion. No snapshot binding is required before the first
   full observation. After warmup, unavailable signal inputs or inference also close readiness; input-window failures
@@ -331,6 +350,12 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,
   and the broker read/account-binding facts in `GET /v1/status`. Restore the failed dependency or the existing scoped
   loop; do not bypass OBSERVE or create a replacement scheduler.
+- `CASH_FEES_PENDING`: Alpaca's stream can report cash fees before REST provides the authoritative records.
+  When this is the only blocker, Bayn reports `cycle.condition=WAITING` and `executionSession.condition=BLOCKED`
+  without a cycle-failed or runtime-degraded page. A fresh broker cut with settled fees and exact reconciliation
+  are still required to resume submissions. The execution-window alert still checks readiness for a verified
+  submission window. If the wait persists, inspect the broker observation and the account activities; never
+  bypass the fee gate. A broker-snapshot wait is recorded as `outcome="pending"`, not a failure.
 - `BaynRepeatedEntryExpiry`: inspect the last ten minutes of durable cycle outcomes and their original deadlines.
   This alert observes at least five changes to a replica's latest terminal timestamp while all sampled terminal
   reasons remain `BLOCKED_UNUSED_ENTRY_EXPIRED`, within its current submission window and with fresh projection

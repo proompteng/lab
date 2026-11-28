@@ -93,7 +93,6 @@ const SkipMaterial = Schema.Struct({
   recordedAt: UtcInstantSchema,
 })
 export const StagedSkipReceiptSchema = Schema.Struct({ ...SkipMaterial.fields, skipHash: Sha256Schema })
-export type StagedSkipReceipt = typeof StagedSkipReceiptSchema.Type
 export const StagedCheckpointSchema = Schema.Struct({
   claims: Schema.Array(StagedDispatchClaimSchema).check(Schema.isMaxLength(2)),
   terminals: Schema.Array(StagedTerminalReceiptSchema).check(Schema.isMaxLength(2)),
@@ -163,7 +162,10 @@ export const decodeStagedCheckpointForRequest = (
       if (new Set(rows.map((row) => row.stage)).size !== rows.length)
         return yield* invalid('Duplicate staged journal row')
     if (
-      (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40') &&
       (checkpoint.claims.some((claim) => claim.stage !== 'CHART') ||
         checkpoint.terminals.some((terminal) => terminal.stage !== 'CHART') ||
@@ -234,7 +236,10 @@ export const decodeStagedCheckpointForRequest = (
       if (terminal.outcome.status === 'NOT_DISPATCHED') {
         const proof = terminal.outcome
         if (
-          request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v41' ||
+          (request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v41' &&
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v42' &&
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v43' &&
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v44') ||
           terminal.stage !== 'CHART' ||
           proof.checkedAt < claim.claimedAt ||
           proof.checkedAt > terminal.recordedAt ||

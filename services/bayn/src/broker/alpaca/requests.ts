@@ -4,6 +4,7 @@ import type { BrokerConnection } from '../connection'
 import { contractFailure, type BrokerReadContractFailure } from './failures'
 import {
   ResponseHeadersSchema,
+  OrderCollection,
   accountConfigurationObservationSchemaVersion,
   accountConfigurationObservationSource,
   assetObservationSchemaVersion,
@@ -51,7 +52,9 @@ export const marketCalendarUrl = (connection: BrokerConnection, query: MarketCal
 
 export const ordersUrl = (connection: BrokerConnection, query: OrdersQuery): URL => {
   const url = new URL('/v2/orders', connection.baseUrl)
-  url.searchParams.set('nested', 'true')
+  // With nested open orders, a filled bracket parent can hide its still-working legs.
+  // Complete history remains nested so reconciliation can verify their lineage and terms.
+  url.searchParams.set('nested', String(query.status !== OrderCollection.Open))
   if (query.status !== undefined) url.searchParams.set('status', query.status)
   if (query.limit !== undefined) url.searchParams.set('limit', String(query.limit))
   if (query.after !== undefined) url.searchParams.set('after', query.after)

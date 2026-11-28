@@ -50,10 +50,11 @@ targets:
       - scripts/kube-router/**
       - argocd/applications/kube-router/**
       - argocd/applications/buzz/networkpolicy.yaml
+      - argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml
+      - argocd/applications/jangar/auto-ontology-db-networkpolicy.yaml
       - argocd/applications/observability/grafana-upgrade-backup.yaml
       - argocd/applications/proompteng/network-policy.yaml
       - argocd/applications/restate/networkpolicy.yaml
-      - argocd/applications/restate-example/networkpolicy.yaml
       - argocd/applications/temporal/upgrade/*backup.yaml
       - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
       - argocd/applications/hermes/network-policy.yaml

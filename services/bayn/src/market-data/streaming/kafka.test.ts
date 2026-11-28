@@ -9,9 +9,7 @@ import {
   type KafkaPartitionPosition,
 } from './bootstrap'
 import { describe, expect, test } from 'bun:test'
-import { Clock, Deferred, Effect, Exit, Logger, Metric, Redacted, Result } from 'effect'
-import { PrometheusMetrics } from 'effect/observability'
-import { makeCaptureHealth, observeCaptureWorker } from './capture-health'
+import { Clock, Deferred, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
 import { AuthenticationError, ProtocolError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
@@ -867,7 +865,6 @@ test('native retention observes the trading consumer cut, including rejected rec
 })
 
 test('failed native retention releases Kafka consumption and preserves incomplete evidence across epoch recovery', async () => {
-  const health = makeCaptureHealth()
   const transports: FakeTransport[] = []
   const captures: NativeArrivalCapture[] = []
   const chunks: NativeArrivalChunk[] = []
@@ -876,19 +873,6 @@ test('failed native retention releases Kafka consumption and preserves incomplet
     Effect.gen(function* () {
       const writing = yield* Deferred.make<void>()
       const failWriter = yield* Deferred.make<void>()
-      const reportHealth = yield* observeCaptureWorker
-      const recordHealth = Effect.gen(function* () {
-        const now = (yield* Clock.currentTimeMillis) / 1000
-        const sample = health.sample(now, now)
-        reportHealth(sample)
-        yield* TestClock.adjust('15 seconds')
-        const metrics = yield* PrometheusMetrics.format()
-        expect(metrics).toContain('bayn_capture_workers_expected 1\n')
-        expect(metrics).toContain('bayn_capture_workers_unobserved 0\n')
-        if (sample.terminalFailures === 0) expect(metrics).not.toContain('bayn_capture_terminal_failures_total')
-        else expect(metrics).toContain(`bayn_capture_terminal_failures_total ${sample.terminalFailures}\n`)
-        return sample
-      })
       let appendCalls = 0
       const market = yield* makeKafkaMarketProjection(
         config,
@@ -899,7 +883,7 @@ test('failed native retention releases Kafka consumption and preserves incomplet
           return transport
         },
         undefined,
-        health.wrap((bootstrap, sources) =>
+        (bootstrap, sources) =>
           Effect.gen(function* () {
             const build = nativeArrivalEpochFixture.build
             const capture = yield* makeNativeArrivalJournal(
@@ -927,14 +911,12 @@ test('failed native retention releases Kafka consumption and preserves incomplet
             captures.push(capture)
             return capture
           }),
-        ),
       )
       yield* TestClock.adjust(1_000)
       const first = transports[0]
       const capture = captures[0]
       if (first === undefined || capture === undefined) throw new Error('missing initial consumer capture')
       const initial = yield* market.read
-      expect(yield* recordHealth).toMatchObject({ activeCaptures: 1, terminalFailures: 0, pendingStagnantSeconds: 0 })
       // Malformed records exercise exact delivery retention, not market-content validity or freshness.
       const record = (offset: string): KafkaConsumedRecord => ({
         topic: 'quotes',
@@ -947,10 +929,7 @@ test('failed native retention releases Kafka consumption and preserves incomplet
       first.send(record('0'))
       yield* Deferred.await(writing)
       first.send(record('1'))
-      const pendingAt = (yield* Clock.currentTimeMillis) / 1000
-      expect(health.sample(pendingAt, pendingAt).pendingStagnantSeconds).toBe(0)
       yield* TestClock.adjust(1_000)
-      expect(health.sample(pendingAt + 1, pendingAt + 1).pendingStagnantSeconds).toBe(1)
       expect(capture.status()).toMatchObject({
         status: 'RECORDING',
         observedConsumerSequence: 2,
@@ -968,7 +947,6 @@ test('failed native retention releases Kafka consumption and preserves incomplet
       expect((yield* market.read).projection.epoch).toBe(initial.projection.epoch)
       expect((yield* market.readForLiquidation).consumerSequence).toBe(3)
       expect(transports).toHaveLength(1)
-      expect(yield* recordHealth).toMatchObject({ activeCaptures: 1, incompleteCaptures: 1, terminalFailures: 1 })
       first.invalidated?.(new Error('synthetic assignment replacement'))
       expect(Exit.isFailure(yield* Effect.exit(market.read))).toBe(true)
       yield* TestClock.adjust(3_000)
@@ -995,12 +973,6 @@ test('failed native retention releases Kafka consumption and preserves incomplet
       const sealedEnd = structuredClone(ends[0])
       const sealedStatus = structuredClone(capture.status())
       const sealedChunk = structuredClone(chunks[0])
-      expect(yield* recordHealth).toMatchObject({
-        activeCaptures: 1,
-        incompleteCaptures: 0,
-        terminalFailures: 1,
-        pendingStagnantSeconds: 0,
-      })
       transports[1]?.send(record('0'))
       yield* TestClock.adjust(1_000)
       expect(captures[1]?.status()).toMatchObject({
@@ -1011,16 +983,13 @@ test('failed native retention releases Kafka consumption and preserves incomplet
       expect(chunks).toHaveLength(2)
       expect(chunks[1]?.header.captureId).toBe(captures[1]?.status().captureId)
       expect(ends[0]?.status).toBe('INCOMPLETE')
-      expect(yield* recordHealth).toMatchObject({ terminalFailures: 1, pendingStagnantSeconds: 0 })
       yield* TestClock.adjust('60 seconds')
-      expect(yield* recordHealth).toMatchObject({ activeCaptures: 1, terminalFailures: 1, pendingStagnantSeconds: 0 })
       expect(ends).toHaveLength(1)
       expect(ends[0]).toEqual(sealedEnd)
       expect(capture.status()).toEqual(sealedStatus)
       expect(chunks[0]).toEqual(sealedChunk)
-    }).pipe(Effect.provideService(Metric.MetricRegistry, new Map())),
+    }),
   )
-  expect(health.sample(1000, 1000)).toMatchObject({ activeCaptures: 0, terminalFailures: 1 })
   expect(ends.map((end) => end.status)).toEqual(['INCOMPLETE', 'STOPPED'])
   expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
 })
@@ -1261,9 +1230,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
         const projection = yield* makeKafkaMarketProjection(config, [equity, crypto], () => transport)
         yield* TestClock.adjust('1 second')
         expect(seeks).toEqual([
-          { topics: ['bars', 'features'], timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
+          { topics: ['bars'], timestamp: BigInt(Date.parse('2026-10-28T18:29:55.000Z')) },
           { topics: ['quotes'], timestamp: BigInt(Date.parse('2026-10-29T00:59:43.000Z')) },
           { topics: ['trades'], timestamp: BigInt(Date.parse('2026-10-29T00:29:50.000Z')) },
+          { topics: ['features'], timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
           {
             topics: ['webull', 'crypto', 'crypto-features'],
             timestamp: BigInt(Date.parse('2026-10-29T00:57:55.000Z')),
@@ -1870,9 +1840,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
         expect(transport.lookups).toEqual([
           -2n,
           -1n,
-          BigInt(Date.parse('2026-09-11T13:29:55Z')),
+          BigInt(Date.parse('2026-09-11T07:29:55Z')),
           BigInt(Date.parse('2026-09-11T13:59:42Z')),
           BigInt(Date.parse('2026-09-11T13:29:50Z')),
+          BigInt(Date.parse('2026-09-11T13:29:55Z')),
         ])
         expect(cut.bootstrap.epoch).toBe(cut.projection.epoch)
       }),

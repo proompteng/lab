@@ -44,6 +44,17 @@
       },
       "additionalProperties": false
     },
+    "telemetry": {
+      "type": "object",
+      "properties": {
+        "otlpEndpoint": {
+          "type": "string",
+          "pattern": "^(|https?://[^\\s]+)$",
+          "description": "Optional OTLP/HTTP protobuf base URL. Leave empty to disable AgentRun lifecycle trace export."
+        }
+      },
+      "additionalProperties": false
+    },
     "cors": {
       "type": "object",
       "properties": {
@@ -377,6 +388,38 @@
         "networkPolicy": {
           "type": "object",
           "properties": { "enabled": { "type": "boolean" } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "autoOntologyMcpGateway": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "apiTokenSecretName": { "type": "string", "minLength": 1 },
+        "apiUrl": { "type": "string", "minLength": 1 },
+        "runnerServiceAccountName": { "type": "string", "minLength": 1 },
+        "tokenAudience": { "type": "string", "minLength": 1 },
+        "podDisruptionBudget": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minAvailable": { "type": ["integer", "string"] },
+            "maxUnavailable": { "type": ["integer", "string"] },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "topologySpreadConstraints": { "type": "array", "items": { "type": "object" } },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
           "additionalProperties": false
         }
       },

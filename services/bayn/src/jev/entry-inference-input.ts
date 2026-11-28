@@ -6,6 +6,7 @@ import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
+import { jevEntryPriceAllowances } from './entry-economics'
 import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
 import { WebullEntryContextSchema, verifyWebullEntryContext } from './webull-entry-context'
 import { EquityShortEligibilitySchema, equityShortIsEligible } from '../execution/equity-short'
@@ -77,7 +78,10 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
         value.numericalState['session'],
       )
       if (
-        value.protocol.schemaVersion !== 'bayn.jev.protocol.v41' ||
+        (value.protocol.schemaVersion !== 'bayn.jev.protocol.v41' &&
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v42' &&
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v43' &&
+          value.protocol.schemaVersion !== 'bayn.jev.protocol.v44') ||
         equityClockSession(timing.observedAt) !== 'regular' ||
         !equityShortIsEligible(
           value.funding.equityShortEligibility,
@@ -120,6 +124,20 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
         )
     }
     if (
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v44'
+    ) {
+      const allowances = jevEntryPriceAllowances(value.protocol, source.symbol)
+      yield* Schema.decodeUnknownResult(
+        Schema.NullOr(
+          Schema.Struct({
+            maximumEntryQuoteDriftBps: Schema.Literal(allowances.quoteDriftBps),
+            maximumEntryLimitSlippageBps: Schema.Literal(allowances.limitSlippageBps),
+          }),
+        ),
+      )(value.numericalState['entryEconomics'])
+    } else if (
       value.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
       value.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
       value.protocol.schemaVersion === 'bayn.jev.protocol.v39'

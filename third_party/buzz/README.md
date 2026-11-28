@@ -32,3 +32,8 @@ runners, pins each build to the matching upstream platform-manifest digest, and
 publishes one multi-architecture image. The deployment consumes that image by
 digest. Remove this derivative after upstream ships equivalent Ceph RGW
 compatibility.
+
+The main-branch compiler-cache workflow publishes OCI cache layers for each architecture under the existing
+`cache-amd64` and `cache-arm64` references. The native validation and image publication builds can reuse the
+compiled stage. That stage retains the relay and its compiled test executable while Cargo's downloaded dependencies and
+build tree stay in BuildKit cache mounts. Every build executes the focused relay tests in the `verify` stage.

@@ -1,19 +1,24 @@
-import type { AgentsServerRouteHandler } from './http-runtime'
-
 type AgentsServerRouteMethod = 'DELETE' | 'GET' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT'
 
-export type AgentsServerRouteArgs = Parameters<AgentsServerRouteHandler>[0]
+export type AgentsServerRouteArgs = {
+  request: Request
+  params: Record<string, string>
+}
 
-export type AgentsFileRouteOptions = {
+export type AgentsServerRouteHandler = (args: AgentsServerRouteArgs) => Response | Promise<Response>
+
+type AgentsFileRouteOptions = {
   server?: {
     handlers?: Partial<Record<AgentsServerRouteMethod, AgentsServerRouteHandler>>
   }
 }
 
-export type AgentsFileRoute = {
+type AgentsFileRoute = {
   path: string
   options: AgentsFileRouteOptions
 }
+
+export type AgentsServerRouteLoader = () => Promise<{ Route: AgentsFileRoute }>
 
 export const createFileRoute =
   (path: string) =>

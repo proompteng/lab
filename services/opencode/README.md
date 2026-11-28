@@ -95,6 +95,26 @@ source revisions. The HTTP source attestation must match the response's server
 revision, while model/configuration/request/stream/cost/timing evidence still
 passes the existing verifier. A server revision cannot be relabeled as the worker.
 
+The research gateway starts the pinned CLI once, then requires its authenticated
+`/api/info` response to report exactly `2.1.3` before serving readiness or proposals.
+Each start uses a new private password and isolated configuration; the native API
+and provider relay remain on loopback. The [Nix package](../../nix/images/opencode-cli.nix) retains the fixed hash and its
+independent `--version` install check. A second runtime `--version` invocation
+would bootstrap the CLI before the actual server without strengthening the live
+identity proof.
+
+Startup retries connection failures and the [native server's authenticated HTTP 503
+startup response](https://github.com/anomalyco/opencode/blob/bb25a2f4a3f3f04d7c344bec0c0574ea3510b3b1/packages/server/src/process.ts)
+within the existing 25-second readiness bound. The 503 response
+must still prove the exact version.
+A rejected identity or authentication response, a defect, or any child exit fails
+startup and releases the process scope. The native integration test observes the
+server fiber while polling, so an early failure is reported directly. Finalization
+can add time after the readiness bound. The [previous amd64 timeouts](https://github.com/proompteng/lab/actions/runs/44871171425) did not retain
+enough phase evidence to identify the original stall or quantify a latency saving;
+native image tests on both architectures remain the release gate. Proposal and
+research deadlines, one-call admission and retained-attempt rules are unchanged.
+
 The protected `bayn/bayn-opencode-state` PVC retains the original volume as
 recovery evidence. No active workload mounts it. The temporary migration Jobs and
 old gateway Deployment, Service and NetworkPolicy are retired after the verified

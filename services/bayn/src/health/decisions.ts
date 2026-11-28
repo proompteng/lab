@@ -216,6 +216,9 @@ const deriveBrokerStatus = (
     readAvailable: observed._tag === 'Available' && observed.value.permissionError === null,
     checkedAt,
     error: bindingError,
+    ...(observed._tag === 'Unavailable' && observed.observationFailure !== undefined
+      ? { observationFailure: observed.observationFailure }
+      : {}),
     executionEligible: broker.executionEligible,
     executionDisabledReason: broker.executionDisabledReason,
   }
@@ -226,6 +229,7 @@ const deriveCycleStatus = (
   config: RuntimeConfig,
   runtime: RuntimeState,
   clock: HealthProbeClock,
+  awaitingCashFees: boolean,
 ): CycleOperationsStatus => {
   const clockError =
     clock._tag === 'Unavailable'
@@ -243,6 +247,7 @@ const deriveCycleStatus = (
         clock.checkedAtMs,
         runtime.capitalActivation?._tag === 'Realized' ? Authority.Execution : Authority.Observe,
         config,
+        awaitingCashFees,
       ),
       {
         onFailure: (failure) => ({
@@ -370,9 +375,16 @@ export const deriveHealthTransition = (current: RuntimeState, input: HealthTrans
     executionController === undefined
       ? { ...current, autonomousCycleLoop }
       : { ...current, autonomousCycleLoop, executionController }
-  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
+  // Only classify healthy peers with a current cash fee wait as expected; don't mask another outage.
+  const awaitingCashFees =
+    input.results.broker?._tag === 'Unavailable' &&
+    input.results.broker.observationFailure === 'CASH_FEES_PENDING' &&
+    current.status !== 'FAILED' &&
+    current.capitalActivation?._tag !== 'Pending' &&
+    Object.values(health.dependencies).every(({ status }) => status === 'AVAILABLE')
+  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock, awaitingCashFees)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
   const next = deriveNextRuntimeState(projectedCurrent, health, cycle, broker, executionController, failures)
   return {

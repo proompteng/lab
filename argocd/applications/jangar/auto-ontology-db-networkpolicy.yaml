@@ -1,0 +1,55 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jangar-db-auto-ontology-ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: jangar-db
+      cnpg.io/instanceRole: replica
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-ontology
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: 9187
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudnative-pg
+      ports:
+        - port: 8000
+          protocol: TCP
+        - port: 5432
+          protocol: TCP
+    - from:
+        # Cross-node host traffic uses the node's Flannel VTEP (.0); local
+        # host traffic uses its CNI gateway (.1). Each /31 is limited to those
+        # two node-local addresses for kubelet/API CNPG status checks.
+        - ipBlock:
+            cidr: 10.244.0.0/31
+        - ipBlock:
+            cidr: 10.244.3.0/31
+        - ipBlock:
+            cidr: 10.244.5.0/31
+      ports:
+        - port: 8000
+          protocol: TCP

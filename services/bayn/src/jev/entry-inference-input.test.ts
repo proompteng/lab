@@ -17,7 +17,7 @@ const input = {
   numericalState: {
     schemaVersion: defaultJevProtocolDocument.inputDefinition,
     webullContext: null,
-    entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
+    entryEconomics: { maximumEntryQuoteDriftBps: 5, maximumEntryLimitSlippageBps: 5 },
     task: { decisionPurpose: 'ENTRY' },
     candidate: { symbol: 'AAPL', bars1m: bars },
     session: { completedBarWindowEndsAt: '2026-10-25T07:00:00.000Z', observedAt: '2026-10-25T07:00:02.000Z' },

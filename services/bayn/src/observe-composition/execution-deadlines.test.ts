@@ -187,8 +187,35 @@ test('ordinary terminal success does not schedule a successor tick', () => {
       cycle: { ...cycle, state: CycleState.Completed },
       observedAt,
     })
+
     expect(executionAdvanceDeadline(completed, observedAt, policy)).toBeUndefined()
   }
+})
+
+test('a deferred terminal successor wakes at its known source boundary without an unused lease or polling timer', () => {
+  const terminal = { ...cycle, state: CycleState.Blocked, terminalReason: CycleTerminalReason.UnusedEntryExpired }
+  const pending = advance({
+    outcome: 'ALREADY_TERMINAL',
+    cycle: terminal,
+    observedAt,
+    readiness: {
+      reason: DecisionReadinessReason.SignalWindowObserved,
+      message: 'The current entry window is already consumed',
+      availableAt: at(67_000),
+    },
+  })
+  expect(executionAdvanceDeadline(pending, observedAt, policy)).toEqual({
+    at: at(67_000),
+    reason: ExecutionDeadlineReason.Eligibility,
+  })
+  expect(executionAdvanceDeadline(pending, at(66_999), policy)?.at).toBe(at(67_000))
+  expect(executionAdvanceDeadline(pending, at(68_000), policy)).toEqual({
+    at: at(68_001),
+    reason: ExecutionDeadlineReason.Eligibility,
+  })
+  expect(
+    executionAdvanceDeadline(advance({ outcome: 'ALREADY_TERMINAL', cycle: terminal, observedAt }), observedAt, policy),
+  ).toBeUndefined()
 })
 
 test('an expired unbound admission hands off once before the unchanged cutoff', () => {

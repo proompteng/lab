@@ -87,6 +87,10 @@ const handoff = (
       },
       probeProtection: async () => undefined,
       recordNotification: async () => ({ covered: false }),
+      isNotificationCovered: async () => false,
+      project: async () => {
+        throw new Error('deployment handoff does not project broker source events')
+      },
       invalidate: async () => undefined,
       activate: async () => {
         brokerActivations += 1

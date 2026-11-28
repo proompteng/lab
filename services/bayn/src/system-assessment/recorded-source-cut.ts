@@ -7,11 +7,11 @@ import {
   RetainedJevExecutionDecisionDocumentSchema,
 } from '../shadow-decision-contract'
 import { IsoDateSchema } from '../schemas'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema } from './source-cut'
 
 // Only historical operational reads use this schema. Current source persistence keeps SystemSourceCutSchema.
 export const RecordedSystemSourceCutSchema = Schema.Struct({
-  ...SystemSourceCutSchema.fields,
+  ...RetainedSystemSourceCutSchema.fields,
   decisions: Schema.Array(
     Schema.Struct({
       sessionDate: IsoDateSchema,

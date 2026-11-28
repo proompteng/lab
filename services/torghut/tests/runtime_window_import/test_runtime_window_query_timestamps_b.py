@@ -1,25 +1,28 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import import_hypothesis_runtime_windows as runtime_import_cli
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
-    RuntimeWindowImportTestCaseBase,
-    _FakeConnection,
-    _FakeCursor,
     _query_timestamps,
     _source_activity_diagnostics_blockers,
-    datetime,
-    patch,
-    timedelta,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.runtime_window_import_support import (
+    _FakeConnection,
+    _FakeCursor,
 )
 
 
-class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportQueryTimestampsB(TestCase):
     def test_query_timestamps_includes_verified_post_window_closeout(
         self,
     ) -> None:
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         closeout_at = window_end + timedelta(minutes=5)
         entry_payload = {
@@ -250,9 +253,8 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
         connection = _FakeConnection(cursor)
         diagnostics: dict[str, object] = {}
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             decisions, executions, tca_rows = _query_timestamps(
                 dsn="postgresql://example",
@@ -320,13 +322,12 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
             for rows in cursor._results
         ]
         connection = _FakeConnection(cursor)
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         diagnostics: dict[str, object] = {}
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             _, _, tca_rows = _query_timestamps(
                 dsn="postgresql://example",
@@ -469,7 +470,7 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
             [
                 decision_row(
                     "decision-sell-id",
-                    datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    march_6_market_hour(39),
                     "decision-sell",
                 )
             ],
@@ -477,8 +478,8 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
                 execution_row(
                     "execution-sell",
                     "decision-sell-id",
-                    datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
-                    datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    march_6_market_hour(39),
+                    march_6_market_hour(40),
                     "sell",
                     "1",
                     "101",
@@ -491,7 +492,7 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
                     "event-new-sell",
                     "decision-sell-id",
                     "execution-sell",
-                    datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
+                    march_6_market_hour(39, 1),
                     "new",
                     "sell",
                     "1",
@@ -504,7 +505,7 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
                     "event-fill-sell",
                     "decision-sell-id",
                     "execution-sell",
-                    datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    march_6_market_hour(40),
                     "filled",
                     "sell",
                     "1",
@@ -517,7 +518,7 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
             [
                 decision_row(
                     "decision-buy-id",
-                    datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
+                    march_6_market_hour(34),
                     "decision-buy",
                 )
             ],
@@ -525,8 +526,8 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
                 execution_row(
                     "execution-buy",
                     "decision-buy-id",
-                    datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
-                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    march_6_market_hour(34),
+                    march_6_market_hour(35),
                     "buy",
                     "1",
                     "100",
@@ -539,7 +540,7 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
                     "event-new-buy",
                     "decision-buy-id",
                     "execution-buy",
-                    datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
+                    march_6_market_hour(34, 1),
                     "new",
                     "buy",
                     "1",
@@ -552,7 +553,7 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
                     "event-fill-buy",
                     "decision-buy-id",
                     "execution-buy",
-                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    march_6_market_hour(35),
                     "filled",
                     "buy",
                     "1",
@@ -567,16 +568,15 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
         connection = _FakeConnection(cursor)
         diagnostics: dict[str, object] = {}
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             _, _, tca_rows = _query_timestamps(
                 dsn="postgresql://example",
                 strategy_names=["microbar-cross-sectional-pairs-v1"],
                 account_label="TORGHUT_SIM",
-                window_start=datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
-                window_end=datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+                window_start=march_6_market_hour(40),
+                window_end=march_6_market_hour(45),
                 symbols=["AAPL"],
                 allow_authoritative_runtime_ledger_materialization=True,
                 source_activity_diagnostics=diagnostics,
@@ -650,7 +650,7 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
         self,
     ) -> None:
         cursor = _FakeCursor()
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         cursor._results = [
             *cursor._results,
             [],
@@ -669,9 +669,8 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
         connection = _FakeConnection(cursor)
         diagnostics: dict[str, object] = {}
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             _, _, tca_rows = _query_timestamps(
                 dsn="postgresql://example",
@@ -756,12 +755,11 @@ class TestRuntimeWindowImportQueryTimestampsB(RuntimeWindowImportTestCaseBase):
         cursor = _FakeCursor()
         cursor._results.insert(3, [])
         connection = _FakeConnection(cursor)
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             _query_timestamps(
                 dsn="postgresql://example",

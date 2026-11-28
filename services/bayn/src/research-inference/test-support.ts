@@ -37,7 +37,7 @@ export const editorFixture = () => {
       policy: {
         model: editorModel,
         checkpoint: editorCheckpoint,
-        servingImage: 'sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
+        servingImage: 'sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1',
         tokenizerRevision: editorCheckpoint,
         chatTemplateRevision: editorCheckpoint,
         temperature: 0.7,
@@ -75,6 +75,7 @@ export const retainedEditorFixture = () => {
         ...run.policy,
         model: 'qwen3-jev-editor-b968826d9c46',
         checkpoint,
+        servingImage: 'sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
         tokenizerRevision: checkpoint,
         chatTemplateRevision: checkpoint,
       },

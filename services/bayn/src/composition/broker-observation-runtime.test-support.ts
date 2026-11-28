@@ -1,4 +1,4 @@
-import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
+import { brokerObservationPostgresFixture } from './broker-observation-postgres.test-support'
 import { ValkeyCache } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
@@ -54,7 +54,7 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
             status: 'RESERVED',
             generation: 1,
             startedAt: new Date(now).toISOString(),
-            nextPollNotBeforeMs: Number(values[4]),
+            nextPollNotBeforeMs: Number(values.at(-2)),
           },
         ]),
       )
@@ -84,7 +84,7 @@ await mock.module('../db/postgres-client', () => ({
           loggerInherited: (yield* Logger.CurrentLoggers) === loggers,
           tracerInherited: (yield* Tracer.Tracer) === tracer,
         }
-        return postgresQueryFixture(sql)
+        return brokerObservationPostgresFixture(sql)
       }),
     ),
 }))

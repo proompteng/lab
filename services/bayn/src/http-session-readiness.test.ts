@@ -124,6 +124,59 @@ const expectSession = (state: RuntimeState, condition: string, ready: boolean) =
     },
   })
 
+test('projects a verified opening even when the controller never creates a cycle', () => {
+  const withoutCycle = (checkedAt: string): RuntimeState => {
+    const state = sessionState(checkedAt)
+    const controller = state.executionController
+    if (controller?.status == null || state.cycle.current === null) throw new Error('Missing opening fixture')
+    return {
+      ...state,
+      cycle: {
+        ...state.cycle,
+        current: null,
+        last: {
+          ...state.cycle.current,
+          executionSessionDate: '2026-09-30',
+          phase: CycleState.Completed,
+          submissionOpenAt: '2026-09-30T13:30:00.000Z',
+          submissionCutoffAt: '2026-09-30T19:55:00.000Z',
+          executionOpenAt: '2026-09-30T13:30:00.000Z',
+          executionCloseAt: '2026-09-30T20:00:00.000Z',
+        },
+      },
+      executionController: {
+        ...controller,
+        status: {
+          ...controller.status,
+          expectedSession: {
+            date: '2026-10-01',
+            submissionOpenAt: '2026-10-01T13:30:00.000Z',
+            firstObservationAt: '2026-10-01T13:31:02.000Z',
+            submissionCutoffAt: '2026-10-01T19:55:00.000Z',
+          },
+        },
+      },
+    }
+  }
+  expectSession(withoutCycle('2026-10-01T13:20:00.000Z'), 'PREOPEN', true)
+  expectSession(withoutCycle('2026-10-01T13:31:01.999Z'), 'WARMUP', true)
+  expectSession(withoutCycle('2026-10-01T13:32:01.999Z'), 'AWAITING_DECISION', true)
+  expectSession(withoutCycle('2026-10-01T13:32:02.000Z'), 'UNAVAILABLE', false)
+  expectSession(withoutCycle('2026-10-01T19:55:00.000Z'), 'CLOSED', false)
+
+  const opening = withoutCycle('2026-10-01T13:20:00.000Z')
+  expect(renderPrometheusMetrics(opening, config, provenance, config.build.verification)).toContain(
+    `bayn_execution_missing_cycle_alert_start_timestamp_seconds ${Date.parse('2026-10-01T13:32:02Z') / 1000}\n`,
+  )
+  expect(renderPrometheusMetrics(opening, config, provenance, config.build.verification, false)).toContain(
+    `bayn_execution_missing_cycle_alert_start_timestamp_seconds ${Date.parse('2026-10-01T13:20:00Z') / 1000}\n`,
+  )
+  const active = { ...opening, cycle: sessionState().cycle }
+  expect(renderPrometheusMetrics(active, config, provenance, config.build.verification)).toContain(
+    'bayn_execution_missing_cycle_cutoff_timestamp_seconds 0\n',
+  )
+})
+
 test('pre-open execution prerequisites are ready before a snapshot or decision exists', () => {
   const state = sessionState()
   expect(executionSessionPreflightReady(state)).toBe(true)
@@ -135,6 +188,21 @@ test('pre-open execution prerequisites are ready before a snapshot or decision e
     `bayn_cycle_decision_deadline_timestamp_seconds ${Date.parse('2026-10-01T13:32:02Z') / 1000}\n`,
   )
 })
+
+test.each(['2026-10-01T13:20:00.000Z', '2026-10-01T13:30:00.000Z'])(
+  'cash fee settlement blocks the session even with otherwise ready prerequisites at %s',
+  (checkedAt) => {
+    const state = sessionState(checkedAt)
+    if (state.broker === null) throw new Error('Missing broker fixture')
+    expect(executionSessionPreflightReady(state)).toBe(true)
+    const blocked: RuntimeState = {
+      ...state,
+      broker: { ...state.broker, readAvailable: false, observationFailure: 'CASH_FEES_PENDING' },
+    }
+    expect(executionSessionPreflightReady(blocked)).toBe(false)
+    expectSession(blocked, 'BLOCKED', false)
+  },
+)
 
 test.each([
   ['2026-10-01T13:30:00.000Z', 'WARMUP', true],

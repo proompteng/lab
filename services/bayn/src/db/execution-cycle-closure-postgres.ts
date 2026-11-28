@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Option, Result, Schema } from 'effect'
 
-import { executionCloseRecoveryExpiry } from '../market-hours'
+import { executionCloseRecoveryExpiry, isContinuousMarket, regularEquitySessions } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { currentUtcInstant } from '../time'
@@ -125,8 +125,29 @@ const makeStore = Effect.gen(function* () {
     Effect.gen(function* () {
       const target = closure.document.strategyDecision
       if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') {
-        if (original?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5')
-          return yield* storeError('bind-replan', 'invariant', 'A Jev close replan cannot discard its exit evidence')
+        const originalTarget = original?.document.strategyDecision
+        if (original === undefined || originalTarget?.schemaVersion !== 'bayn.jev-exit-target.v5') return
+        const session = original.document.executionSession
+        const regular =
+          session === undefined || isContinuousMarket(session.calendar)
+            ? undefined
+            : regularEquitySessions(session.calendar).find(({ date }) => date === originalTarget.sessionDate)
+        const predecessor = Option.getOrElse(yield* readLatestReplanByCycleId(sql, closure.cycleId), () => original)
+        if (
+          target?.schemaVersion !== 'bayn.execution-flat-target.v1' ||
+          originalTarget.evidence.portfolio.purpose !== 'MANAGE' ||
+          originalTarget.evidence.portfolio.managedSymbol === undefined ||
+          regular === undefined ||
+          Date.parse(closure.createdAt) < Date.parse(regular.closeAt) - 120_000 ||
+          closure.entryDecisionHash !== original.entryDecisionHash ||
+          closure.document.replanGenerationHash !== predecessor.contentHash ||
+          closure.createdAt <= predecessor.createdAt
+        )
+          return yield* storeError(
+            'bind-replan',
+            'invariant',
+            'A Jev close replan cannot discard its exit evidence before the ETF flatten window',
+          )
         return
       }
       const binding = closure.document.bindings
@@ -164,27 +185,72 @@ const makeStore = Effect.gen(function* () {
     `,
       )
       if (original !== undefined) {
-        const first = yield* Effect.fromResult(canonicalHashV1Result(original.document.strategyDecision))
         const next = yield* Effect.fromResult(canonicalHashV1Result(target))
         const prior = closure.document.replanGenerationHash
         const latest = yield* readLatestReplanByCycleId(sql, closure.cycleId)
         const predecessor = Option.getOrElse(latest, () => original)
+        const previousTarget = predecessor.document.strategyDecision
+        const first = yield* Effect.fromResult(canonicalHashV1Result(previousTarget))
+        const newLeg =
+          first !== next &&
+          previousTarget?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+          previousTarget.evidence.portfolio.purpose === 'MANAGE' &&
+          previousTarget.evidence.portfolio.managedSymbol !== undefined &&
+          target.evidence.portfolio.purpose === 'MANAGE' &&
+          target.evidence.portfolio.managedSymbol !== undefined &&
+          target.evidence.portfolio.managedSymbol !== previousTarget.evidence.portfolio.managedSymbol
+        if (newLeg) {
+          const now = yield* currentUtcInstant
+          const earlierSymbol = previousTarget.symbols[0]
+          if (
+            now < closure.createdAt ||
+            now >= target.commitDeadlineAt ||
+            target.evidence.portfolio.brokerState.positions.some(
+              (position) => position.symbol === earlierSymbol && BigInt(position.quantityAtoms) !== 0n,
+            )
+          )
+            return yield* storeError(
+              'bind-replan',
+              'invariant',
+              'A new ETF exit requires fresh evidence and a settled preceding leg',
+            )
+          yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
+            yield* sql`SELECT NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements_text(${sql.json(predecessor.document.orderedIntentIds)}) AS prior(id)
+              LEFT JOIN intents i ON i.intent_id = prior.id AND i.cycle_id = ${closure.cycleId}
+              WHERE i.state IS DISTINCT FROM 'TERMINAL'
+            ) AS matches`,
+          )
+          yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)
+        }
+        const originalSession = original.document.executionSession
+        const regularCloseAt =
+          originalSession === undefined || isContinuousMarket(originalSession.calendar)
+            ? null
+            : (regularEquitySessions(originalSession.calendar).find(
+                ({ date }) => date === originalSession.executionSession.date,
+              )?.closeAt ?? null)
         const [recovery] = yield* Schema.decodeUnknownEffect(
           Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
         )(
-          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
+          yield* sql`
+            SELECT EXISTS (
+              SELECT 1 FROM autonomous_cycles WHERE cycle_id = ${closure.cycleId}
+                AND LEAST(execution_close_at, ${regularCloseAt}::timestamptz) <= ${closure.createdAt}::timestamptz
+            ) AS allowed
+          `,
         )
         const recoveryDeadline =
-          closure.document.executionSession === undefined
+          originalSession === undefined
             ? null
-            : executionCloseRecoveryExpiry(closure.document.executionSession.calendar, closure.createdAt)
+            : executionCloseRecoveryExpiry(originalSession.calendar, closure.createdAt)
         const boundedRecoveryLease =
           recovery.allowed &&
           closure.expiresAt > closure.createdAt &&
           recoveryDeadline !== null &&
           closure.expiresAt <= recoveryDeadline
         if (
-          first !== next ||
+          (first !== next && !newLeg) ||
           closure.entryDecisionHash !== original.entryDecisionHash ||
           (closure.expiresAt !== original.expiresAt && !boundedRecoveryLease) ||
           prior !== predecessor.contentHash ||

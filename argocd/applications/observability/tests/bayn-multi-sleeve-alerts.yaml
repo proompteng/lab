@@ -1,0 +1,289 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 30s
+tests:
+  - name: Black Friday broker preflight failure cadence fires within five minutes
+    interval: 30s
+    input_series:
+      # The OTLP failure series starts at 1, not at an initialized zero.
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.reconciliation.broker-snapshot",outcome="failed",instance="worker-a"}
+        values: '_ 1+1x8 9+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts: []
+      - eval_time: 3m30s
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts:
+          - exp_labels: &burst_labels
+              namespace: bayn
+              service: bayn-execution-controller
+              team: trading
+              severity: critical
+              notify: email
+            exp_annotations: &burst_annotations
+              summary: Bayn execution controller is repeatedly failing a stage
+              description: A cycle pass, broker reconciliation stage, or liquidation snapshot read recorded an estimated four or more failures or interruptions per three minutes for one minute. Compare the stage rates, controller observations and corresponding worker logs before intervening.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+      - eval_time: 8m
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts: []
+
+  - name: close quote retries fire even when the enclosing cycle pass succeeds
+    interval: 30s
+    input_series:
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.market-data.snapshot",operation="LIQUIDATION",outcome="failed",source_revision="a"}
+        values: '_ 18+18x10'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="succeeded",source_revision="a"}
+        values: '0+18x20'
+    alert_rule_test:
+      - eval_time: 1m30s
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts:
+          - exp_labels: *burst_labels
+            exp_annotations: *burst_annotations
+
+  - name: repeated cycle-pass interruptions across workers keep one alert identity
+    interval: 30s
+    input_series:
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="interrupted",instance="worker-a",source_revision="old"}
+        values: '0+1x20'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="failed",instance="worker-b",source_revision="new"}
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts:
+          - exp_labels: *burst_labels
+            exp_annotations: *burst_annotations
+
+  - name: pending broker snapshots, healthy volume, entry reads and single nested errors do not page
+    interval: 30s
+    input_series:
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="succeeded"}
+        values: '0+18x20'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.market-data.snapshot",operation="SIGNAL",outcome="failed"}
+        values: '0+18x20'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.reconciliation.broker-snapshot",outcome="failed"}
+        values: '8+0x7 9+0x12'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.reconciliation.broker-snapshot",outcome="pending"}
+        values: '0+1x20'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="failed"}
+        values: '42+0x7 43+0x3 0+0x8'
+      - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn",stage="bayn.execution.cycle-pass",outcome="failed"}
+        values: '0+18x20'
+      - series: bayn_operation_duration_seconds_count{namespace="other",service="bayn-execution-controller",stage="bayn.execution.cycle-pass",outcome="failed"}
+        values: '0+18x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: BaynExecutionControllerErrorBurst
+        exp_alerts: []
+
+  - name: only terminal owned Jobs alert, and a later owned success clears a retained failure
+    interval: 30s
+    input_series:
+      - series: kube_cronjob_created{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '1+0x12'
+      - series: kube_cronjob_created{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '1+0x260'
+      - series: kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '_x6 180+0x6'
+      - series: kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '_ 20+0x259'
+      - series: kube_cronjob_status_last_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '_ 30+0x259'
+      - series: kube_job_created{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-1"}
+        values: '_ 30+0x11'
+      - series: kube_job_owner{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-1",owner_kind="CronJob",owner_name="bayn-macro-daily-sleeves",owner_is_controller="true"}
+        values: '_ 1+0x11'
+      - series: kube_job_status_failed{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-1",reason="BackoffLimitExceeded"}
+        values: '_ 1+0x11'
+      - series: kube_job_status_failed{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-1",reason="DeadlineExceeded"}
+        values: '_ 0+0x11'
+      - series: kube_job_failed{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-1",condition="true"}
+        values: '_ 1+0x11'
+      - series: kube_job_created{job="kube-state-metrics",namespace="bayn",job_name="bayn-daily-scorecard-1"}
+        values: '_ 30+0x259'
+      - series: kube_job_owner{job="kube-state-metrics",namespace="bayn",job_name="bayn-daily-scorecard-1",owner_kind="CronJob",owner_name="bayn-daily-scorecard",owner_is_controller="true"}
+        values: '_ 1+0x259'
+      - series: kube_job_status_failed{job="kube-state-metrics",namespace="bayn",job_name="bayn-daily-scorecard-1",reason="BackoffLimitExceeded"}
+        values: '_ 1+0x259'
+      - series: kube_job_failed{job="kube-state-metrics",namespace="bayn",job_name="bayn-daily-scorecard-1",condition="true"}
+        values: '_x3 1+0x257'
+      - series: kube_job_created{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-manual"}
+        values: '_x8 240+0x4'
+      - series: kube_job_owner{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-manual",owner_kind="",owner_name="",owner_is_controller=""}
+        values: '_x8 1+0x4'
+      - series: kube_job_status_failed{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-manual"}
+        values: '_x8 1+0x4'
+      - series: kube_job_failed{job="kube-state-metrics",namespace="bayn",job_name="bayn-macro-daily-sleeves-manual",condition="true"}
+        values: '_x8 1+0x4'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BaynDailyCronJobFailed
+        exp_alerts: []
+      - eval_time: 1m30s
+        alertname: BaynDailyCronJobFailed
+        exp_alerts:
+          - exp_labels: &sleeves_job_labels
+              namespace: bayn
+              cronjob: bayn-macro-daily-sleeves
+              service: bayn
+              team: trading
+              severity: warning
+              notify: email
+            exp_annotations: &sleeves_failed_annotations
+              summary: Bayn CronJob bayn-macro-daily-sleeves has an unrecovered failed Job
+              description: &failed_description An owned Job reached terminal failure and the CronJob has no successful completion at or after that Job was created. Inspect the Job condition and pod logs. Failed pods in an active retry do not count.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+      - eval_time: 2m30s
+        alertname: BaynDailyCronJobFailed
+        exp_alerts:
+          - exp_labels: *sleeves_job_labels
+            exp_annotations: *sleeves_failed_annotations
+          - exp_labels: &scorecard_job_labels
+              namespace: bayn
+              cronjob: bayn-daily-scorecard
+              service: bayn
+              team: trading
+              severity: warning
+              notify: email
+            exp_annotations: &scorecard_failed_annotations
+              summary: Bayn CronJob bayn-daily-scorecard has an unrecovered failed Job
+              description: *failed_description
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+      - eval_time: 6m
+        alertname: BaynDailyCronJobFailed
+        exp_alerts:
+          - exp_labels: *scorecard_job_labels
+            exp_annotations: *scorecard_failed_annotations
+      - eval_time: 2h10m
+        alertname: BaynDailyCronJobFailed
+        exp_alerts:
+          - exp_labels: *scorecard_job_labels
+            exp_annotations: *scorecard_failed_annotations
+      - eval_time: 2h10m
+        alertname: BaynDailyCronJobStale
+        exp_alerts: []
+
+  - name: completion staleness covers an overdue first run and a missed scheduled start
+    interval: 30s
+    input_series:
+      - series: kube_cronjob_created{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '1+0x270'
+      - series: kube_cronjob_created{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '1+0x270'
+      - series: kube_cronjob_status_last_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '_x2 60+0x268'
+      - series: kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '_x260 7800+0x10'
+      - series: kube_cronjob_next_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '60+0x259 86460+0x10'
+      - series: kube_cronjob_status_last_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '_x260 7800+0x10'
+    alert_rule_test:
+      - eval_time: 2h1m
+        alertname: BaynDailyCronJobStale
+        exp_alerts: []
+      - eval_time: 2h6m
+        alertname: BaynDailyCronJobStale
+        exp_alerts: []
+      - eval_time: 2h6m30s
+        alertname: BaynDailyCronJobStale
+        exp_alerts:
+          - exp_labels: *sleeves_job_labels
+            exp_annotations:
+              summary: Bayn CronJob bayn-macro-daily-sleeves missed its completion budget
+              description: &stale_description An enabled CronJob is more than two hours past an expected start without being scheduled, or more than two hours past its last scheduled start without a successful completion. Inspect the CronJob schedule, events and Jobs. A separate alert covers observed terminal Job failures.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+          - exp_labels: *scorecard_job_labels
+            exp_annotations:
+              summary: Bayn CronJob bayn-daily-scorecard missed its completion budget
+              description: *stale_description
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+      - eval_time: 2h10m
+        alertname: BaynDailyCronJobStale
+        exp_alerts: []
+
+  - name: completed schedules, suspended jobs and unrelated workloads stay quiet
+    interval: 1m
+    input_series:
+      - series: kube_cronjob_status_last_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '1+0x300'
+      - series: kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '60+0x300'
+      - series: kube_cronjob_next_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-macro-daily-sleeves"}
+        values: '259201+0x300'
+      - series: kube_cronjob_created{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '1+0x300'
+      - series: kube_cronjob_status_last_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '60+0x300'
+      - series: kube_cronjob_spec_suspend{job="kube-state-metrics",namespace="bayn",cronjob="bayn-daily-scorecard"}
+        values: '1+0x300'
+      - series: kube_cronjob_next_schedule_time{job="kube-state-metrics",namespace="another",cronjob="bayn-daily-scorecard"}
+        values: '60+0x300'
+      - series: kube_cronjob_next_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob="some-other-job"}
+        values: '60+0x300'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: BaynDailyCronJobStale
+        exp_alerts: []
+      - eval_time: 5h
+        alertname: BaynDailyCronJobFailed
+        exp_alerts: []
+
+  - name: Auto Ontology short replacement and scaled-to-zero Deployments remain quiet
+    interval: 30s
+    input_series:
+      - series: kube_deployment_spec_replicas{job="kube-state-metrics",namespace="auto-ontology",deployment="auto-ontology-mcp"}
+        values: '1+0x20'
+      - series: kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="auto-ontology",deployment="auto-ontology-mcp"}
+        values: '0+0x8 1+0x11'
+      - series: kube_deployment_spec_replicas{job="kube-state-metrics",namespace="auto-ontology",deployment="intentionally-scaled-down"}
+        values: '0+0x20'
+      - series: kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="auto-ontology",deployment="intentionally-scaled-down"}
+        values: '0+0x20'
+      - series: kube_deployment_spec_replicas{job="kube-state-metrics",namespace="other",deployment="auto-ontology-mcp"}
+        values: '1+0x20'
+      - series: kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="other",deployment="auto-ontology-mcp"}
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AutoOntologyDeploymentUnavailable
+        exp_alerts: []
+
+  - name: sustained partial readiness is strictly advisory and clears on recovery
+    interval: 30s
+    input_series:
+      - series: kube_deployment_spec_replicas{job="kube-state-metrics",namespace="auto-ontology",deployment="auto-ontology-mcp"}
+        values: '2+0x20'
+      - series: kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="auto-ontology",deployment="auto-ontology-mcp"}
+        values: '1+0x11 2+0x8'
+    alert_rule_test:
+      - eval_time: 4m30s
+        alertname: AutoOntologyDeploymentUnavailable
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AutoOntologyDeploymentUnavailable
+        exp_alerts:
+          - exp_labels:
+              namespace: auto-ontology
+              deployment: auto-ontology-mcp
+              service: auto-ontology
+              team: platform
+              advisory: "true"
+              severity: warning
+            exp_annotations:
+              summary: Auto Ontology deployment auto-ontology-mcp is below its replica target
+              description: Available replicas have remained below the desired count for five minutes. This advisory signals degraded collective knowledge availability, not a trading-critical outage or execution gate.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+      - eval_time: 6m
+        alertname: AutoOntologyDeploymentUnavailable
+        exp_alerts: []

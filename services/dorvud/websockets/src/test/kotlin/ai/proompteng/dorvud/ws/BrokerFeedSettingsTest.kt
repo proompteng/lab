@@ -13,21 +13,15 @@ class BrokerFeedSettingsTest {
       "BAYN_ALPACA_BASE_URL" to "https://paper-api.alpaca.markets",
       "BAYN_ALPACA_PROXY_URL" to "http://bayn-egress-proxy:3128",
       "DORVUD_SOURCE_REVISION" to "a".repeat(40),
-      "BAYN_BROKER_NOTIFICATIONS_TOPIC" to "bayn.broker-notifications.v1",
-      "KAFKA_BOOTSTRAP" to "kafka:9092",
-      "KAFKA_SASL_USER" to "bayn-broker-feed",
-      "KAFKA_SASL_PASSWORD" to "test-kafka-password",
-      "KAFKA_SECURITY_PROTOCOL" to "SASL_PLAINTEXT",
+      "RESTATE_INGRESS_URL" to "http://restate.restate.svc.cluster.local:8080",
     )
 
   @Test
   fun `uses the existing paper destination and proxy with authenticated idempotent publication`() {
     val config = BrokerFeedSettings.fromEnv(environment)
     assertEquals("http://bayn-egress-proxy:3128", config.proxyUrl)
+    assertEquals("http://restate.restate.svc.cluster.local:8080", config.restateIngressUrl)
     assertEquals("wss://paper-api.alpaca.markets/stream", config.connection.streamUrl)
-    assertEquals("all", config.kafka.acks)
-    assertEquals(true, config.kafka.enableIdempotence)
-    assertEquals(0, config.kafka.lingerMs)
   }
 
   @Test
@@ -37,8 +31,7 @@ class BrokerFeedSettingsTest {
       "BAYN_ALPACA_BASE_URL" to "https://api.alpaca.markets",
       "BAYN_ALPACA_PROXY_URL" to "http://another-proxy:3128",
       "DORVUD_SOURCE_REVISION" to "main",
-      "BAYN_BROKER_NOTIFICATIONS_TOPIC" to "torghut.trade-updates.v2",
-      "KAFKA_SECURITY_PROTOCOL" to "PLAINTEXT",
+      "RESTATE_INGRESS_URL" to "http://another-restate:8080",
     )) {
       assertFailsWith<IllegalArgumentException> { BrokerFeedSettings.fromEnv(environment + (key to value)) }
     }

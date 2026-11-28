@@ -25,7 +25,8 @@ class ServingIdentityMiddleware:
         if (
             not isinstance(revision, str)
             or not re.fullmatch(r"[0-9a-f]{40}", revision)
-            or model.hf_config._commit_hash != revision
+            or state.args.revision != revision
+            or model.hf_config_path not in (None, model.model)
             or model.tokenizer_revision != revision
             or model.tokenizer != model.model
             or state.args.chat_template is not None

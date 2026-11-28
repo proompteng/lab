@@ -36,7 +36,6 @@ export const targetFiles = [
   'argocd/applications/flamingo/README.md',
   'argocd/applications/flamingo/docs/large-model-multigpu.md',
   'argocd/applications/agents/anypi-agentprovider.yaml',
-  'argocd/applications/agents/anypi-eval-agentprovider.yaml',
   'argocd/applications/jangar/openwebui-values.yaml',
   'argocd/applications/jangar/deployment.yaml',
   'argocd/applications/bumba/deployment.yaml',
@@ -246,9 +245,9 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
   if (platform?.includes('namespace: saigak\n          name: saigak')) {
     failures.push('argocd/applicationsets/platform.yaml: Saigak must not keep VirtualMachine diff-ignore desired state')
   }
-  if (platform && !hasPvcBoundFieldDiffIgnore(platform, 'saigak-altra-data')) {
+  if (platform && !hasPvcBoundFieldDiffIgnore(platform, 'saigak-ryzen-data')) {
     failures.push(
-      'argocd/applicationsets/platform.yaml: Saigak must ignore bound local-path PVC drift for saigak-altra-data',
+      'argocd/applicationsets/platform.yaml: Saigak must ignore bound local-path PVC drift for saigak-ryzen-data',
     )
   }
 
@@ -270,16 +269,14 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
     }
     for (const term of [
       'replicas: 1',
-      'runtimeClassName: nvidia',
-      'kubernetes.io/arch: arm64',
-      'kubernetes.io/hostname: talos-192-168-1-85',
-      'nvidia.com/gpu.present: "true"',
-      'nvidia.com/gpu: "1"',
-      'claimName: saigak-altra-data',
+      'kubernetes.io/arch: amd64',
+      'kubernetes.io/hostname: talos-192-168-1-194',
+      'amd.com/gpu: "1"',
+      'claimName: saigak-ryzen-data',
     ]) {
       if (!saigakStatefulSet.includes(term)) {
         failures.push(
-          `argocd/applications/saigak/statefulset.yaml: Saigak must run embeddings on the Altra RTX 3090, missing "${term}"`,
+          `argocd/applications/saigak/statefulset.yaml: Saigak must run embeddings on the Ryzen Radeon 8060S, missing "${term}"`,
         )
       }
     }

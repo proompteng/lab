@@ -1,4 +1,4 @@
-import { registeredReplayInferenceTariff } from './inference-costs'
+import { registeredReplayInferenceTariff, registeredStrategyReplayInferenceTariff } from './inference-costs'
 import { InferenceRateCardSchema } from '../inference-costs'
 import { ReplayInstrumentsSchema } from './execution-core'
 import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
@@ -16,7 +16,7 @@ import { AssetResponseSchema, MarketCalendarResponseSchema } from '../broker/alp
 import { normalizeAssetResult, normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata } from '../build'
-import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
+import { BrokerAccess, ExecutionStrategyIdentitySchema, noCapitalAuthority } from '../execution/authority'
 import { causeSummary } from '../broker/alpaca-mutations/model'
 import { makeRuntimeProvenanceResult } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -32,13 +32,42 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { loadActiveStrategyProtocol, makeActiveStrategyRuntime } from '../strategy'
-import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
+import {
+  activeStrategyBehaviorHash,
+  loadActiveStrategyProtocol,
+  loadSharedJevProtocol,
+  makeJevStrategyRuntime,
+} from '../strategy'
+import { makeEntryAblationRuntime, makeIntradayAlphaRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
-import { NativeReplayIdentitySchema, NativeReplayPolicySchema, nativeReplayPolicyIdentity } from './native-policy'
+import { NativeReplayPolicySchema, nativeReplayPolicyIdentity, nativeReplayStrategyIdentity } from './native-policy'
+import {
+  isAlphaBinding,
+  ResearchStrategyBindingSchema,
+  ResearchStrategyEngine,
+  researchStrategyInferenceModels,
+  validateResearchStrategyBinding,
+  makeResearchStrategyBinding,
+} from '../system-assessment/strategy-binding'
+import { prepareReplayAlphaBaselineSources, selectReplayAlphaBaselineSource } from './alpha-baseline'
+import { prepareReplayAlphaBaselinePreparations, selectReplayAlphaBaselinePreparation } from './alpha-prepared-baseline'
+import { AnyReplayAlphaBaselineUseSchema, type AnyReplayAlphaBaselineUse } from './alpha-baseline-use'
+import { AlphaBaselineSourceSchema } from '../system-assessment/alpha-observation-witness'
+import { PreparedAlphaBaselineSourceSchema } from '../system-assessment/alpha-baseline-witness'
+import {
+  PreparedReplayAlphaObservationSchema,
+  ReplayAlphaObservationSchema,
+  verifyPreparedReplayAlphaEvidence,
+  verifyReplayAlphaEvidence,
+  type ReplayAlphaBaselineGap,
+} from './alpha-report'
+import {
+  IntradayAlphaObservationSchema,
+  reproduceIntradayAlphaObservation,
+} from '../strategy/intraday-alpha/observation'
 import { JevClient } from '../jev/client'
 import { jevModel } from '../jev/contract'
 import {
@@ -66,11 +95,12 @@ import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerState, type ReplayValuationEvidence } from './broker'
 import type { CycleRunResult } from '../cycle/runner/model'
 import { makeReplayExecutionRuntime } from './runtime'
-import { makeReplayTimeline, driveReplaySession } from './session'
+import type { ResearchAlphaBaselineSource } from './decision-builder'
+import { makeReplayTimeline, driveReplaySession, makeStreamingReplaySession } from './session'
 import { EquityExecutionTapeReferenceSchema, type EquityExecutionTape } from './equity-execution-tape'
 import type { RuntimeConfig } from '../config/model'
 import type { RecordAutonomousCyclePass } from '../app'
-import type { OperationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { ReconciliationStatus } from '../execution/contracts'
 import type { ReconciliationMetrics } from '../simulation-reconciliation/broker-model'
@@ -91,6 +121,7 @@ export enum BacktestIssue {
   UnclosedOrder = 'unclosed-order',
   MissingValuation = 'missing-valuation',
   MissingDecisionData = 'missing-decision-data',
+  MissingCausalAlphaBaseline = 'missing-causal-alpha-baseline',
   UnresolvedModelCost = 'unresolved-model-cost',
   UnresolvedExecutionCost = 'unresolved-execution-cost',
   UnresolvedDataCost = 'unresolved-data-cost',
@@ -138,7 +169,7 @@ const inferenceFields = {
   costs: InferenceRateCardSchema,
   maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
 }
-export const BacktestInputSchema = Schema.Struct({
+export const BacktestInputV11Schema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest.v11'),
   policy: NativeReplayPolicySchema,
   latencyStress: Schema.NullOr(SystemLatencyReplaySchema),
@@ -188,16 +219,48 @@ export const BacktestInputSchema = Schema.Struct({
   }),
 })
 
+export const BacktestInputV12Schema = Schema.Struct({
+  ...BacktestInputV11Schema.fields,
+  schemaVersion: Schema.Literal('bayn.backtest.v12'),
+  strategyBinding: ResearchStrategyBindingSchema,
+  alphaBaselineSources: Schema.Array(AlphaBaselineSourceSchema),
+})
+export const BacktestInputV13Schema = Schema.Struct({
+  ...BacktestInputV11Schema.fields,
+  schemaVersion: Schema.Literal('bayn.backtest.v13'),
+  strategyBinding: ResearchStrategyBindingSchema,
+  alphaBaselinePreparations: Schema.Array(PreparedAlphaBaselineSourceSchema),
+})
+export const BacktestInputSchema = Schema.Union([
+  BacktestInputV11Schema,
+  BacktestInputV12Schema,
+  BacktestInputV13Schema,
+])
+
 export const BacktestBuildEvidenceSchema = Schema.Struct({
   ...EmbeddedBuildMetadataSchema.fields,
   declaredImageDigest: ImageDigestSchema,
   imageDigestVerification: Schema.Literal('unverified-input'),
-  executableStrategy: NativeReplayIdentitySchema.fields.strategy,
+  executableStrategy: ExecutionStrategyIdentitySchema,
   sourceAndStrategyVerification: Schema.Literals(['configured', 'embedded']),
 })
 
-const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparisonFields } = BacktestInputSchema.fields
-export const BacktestComparisonInputSchema = Schema.Struct(comparisonFields)
+const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparisonFields } = BacktestInputV11Schema.fields
+const {
+  replicate: _nativeReplicate,
+  jevInstructionsHash: _nativeInstructions,
+  ...nativeComparisonFields
+} = BacktestInputV12Schema.fields
+const {
+  replicate: _preparedReplicate,
+  jevInstructionsHash: _preparedInstructions,
+  ...preparedComparisonFields
+} = BacktestInputV13Schema.fields
+export const BacktestComparisonInputSchema = Schema.Union([
+  Schema.Struct(comparisonFields),
+  Schema.Struct(nativeComparisonFields),
+  Schema.Struct(preparedComparisonFields),
+])
 export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) => {
   const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparison } = input
   return comparison
@@ -206,12 +269,35 @@ export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) 
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
-    const costs = yield* registeredReplayInferenceTariff(
-      supplied.inference.costs,
-      supplied.interval,
-      supplied.policy,
-      defaultJevProtocolDocument,
-    )
+    const baselineProtocol = yield* loadSharedJevProtocol()
+    const strategyBinding =
+      supplied.schemaVersion !== 'bayn.backtest.v11'
+        ? yield* validateResearchStrategyBinding(supplied.strategyBinding)
+        : null
+    const policyIdentity =
+      strategyBinding === null
+        ? yield* nativeReplayPolicyIdentity(supplied.policy, baselineProtocol)
+        : yield* nativeReplayStrategyIdentity(supplied.policy, strategyBinding, baselineProtocol)
+    const alphaBaselineSources =
+      supplied.schemaVersion === 'bayn.backtest.v12'
+        ? yield* prepareReplayAlphaBaselineSources(supplied.strategyBinding, supplied.alphaBaselineSources)
+        : []
+    const alphaBaselinePreparations =
+      supplied.schemaVersion === 'bayn.backtest.v13'
+        ? yield* prepareReplayAlphaBaselinePreparations(supplied.strategyBinding, supplied.alphaBaselinePreparations)
+        : []
+    const requiresInference =
+      strategyBinding === null
+        ? supplied.policy !== JevResearchPolicy.Momentum
+        : researchStrategyInferenceModels(strategyBinding).length !== 0
+    const costs = yield* strategyBinding === null
+      ? registeredReplayInferenceTariff(
+          supplied.inference.costs,
+          supplied.interval,
+          supplied.policy,
+          defaultJevProtocolDocument,
+        )
+      : registeredStrategyReplayInferenceTariff(supplied.inference.costs, supplied.interval, strategyBinding)
     const decoded = {
       ...supplied,
       inference: {
@@ -241,7 +327,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         recording.strategyParameterHash !== decoded.build.strategyParameterHash ||
         recording.jevInstructionsHash !== decoded.jevInstructionsHash ||
         (decoded.policy === JevResearchPolicy.Ablation && recording.calls.some((call) => call.stage === 'JEV')) ||
-        (decoded.policy === JevResearchPolicy.Momentum && recording.calls.length !== 0) ||
+        (!requiresInference && recording.calls.length !== 0) ||
         recording.calls.some(
           (call) =>
             call.simulatedStartedAt < decoded.interval.startAt || call.simulatedStartedAt > decoded.interval.endAt,
@@ -251,13 +337,23 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
           new ReplayBrokerFailure({ message: 'Retained inference differs from the replay source, policy or interval' }),
         )
     }
-    const baselineProtocol = yield* loadActiveStrategyProtocol()
+    const activePolicy = yield* loadActiveStrategyProtocol()
+    const activeParameterHash = yield* canonicalHashV1Result(activePolicy)
     if (decoded.jevInstructionsHash !== (yield* canonicalHashV1Result(jevInstructions)))
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay instructions differ from its compiled executable' }),
       )
-    const executableIdentity = yield* nativeReplayPolicyIdentity(JevResearchPolicy.Candidate, baselineProtocol)
-    const policyIdentity = yield* nativeReplayPolicyIdentity(decoded.policy, baselineProtocol)
+    const executableIdentity =
+      supplied.schemaVersion === 'bayn.backtest.v11'
+        ? yield* nativeReplayPolicyIdentity(JevResearchPolicy.Candidate, baselineProtocol)
+        : yield* nativeReplayStrategyIdentity(
+            JevResearchPolicy.Candidate,
+            yield* makeResearchStrategyBinding({
+              engine: ResearchStrategyEngine.PureEtf,
+              parameters: activePolicy,
+            }),
+            baselineProtocol,
+          )
     if (
       decoded.build.strategyBehaviorHash !== policyIdentity.strategy.behaviorHash ||
       decoded.build.strategyParameterHash !== policyIdentity.strategy.parameterHash
@@ -265,15 +361,23 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay must use the unchanged source-controlled strategy' }),
       )
+    const allowedEmbeddedBuilds = [
+      yield* canonicalHashV1Result({
+        sourceRevision: decoded.build.sourceRevision,
+        imageRepository: decoded.build.imageRepository,
+        strategyBehaviorHash: activeStrategyBehaviorHash,
+        strategyParameterHash: activeParameterHash,
+      }),
+      yield* canonicalHashV1Result({
+        sourceRevision: decoded.build.sourceRevision,
+        imageRepository: decoded.build.imageRepository,
+        strategyBehaviorHash: executableIdentity.strategy.behaviorHash,
+        strategyParameterHash: executableIdentity.strategy.parameterHash,
+      }),
+    ]
     if (
       embeddedBuildMetadata !== undefined &&
-      (yield* canonicalHashV1Result(embeddedBuildMetadata)) !==
-        (yield* canonicalHashV1Result({
-          sourceRevision: decoded.build.sourceRevision,
-          imageRepository: decoded.build.imageRepository,
-          strategyBehaviorHash: executableIdentity.strategy.behaviorHash,
-          strategyParameterHash: executableIdentity.strategy.parameterHash,
-        }))
+      !allowedEmbeddedBuilds.includes(yield* canonicalHashV1Result(embeddedBuildMetadata))
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),
@@ -403,6 +507,10 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       identity,
       reportingWindows: registeredWindows ?? sessions,
       latencyStress,
+      strategyBinding,
+      alphaBaselineSources,
+      alphaBaselinePreparations,
+      requiresInference,
       brokerSessions: calendarDays
         .flatMap((day) => day.providerSessions)
         .map((session) => ({ date: session.date, openAt: session.regularOpenAt, closeAt: session.regularCloseAt }))
@@ -425,12 +533,13 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         strategyParameterHash: parameterHash,
         verification: embeddedBuildMetadata === undefined ? ('development-configured' as const) : ('embedded' as const),
       },
-      strategy:
-        decoded.policy === JevResearchPolicy.Ablation
+      strategy: isAlphaBinding(strategyBinding)
+        ? makeIntradayAlphaRuntime(strategyBinding.parameters, provenance)
+        : decoded.policy === JevResearchPolicy.Ablation
           ? makeEntryAblationRuntime(makeEntryAblationPolicy(protocol), provenance)
           : decoded.policy === JevResearchPolicy.Momentum
             ? makeRepeatedMomentumRuntime(makeRepeatedMomentumPolicy(protocol), provenance)
-            : makeActiveStrategyRuntime(protocol, provenance),
+            : makeJevStrategyRuntime(protocol, provenance),
     }
   })
 export type PreparedBacktest = Result.Result.Success<ReturnType<typeof prepareBacktest>>
@@ -489,6 +598,7 @@ export const prepareFreshReplayDatabase = (timeoutMs = 30_000) =>
   )
 
 export type BacktestPass = Parameters<RecordAutonomousCyclePass>[0] & {
+  readonly executionIssuedAt: string
   readonly cycleResult: CycleRunResult | null
   readonly brokerState: ReplayBrokerState
   readonly valuation: ReplayValuationEvidence | null
@@ -530,8 +640,7 @@ export const runBacktest = (
         message: 'Latency replay database timeout differs from its registration',
       })
     if (
-      (prepared.input.inference.mode === 'measured-providers' &&
-        prepared.input.policy !== JevResearchPolicy.Momentum) !==
+      (prepared.input.inference.mode === 'measured-providers' && prepared.requiresInference) !==
       (liveProviders !== null)
     )
       return yield* new ReplayBrokerFailure({
@@ -575,10 +684,7 @@ export const runBacktest = (
             yield* Clock.clockWith(Effect.succeed),
           )
         : undefined
-    const providers =
-      prepared.input.policy === JevResearchPolicy.Momentum
-        ? momentumReplayProviders
-        : (recorded?.providers ?? liveProviders)
+    const providers = !prepared.requiresInference ? momentumReplayProviders : (recorded?.providers ?? liveProviders)
     if (providers === null)
       return yield* new ReplayBrokerFailure({ message: 'Replay inference capability is unavailable' })
     const timing = yield* makeReplayInferenceTiming({
@@ -624,7 +730,86 @@ export const runBacktest = (
         ),
       ),
     )
+    const strategyBinding = prepared.strategyBinding
+    const baselineGaps = new Map<string, ReplayAlphaBaselineGap>()
+    const baselineUses = new Map<string, AnyReplayAlphaBaselineUse>()
+    const preparedBaseline = prepared.input.schemaVersion === 'bayn.backtest.v13'
+    const baselineAvailability = preparedBaseline
+      ? prepared.alphaBaselinePreparations.map((source) => ({
+          sessionDate: source.payload.sessionDate,
+          availableAt: source.availableAt,
+        }))
+      : prepared.alphaBaselineSources.map((source) => ({
+          sessionDate: source.payload.trailingBaseline.sessionDate,
+          availableAt: source.availableAt,
+        }))
     const runtime = yield* makeReplayExecutionRuntime({
+      decisionTrigger: prepared.input.schemaVersion === 'bayn.backtest.v11' ? 'polling' : 'streaming',
+      ...(strategyBinding === null
+        ? {}
+        : {
+            loadAlphaBaseline: (query, observedAt, commandIssuedAt) => {
+              const baselineCut = preparedBaseline ? commandIssuedAt : observedAt
+              return Effect.fromResult<ResearchAlphaBaselineSource, OperationalError>(
+                preparedBaseline
+                  ? selectReplayAlphaBaselinePreparation(
+                      strategyBinding,
+                      prepared.alphaBaselinePreparations,
+                      query,
+                      baselineCut,
+                    )
+                  : selectReplayAlphaBaselineSource(strategyBinding, prepared.alphaBaselineSources, query, baselineCut),
+              ).pipe(
+                Effect.tapError((cause) =>
+                  !cause.retryable
+                    ? Effect.void
+                    : Effect.sync(() => {
+                        baselineGaps.set(`${query.sessionDate}:${baselineCut}`, {
+                          reason: 'MISSING_CAUSAL_ALPHA_BASELINE',
+                          sessionDate: query.sessionDate,
+                          observedAt: baselineCut,
+                          firstAvailableAt:
+                            baselineAvailability
+                              .filter((source) => source.sessionDate === query.sessionDate)
+                              .toSorted((a, b) => Date.parse(a.availableAt) - Date.parse(b.availableAt))[0]
+                              ?.availableAt ?? null,
+                        })
+                      }),
+                ),
+              )
+            },
+            recordAlphaBaselineUse: (raw) =>
+              Effect.gen(function* () {
+                const use = yield* Schema.decodeUnknownEffect(AnyReplayAlphaBaselineUseSchema, strictParseOptions)(raw)
+                if (preparedBaseline !== (use.schemaVersion === 'bayn.replay-alpha-baseline-use.v2'))
+                  return yield* operationalError({
+                    component: 'strategy',
+                    operation: 'replay-alpha-baseline',
+                    message: 'Alpha baseline-use version differs from its source contract',
+                  })
+                const previous = baselineUses.get(use.observationHash)
+                if (
+                  previous !== undefined &&
+                  (yield* Effect.fromResult(canonicalHashV1Result(previous))) !==
+                    (yield* Effect.fromResult(canonicalHashV1Result(use)))
+                )
+                  return yield* operationalError({
+                    component: 'strategy',
+                    operation: 'replay-alpha-baseline',
+                    message: 'A retained alpha observation changed its original baseline-use receipt',
+                  })
+                baselineUses.set(use.observationHash, use)
+              }).pipe(
+                Effect.mapError((cause) =>
+                  operationalError({
+                    component: 'strategy',
+                    operation: 'replay-alpha-baseline',
+                    message: 'Alpha baseline-use receipt could not be retained',
+                    cause,
+                  }),
+                ),
+              ),
+          }),
       decisionLatencyStress:
         prepared.latencyStress === null
           ? null
@@ -675,6 +860,29 @@ export const runBacktest = (
       if (drawdown > maximumObservedDrawdown) maximumObservedDrawdown = drawdown
     }
     let nextPollAtMs = prepared.openMs
+    const driveSession =
+      prepared.input.schemaVersion === 'bayn.backtest.v11'
+        ? driveReplaySession
+        : makeStreamingReplaySession({
+            nextAvailableAtMs: source.nextAvailableAtMs,
+            sourceRevision: source.sourceRevision,
+            brokerStateHash: broker.snapshot.pipe(
+              Effect.flatMap((state) =>
+                Effect.fromResult(
+                  canonicalHashV1Result({
+                    // Quote attempts are retained research evidence, not broker notifications. Only observable state wakes the owner.
+                    orders: state.orders.map(({ order }) => order),
+                    fills: state.fills,
+                    fees: state.fees,
+                    ledger: state.ledger,
+                  }),
+                ),
+              ),
+              Effect.mapError(
+                (cause) => new ReplayBrokerFailure({ message: 'Replay broker notification identity failed', cause }),
+              ),
+            ),
+          })
     const sessions = yield* Effect.forEach(
       prepared.reportingWindows,
       (session) =>
@@ -682,31 +890,37 @@ export const runBacktest = (
           let valuationFailureCount = 0
           const firstCallIndex = inferenceCalls.length
           if (allocatedDataCost !== null) accruedKnownDataCost += BigInt(allocatedDataCost)
-          const schedule = yield* driveReplaySession(
+          const schedule = yield* driveSession(
             {
               ...runtime,
-              advance: run(runtime.advance).pipe(
-                Effect.tap((pass) =>
-                  Effect.gen(function* () {
-                    const valued = yield* Effect.result(
-                      Effect.all({ account: broker.read.account, valuation: broker.valuation }),
-                    )
-                    const usableValuation =
-                      Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
-                    if (usableValuation) observeEquity(equityAfterKnownCosts(valued.success.account.value.equityMicros))
-                    else valuationFailureCount++
-                    yield* recordPass({
-                      ...pass.observation,
-                      cycleResult: pass.result ?? null,
-                      brokerState: yield* broker.snapshot,
-                      valuation: Result.isSuccess(valued) ? valued.success.valuation : null,
-                      valuationFailure: Result.isFailure(valued)
-                        ? causeSummary(valued.failure)
-                        : usableValuation
-                          ? null
-                          : { reason: 'unexecutable-held-position-mark' },
-                    })
-                  }),
+              advance: Clock.currentTimeMillis.pipe(
+                Effect.flatMap((issuedAtMs) =>
+                  run(runtime.advance).pipe(
+                    Effect.tap((pass) =>
+                      Effect.gen(function* () {
+                        const valued = yield* Effect.result(
+                          Effect.all({ account: broker.read.account, valuation: broker.valuation }),
+                        )
+                        const usableValuation =
+                          Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
+                        if (usableValuation)
+                          observeEquity(equityAfterKnownCosts(valued.success.account.value.equityMicros))
+                        else valuationFailureCount++
+                        yield* recordPass({
+                          ...pass.observation,
+                          executionIssuedAt: utcInstantFromEpochMillis(issuedAtMs),
+                          cycleResult: pass.result ?? null,
+                          brokerState: yield* broker.snapshot,
+                          valuation: Result.isSuccess(valued) ? valued.success.valuation : null,
+                          valuationFailure: Result.isFailure(valued)
+                            ? causeSummary(valued.failure)
+                            : usableValuation
+                              ? null
+                              : { reason: 'unexecutable-held-position-mark' },
+                        })
+                      }),
+                    ),
+                  ),
                 ),
               ),
             },
@@ -767,11 +981,15 @@ export const runBacktest = (
     ).pipe(Effect.withSpan('bayn.backtest.sessions'))
     const brokerState = yield* broker.snapshot
     const decisionLatencyEvidence = yield* runtime.decisionLatencyEvidence
+    const alphaBaselineGaps = [...baselineGaps.values()].sort(
+      (a, b) => a.observedAt.localeCompare(b.observedAt) || a.sessionDate.localeCompare(b.sessionDate),
+    )
     const modelCosts = calculateReplayInferenceCosts(inferenceCalls, prepared.input.inference.costs)
     const dataCostMicros =
       allocatedDataCost === null ? null : (BigInt(allocatedDataCost) * BigInt(sessions.length)).toString()
     const executionPnl = brokerState.ledger.netRealizedPnlAfterCostsMicros
     const issues = [
+      ...(alphaBaselineGaps.length === 0 ? [] : [BacktestIssue.MissingCausalAlphaBaseline]),
       ...(modelCosts.unresolvedCallCount === 0 ? [] : [BacktestIssue.UnresolvedModelCost]),
       ...(executionPnl === null ? [BacktestIssue.UnresolvedExecutionCost] : []),
       ...(allocatedDataCost === null ? [BacktestIssue.UnresolvedDataCost] : []),
@@ -856,8 +1074,67 @@ export const runBacktest = (
                 return { contentHash: row.content_hash, payload: row.payload }
               }),
             )
+      const alphaObservations = !isAlphaBinding(prepared.strategyBinding)
+        ? []
+        : yield* Effect.forEach(observationRows, (row) =>
+            Effect.gen(function* () {
+              const payload = yield* Schema.decodeUnknownEffect(IntradayAlphaObservationSchema)(
+                row.payload,
+                strictParseOptions,
+              )
+              const reproduced = yield* Effect.fromResult(reproduceIntradayAlphaObservation(payload))
+              if (reproduced.contentHash !== row.content_hash)
+                return yield* new ReplayBrokerFailure({
+                  message: 'Persisted alpha observation hash does not reproduce',
+                })
+              const baselineUse = baselineUses.get(row.content_hash)
+              if (baselineUse === undefined)
+                return yield* new ReplayBrokerFailure({
+                  message: 'Persisted alpha observation has no original baseline-use receipt',
+                })
+              return { contentHash: row.content_hash, payload, baselineUse }
+            }),
+          )
+      if (baselineUses.size !== alphaObservations.length)
+        return yield* new ReplayBrokerFailure({ message: 'Alpha baseline-use receipt has no retained observation' })
+      if (prepared.strategyBinding !== null) {
+        const sharedEvidence = {
+          binding: prepared.strategyBinding,
+          baselineGaps: alphaBaselineGaps,
+          decisions,
+          runId: prepared.runId,
+          observationReleases: decisionLatencyEvidence.observationReceipts,
+        }
+        if (preparedBaseline)
+          yield* Effect.fromResult(
+            verifyPreparedReplayAlphaEvidence({
+              ...sharedEvidence,
+              preparations: prepared.alphaBaselinePreparations,
+              observations: yield* Schema.decodeUnknownEffect(
+                Schema.Array(PreparedReplayAlphaObservationSchema),
+                strictParseOptions,
+              )(alphaObservations),
+            }),
+          )
+        else
+          yield* Effect.fromResult(
+            verifyReplayAlphaEvidence({
+              ...sharedEvidence,
+              sources: prepared.alphaBaselineSources,
+              observations: yield* Schema.decodeUnknownEffect(
+                Schema.Array(ReplayAlphaObservationSchema),
+                strictParseOptions,
+              )(alphaObservations),
+            }),
+          )
+      }
       const report = {
-        schemaVersion: 'bayn.backtest-report.v9' as const,
+        schemaVersion:
+          prepared.input.schemaVersion === 'bayn.backtest.v11'
+            ? ('bayn.backtest-report.v9' as const)
+            : prepared.input.schemaVersion === 'bayn.backtest.v12'
+              ? ('bayn.backtest-report.v10' as const)
+              : ('bayn.backtest-report.v11' as const),
         latencyStress:
           prepared.latencyStress === null
             ? null
@@ -913,6 +1190,7 @@ export const runBacktest = (
         brokerCheckpoint: yield* broker.checkpoint,
         batches,
         momentumObservations,
+        ...(prepared.input.schemaVersion !== 'bayn.backtest.v11' ? { alphaObservations, alphaBaselineGaps } : {}),
         durableCounts: rows[0],
         decisions,
         closingDecisions,

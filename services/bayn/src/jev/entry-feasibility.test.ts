@@ -6,6 +6,7 @@ import { makeNativeChartEvidence } from './chart-evidence'
 import { jevEntryEconomics } from './entry-economics'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
+import { retainedJevProtocolV41Document } from './protocol'
 import type { ChartAssessments } from './/chart-assessments'
 
 const sourceIsFeasible = (input: Parameters<typeof makeEntrySourceCandidates>[0]) =>
@@ -164,7 +165,7 @@ describe('pre-chart source feasibility', () => {
   })
 
   test('does not invent base intervals across missing source minutes', () => {
-    const request = entryEvaluationRequestFixture()
+    const request = entryEvaluationRequestFixture(undefined, undefined, undefined, retainedJevProtocolV41Document)
     for (const gap of [false, true]) {
       const chart = Result.getOrThrow(
         makeNativeChartEvidence({

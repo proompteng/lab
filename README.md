@@ -31,8 +31,8 @@ The repository centers on:
 - `packages/scripts`: typed Bun deploy/build/reseal automation used across services
 - `packages/temporal-bun-sdk`: Temporal SDK and examples for Bun-based workers
 - `packages/codex`: Codex client/runtime package
-- `packages/design`, `packages/atelier`, `packages/cloutt`, `packages/cx-tools`, `packages/discord`,
-  `packages/otel`, `packages/schematic`: shared libraries and tooling
+- `packages/design`, `packages/cx-tools`, `packages/discord`, `packages/otel`, `packages/schematic`: shared libraries
+  and tooling
 
 ### Services
 
@@ -84,6 +84,10 @@ toolchain-doctor
 bun install
 ```
 
+With mise installed, `bun run hooks:install` sets up the repository's Git hooks. If this clone already uses the old
+Lefthook setup, run `bunx lefthook@2.1.9 uninstall` once before installing hk. Commits run formatting and linting on
+staged files. Pushes run the same workspace lint as CI.
+
 Common entry points from the repo root:
 
 ```bash
@@ -107,7 +111,7 @@ bun run dev:convex
 
 Service-specific local workflows live in the nearest README. Two important examples:
 
-- `services/jangar/README.md`: local Jangar development, Tilt port-forwards, worker split, and gRPC notes
+- `services/jangar/README.md`: local Jangar development, worker split, and gRPC notes
 - `services/torghut/README.md`: `uv`-based Python setup, migration checks, whitepaper workflow, and rollout automation
 
 ## Common Commands

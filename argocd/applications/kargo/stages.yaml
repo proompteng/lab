@@ -786,6 +786,22 @@ spec:
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.2.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.3.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.4.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.4.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.5.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.5.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.6.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.6.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
         - uses: git-commit
           as: commit
           config:
@@ -2138,8 +2154,6 @@ spec:
           config:
             path: ./src/argocd/applications/bayn/deployment.yaml
             outputs:
-              - name: hasLineage
-                fromExpression: any(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
               - name: lineageIndex
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
               - name: sourceIndex
@@ -2148,12 +2162,11 @@ spec:
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
         - uses: yaml-parse
           as: baynLineage
-          if: ${{ outputs.baynDeployment.hasLineage }}
           config:
-            path: ./src/argocd/applications/bayn/deployment.yaml
+            path: ./src/argocd/applications/bayn/alpaca-sealedsecret.yaml
             outputs:
-              - name: lineage
-                fromExpression: fromJSON(find(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE').value)
+              - name: mandate
+                fromExpression: metadata.annotations['proompteng.ai/bayn.mandate-identity'] ?? ''
         - uses: kustomize-set-image
           config:
             path: ./out/argocd/applications/bayn
@@ -2168,12 +2181,12 @@ spec:
                 newName: ${{ vars.brokerFeedImageRepo }}
                 digest: ${{ imageFrom(vars.brokerFeedImageRepo).Digest }}
         - uses: yaml-update
-          if: ${{ outputs.baynDeployment.hasLineage }}
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynDeployment.lineageIndex != nil && outputs.baynDeployment.lineageIndex != '' && outputs.baynDeployment.lineageIndex != '-1' && outputs.baynDeployment.lineageIndex != '<nil>' }}
           config:
             path: ./out/argocd/applications/bayn/deployment.yaml
             updates:
               - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynDeployment.lineageIndex) + '.value' }}
-                value: "${{ asJSON({schemaVersion: outputs.baynLineage.lineage.schemaVersion, requestHash: outputs.baynLineage.lineage.requestHash, authoredActivation: outputs.baynLineage.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+                value: "${{ asJSON({schemaVersion: 'bayn.research-capital-build-lineage.v1', requestHash: fromJSON(outputs.baynLineage.mandate).requestHash, authoredActivation: fromJSON(outputs.baynLineage.mandate).authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/deployment.yaml
@@ -2187,8 +2200,6 @@ spec:
           config:
             path: ./src/argocd/applications/bayn/execution-controller.yaml
             outputs:
-              - name: hasLineage
-                fromExpression: any(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
               - name: lineageIndex
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
               - name: sourceIndex
@@ -2196,12 +2207,12 @@ spec:
               - name: digestIndex
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
         - uses: yaml-update
-          if: ${{ outputs.baynController.hasLineage }}
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynController.lineageIndex != nil && outputs.baynController.lineageIndex != '' && outputs.baynController.lineageIndex != '-1' && outputs.baynController.lineageIndex != '<nil>' }}
           config:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
             updates:
               - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.lineageIndex) + '.value' }}
-                value: "${{ asJSON({schemaVersion: outputs.baynLineage.lineage.schemaVersion, requestHash: outputs.baynLineage.lineage.requestHash, authoredActivation: outputs.baynLineage.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+                value: "${{ asJSON({schemaVersion: 'bayn.research-capital-build-lineage.v1', requestHash: fromJSON(outputs.baynLineage.mandate).requestHash, authoredActivation: fromJSON(outputs.baynLineage.mandate).authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
@@ -2217,8 +2228,6 @@ spec:
           config:
             path: ./src/argocd/applications/bayn/execution-activation.yaml
             outputs:
-              - name: hasLineage
-                fromExpression: any(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
               - name: lineageIndex
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
               - name: sourceIndex
@@ -2228,12 +2237,12 @@ spec:
               - name: generationIndex
                 fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_EXECUTION_ACTIVATION_GENERATION'))
         - uses: yaml-update
-          if: ${{ outputs.baynActivation.hasLineage }}
+          if: ${{ outputs.baynLineage.mandate != '' && outputs.baynActivation.lineageIndex != nil && outputs.baynActivation.lineageIndex != '' && outputs.baynActivation.lineageIndex != '-1' && outputs.baynActivation.lineageIndex != '<nil>' }}
           config:
             path: ./out/argocd/applications/bayn/execution-activation.yaml
             updates:
               - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.lineageIndex) + '.value' }}
-                value: "${{ asJSON({schemaVersion: outputs.baynLineage.lineage.schemaVersion, requestHash: outputs.baynLineage.lineage.requestHash, authoredActivation: outputs.baynLineage.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+                value: "${{ asJSON({schemaVersion: 'bayn.research-capital-build-lineage.v1', requestHash: fromJSON(outputs.baynLineage.mandate).requestHash, authoredActivation: fromJSON(outputs.baynLineage.mandate).authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-activation.yaml

@@ -1,8 +1,10 @@
+import { executionServiceName } from './execution-service-names'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result, Schema } from 'effect'
 
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import type { BrokerNotification, BrokerNotificationError } from '../broker/notifications'
+import type { BrokerSourceProjectionAttempt } from '../broker/trade-update-projection'
 import type { ExecutionWakeup, ProtectionReleaseReference } from '../execution/events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
@@ -11,7 +13,7 @@ const previousKey = 'polling'
 const budgetKey = 'next-poll-not-before-ms'
 const recoveryDelayMs = 1_000
 const coalescingDelayMs = 100
-const protectionSettlementDelayMs = 200
+export const brokerSourceProjectionContract = 'bayn.broker-source-projection.v1'
 // Explicit intervals override the finite handler retry policy. Accepted notifications must survive a database
 // outage without recording a terminal run result; leave attempt and duration limits unset for idempotent writes.
 const persistenceRunOptions = { initialRetryInterval: 50, maxRetryInterval: 1_000 }
@@ -61,8 +63,14 @@ export interface BrokerObservationRuntime {
   readonly activate: (signal: AbortSignal, nextPollNotBeforeMs: number) => Promise<void>
   readonly recordNotification: (
     signal: AbortSignal,
-    receipt: Pick<BrokerNotification, 'eventId' | 'receivedAt'>,
+    notification: BrokerNotification,
   ) => Promise<{ readonly covered: boolean }>
+  readonly isNotificationCovered: (signal: AbortSignal, eventId: string) => Promise<boolean>
+  readonly project: (
+    signal: AbortSignal,
+    eventId: string,
+    allowProtectionWait?: boolean,
+  ) => Promise<BrokerSourceProjectionAttempt>
   readonly invalidate: (signal: AbortSignal) => Promise<void>
   readonly probeProtection: (
     signal: AbortSignal,
@@ -79,6 +87,7 @@ export interface BrokerObservationRuntime {
   }>
 }
 export interface BrokerObservationOwnerConfig {
+  readonly servicePrefix?: string
   readonly controllerKey: string
   readonly sourceRevision: string
   readonly maxAgeMs: number
@@ -114,7 +123,7 @@ export const makeBaynBrokerObservations = (
   // SDK 1.16.5 encodes delay as invoke_time; core 7.0.2 excludes it from send replay equality.
   const schedule = (ctx: restate.ObjectContext, method: 'capture' | 'freshness', state: State, dueAt: number) =>
     ctx.genericSend({
-      service: 'BaynBrokerObservations',
+      service: executionServiceName('observations', config.servicePrefix),
       method,
       key: ctx.key,
       parameter: { sourceRevision: state.sourceRevision, epoch: state.epoch, sequence: state.sequence },
@@ -123,12 +132,13 @@ export const makeBaynBrokerObservations = (
       idempotencyKey: `broker-observations:${method}:${state.sourceRevision}:${state.epoch}:${state.sequence}`,
     })
   const sample = async (ctx: restate.ObjectContext, waitForQuota: boolean): Promise<BrokerObservationPoll> => {
+    const request = ctx.request()
     while (true) {
       let sampled: Awaited<ReturnType<BrokerObservationRuntime['poll']>>
       try {
         sampled = await ctx.run(
           'capture and publish broker observation',
-          () => runtime.poll(ctx.request().attemptCompletedSignal, { captureId: ctx.request().id }),
+          () => runtime.poll(request.attemptCompletedSignal, { captureId: request.id }),
           { maxRetryAttempts: 0 },
         )
       } catch {
@@ -150,7 +160,7 @@ export const makeBaynBrokerObservations = (
     ctx.set(key, state)
     if (poll._tag === 'Published') {
       ctx.genericSend({
-        service: 'BaynExecutionController',
+        service: executionServiceName('controller', config.servicePrefix),
         method: 'wake',
         key: ctx.key,
         parameter: {
@@ -179,47 +189,50 @@ export const makeBaynBrokerObservations = (
     return state
   }
   return restate.object({
-    name: 'BaynBrokerObservations',
+    name: executionServiceName('observations', config.servicePrefix),
     metadata: {
       'bayn.source-revision': config.sourceRevision,
       'bayn.broker-identity-hash': config.controllerKey,
     },
     handlers: {
       notify: restate.handlers.object.shared(
-        { ingressPrivate: false },
+        { ingressPrivate: false, idempotencyRetention: { days: 7 } },
         async (ctx: restate.ObjectSharedContext, candidate: unknown) => {
           verifyKey(ctx)
           const verified = await ctx.run('verify broker notification', async () => {
             const result = runtime.verifyNotification(candidate, transportClock.currentTimeMillisUnsafe())
             return Result.isFailure(result)
               ? { accepted: false as const, reason: result.failure.reason }
-              : { accepted: true as const, eventId: result.success.eventId, receivedAt: result.success.receivedAt }
+              : { accepted: true as const, notification: result.success }
           })
           if (!verified.accepted)
             throw new restate.TerminalError(`broker notification rejected: ${verified.reason}`, { errorCode: 400 })
-          const retained = await ctx.run(
+          const notification = verified.notification
+          if (notification.session.sourceRevision !== config.sourceRevision)
+            throw new restate.TerminalError('broker notification source revision mismatch', { errorCode: 409 })
+          const signal = ctx.request().attemptCompletedSignal
+          await ctx.run(
             'record verified broker notification',
-            () =>
-              runtime.recordNotification(ctx.request().attemptCompletedSignal, {
-                eventId: verified.eventId,
-                receivedAt: verified.receivedAt,
-              }),
+            () => runtime.recordNotification(signal, notification),
             persistenceRunOptions,
           )
-          if (retained.covered) return { accepted: true, eventId: verified.eventId }
-          // Only the stable identity is retained; payloads and credentials never enter owner state.
           ctx.genericSend({
-            service: 'BaynBrokerObservations',
-            method: 'accept',
+            service: executionServiceName('projector', config.servicePrefix),
+            method: 'project',
             key: ctx.key,
-            parameter: { eventId: verified.eventId },
+            parameter: { eventId: notification.eventId },
             inputSerde: brokerObservationJsonSerde,
-            idempotencyKey: `broker-notification:${verified.eventId}`,
+            idempotencyKey: `broker-source-project:${notification.eventId}`,
           })
-          return { accepted: true, eventId: verified.eventId }
+          return {
+            accepted: true,
+            eventId: notification.eventId,
+            sourceRevision: config.sourceRevision,
+            projectionContract: brokerSourceProjectionContract,
+          }
         },
       ),
-      accept: restate.handlers.object.exclusive(
+      reconcile: restate.handlers.object.exclusive(
         { ingressPrivate: true, idempotencyRetention: { days: 7 } },
         async (ctx: restate.ObjectContext, candidate: unknown) => {
           verifyKey(ctx)
@@ -231,9 +244,10 @@ export const makeBaynBrokerObservations = (
             current.pendingNotificationId !== undefined
           )
             return
+          const signal = ctx.request().attemptCompletedSignal
           await ctx.run(
-            'invalidate broker observation after notification',
-            () => runtime.invalidate(ctx.request().attemptCompletedSignal),
+            'invalidate broker observation after source event',
+            () => runtime.invalidate(signal),
             persistenceRunOptions,
           )
           const state: State = {
@@ -263,9 +277,10 @@ export const makeBaynBrokerObservations = (
           const current = await read(ctx)
           if (current === null || current.sourceRevision !== config.sourceRevision) return
           const receivedAt = await ctx.date.now()
+          const request = ctx.request()
           await ctx.run(
             'invalidate broker observation after execution mutation',
-            () => runtime.invalidate(ctx.request().attemptCompletedSignal),
+            () => runtime.invalidate(request.attemptCompletedSignal),
             persistenceRunOptions,
           )
           const state: State = {
@@ -281,15 +296,12 @@ export const makeBaynBrokerObservations = (
           ctx.set(key, state)
           const cycleId = binding.cycleId
           if (cycleId !== undefined) {
-            const settleInMs = receivedAt + protectionSettlementDelayMs - (await ctx.date.now())
-            if (settleInMs > 0) await ctx.sleep({ milliseconds: settleInMs })
             let proof: ProtectionReleaseReference | null = null
             try {
               proof = await ctx.run(
                 'read and record exact protective release',
                 async () =>
-                  (await runtime.probeProtection(ctx.request().attemptCompletedSignal, cycleId, ctx.request().id)) ??
-                  null,
+                  (await runtime.probeProtection(request.attemptCompletedSignal, cycleId, request.id)) ?? null,
                 { maxRetryAttempts: 2, initialRetryInterval: 75 },
               )
             } catch {
@@ -297,7 +309,7 @@ export const makeBaynBrokerObservations = (
             }
             if (proof !== null)
               ctx.genericSend({
-                service: 'BaynExecutionController',
+                service: executionServiceName('controller', config.servicePrefix),
                 method: 'wake',
                 key: ctx.key,
                 parameter: {
@@ -331,9 +343,10 @@ export const makeBaynBrokerObservations = (
               current?.nextCaptureNotBeforeMs ?? 0,
               storedBudget === null ? 0 : decode(BudgetDeadlineSchema, storedBudget),
             )
+            const signal = ctx.request().attemptCompletedSignal
             await ctx.run(
               'activate broker observation projection',
-              () => runtime.activate(ctx.request().attemptCompletedSignal, nextPollNotBeforeMs),
+              () => runtime.activate(signal, nextPollNotBeforeMs),
               { maxRetryAttempts: 0 },
             )
             ctx.clear(budgetKey)
@@ -383,6 +396,104 @@ export const makeBaynBrokerObservations = (
     },
     options: {
       ingressPrivate: false,
+      enableLazyState: false,
+      hooks: [...hooks],
+      retryPolicy: { maxAttempts: 3, onMaxAttempts: 'pause', initialInterval: 1_000, maxInterval: 10_000 },
+      inactivityTimeout: { milliseconds: config.operationTimeoutMs * 2 },
+      abortTimeout: { milliseconds: config.operationTimeoutMs * 3 },
+    },
+  })
+}
+
+export const makeBaynBrokerSourceProjector = (
+  config: BrokerObservationOwnerConfig,
+  runtime: Pick<BrokerObservationRuntime, 'isNotificationCovered' | 'project'>,
+  hooks: readonly restate.HooksProvider[] = [],
+) => {
+  const verifyKey = (ctx: Pick<restate.ObjectSharedContext, 'key'>) => {
+    if (ctx.key !== config.controllerKey) throw new restate.TerminalError('broker projector account binding mismatch')
+  }
+  return restate.object({
+    name: executionServiceName('projector', config.servicePrefix),
+    metadata: {
+      'bayn.source-revision': config.sourceRevision,
+      'bayn.broker-identity-hash': config.controllerKey,
+    },
+    handlers: {
+      // This object is independent of the snapshot owner so slow provider reads cannot block ordered source evidence.
+      project: restate.handlers.object.exclusive(
+        { ingressPrivate: true, idempotencyRetention: { days: 7 } },
+        async (ctx: restate.ObjectContext, candidate: unknown) => {
+          verifyKey(ctx)
+          const receipt = decode(ReceiptSchema, candidate)
+          const signal = ctx.request().attemptCompletedSignal
+          let projection = await ctx.run(
+            'project durable broker source event',
+            () => runtime.project(signal, receipt.eventId),
+            persistenceRunOptions,
+          )
+          if (projection._tag === 'AwaitingProtection') {
+            // Only the ordered projector waits. The financial writer transaction has returned, and the independent
+            // canonical owner can establish the parent/child binding or cover this early nonfinancial event.
+            ctx.genericSend({
+              service: executionServiceName('observations', config.servicePrefix),
+              method: 'reconcile',
+              key: ctx.key,
+              parameter: { eventId: receipt.eventId },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `broker-source-reconcile:${receipt.eventId}`,
+            })
+            const deadlineMs = Date.parse(projection.deadlineAt)
+            let attempt = 0
+            while (projection._tag === 'AwaitingProtection') {
+              const remaining = Math.max(0, deadlineMs - (await ctx.date.now()))
+              if (remaining > 0) await ctx.sleep({ milliseconds: Math.min(recoveryDelayMs, remaining) })
+              const allowProtectionWait = (await ctx.date.now()) < deadlineMs
+              projection = await ctx.run(
+                `resolve broker protection binding ${++attempt}`,
+                () => runtime.project(signal, receipt.eventId, allowProtectionWait),
+                persistenceRunOptions,
+              )
+              if (!allowProtectionWait && projection._tag === 'AwaitingProtection')
+                throw new restate.TerminalError('broker protection binding exceeded its original recovery deadline')
+            }
+          }
+          if (projection._tag === 'CanonicallyCovered') return projection
+          const covered = await ctx.run(
+            'check canonical broker source coverage',
+            () => runtime.isNotificationCovered(signal, receipt.eventId),
+            persistenceRunOptions,
+          )
+          if (projection._tag === 'Projected')
+            ctx.genericSend({
+              service: executionServiceName('controller', config.servicePrefix),
+              method: 'wake',
+              key: ctx.key,
+              parameter: {
+                schemaVersion: 'bayn.execution-wakeup.v1',
+                _tag: 'BrokerEvent',
+                sourceRevision: config.sourceRevision,
+                eventId: projection.eventId,
+                observedAt: projection.observedAt,
+              } satisfies ExecutionWakeup,
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `broker-source-wake:${projection.eventId}`,
+            })
+          if (!covered)
+            ctx.genericSend({
+              service: executionServiceName('observations', config.servicePrefix),
+              method: 'reconcile',
+              key: ctx.key,
+              parameter: { eventId: projection.eventId },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `broker-source-reconcile:${projection.eventId}`,
+            })
+          return projection
+        },
+      ),
+    },
+    options: {
+      ingressPrivate: true,
       enableLazyState: false,
       hooks: [...hooks],
       retryPolicy: { maxAttempts: 3, onMaxAttempts: 'pause', initialInterval: 1_000, maxInterval: 10_000 },

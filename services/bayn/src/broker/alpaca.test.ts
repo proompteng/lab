@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schedule, Schema, Stream } from 'effect'
+import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
@@ -13,6 +13,8 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
+  NonTradeActivityStatementSchema,
+  verifyNonTradeActivityStatement,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -28,7 +30,7 @@ import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/prefligh
 import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
 import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
 import { make, alpacaHttpLayer } from './alpaca/http'
-import { activityFrames, fillActivityIdentity, startAccountActivityStream } from './alpaca/activity-stream'
+import { fillActivityIdentity } from './activities'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -184,119 +186,6 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
-  const activityCursor = (n: number) => n.toString().padStart(26, '0')
-  const fillFrame = (n: number, executedAt = '2026-11-18T20:46:59.021034500Z') => ({
-    activity_type: 'TRD',
-    event_id: activityCursor(n),
-    ref_id: n === 1 ? assetId : orderId,
-    executed_at: executedAt,
-    price: '260.10',
-    qty: '1',
-    details: {
-      order_id: orderId,
-      cum_qty: String(n),
-      leaves_qty: n === 1 ? '1' : '0',
-      symbol: 'AAPL',
-      side: 'buy',
-      execution_type: 'fill',
-    },
-  })
-  const feeFrame = {
-    activity_type: 'CFEE',
-    event_id: activityCursor(3),
-    ref_id: 'b91fed24-9e79-4d01-b902-72bfc9701cba',
-    status: 'executed',
-    currency: 'USD',
-    net_amount: '0',
-    qty: '-0.0002',
-    price: '260.1020',
-    settle_date: '2026-11-19',
-    details: { system_date: '2026-11-18' },
-  }
-  const frameText = (value: unknown) => `data: ${JSON.stringify(value)}
-
-`
-  const sseResponse = (body: BodyInit) =>
-    new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'activity-stream' } })
-
-  test('reads PAPER fills and fees from an open stream and replays its inclusive cursor across reconnects', async () => {
-    const requests: string[] = []
-    let transport: ReadableStreamDefaultController<Uint8Array> | undefined
-    let cancellations = 0
-    const bytes = new TextEncoder()
-    const client = HttpClient.make((request, url) => {
-      expect(url.pathname).toBe('/v2beta1/events/activities')
-      requests.push(url.search)
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          transport = controller
-          const history = requests.length === 1 ? frameText(fillFrame(1)) : frameText(feeFrame) + ': heartbeat\n\n'
-          controller.enqueue(bytes.encode(': welcome to the Alpaca events\n\n' + history))
-        },
-        cancel() {
-          cancellations++
-        },
-      })
-      return Effect.succeed(HttpClientResponse.fromWeb(request, sseResponse(body)))
-    })
-    const verified = Effect.void
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { read: snapshot } = yield* startAccountActivityStream(options, verified)
-          const read = snapshot.pipe(
-            Effect.catch(() => Effect.sleep('1 millis').pipe(Effect.andThen(snapshot))),
-            Effect.retry({ times: 50 }),
-          )
-          yield* Effect.sync(() => transport).pipe(
-            Effect.repeat({ while: (controller) => controller === undefined, schedule: Schedule.spaced('1 millis') }),
-            Effect.timeout('1 second'),
-          )
-          expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
-          transport?.enqueue(bytes.encode(': heartbeat\n\n'))
-          expect((yield* read).fills.map(({ value }) => value)).toMatchObject([
-            {
-              activityId: `20261118154659021::${assetId}`,
-              transactionTime: '2026-11-18T20:46:59.021034000Z',
-              type: TradeActivityType.PartialFill,
-            },
-          ])
-          expect(requests.map((query) => Object.fromEntries(new URLSearchParams(query)))).toEqual([
-            { since: '2026-02-11T00:00:00.000Z' },
-          ])
-          transport?.enqueue(bytes.encode(frameText(fillFrame(2))))
-          const second = yield* snapshot.pipe(
-            Effect.repeat({ while: (cut) => cut.fills.length < 2, schedule: Schedule.spaced('1 millis') }),
-            Effect.timeout('1 second'),
-          )
-          expect(second.fills).toHaveLength(2)
-          const feeCountsBefore = second.feeCounts
-          expect(feeCountsBefore.size).toBe(0)
-          transport?.enqueue(bytes.encode(frameText(feeFrame)))
-          const withFee = yield* snapshot.pipe(
-            Effect.repeat({ while: (cut) => cut.feeCounts.size === 0, schedule: Schedule.spaced('1 millis') }),
-            Effect.timeout('1 second'),
-          )
-          expect([...withFee.feeCounts]).toEqual([['["CFEE","2026-11-18","0","200000"]', 1]])
-          expect(feeCountsBefore.size).toBe(0)
-          expect(requests).toHaveLength(1)
-          transport?.close()
-          yield* Effect.sleep('100 millis')
-          expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
-          yield* Effect.sleep('2 seconds')
-          const reconnected = yield* read
-          expect(reconnected.fills).toHaveLength(2)
-          expect(reconnected.feeCounts).toBe(withFee.feeCounts)
-          expect(requests.map((query) => Object.fromEntries(new URLSearchParams(query)))).toEqual([
-            { since: '2026-02-11T00:00:00.000Z' },
-            { since_id: activityCursor(3) },
-          ])
-        }),
-      ).pipe(Effect.provideService(HttpClient.HttpClient, client)),
-    )
-    expect(cancellations).toBe(1)
-  })
-
   test('preserves ledger identity across Eastern daylight time and microsecond rounding', () => {
     expect(fillActivityIdentity(orderId, '2026-10-05T15:12:39.021034500Z')).toEqual({
       activityId: `20261005111239021::${orderId}`,
@@ -306,20 +195,6 @@ describe('Alpaca paper reads', () => {
       activityId: `20261105101239999::${orderId}`,
       transactionTime: '2026-11-05T15:12:40.000000000Z',
     })
-  })
-
-  test('assembles split UTF-8 frames and rejects drops and truncated endings', async () => {
-    const encoded = new TextEncoder().encode(frameText({ text: 'é' }))
-    const frames = (chunks: readonly Uint8Array[]) => activityFrames(Stream.fromIterable(chunks))
-    expect(
-      await Effect.runPromise(Stream.runCollect(frames(Array.from(encoded, (byte) => Uint8Array.of(byte))))),
-    ).toEqual([{ type: 'Data', value: { text: 'é' } }])
-    for (const input of [': you are reading too slowly, dropped 1 messages\n\n', 'data: {}\n']) {
-      const result = await Effect.runPromise(
-        Effect.result(Stream.runCollect(frames([new TextEncoder().encode(input)]))),
-      )
-      expect(result).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.InvalidResponse } })
-    }
   })
 
   test('retains the broker crypto fee tier with its account response evidence', async () => {
@@ -356,6 +231,7 @@ describe('Alpaca paper reads', () => {
   })
 
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
+    const response = { ...accountResponse, transfers_blocked: true }
     let method = ''
     let url = ''
     let key = ''
@@ -380,7 +256,7 @@ describe('Alpaca paper reads', () => {
               }),
           ),
         )
-        return jsonResponse(request, accountResponse)
+        return jsonResponse(request, response)
       }),
     )
 
@@ -404,6 +280,7 @@ describe('Alpaca paper reads', () => {
       'feeActivities',
       'fillActivities',
       'marketCalendar',
+      'nonTradeActivityStatement',
       'orderByClientId',
       'orderById',
       'orders',
@@ -416,12 +293,13 @@ describe('Alpaca paper reads', () => {
       equityMicros: '103820560000',
       lastEquityMicros: '104000000000',
       buyingPowerMicros: '262113632000',
+      transfersBlocked: true,
       observedAt: '1970-01-01T00:00:00.000Z',
     })
     expect(result.evidence).toEqual({
       requestId: 'req-123',
       status: 200,
-      contentHash: Result.getOrThrow(canonicalHashV1Result(accountResponse)),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
       rateLimit: {
         limit: '200',
@@ -1469,6 +1347,102 @@ describe('Alpaca paper reads', () => {
     expect(Result.getOrThrow(decimalToMicrosResult('-0.01', true, 'fee'))).toBe('-10000')
     expect(Result.isFailure(decimalToMicrosResult('-0.01', false, 'quantity'))).toBe(true)
     expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
+  })
+
+  test('captures all non-trade activity through empty terminal pages in both directions', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = {
+      id: `20260911010000000::${orderId}`,
+      activity_type: 'FEE',
+      date: '2026-09-10',
+      net_amount: '-0.21',
+      description: 'private account detail',
+    }
+    const deposit = {
+      id: `20260910160000000::${assetId}`,
+      activity_type: 'CSD',
+      date: '2026-09-10',
+      created_at: '2026-09-10T16:00:00Z',
+      net_amount: '0.21',
+    }
+    const calls: { direction: string | null; pageToken: string | null }[] = []
+    const client = HttpClient.make((request, url) => {
+      expect(request.method).toBe('GET')
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      expect(url.pathname).toBe('/v2/account/activities')
+      expect(url.searchParams.get('category')).toBe('non_trade_activity')
+      expect(url.searchParams.has('activity_types')).toBe(false)
+      expect(url.searchParams.get('after')).toBe(bounds.after)
+      expect(url.searchParams.get('until')).toBe(bounds.until)
+      const direction = url.searchParams.get('direction')
+      const pageToken = url.searchParams.get('page_token')
+      calls.push({ direction, pageToken })
+      const [first, second] = direction === 'asc' ? [deposit, fee] : [fee, deposit]
+      return Effect.succeed(
+        jsonResponse(request, pageToken === null ? [first] : pageToken === first.id ? [second] : []),
+      )
+    })
+    const result = await Effect.runPromise(
+      make(options).pipe(
+        Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    )
+    expect(calls).toEqual([
+      { direction: 'asc', pageToken: null },
+      { direction: 'asc', pageToken: deposit.id },
+      { direction: 'asc', pageToken: fee.id },
+      { direction: 'desc', pageToken: null },
+      { direction: 'desc', pageToken: fee.id },
+      { direction: 'desc', pageToken: deposit.id },
+    ])
+    expect(result.accountIdentityHash).toBe(options.identity.identityHash)
+    expect(result.window).toEqual(bounds)
+    const statement = Result.getOrThrow(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))
+    expect(statement.accountBody).toEqual(accountResponse)
+    expect(
+      verifyNonTradeActivityStatement({ ...statement, accountBody: { ...accountResponse, id: assetId } }, assetId),
+    ).toMatchObject({ _tag: 'Failure' })
+    expect(Result.getOrThrow(verifyNonTradeActivityStatement(statement, accountId)).activities).toEqual([
+      {
+        activityId: deposit.id,
+        activityType: 'CSD',
+        date: deposit.date,
+        createdAt: deposit.created_at,
+        netAmount: '0.21',
+      },
+      { activityId: fee.id, activityType: 'FEE', date: fee.date, createdAt: null, netAmount: '-0.21' },
+    ])
+    expect(result.firstPass.at(-1)?.body).toEqual([])
+    expect(result.secondPass.at(-1)?.body).toEqual([])
+    expect(result.firstPass[1]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee])))
+  })
+
+  test('withholds the non-trade statement for repeated, changing, wrong-account or out-of-window activities', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = { id: `20260911010000000::${orderId}`, activity_type: 'FEE', date: '2026-09-10', net_amount: '-0.21' }
+    const scenarios = [
+      () => [fee],
+      (url: URL) =>
+        url.searchParams.has('page_token')
+          ? []
+          : [{ ...fee, net_amount: url.searchParams.get('direction') === 'asc' ? '-0.21' : '-0.22' }],
+      () => [{ ...fee, account_id: assetId }],
+      () => [{ ...fee, created_at: bounds.until }],
+    ]
+    for (const scenario of scenarios) {
+      const client = HttpClient.make((request, url) =>
+        Effect.succeed(jsonResponse(request, url.pathname === '/v2/account' ? accountResponse : scenario(url))),
+      )
+      const failure = await Effect.runPromise(
+        make(options).pipe(
+          Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.flip,
+        ),
+      )
+      expect(failure).toMatchObject({ operation: 'non-trade-activities', kind: BrokerReadErrorKind.InvalidResponse })
+    }
   })
 
   test('retains available cash CFEE through the HTTP adapter in a stable broker snapshot', async () => {

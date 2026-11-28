@@ -232,6 +232,34 @@ tests:
         exp_samples:
           - labels: '{}'
             value: 0
+  - name: collector warnings stay visible without email during shared quota pressure
+    interval: 1m
+    input_series:
+      - series: up{job="ci-observability"}
+        values: 0+0x20
+      - series: ci_observability_github_rate_limit_remaining
+        values: 1500+0x20
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+0x20
+      - series: ci_observability_last_history_progress_timestamp_seconds
+        values: 0+0x20
+      - series: ci_observability_oldest_live_pending_seconds
+        values: 600+0x20
+      - series: ci_observability_oldest_loki_pending_seconds
+        values: 900+0x20
+      - series: ci_observability_loki_rejected_records
+        values: 1+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"CiObservability.*",alertstate="firing",severity="warning",notify=""}) or vector(0)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 6
+      - expr: count(ALERTS{alertname=~"CiObservability.*",alertstate="firing",notify="email"}) or vector(0)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 0
   - name: workflow changes retain one runner pool incident
     interval: 1m
     input_series:
@@ -254,17 +282,23 @@ tests:
         exp_samples:
           - labels: '{}'
             value: 0
-  - name: a saturated metric tenant pages before downstream telemetry disappears
+  - name: a saturated metric tenant pages and recovers when admission resumes below the live allowance
     interval: 1m
     input_series:
       - series: cortex_discarded_samples_total{job="mimir-ingester",reason="per_user_series_limit",pod="one"}
-        values: 0+10x20
+        values: 0+10x14 140+0x15
       - series: cortex_ingester_memory_series{job="mimir-ingester",pod="one"}
-        values: 50000+0x20
+        values: 100000+0x14 150000+0x15
       - series: cortex_ingester_memory_series{job="mimir-ingester",pod="two"}
-        values: 50000+0x20
+        values: 100000+0x14 150000+0x15
       - series: cortex_ingester_memory_series{job="mimir-ingester",pod="three"}
-        values: 50000+0x20
+        values: 100000+0x14 150000+0x15
+      - series: cortex_ingester_local_limits{job="mimir-ingester",pod="one",limit="max_global_series_per_user",user="anonymous"}
+        values: 100000+0x14 200000+0x15
+      - series: cortex_ingester_local_limits{job="mimir-ingester",pod="two",limit="max_global_series_per_user",user="anonymous"}
+        values: 100000+0x14 200000+0x15
+      - series: cortex_ingester_local_limits{job="mimir-ingester",pod="three",limit="max_global_series_per_user",user="anonymous"}
+        values: 100000+0x14 200000+0x15
     promql_expr_test:
       - expr: count(ALERTS{alertname="MimirSeriesLimitExceeded",alertstate="firing"}) or vector(0)
         eval_time: 4m
@@ -273,6 +307,16 @@ tests:
             value: 1
       - expr: count(ALERTS{alertname="MimirIngestionObservationUnavailable",alertstate="firing"}) or vector(0)
         eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: count(ALERTS{alertname=~"MimirSeriesCapacityHigh|MimirSeriesLimitExceeded",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples:
+          - labels: '{}'
+            value: 2
+      - expr: count(ALERTS{alertname=~"MimirSeriesCapacityHigh|MimirSeriesLimitExceeded",alertstate="firing"}) or vector(0)
+        eval_time: 25m
         exp_samples:
           - labels: '{}'
             value: 0

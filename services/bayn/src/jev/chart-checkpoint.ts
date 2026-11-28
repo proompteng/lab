@@ -22,7 +22,6 @@ const ClaimMaterial = Schema.Struct({
   expiresAt: UtcInstantSchema,
 })
 export const ChartDispatchClaimSchema = Schema.Struct({ ...ClaimMaterial.fields, claimHash: Sha256Schema })
-export type ChartDispatchClaim = typeof ChartDispatchClaimSchema.Type
 export const ChartTerminalOutcomeSchema = Schema.Union([
   Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: DecisionsInferenceSchema }),
   Schema.Struct({
@@ -43,7 +42,6 @@ const ReceiptMaterial = Schema.Struct({
   outcome: ChartTerminalOutcomeSchema,
 })
 export const ChartTerminalReceiptSchema = Schema.Struct({ ...ReceiptMaterial.fields, terminalHash: Sha256Schema })
-export type ChartTerminalReceipt = typeof ChartTerminalReceiptSchema.Type
 export const ChartCheckpointSchema = Schema.Struct({
   claim: ChartDispatchClaimSchema,
   terminal: Schema.NullOr(ChartTerminalReceiptSchema),

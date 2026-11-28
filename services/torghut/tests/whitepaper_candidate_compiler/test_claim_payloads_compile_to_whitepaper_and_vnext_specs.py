@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.whitepaper_candidate_compiler.support import (
+    _PORTFOLIO_TARGET_FAMILIES,
     Decimal,
     Path,
-    _PORTFOLIO_TARGET_FAMILIES,
-    _TestWhitepaperCandidateCompilerBase,
     _expected_portfolio_target_candidate_count,
     _profile_count_for_family,
+    _TestWhitepaperCandidateCompilerBase,
     compile_claim_payloads_to_whitepaper_experiments,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestClaimPayloadsCompileToWhitepaperAndVnextSpecs(

@@ -6,7 +6,7 @@ import {
   type ObjectSharedContext,
   type ObjectContext,
 } from '@restatedev/restate-sdk'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import {
   executionControllerMaximumRecoveryWindow,
@@ -20,6 +20,7 @@ import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { MarketChangeReason, marketChangedEventId } from '../execution/events'
 import { CycleRunnerError } from '../cycle/runner/model'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
+import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { decisionBuildError, reconciliationRunnerError } from '../observe-composition/decision-builder'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
@@ -46,8 +47,24 @@ import {
 const fixtureTransportClock = {
   currentTimeMillisUnsafe: () => Date.parse('2026-08-13T18:00:00.000Z'),
 }
-const makeBaynExecutionController: typeof makeController = (configuration, runtime, hooks, transportClock) =>
-  makeController(configuration, runtime, hooks, transportClock ?? fixtureTransportClock)
+type ControllerRuntime = Parameters<typeof makeController>[1]
+const makeBaynExecutionController = (
+  configuration: Parameters<typeof makeController>[0],
+  runtime: Pick<ControllerRuntime, 'advance'> & Partial<ControllerRuntime>,
+  hooks?: Parameters<typeof makeController>[2],
+  transportClock = fixtureTransportClock,
+) =>
+  makeController(
+    configuration,
+    {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      ...runtime,
+    },
+    hooks,
+    transportClock,
+  )
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
@@ -79,6 +96,17 @@ const activation = {
   planHash,
   sourceRevision,
 }
+
+const controllerStateFixture = (overrides: Partial<ExecutionControllerState> = {}): ExecutionControllerState => ({
+  schemaVersion: 1,
+  active: true,
+  epoch: 1,
+  planHash,
+  sourceRevision,
+  initialSequence: 4,
+  nextSequence: 4,
+  ...overrides,
+})
 
 type Delivery = {
   readonly method?: string
@@ -159,52 +187,64 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
 
 type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
 
+const controllerFixture = (...args: Parameters<typeof makeBaynExecutionController>) =>
+  handlers(makeBaynExecutionController(...args))
+
+const invocationRequest = (id: string) => ({ id, attemptCompletedSignal: new AbortController().signal })
+
+// Shared fake Restate context for cases that only need a mutable controller slot.
+// Scheduling, journaling, and clock behavior remain owned by each scenario.
+const mutableControllerContext = (
+  read: () => ExecutionControllerState | null,
+  write: (next: ExecutionControllerState) => void,
+  operations: {
+    genericSend?: (delivery: Delivery & { service: string; method: string }) => unknown
+    run?: (name: string, action: () => Promise<unknown>) => Promise<unknown>
+    request?: () => ReturnType<typeof invocationRequest>
+    date?: Partial<TestContext['date']>
+    invocation?: (id: string) => { cancel: () => unknown }
+  },
+): TestContext =>
+  ({
+    key: controllerKey,
+    get: async () => read(),
+    set: (_key: string, next: ExecutionControllerState) => write(next),
+    ...operations,
+  }) as unknown as TestContext
+
 test('a successful successor retires its old deadline and an executing deadline never cancels itself', async () => {
-  let state: ExecutionControllerState = {
-    schemaVersion: 1,
-    active: true,
-    epoch: 1,
-    planHash,
-    sourceRevision,
-    initialSequence: 4,
-    nextSequence: 4,
-  }
+  let state: ExecutionControllerState = controllerStateFixture()
   let invocationId = 'inv_initial'
   let sent = 0
   let idle = false
   let projectionFails = false
   const cancelled: string[] = []
-  const object = handlers(
-    makeBaynExecutionController(config, {
-      prepareActivation: async () => undefined,
-      projectState: async () => {
-        if (projectionFails) throw new Error('Controlled deactivation projection failure')
-      },
-      log: async () => undefined,
-      advance: async () => ({
-        completedAt: '2026-08-13T18:00:01.000Z',
-        outcome: {
-          _tag: ExecutionControllerOutcome.Waiting,
-          receiptHash: 'd'.repeat(64),
-          nextDelayMs: 1,
-          ...(idle ? {} : { nextWakeAt: '2026-08-13T18:00:31.000Z' }),
-        },
-      }),
-    }),
-  )
-  const context = {
-    key: controllerKey,
-    get: async () => state,
-    set: (_key: string, next: ExecutionControllerState) => {
-      state = next
+  const object = controllerFixture(config, {
+    projectState: async () => {
+      if (projectionFails) throw new Error('Controlled deactivation projection failure')
     },
-    run: async <A>(_name: string, action: () => Promise<A>) => action(),
-    genericSend: () => ({
-      invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_deadline${++sent}`)),
+    advance: async () => ({
+      completedAt: '2026-08-13T18:00:01.000Z',
+      outcome: {
+        _tag: ExecutionControllerOutcome.Waiting,
+        receiptHash: 'd'.repeat(64),
+        nextDelayMs: 1,
+        ...(idle ? {} : { nextWakeAt: '2026-08-13T18:00:31.000Z' }),
+      },
     }),
-    invocation: (id: string) => ({ cancel: () => cancelled.push(id) }),
-    request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
-  } as unknown as TestContext
+  })
+  const context = mutableControllerContext(
+    () => state,
+    (next) => (state = next),
+    {
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: () => ({
+        invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_deadline${++sent}`)),
+      }),
+      invocation: (id: string) => ({ cancel: () => cancelled.push(id) }),
+      request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
+    },
+  )
   const advance = () =>
     object.tick(context, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -247,42 +287,28 @@ test('a successful successor retires its old deadline and an executing deadline 
 })
 
 test('a tick keeps the inference expiry without dispatching work', async () => {
-  let state: ExecutionControllerState = {
-    schemaVersion: 1,
-    active: true,
-    epoch: 1,
-    planHash,
-    sourceRevision,
-    initialSequence: 4,
-    nextSequence: 4,
-  }
+  let state: ExecutionControllerState = controllerStateFixture()
   const deliveries: Array<{ service: string; method: string; parameter: unknown }> = []
-  const object = handlers(
-    makeBaynExecutionController(config, {
-      prepareActivation: async () => undefined,
-      projectState: async () => undefined,
-      log: async () => undefined,
-      advance: async () => ({
-        completedAt: '2026-08-13T18:00:01.000Z',
-        outcome: {
-          _tag: ExecutionControllerOutcome.Waiting,
-          receiptHash: 'd'.repeat(64),
-          nextDelayMs: 1,
-          nextWakeAt: '2026-08-13T18:01:00.000Z',
-        },
-      }),
+  const object = controllerFixture(config, {
+    advance: async () => ({
+      completedAt: '2026-08-13T18:00:01.000Z',
+      outcome: {
+        _tag: ExecutionControllerOutcome.Waiting,
+        receiptHash: 'd'.repeat(64),
+        nextDelayMs: 1,
+        nextWakeAt: '2026-08-13T18:01:00.000Z',
+      },
     }),
-  )
-  const context = {
-    key: controllerKey,
-    get: async () => state,
-    set: (_key: string, next: ExecutionControllerState) => {
-      state = next
+  })
+  const context = mutableControllerContext(
+    () => state,
+    (next) => (state = next),
+    {
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: { service: string; method: string; parameter: unknown }) => deliveries.push(delivery),
+      request: () => ({ id: 'prepared-inference-owner', attemptCompletedSignal: new AbortController().signal }),
     },
-    run: async <A>(_name: string, action: () => Promise<A>) => action(),
-    genericSend: (delivery: { service: string; method: string; parameter: unknown }) => deliveries.push(delivery),
-    request: () => ({ id: 'prepared-inference-owner', attemptCompletedSignal: new AbortController().signal }),
-  } as unknown as TestContext
+  )
   await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
   expect(state.nextSequence).toBe(5)
   expect(state.nextDueAt).toBe('2026-08-13T18:01:00.000Z')
@@ -290,38 +316,22 @@ test('a tick keeps the inference expiry without dispatching work', async () => {
 })
 
 test('market bursts preserve eligibility and ignore duplicate, older and foreign producer hints', async () => {
-  let state: ExecutionControllerState = {
-    schemaVersion: 1,
-    active: true,
-    epoch: 1,
-    planHash,
-    sourceRevision,
-    initialSequence: 4,
-    nextSequence: 4,
+  let state: ExecutionControllerState = controllerStateFixture({
     marketEligibleAt: '2026-08-13T18:01:02.000Z',
     nextDueAt: '2026-08-13T18:01:02.000Z',
-  }
+  })
   let now = Date.parse('2026-08-13T18:01:00.000Z')
   const deliveries: unknown[] = []
-  const object = handlers(
-    makeBaynExecutionController(config, {
-      prepareActivation: async () => undefined,
-      projectState: async () => undefined,
-      log: async () => undefined,
-      advance: async () => {
-        throw new Error('a notification cannot directly execute financial work')
-      },
-    }),
-  )
-  const context = {
-    key: controllerKey,
-    get: async () => state,
-    set: (_key: string, next: ExecutionControllerState) => {
-      state = next
+  const object = controllerFixture(config, {
+    advance: async () => {
+      throw new Error('a notification cannot directly execute financial work')
     },
-    genericSend: (delivery: unknown) => deliveries.push(delivery),
-    date: { now: async () => now },
-  } as unknown as TestContext
+  })
+  const context = mutableControllerContext(
+    () => state,
+    (next) => (state = next),
+    { genericSend: (delivery: unknown) => deliveries.push(delivery), date: { now: async () => now } },
+  )
   const event = marketChange(2)
   await object.wake(context, event)
   expect(deliveries).toHaveLength(0)
@@ -337,41 +347,27 @@ test('market bursts preserve eligibility and ignore duplicate, older and foreign
 })
 
 test('independent market producers cannot suppress one another and share one queued account tick', async () => {
-  let state: ExecutionControllerState = {
-    schemaVersion: 1,
-    active: true,
-    epoch: 1,
-    planHash,
-    sourceRevision,
-    initialSequence: 4,
-    nextSequence: 4,
-  }
+  let state: ExecutionControllerState = controllerStateFixture()
   const deliveries: Delivery[] = []
   let clockReads = 0
-  const object = handlers(
-    makeBaynExecutionController(config, {
-      prepareActivation: async () => undefined,
-      projectState: async () => undefined,
-      log: async () => undefined,
-      advance: async () => {
-        throw new Error('a hint cannot perform financial work')
+  const object = controllerFixture(config, {
+    advance: async () => {
+      throw new Error('a hint cannot perform financial work')
+    },
+  })
+  const context = mutableControllerContext(
+    () => state,
+    (next) => (state = next),
+    {
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      date: {
+        now: async () => {
+          clockReads++
+          return fixtureTransportClock.currentTimeMillisUnsafe()
+        },
       },
-    }),
+    },
   )
-  const context = {
-    key: controllerKey,
-    get: async () => state,
-    set: (_key: string, next: ExecutionControllerState) => {
-      state = next
-    },
-    genericSend: (delivery: Delivery) => deliveries.push(delivery),
-    date: {
-      now: async () => {
-        clockReads++
-        return fixtureTransportClock.currentTimeMillisUnsafe()
-      },
-    },
-  } as unknown as TestContext
   await object.wake(context, marketChange(100))
   const replacementProducer = '22222222-2222-4222-8222-222222222222'
   await object.wake(context, marketChange(1, replacementProducer))
@@ -391,16 +387,11 @@ test('the authenticated market gateway awaits only its small private wake and re
     releaseWake = resolve
   })
   let acknowledged = false
-  const object = handlers(
-    makeBaynExecutionController(config, {
-      prepareActivation: async () => undefined,
-      projectState: async () => undefined,
-      log: async () => undefined,
-      advance: async () => {
-        throw new Error('the ingress cannot advance financial work')
-      },
-    }),
-  )
+  const object = controllerFixture(config, {
+    advance: async () => {
+      throw new Error('the ingress cannot advance financial work')
+    },
+  })
   const context = {
     key: controllerKey,
     request: () => ({ headers: new Map([['authorization', `Bearer ${Buffer.alloc(32, 7).toString('base64url')}`]]) }),
@@ -444,15 +435,7 @@ describe.each(['reconcile', 'build-decision'] as const)('a typed %s broker absen
     'retains market backoff and releases on %s',
     async (recovery) => {
       let now = Date.parse('2026-08-13T18:00:01.000Z')
-      let state: ExecutionControllerState = {
-        schemaVersion: 1,
-        active: true,
-        epoch: 1,
-        planHash,
-        sourceRevision,
-        initialSequence: 4,
-        nextSequence: 4,
-      }
+      let state: ExecutionControllerState = controllerStateFixture()
       const deliveries: unknown[] = []
       const missing = new BrokerReadError({
         operation: 'preflight',
@@ -478,38 +461,32 @@ describe.each(['reconcile', 'build-decision'] as const)('a typed %s broker absen
                 }),
               ),
             })
-      const object = handlers(
-        makeBaynExecutionController(config, {
-          prepareActivation: async () => undefined,
-          projectState: async () => undefined,
-          log: async () => undefined,
-          advance: async () => ({
-            completedAt: '2026-08-13T18:00:00.000Z',
-            observation: retainAutonomousCyclePassObservation({
-              outcome: 'FAILED',
-              observedAt: '2026-08-13T18:00:00.000Z',
-              error,
-            }),
-            outcome: {
-              _tag: ExecutionControllerOutcome.Blocked,
-              receiptHash: 'd'.repeat(64),
-              nextDelayMs: 30_000,
-              nextWakeAt: '2026-08-13T18:00:30.000Z',
-            },
+      const object = controllerFixture(config, {
+        advance: async () => ({
+          completedAt: '2026-08-13T18:00:00.000Z',
+          observation: retainAutonomousCyclePassObservation({
+            outcome: 'FAILED',
+            observedAt: '2026-08-13T18:00:00.000Z',
+            error,
           }),
+          outcome: {
+            _tag: ExecutionControllerOutcome.Blocked,
+            receiptHash: 'd'.repeat(64),
+            nextDelayMs: 30_000,
+            nextWakeAt: '2026-08-13T18:00:30.000Z',
+          },
         }),
-      )
-      const context = {
-        key: controllerKey,
-        get: async () => state,
-        set: (_key: string, next: ExecutionControllerState) => {
-          state = next
+      })
+      const context = mutableControllerContext(
+        () => state,
+        (next) => (state = next),
+        {
+          run: async <A>(_name: string, action: () => Promise<A>) => action(),
+          genericSend: (delivery: unknown) => deliveries.push(delivery),
+          request: () => ({ id: 'broker-retry-eligibility', attemptCompletedSignal: new AbortController().signal }),
+          date: { now: async () => now },
         },
-        run: async <A>(_name: string, action: () => Promise<A>) => action(),
-        genericSend: (delivery: unknown) => deliveries.push(delivery),
-        request: () => ({ id: 'broker-retry-eligibility', attemptCompletedSignal: new AbortController().signal }),
-        date: { now: async () => now },
-      } as unknown as TestContext
+      )
       await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
       expect(state.marketEligibleAt).toBe('2026-08-13T18:00:30.000Z')
       expect(state.nextDueAt).toBe(state.marketEligibleAt)
@@ -553,66 +530,52 @@ describe.each(['reconcile', 'build-decision'] as const)('a typed %s broker absen
 
 test('an early broker publication failure retains the original recovery deadline', async () => {
   let now = Date.parse('2026-08-13T18:00:00.000Z')
-  let state: ExecutionControllerState = {
-    schemaVersion: 1,
-    active: true,
-    epoch: 1,
-    planHash,
-    sourceRevision,
-    initialSequence: 4,
-    nextSequence: 4,
-  }
+  let state: ExecutionControllerState = controllerStateFixture()
   let invocationId = 'inv_initial'
   let advances = 0
   const deliveries: Delivery[] = []
   const cancelled: string[] = []
-  const object = handlers(
-    makeBaynExecutionController(
-      config,
-      {
-        prepareActivation: async () => undefined,
-        projectState: async () => undefined,
-        log: async () => undefined,
-        advance: async () => {
-          advances++
-          const completedAt = new Date(now).toISOString()
-          return {
-            completedAt,
-            observation: {
-              result: 'FAILURE',
-              observedAt: completedAt,
-              operation: 'reconcile',
-              failure: 'market-data',
-              message: 'Broker observation is unavailable or invalidated by a mutation',
-            },
-            outcome: {
-              _tag: ExecutionControllerOutcome.Blocked,
-              receiptHash: 'd'.repeat(64),
-              nextDelayMs: 30_000,
-              nextWakeAt: new Date(now + 30_000).toISOString(),
-            },
-          }
-        },
+  const object = controllerFixture(
+    config,
+    {
+      advance: async () => {
+        advances++
+        const completedAt = new Date(now).toISOString()
+        return {
+          completedAt,
+          observation: {
+            result: 'FAILURE',
+            observedAt: completedAt,
+            operation: 'reconcile',
+            failure: 'market-data',
+            message: 'Broker observation is unavailable or invalidated by a mutation',
+          },
+          outcome: {
+            _tag: ExecutionControllerOutcome.Blocked,
+            receiptHash: 'd'.repeat(64),
+            nextDelayMs: 30_000,
+            nextWakeAt: new Date(now + 30_000).toISOString(),
+          },
+        }
       },
-      [],
-      { currentTimeMillisUnsafe: () => now },
-    ),
+    },
+    [],
+    { currentTimeMillisUnsafe: () => now },
   )
-  const context = {
-    key: controllerKey,
-    get: async () => state,
-    set: (_key: string, next: ExecutionControllerState) => {
-      state = next
+  const context = mutableControllerContext(
+    () => state,
+    (next) => (state = next),
+    {
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: Delivery) => {
+        deliveries.push(delivery)
+        return { invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_sent${deliveries.length}`)) }
+      },
+      invocation: (id: string) => ({ cancel: () => cancelled.push(id) }),
+      request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
+      date: { now: async () => now },
     },
-    run: async <A>(_name: string, action: () => Promise<A>) => action(),
-    genericSend: (delivery: Delivery) => {
-      deliveries.push(delivery)
-      return { invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_sent${deliveries.length}`)) }
-    },
-    invocation: (id: string) => ({ cancel: () => cancelled.push(id) }),
-    request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
-    date: { now: async () => now },
-  } as unknown as TestContext
+  )
 
   await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
   expect(deliveries).toHaveLength(1)
@@ -657,55 +620,41 @@ test('an early broker publication failure retains the original recovery deadline
 test.each(['broker', 'inference', 'Startup', 'Ready', 'Recovery'] as const)(
   'a closed owner without a deadline ignores quote bursts until %s supplies relevant work',
   async (wake) => {
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 4,
-      nextSequence: 4,
-    }
+    let state: ExecutionControllerState = controllerStateFixture()
     const deliveries: unknown[] = []
     let advances = 0
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        prepareActivation: async () => undefined,
-        projectState: async () => undefined,
-        log: async () => undefined,
-        advance: async () => {
-          advances++
-          return {
-            completedAt: '2026-08-13T18:00:00.000Z',
-            ...(advances === 1
-              ? {
-                  observation: {
-                    result: 'SUCCESS' as const,
-                    outcome: 'WINDOW_CLOSED' as const,
-                    observedAt: '2026-08-13T18:00:00.000Z',
-                  },
-                }
-              : {}),
-            outcome: {
-              _tag: ExecutionControllerOutcome.Waiting,
-              receiptHash: 'd'.repeat(64),
-              nextDelayMs: 30_000,
-            },
-          }
-        },
-      }),
-    )
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
+    const object = controllerFixture(config, {
+      advance: async () => {
+        advances++
+        return {
+          completedAt: '2026-08-13T18:00:00.000Z',
+          ...(advances === 1
+            ? {
+                observation: {
+                  result: 'SUCCESS' as const,
+                  outcome: 'WINDOW_CLOSED' as const,
+                  observedAt: '2026-08-13T18:00:00.000Z',
+                },
+              }
+            : {}),
+          outcome: {
+            _tag: ExecutionControllerOutcome.Waiting,
+            receiptHash: 'd'.repeat(64),
+            nextDelayMs: 30_000,
+          },
+        }
       },
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      genericSend: (delivery: unknown) => deliveries.push(delivery),
-      request: () => ({ id: 'closed-owner', attemptCompletedSignal: new AbortController().signal }),
-      date: { now: async () => Date.parse('2026-08-13T18:00:01.000Z') },
-    } as unknown as TestContext
+    })
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        genericSend: (delivery: unknown) => deliveries.push(delivery),
+        request: () => ({ id: 'closed-owner', attemptCompletedSignal: new AbortController().signal }),
+        date: { now: async () => Date.parse('2026-08-13T18:00:01.000Z') },
+      },
+    )
     await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
     state = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
     for (let sequence = 1; sequence <= 100; sequence++) await object.wake(context, marketChange(sequence))
@@ -746,41 +695,147 @@ test.each(['broker', 'inference', 'Startup', 'Ready', 'Recovery'] as const)(
   },
 )
 
+test.each(['deadline', 'market-boundary', 'broker'] as const)(
+  'source-window admission waits retain native eligibility and permit %s recovery',
+  async (recovery) => {
+    let now = Date.parse('2026-08-13T18:00:13.000Z')
+    const nextWakeAt = '2026-08-13T18:01:02.000Z'
+    let state: ExecutionControllerState = controllerStateFixture()
+    let advances = 0
+    const deliveries: Delivery[] = []
+    const object = controllerFixture(
+      config,
+      {
+        advance: async () => {
+          advances++
+          const observedAt = new Date(now).toISOString()
+          const waiting = observedAt < nextWakeAt
+          const observation = Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)({
+            result: 'SUCCESS',
+            outcome: waiting ? 'ALREADY_TERMINAL' : 'ACQUIRED',
+            observedAt,
+            ...(waiting
+              ? {
+                  readiness: {
+                    reason: DecisionReadinessReason.SignalWindowObserved,
+                    message:
+                      'The current entry signal window is already consumed; successor admission awaits the next due window',
+                    availableAt: nextWakeAt,
+                  },
+                }
+              : {}),
+          })
+          return {
+            completedAt: observedAt,
+            observation,
+            outcome: {
+              _tag: waiting ? ExecutionControllerOutcome.Waiting : ExecutionControllerOutcome.Completed,
+              receiptHash: sha256(observedAt),
+              nextDelayMs: 1,
+              ...(waiting ? { nextWakeAt } : {}),
+            },
+          }
+        },
+      },
+      undefined,
+      { currentTimeMillisUnsafe: () => now },
+    )
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        request: () => ({ id: 'source-window-eligibility', attemptCompletedSignal: new AbortController().signal }),
+        date: { now: async () => now },
+      },
+    )
+    await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+    expect(advances).toBe(1)
+    expect(state.nextSequence).toBe(5)
+    expect(state.marketEligibleAt).toBe(nextWakeAt)
+    expect(state.nextDueAt).toBe(nextWakeAt)
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        method: 'tick',
+        parameter: { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 5, attempt: 0 },
+        delay: 49_000,
+      }),
+    ])
+    const deadline = deliveries[0]!
+    state = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+    deliveries.length = 0
+    await object.wake(context, marketChange(1))
+    now = Date.parse(nextWakeAt) - 1
+    await object.wake(context, marketChange(2))
+    expect(deliveries).toEqual([])
+    expect(advances).toBe(1)
+    expect(state.marketFrontier?.sequence).toBe(2)
+    expect(state.marketEligibleAt).toBe(nextWakeAt)
+    expect(state.nextDueAt).toBe(nextWakeAt)
+
+    if (recovery === 'deadline') {
+      now = Date.parse(nextWakeAt)
+      await object.tick(context, deadline.parameter)
+    } else {
+      if (recovery === 'market-boundary') {
+        now = Date.parse(nextWakeAt)
+        await object.wake(context, marketChange(3))
+      } else {
+        await object.wake(context, {
+          schemaVersion: 'bayn.execution-wakeup.v1',
+          _tag: 'BrokerObservation',
+          sourceRevision,
+          eventId: 'e'.repeat(64),
+          snapshotHash: 'f'.repeat(64),
+          observedAt: new Date(now).toISOString(),
+        })
+      }
+      expect(deliveries).toEqual([
+        expect.objectContaining({
+          method: 'tick',
+          parameter: { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 5 },
+        }),
+      ])
+      expect(state.wakeScheduledSequence).toBe(5)
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      await object.tick(context, deliveries[0]!.parameter)
+    }
+    expect(advances).toBe(2)
+    expect(state.nextSequence).toBe(6)
+    if (recovery === 'broker') {
+      expect(state.marketEligibleAt).toBe(nextWakeAt)
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Waiting)
+    } else {
+      expect(state.marketEligibleAt).toBeUndefined()
+      expect(state.nextDueAt).toBeUndefined()
+      expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Completed)
+    }
+  },
+)
+
 test('closed-session completion retains the next eligibility boundary against unrelated market bursts', async () => {
-  let state: ExecutionControllerState = {
-    schemaVersion: 1,
-    active: true,
-    epoch: 1,
-    planHash,
-    sourceRevision,
-    initialSequence: 4,
-    nextSequence: 4,
-  }
+  let state: ExecutionControllerState = controllerStateFixture()
   const deliveries: unknown[] = []
   const nextWakeAt = '2026-08-14T13:31:02.000Z'
-  const object = handlers(
-    makeBaynExecutionController(config, {
-      prepareActivation: async () => undefined,
-      projectState: async () => undefined,
-      log: async () => undefined,
-      advance: async () => ({
-        completedAt: '2026-08-13T18:00:00.000Z',
-        observation: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: '2026-08-13T18:00:00.000Z' },
-        outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1, nextWakeAt },
-      }),
+  const object = controllerFixture(config, {
+    advance: async () => ({
+      completedAt: '2026-08-13T18:00:00.000Z',
+      observation: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: '2026-08-13T18:00:00.000Z' },
+      outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1, nextWakeAt },
     }),
-  )
-  const context = {
-    key: controllerKey,
-    get: async () => state,
-    set: (_key: string, next: ExecutionControllerState) => {
-      state = next
+  })
+  const context = mutableControllerContext(
+    () => state,
+    (next) => (state = next),
+    {
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: unknown) => deliveries.push(delivery),
+      request: () => ({ id: 'closed-session-eligibility', attemptCompletedSignal: new AbortController().signal }),
+      date: { now: async () => Date.parse('2026-08-13T18:00:01.000Z') },
     },
-    run: async <A>(_name: string, action: () => Promise<A>) => action(),
-    genericSend: (delivery: unknown) => deliveries.push(delivery),
-    request: () => ({ id: 'closed-session-eligibility', attemptCompletedSignal: new AbortController().signal }),
-    date: { now: async () => Date.parse('2026-08-13T18:00:01.000Z') },
-  } as unknown as TestContext
+  )
   await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
   expect(state.marketEligibleAt).toBe(nextWakeAt)
   await object.wake(context, marketChange(1))
@@ -797,71 +852,57 @@ test.each([
   'market bursts preserve the original %s boundary while completion events accelerate',
   async (waitReason) => {
     for (const completion of ['BrokerObservation', 'InferenceCompleted'] as const) {
-      let state: ExecutionControllerState = {
-        schemaVersion: 1,
-        active: true,
-        epoch: 1,
-        planHash,
-        sourceRevision,
-        initialSequence: 4,
-        nextSequence: 4,
-      }
+      let state: ExecutionControllerState = controllerStateFixture()
       const deliveries: unknown[] = []
       const nextWakeAt = '2026-08-13T18:00:30.000Z'
       let advances = 0
-      const object = handlers(
-        makeBaynExecutionController(config, {
-          prepareActivation: async () => undefined,
-          projectState: async () => undefined,
-          log: async () => undefined,
-          advance: async () => {
-            advances++
-            return {
-              completedAt: '2026-08-13T18:00:01.000Z',
-              observation:
-                waitReason === 'BROKER_OBSERVATION_PENDING'
-                  ? {
-                      result: 'SUCCESS',
-                      outcome: 'WAITING',
-                      waitReason,
-                      observedAt: '2026-08-13T18:00:01.000Z',
-                    }
-                  : {
-                      result: 'SUCCESS',
-                      outcome: 'RECOVERED',
-                      recoveryAction: 'WAITING',
-                      ...(waitReason === 'POST_MUTATION_RECONCILIATION'
-                        ? { waitReason }
-                        : {
-                            readiness: {
-                              reason: waitReason,
-                              availableAt: nextWakeAt,
-                              message: 'Awaiting the committed inference result',
-                            },
-                          }),
-                      observedAt: '2026-08-13T18:00:01.000Z',
-                    },
-              outcome: {
-                _tag: ExecutionControllerOutcome.Waiting,
-                receiptHash: 'd'.repeat(64),
-                nextDelayMs: 1,
-                nextWakeAt,
-              },
-            }
-          },
-        }),
-      )
-      const context = {
-        key: controllerKey,
-        get: async () => state,
-        set: (_key: string, next: ExecutionControllerState) => {
-          state = next
+      const object = controllerFixture(config, {
+        advance: async () => {
+          advances++
+          return {
+            completedAt: '2026-08-13T18:00:01.000Z',
+            observation:
+              waitReason === 'BROKER_OBSERVATION_PENDING'
+                ? {
+                    result: 'SUCCESS',
+                    outcome: 'WAITING',
+                    waitReason,
+                    observedAt: '2026-08-13T18:00:01.000Z',
+                  }
+                : {
+                    result: 'SUCCESS',
+                    outcome: 'RECOVERED',
+                    recoveryAction: 'WAITING',
+                    ...(waitReason === 'POST_MUTATION_RECONCILIATION'
+                      ? { waitReason }
+                      : {
+                          readiness: {
+                            reason: waitReason,
+                            availableAt: nextWakeAt,
+                            message: 'Awaiting the committed inference result',
+                          },
+                        }),
+                    observedAt: '2026-08-13T18:00:01.000Z',
+                  },
+            outcome: {
+              _tag: ExecutionControllerOutcome.Waiting,
+              receiptHash: 'd'.repeat(64),
+              nextDelayMs: 1,
+              nextWakeAt,
+            },
+          }
         },
-        run: async <A>(_name: string, action: () => Promise<A>) => action(),
-        genericSend: (delivery: unknown) => deliveries.push(delivery),
-        request: () => ({ id: 'broker-wait-eligibility', attemptCompletedSignal: new AbortController().signal }),
-        date: { now: async () => Date.parse('2026-08-13T18:00:02.000Z') },
-      } as unknown as TestContext
+      })
+      const context = mutableControllerContext(
+        () => state,
+        (next) => (state = next),
+        {
+          run: async <A>(_name: string, action: () => Promise<A>) => action(),
+          genericSend: (delivery: unknown) => deliveries.push(delivery),
+          request: () => ({ id: 'broker-wait-eligibility', attemptCompletedSignal: new AbortController().signal }),
+          date: { now: async () => Date.parse('2026-08-13T18:00:02.000Z') },
+        },
+      )
       await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
       deliveries.length = 0
       await object.wake(context, marketChange(1))
@@ -907,44 +948,30 @@ test.each([
 test.each(['POST_MUTATION_RECONCILIATION', 'PROTECTION_EXIT_COMMITTED'] as const)(
   'an accepted %s outcome requests one quota-bound canonical refresh',
   async (waitReason) => {
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 4,
-      nextSequence: 4,
-    }
+    let state: ExecutionControllerState = controllerStateFixture()
     const deliveries: unknown[] = []
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        prepareActivation: async () => undefined,
-        projectState: async () => undefined,
-        log: async () => undefined,
-        advance: async () => ({
-          completedAt: '2026-08-13T18:00:01.000Z',
-          observation: {
-            result: 'SUCCESS',
-            outcome: 'RECOVERED',
-            recoveryAction: 'WAITING',
-            waitReason,
-            observedAt: '2026-08-13T18:00:01.000Z',
-          },
-          outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1 },
-        }),
+    const object = controllerFixture(config, {
+      advance: async () => ({
+        completedAt: '2026-08-13T18:00:01.000Z',
+        observation: {
+          result: 'SUCCESS',
+          outcome: 'RECOVERED',
+          recoveryAction: 'WAITING',
+          waitReason,
+          observedAt: '2026-08-13T18:00:01.000Z',
+        },
+        outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1 },
       }),
-    )
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
+    })
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        genericSend: (delivery: unknown) => deliveries.push(delivery),
+        request: () => ({ id: 'post-mutation-refresh', attemptCompletedSignal: new AbortController().signal }),
       },
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      genericSend: (delivery: unknown) => deliveries.push(delivery),
-      request: () => ({ id: 'post-mutation-refresh', attemptCompletedSignal: new AbortController().signal }),
-    } as unknown as TestContext
+    )
     const tick = { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 }
     await object.tick(context, tick)
     await object.tick(context, tick)
@@ -973,15 +1000,7 @@ test.each([
 ])(
   'successor wait uses its persisted due time after worker replay or a pre-send crash (%j)',
   async ({ absoluteWake, replayed, liveAt, delay }) => {
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 4,
-      nextSequence: 4,
-    }
+    let state: ExecutionControllerState = controllerStateFixture()
     const deliveries: Delivery[] = []
     const events: string[] = []
     const result = {
@@ -993,26 +1012,21 @@ test.each([
         ...(absoluteWake ? { nextWakeAt: '2026-08-13T18:00:07.000Z' } : {}),
       },
     }
-    const controller = handlers(
-      makeBaynExecutionController(
-        config,
-        {
-          advance: async () => {
-            events.push('advance')
-            return result
-          },
-          log: async () => undefined,
-          prepareActivation: () => Promise.resolve(),
-          projectState: async () => undefined,
+    const controller = controllerFixture(
+      config,
+      {
+        advance: async () => {
+          events.push('advance')
+          return result
         },
-        [],
-        {
-          currentTimeMillisUnsafe: () => {
-            events.push('transport-clock')
-            return Date.parse(liveAt)
-          },
+      },
+      [],
+      {
+        currentTimeMillisUnsafe: () => {
+          events.push('transport-clock')
+          return Date.parse(liveAt)
         },
-      ),
+      },
     )
     const context = {
       key: controllerKey,
@@ -1032,7 +1046,7 @@ test.each([
           return '2026-08-13T18:00:05.000Z'
         },
       },
-      request: () => ({ id: 'successor-wait-fixture', attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest('successor-wait-fixture'),
     } as unknown as TestContext
     await controller.tick(context, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -1060,15 +1074,7 @@ test.each([
 
 describe('native Restate execution controller', () => {
   test('journals time with advance, waits for its durable result, and replays without resampling receipt time', async () => {
-    const initial: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 4,
-      nextSequence: 4,
-    }
+    const initial: ExecutionControllerState = controllerStateFixture()
     let state = initial
     const deliveries: Delivery[] = []
     const commands: Array<Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]> = []
@@ -1078,51 +1084,45 @@ describe('native Restate execution controller', () => {
     let recorded: unknown
     let replay = false
     let runCount = 0
-    const object = handlers(
-      makeBaynExecutionController(
-        config,
-        {
-          advance: async (command) => {
-            commands.push(command)
-            advanced.resolve()
-            return {
-              completedAt: command.issuedAt,
-              outcome: {
-                _tag: ExecutionControllerOutcome.Waiting,
-                receiptHash: 'd'.repeat(64),
-                nextDelayMs: 1_000,
-                nextWakeAt: '2026-08-13T18:00:01.000Z',
-              },
-            }
-          },
-          log: async () => undefined,
-          prepareActivation: async () => undefined,
-          projectState: async () => undefined,
+    const object = controllerFixture(
+      config,
+      {
+        advance: async (command) => {
+          commands.push(command)
+          advanced.resolve()
+          return {
+            completedAt: command.issuedAt,
+            outcome: {
+              _tag: ExecutionControllerOutcome.Waiting,
+              receiptHash: 'd'.repeat(64),
+              nextDelayMs: 1_000,
+              nextWakeAt: '2026-08-13T18:00:01.000Z',
+            },
+          }
         },
-        [],
-        { currentTimeMillisUnsafe: () => now },
-      ),
+      },
+      [],
+      { currentTimeMillisUnsafe: () => now },
     )
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, value: ExecutionControllerState) => {
-        state = value
-      },
-      genericSend: (delivery: Delivery) => deliveries.push(delivery),
-      run: async (_name: string, action: () => Promise<unknown>) => {
-        runCount += 1
-        if (!replay) recorded = JSON.parse(JSON.stringify(await action()))
-        await durable.promise
-        return recorded
-      },
-      date: {
-        toJSON: async () => {
-          throw new Error('A separate durable clock boundary is forbidden')
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async (_name: string, action: () => Promise<unknown>) => {
+          runCount += 1
+          if (!replay) recorded = JSON.parse(JSON.stringify(await action()))
+          await durable.promise
+          return recorded
         },
+        date: {
+          toJSON: async () => {
+            throw new Error('A separate durable clock boundary is forbidden')
+          },
+        },
+        request: () => ({ id: 'combined-clock-advance', attemptCompletedSignal: new AbortController().signal }),
       },
-      request: () => ({ id: 'combined-clock-advance', attemptCompletedSignal: new AbortController().signal }),
-    } as unknown as TestContext
+    )
     const tick = { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 }
     const first = object.tick(context, tick)
     await advanced.promise
@@ -1172,7 +1172,7 @@ describe('native Restate execution controller', () => {
     })
   })
 
-  test('serializes null activation into one first pass and its explicit recovery deadline', async () => {
+  test.each(['', 'sleeve-4'])('serializes activation and successor routing for prefix %j', async (servicePrefix) => {
     let state: ExecutionControllerState | null = null
     const deliveries: Delivery[] = []
     const events: string[] = []
@@ -1202,12 +1202,11 @@ describe('native Restate execution controller', () => {
         }
       },
       log: () => Promise.reject(new Error('telemetry unavailable')),
-      prepareActivation: () => Promise.resolve(),
       projectState: async (_key: string, next: ExecutionControllerState) => {
         projectedStates.push(next)
         events.push(next.active ? 'activation-projected' : 'deactivation-projected')
       },
-    }
+    } satisfies Pick<ControllerRuntime, 'advance'> & Partial<ControllerRuntime>
     const context = {
       key: controllerKey,
       get: async () => state,
@@ -1230,13 +1229,14 @@ describe('native Restate execution controller', () => {
       date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
       request: () => ({ id: 'invocation-1', attemptCompletedSignal: attempt.signal }),
     } as unknown as TestContext
-    const object = handlers(makeBaynExecutionController(config, runtime))
+    const object = controllerFixture({ ...config, servicePrefix }, runtime)
 
     expect(await object.activate(context, activation)).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
     expect(projectedStates).toHaveLength(1)
     expect(projectedStates[0]).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
     expect(deliveries).toHaveLength(2)
     expect(deliveries.shift()).toMatchObject({
+      service: servicePrefix === '' ? 'BaynEntryInference' : 'sleeve-4-BaynEntryInference',
       method: 'watch',
       parameter: { controllerKey, epoch: 1, sourceRevision, pending: [] },
     })
@@ -1247,6 +1247,7 @@ describe('native Restate execution controller', () => {
       'first-pass-scheduled',
     ])
     expect(deliveries[0]).toMatchObject({
+      service: servicePrefix === '' ? 'BaynExecutionController' : 'sleeve-4-BaynExecutionController',
       delay: 0,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 4, 0),
       parameter: { epoch: 1, sequence: 4, attempt: 0 },
@@ -1279,6 +1280,7 @@ describe('native Restate execution controller', () => {
     expect((state as ExecutionControllerState | null)?.lastCompletion).not.toHaveProperty('lastPass')
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
+      service: servicePrefix === '' ? 'BaynExecutionController' : 'sleeve-4-BaynExecutionController',
       delay: 31_000,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 5, 0),
       parameter: { epoch: 1, sequence: 5, attempt: 0 },
@@ -1307,15 +1309,11 @@ describe('native Restate execution controller', () => {
   })
 
   test('explicit reactivation deduplicates replay but can retry an exhausted revision-bound probe', async () => {
-    const state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
+    const state: ExecutionControllerState = controllerStateFixture({
       epoch: activation.epoch,
-      planHash,
-      sourceRevision,
       initialSequence: activation.firstSequence,
       nextSequence: activation.firstSequence,
-    }
+    })
     const deliveries: Delivery[] = []
     const normalKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, 0)
     const acceptedKeys = new Set([
@@ -1336,16 +1334,11 @@ describe('native Restate execution controller', () => {
         deliveries.push(delivery)
       },
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest(invocationId),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => Promise.reject(new Error('activation must not advance inline')),
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => Promise.reject(new Error('activation must not advance inline')),
+    })
 
     expect(await object.activate(context, activation)).toEqual(state)
     expect(await object.activate(context, activation)).toEqual(state)
@@ -1380,15 +1373,7 @@ describe('native Restate execution controller', () => {
   })
 
   test('quiesces a source catch-up routed to a different immutable worker', async () => {
-    const state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 7,
-      planHash,
-      sourceRevision,
-      initialSequence: 12,
-      nextSequence: 12,
-    }
+    const state: ExecutionControllerState = controllerStateFixture({ epoch: 7, initialSequence: 12, nextSequence: 12 })
     const logged: string[] = []
     let advances = 0
     const context = {
@@ -1397,22 +1382,18 @@ describe('native Restate execution controller', () => {
       set: () => undefined,
       genericSend: () => undefined,
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      request: () => ({ id: 'foreign-catch-up', attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest('foreign-catch-up'),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => {
-          advances += 1
-          return Promise.reject(new Error('foreign catch-up must not advance'))
-        },
-        log: (_level, message) => {
-          logged.push(message)
-          return Promise.resolve()
-        },
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => {
+        advances += 1
+        return Promise.reject(new Error('foreign catch-up must not advance'))
+      },
+      log: (_level, message) => {
+        logged.push(message)
+        return Promise.resolve()
+      },
+    })
 
     await object.tick(context, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -1438,16 +1419,12 @@ describe('native Restate execution controller', () => {
       },
       genericSend: (delivery: Delivery) => deliveries.push(delivery),
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      request: () => ({ id: 'activation-projection-failed', attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest('activation-projection-failed'),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => Promise.reject(new Error('must not advance')),
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.reject(new Error('postgres unavailable')),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      projectState: () => Promise.reject(new Error('postgres unavailable')),
+    })
 
     expect(object.activate(context, activation)).rejects.toThrow('postgres unavailable')
     expect(state).toBeNull()
@@ -1456,31 +1433,18 @@ describe('native Restate execution controller', () => {
   })
 
   test('fails closed on conflicting activation without scheduling work', async () => {
-    const state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 0,
-      nextSequence: 0,
-    }
+    const state: ExecutionControllerState = controllerStateFixture({ initialSequence: 0, nextSequence: 0 })
     const deliveries: Delivery[] = []
     const context = {
       key: controllerKey,
       get: async () => state,
       set: () => undefined,
       genericSend: (delivery: Delivery) => deliveries.push(delivery),
-      request: () => ({ id: 'invocation-2', attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest('invocation-2'),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => Promise.reject(new Error('must not advance')),
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+    })
 
     let activationFailure: unknown
     try {
@@ -1506,26 +1470,21 @@ describe('native Restate execution controller', () => {
       nextSequence: 9,
     }
     let projections = 0
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        request: () => ({ id: 'deactivate-previous', attemptCompletedSignal: new AbortController().signal }),
       },
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      request: () => ({ id: 'deactivate-previous', attemptCompletedSignal: new AbortController().signal }),
-    } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => Promise.reject(new Error('must not advance')),
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => {
-          projections += 1
-          return Promise.resolve()
-        },
-      }),
     )
+    const object = controllerFixture(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      projectState: () => {
+        projections += 1
+        return Promise.resolve()
+      },
+    })
 
     await object.deactivate(context, {
       schemaVersion: 'bayn.execution-controller-deactivation.v1',
@@ -1549,15 +1508,11 @@ describe('native Restate execution controller', () => {
   })
 
   test('rejects sequence exhaustion before the durable advance step', async () => {
-    const state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
+    const state: ExecutionControllerState = controllerStateFixture({
       epoch: 3,
-      planHash,
-      sourceRevision,
       initialSequence: Number.MAX_SAFE_INTEGER,
       nextSequence: Number.MAX_SAFE_INTEGER,
-    }
+    })
     let advances = 0
     const deliveries: Delivery[] = []
     const context = {
@@ -1566,19 +1521,14 @@ describe('native Restate execution controller', () => {
       set: () => undefined,
       genericSend: (delivery: Delivery) => deliveries.push(delivery),
       date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
-      request: () => ({ id: 'invocation-exhausted', attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest('invocation-exhausted'),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => {
-          advances += 1
-          return Promise.reject(new Error('must not advance'))
-        },
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => {
+        advances += 1
+        return Promise.reject(new Error('must not advance'))
+      },
+    })
 
     let failure: unknown
     try {
@@ -1600,34 +1550,26 @@ describe('native Restate execution controller', () => {
   })
 
   test('quiesces a delayed tick with a foreign plan before advancing', async () => {
-    const state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
+    const state: ExecutionControllerState = controllerStateFixture({
       epoch: 3,
       planHash: 'd'.repeat(64),
-      sourceRevision,
       initialSequence: 8,
       nextSequence: 8,
-    }
+    })
     let advances = 0
     const context = {
       key: controllerKey,
       get: async () => state,
       set: () => undefined,
       genericSend: () => undefined,
-      request: () => ({ id: 'stale-deployment', attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest('stale-deployment'),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => {
-          advances += 1
-          return Promise.reject(new Error('must not advance'))
-        },
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => {
+        advances += 1
+        return Promise.reject(new Error('must not advance'))
+      },
+    })
 
     await object.tick(context, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -1654,19 +1596,14 @@ describe('native Restate execution controller', () => {
       get: async () => state,
       set: () => undefined,
       genericSend: (delivery: Delivery) => deliveries.push(delivery),
-      request: () => ({ id: 'previous-binding', attemptCompletedSignal: new AbortController().signal }),
+      request: () => invocationRequest('previous-binding'),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => {
-          advances += 1
-          return Promise.reject(new Error('must not advance'))
-        },
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => {
+        advances += 1
+        return Promise.reject(new Error('must not advance'))
+      },
+    })
 
     await object.tick(context, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -1680,15 +1617,12 @@ describe('native Restate execution controller', () => {
 
   test('authenticates deployment activation and derives activation counters from durable state', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
-    const state: ExecutionControllerState = {
-      schemaVersion: 1,
+    const state: ExecutionControllerState = controllerStateFixture({
       active: false,
       epoch: 7,
-      planHash,
-      sourceRevision,
       initialSequence: 11,
       nextSequence: 17,
-    }
+    })
     const completedState: ExecutionControllerState = {
       ...state,
       active: true,
@@ -1705,9 +1639,6 @@ describe('native Restate execution controller', () => {
     let genericCalls = 0
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
     const context = {
@@ -1767,9 +1698,6 @@ describe('native Restate execution controller', () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
     })
     let activations = 0
     const context = {
@@ -1810,13 +1738,7 @@ describe('native Restate execution controller', () => {
   })
 
   test('reactivation wakes a deferred controller on the same source revision', async () => {
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 4,
+    let state: ExecutionControllerState = controllerStateFixture({
       nextSequence: 10,
       lastCompletion: {
         sequence: 9,
@@ -1824,7 +1746,7 @@ describe('native Restate execution controller', () => {
         receiptHash: 'f'.repeat(64),
         completedAt: '2026-08-12T18:00:00.000Z',
       },
-    }
+    })
     const deferred: Delivery = {
       delay: 8 * 60 * 60 * 1_000,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 10, 0),
@@ -1832,36 +1754,30 @@ describe('native Restate execution controller', () => {
     }
     const deliveries = [deferred]
     const calls: number[] = []
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: async (command) => {
-          calls.push(command.sequence)
-          return {
-            completedAt: '2026-08-13T18:00:01.000Z',
-            outcome: {
-              _tag: ExecutionControllerOutcome.Blocked,
-              receiptHash: 'e'.repeat(64),
-              nextDelayMs: 30_000,
-              nextWakeAt: '2026-08-13T18:00:31.000Z',
-            },
-          }
-        },
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
-    const controllerContext = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
+    const object = controllerFixture(config, {
+      advance: async (command) => {
+        calls.push(command.sequence)
+        return {
+          completedAt: '2026-08-13T18:00:01.000Z',
+          outcome: {
+            _tag: ExecutionControllerOutcome.Blocked,
+            receiptHash: 'e'.repeat(64),
+            nextDelayMs: 30_000,
+            nextWakeAt: '2026-08-13T18:00:31.000Z',
+          },
+        }
       },
-      genericSend: (delivery: Delivery) => deliveries.push(delivery),
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
-      request: () => ({ id: 'fresh-recovery-controller', attemptCompletedSignal: new AbortController().signal }),
-    } as unknown as TestContext
+    })
+    const controllerContext = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({ id: 'fresh-recovery-controller', attemptCompletedSignal: new AbortController().signal }),
+      },
+    )
     const context = {
       key: controllerKey,
       request: () => ({
@@ -1954,8 +1870,6 @@ describe('native Restate execution controller', () => {
           },
         }
       },
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
       projectState: async (_key, next) => {
         projectedStates.push(next)
         events.push(next.active ? 'activation-projected' : 'deactivation-projected')
@@ -2101,12 +2015,9 @@ describe('native Restate execution controller', () => {
     let brokerCalls = 0
     const runtime = {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
-    }
-    const latest = handlers(makeBaynExecutionController(config, runtime))
-    const pinned = handlers(makeBaynExecutionController({ ...config, sourceRevision: oldSourceRevision }, runtime))
+    } satisfies Pick<ControllerRuntime, 'advance'> & Partial<ControllerRuntime>
+    const latest = controllerFixture(config, runtime)
+    const pinned = controllerFixture({ ...config, sourceRevision: oldSourceRevision }, runtime)
     const latestContext = {
       key: controllerKey,
       get: async () => {
@@ -2147,14 +2058,9 @@ describe('native Restate execution controller', () => {
 
   test('rejects retired activation requests before accessing the native owner', async () => {
     let calls = 0
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: () => Promise.reject(new Error('must not advance')),
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const object = controllerFixture(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+    })
     const context = {
       key: controllerKey,
       request: () => ({
@@ -2194,22 +2100,19 @@ describe('native Restate execution controller', () => {
       let deactivations = 0
       let brokerCalls = 0
       let preflights = 0
-      const object = handlers(
-        makeBaynExecutionController(config, {
-          prepareActivation: async (received) => {
-            expect(received).toBe(signal)
-            preflights += 1
-            throw failure
-          },
-          advance: async () => {
-            throw new Error('must not advance')
-          },
-          log: async () => undefined,
-          projectState: async () => {
-            throw new Error('must not project')
-          },
-        }),
-      )
+      const object = controllerFixture(config, {
+        prepareActivation: async (received) => {
+          expect(received).toBe(signal)
+          preflights += 1
+          throw failure
+        },
+        advance: async () => {
+          throw new Error('must not advance')
+        },
+        projectState: async () => {
+          throw new Error('must not project')
+        },
+      })
       const target = {
         key: controllerKey,
         get: async () => {
@@ -2259,20 +2162,17 @@ describe('native Restate execution controller', () => {
 
   test('successful successor preflight precedes reading the predecessor', async () => {
     const events: string[] = []
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        prepareActivation: async () => {
-          events.push('preflight')
-        },
-        advance: async () => {
-          throw new Error('must not advance')
-        },
-        log: async () => undefined,
-        projectState: async () => {
-          throw new Error('must not project')
-        },
-      }),
-    )
+    const object = controllerFixture(config, {
+      prepareActivation: async () => {
+        events.push('preflight')
+      },
+      advance: async () => {
+        throw new Error('must not advance')
+      },
+      projectState: async () => {
+        throw new Error('must not project')
+      },
+    })
     const context = {
       key: controllerKey,
       get: async () => {
@@ -2299,12 +2199,7 @@ describe('native Restate execution controller', () => {
     let genericCalls = 0
     let forwarded: unknown
     let statusReads = 0
-    const successorState: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
+    const successorState: ExecutionControllerState = controllerStateFixture({
       initialSequence: 0,
       nextSequence: 2,
       lastCompletion: {
@@ -2314,12 +2209,9 @@ describe('native Restate execution controller', () => {
         completedAt: '2026-08-13T18:00:31.000Z',
       },
       nextDueAt: '2026-08-13T18:01:01.000Z',
-    }
+    })
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
     const context = {
@@ -2397,20 +2289,9 @@ describe('native Restate execution controller', () => {
 
   test('waits for durable successor evidence and fails deployment when it never arrives', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
-    const pending: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 0,
-      nextSequence: 0,
-    }
+    const pending: ExecutionControllerState = controllerStateFixture({ initialSequence: 0, nextSequence: 0 })
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
     let sleeps = 0
@@ -2470,9 +2351,6 @@ describe('native Restate execution controller', () => {
     let objectCalls = 0
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
     const context = {
@@ -2511,9 +2389,6 @@ describe('native Restate execution controller', () => {
     let controllerCalls = 0
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
     const context = {
@@ -2545,9 +2420,6 @@ describe('native Restate execution controller', () => {
     let ownerCalls = 0
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
     })
     const context = {
       key: 'd'.repeat(64),
@@ -2576,12 +2448,8 @@ describe('native Restate execution controller', () => {
   })
 
   test('retries the same command identity durably and starts a diagnosed recovery window after exhaustion', async () => {
-    const state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
+    const state: ExecutionControllerState = controllerStateFixture({
       epoch: 7,
-      planHash,
-      sourceRevision,
       initialSequence: 12,
       nextSequence: 12,
       lastCompletion: {
@@ -2590,7 +2458,7 @@ describe('native Restate execution controller', () => {
         receiptHash: 'e'.repeat(64),
         completedAt: '2026-08-13T17:59:30.000Z',
       },
-    }
+    })
     const commands: Array<Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]> = []
     const deliveries: Delivery[] = []
     const loggedLevels: string[] = []
@@ -2618,25 +2486,21 @@ describe('native Restate execution controller', () => {
         attemptCompletedSignal: new AbortController().signal,
       }),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(
-        {
-          ...config,
+    const object = controllerFixture(
+      {
+        ...config,
+      },
+      {
+        advance: (command) => {
+          commands.push(command)
+          return Promise.reject(failure)
         },
-        {
-          advance: (command) => {
-            commands.push(command)
-            return Promise.reject(failure)
-          },
-          log: (level, _message, annotations) => {
-            loggedLevels.push(level)
-            loggedAnnotations.push(annotations)
-            return Promise.reject(new Error('telemetry unavailable'))
-          },
-          prepareActivation: () => Promise.resolve(),
-          projectState: () => Promise.resolve(),
+        log: (level, _message, annotations) => {
+          loggedLevels.push(level)
+          loggedAnnotations.push(annotations)
+          return Promise.reject(new Error('telemetry unavailable'))
         },
-      ),
+      },
     )
     let tick: unknown = {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -2739,15 +2603,11 @@ describe('native Restate execution controller', () => {
   ])(
     'retains $expected.failureTag diagnostics and first receipt time across the durable run boundary and replay',
     async ({ failure, expected }) => {
-      const state: ExecutionControllerState = {
-        schemaVersion: 1,
-        active: true,
+      const state: ExecutionControllerState = controllerStateFixture({
         epoch: 7,
-        planHash,
-        sourceRevision,
         initialSequence: 12,
         nextSequence: 12,
-      }
+      })
       const deliveries: Delivery[] = []
       const logged: Array<Readonly<Record<string, string | number | boolean>>> = []
       let advances = 0
@@ -2777,26 +2637,22 @@ describe('native Restate execution controller', () => {
           throw new TerminalError(recorded.message, { errorCode: recorded.code, metadata: recorded.metadata })
         },
         date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
-        request: () => ({ id: 'diagnostic-replay', attemptCompletedSignal: new AbortController().signal }),
+        request: () => invocationRequest('diagnostic-replay'),
       } as unknown as TestContext
-      const object = handlers(
-        makeBaynExecutionController(
-          config,
-          {
-            advance: () => {
-              advances += 1
-              return Promise.reject(failure)
-            },
-            log: (_level, _message, annotations) => {
-              logged.push(annotations)
-              return Promise.resolve()
-            },
-            prepareActivation: () => Promise.resolve(),
-            projectState: () => Promise.resolve(),
+      const object = controllerFixture(
+        config,
+        {
+          advance: () => {
+            advances += 1
+            return Promise.reject(failure)
           },
-          [],
-          { currentTimeMillisUnsafe: () => now },
-        ),
+          log: (_level, _message, annotations) => {
+            logged.push(annotations)
+            return Promise.resolve()
+          },
+        },
+        [],
+        { currentTimeMillisUnsafe: () => now },
       )
       const tick = { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 7, sequence: 12 }
       await object.tick(context, tick)
@@ -2820,15 +2676,11 @@ describe('native Restate execution controller', () => {
   test.each(['not-json', '{"failureTag":"OperationalError","failureFingerprint":"invalid"}'])(
     'ignores malformed durable diagnostics without exposing the original error (%s)',
     async (metadata) => {
-      const state: ExecutionControllerState = {
-        schemaVersion: 1,
-        active: true,
+      const state: ExecutionControllerState = controllerStateFixture({
         epoch: 7,
-        planHash,
-        sourceRevision,
         initialSequence: 12,
         nextSequence: 12,
-      }
+      })
       const logged: Array<Readonly<Record<string, string | number | boolean>>> = []
       const deliveries: Delivery[] = []
       const context = {
@@ -2837,25 +2689,21 @@ describe('native Restate execution controller', () => {
         genericSend: (delivery: Delivery) => deliveries.push(delivery),
         run: async <A>(_name: string, action: () => Promise<A>) => action(),
         date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
-        request: () => ({ id: 'invalid-diagnostic', attemptCompletedSignal: new AbortController().signal }),
+        request: () => invocationRequest('invalid-diagnostic'),
       } as unknown as TestContext
-      const object = handlers(
-        makeBaynExecutionController(config, {
-          advance: () =>
-            Promise.reject(
-              new TerminalError('provider-secret-must-not-be-logged', {
-                errorCode: 500,
-                metadata: { 'bayn.execution-advance-failure.v1': metadata },
-              }),
-            ),
-          log: (_level, _message, annotations) => {
-            logged.push(annotations)
-            return Promise.resolve()
-          },
-          prepareActivation: () => Promise.resolve(),
-          projectState: () => Promise.resolve(),
-        }),
-      )
+      const object = controllerFixture(config, {
+        advance: () =>
+          Promise.reject(
+            new TerminalError('provider-secret-must-not-be-logged', {
+              errorCode: 500,
+              metadata: { 'bayn.execution-advance-failure.v1': metadata },
+            }),
+          ),
+        log: (_level, _message, annotations) => {
+          logged.push(annotations)
+          return Promise.resolve()
+        },
+      })
       await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 7, sequence: 12 })
       expect(deliveries).toHaveLength(1)
       expect(logged).toHaveLength(1)
@@ -2865,12 +2713,8 @@ describe('native Restate execution controller', () => {
   )
 
   test('a queued wake marker preserves recovery timers through a long outage on the unchanged owned sequence', async () => {
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
+    let state: ExecutionControllerState = controllerStateFixture({
       epoch: 7,
-      planHash,
-      sourceRevision,
       initialSequence: 11,
       nextSequence: 12,
       lastCompletion: {
@@ -2879,7 +2723,7 @@ describe('native Restate execution controller', () => {
         receiptHash: 'e'.repeat(64),
         completedAt: '2026-08-13T17:59:30.000Z',
       },
-    }
+    })
     const deliveries: Delivery[] = []
     let invocation = 0
     let healthy = false
@@ -2890,42 +2734,36 @@ describe('native Restate execution controller', () => {
       message: 'execution advance did not complete within its bounded interpreter',
       cause: new Error('persistent database outage'),
     })
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
-      },
-      genericSend: (delivery: Delivery) => deliveries.push(delivery),
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      date: { now: async () => transportNow, toJSON: async () => '2026-08-13T18:00:00.000Z' },
-      request: () => ({
-        id: `recovery-budget-${invocation}`,
-        attemptCompletedSignal: new AbortController().signal,
-      }),
-    } as unknown as TestContext
-    const restart = () =>
-      handlers(
-        makeBaynExecutionController(config, {
-          advance: (command) => {
-            issuedAt.push(command.issuedAt)
-            return healthy
-              ? Promise.resolve({
-                  completedAt: '2026-08-13T18:10:00.000Z',
-                  outcome: {
-                    _tag: ExecutionControllerOutcome.Completed,
-                    receiptHash: 'e'.repeat(64),
-                    nextDelayMs: 30_000,
-                    nextWakeAt: '2026-08-13T18:00:31.000Z',
-                  },
-                })
-              : Promise.reject(failure)
-          },
-          log: () => Promise.resolve(),
-          prepareActivation: () => Promise.resolve(),
-          projectState: () => Promise.resolve(),
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        date: { now: async () => transportNow, toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({
+          id: `recovery-budget-${invocation}`,
+          attemptCompletedSignal: new AbortController().signal,
         }),
-      )
+      },
+    )
+    const restart = () =>
+      controllerFixture(config, {
+        advance: (command) => {
+          issuedAt.push(command.issuedAt)
+          return healthy
+            ? Promise.resolve({
+                completedAt: '2026-08-13T18:10:00.000Z',
+                outcome: {
+                  _tag: ExecutionControllerOutcome.Completed,
+                  receiptHash: 'e'.repeat(64),
+                  nextDelayMs: 30_000,
+                  nextWakeAt: '2026-08-13T18:00:31.000Z',
+                },
+              })
+            : Promise.reject(failure)
+        },
+      })
     let object = restart()
     await object.wake(context, marketChange(1))
     expect(deliveries.shift()?.idempotencyKey).toBe('bayn-execution-wake-7-12')
@@ -2989,11 +2827,8 @@ describe('native Restate execution controller', () => {
 
   test('quiesces a foreign source before advancing and keeps the established owner free', async () => {
     const establishedSourceRevision = 'd'.repeat(40)
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
+    let state: ExecutionControllerState = controllerStateFixture({
       epoch: 7,
-      planHash,
       sourceRevision: establishedSourceRevision,
       initialSequence: 12,
       nextSequence: 12,
@@ -3005,55 +2840,44 @@ describe('native Restate execution controller', () => {
         receiptHash: 'e'.repeat(64),
         completedAt: '2026-08-13T17:59:30.000Z',
       },
-    }
+    })
     const deliveries: Delivery[] = []
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({ id: 'catch-up-failure', attemptCompletedSignal: new AbortController().signal }),
       },
-      genericSend: (delivery: Delivery) => deliveries.push(delivery),
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
-      request: () => ({ id: 'catch-up-failure', attemptCompletedSignal: new AbortController().signal }),
-    } as unknown as TestContext
-    let replacementAdvances = 0
-    const replacement = handlers(
-      makeBaynExecutionController(
-        {
-          ...config,
-        },
-        {
-          advance: () => {
-            replacementAdvances += 1
-            return Promise.reject(new Error('foreign source must not advance'))
-          },
-          log: () => Promise.resolve(),
-          prepareActivation: () => Promise.resolve(),
-          projectState: () => Promise.resolve(),
-        },
-      ),
     )
-    const established = handlers(
-      makeBaynExecutionController(
-        { ...config, sourceRevision: establishedSourceRevision },
-        {
-          advance: () =>
-            Promise.resolve({
-              completedAt: '2026-08-13T18:00:01.000Z',
-              outcome: {
-                _tag: ExecutionControllerOutcome.Blocked,
-                receiptHash: 'f'.repeat(64),
-                nextDelayMs: 30_000,
-                nextWakeAt: '2026-08-13T18:00:31.000Z',
-              },
-            }),
-          log: () => Promise.resolve(),
-          prepareActivation: () => Promise.resolve(),
-          projectState: () => Promise.resolve(),
+    let replacementAdvances = 0
+    const replacement = controllerFixture(
+      {
+        ...config,
+      },
+      {
+        advance: () => {
+          replacementAdvances += 1
+          return Promise.reject(new Error('foreign source must not advance'))
         },
-      ),
+      },
+    )
+    const established = controllerFixture(
+      { ...config, sourceRevision: establishedSourceRevision },
+      {
+        advance: () =>
+          Promise.resolve({
+            completedAt: '2026-08-13T18:00:01.000Z',
+            outcome: {
+              _tag: ExecutionControllerOutcome.Blocked,
+              receiptHash: 'f'.repeat(64),
+              nextDelayMs: 30_000,
+              nextWakeAt: '2026-08-13T18:00:31.000Z',
+            },
+          }),
+      },
     )
     const catchUp = {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -3093,57 +2917,43 @@ describe('native Restate execution controller', () => {
   })
 
   test('keeps a replacement tick retryable across the predecessor termination grace period', async () => {
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 7,
-      planHash,
-      sourceRevision,
-      initialSequence: 12,
-      nextSequence: 12,
-    }
+    let state: ExecutionControllerState = controllerStateFixture({ epoch: 7, initialSequence: 12, nextSequence: 12 })
     const deliveries: Delivery[] = []
     let advances = 0
     let invocation = 0
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
+    const context = mutableControllerContext(
+      () => state,
+      (next) => (state = next),
+      {
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({
+          id: `rotation-${invocation++}`,
+          attemptCompletedSignal: new AbortController().signal,
+        }),
       },
-      genericSend: (delivery: Delivery) => deliveries.push(delivery),
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
-      request: () => ({
-        id: `rotation-${invocation++}`,
-        attemptCompletedSignal: new AbortController().signal,
-      }),
-    } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(
-        {
-          ...config,
+    )
+    const object = controllerFixture(
+      {
+        ...config,
+      },
+      {
+        advance: () => {
+          advances += 1
+          return advances <= 6
+            ? Promise.reject(new Error('predecessor still owns the writer fence'))
+            : Promise.resolve({
+                completedAt: '2026-08-13T18:00:16.000Z',
+                outcome: {
+                  _tag: ExecutionControllerOutcome.Blocked,
+                  receiptHash: 'f'.repeat(64),
+                  nextDelayMs: 30_000,
+                  nextWakeAt: '2026-08-13T18:00:31.000Z',
+                },
+              })
         },
-        {
-          advance: () => {
-            advances += 1
-            return advances <= 6
-              ? Promise.reject(new Error('predecessor still owns the writer fence'))
-              : Promise.resolve({
-                  completedAt: '2026-08-13T18:00:16.000Z',
-                  outcome: {
-                    _tag: ExecutionControllerOutcome.Blocked,
-                    receiptHash: 'f'.repeat(64),
-                    nextDelayMs: 30_000,
-                    nextWakeAt: '2026-08-13T18:00:31.000Z',
-                  },
-                })
-          },
-          log: () => Promise.resolve(),
-          prepareActivation: () => Promise.resolve(),
-          projectState: () => Promise.resolve(),
-        },
-      ),
+      },
     )
     let tick: unknown = {
       schemaVersion: 'bayn.execution-controller-tick.v1',

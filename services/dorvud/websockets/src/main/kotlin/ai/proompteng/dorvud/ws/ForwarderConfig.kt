@@ -51,6 +51,7 @@ data class ForwarderConfig(
   val alpacaFeed: String,
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
+  val marketDataProxyUrl: String? = null,
   val alpacaTradeStreamUrl: String?,
   val alpacaMarketDataChannels: List<String>,
   val alpacaMarketDataSymbolOverrides: Map<String, List<String>> = emptyMap(),
@@ -86,7 +87,6 @@ data class ForwarderConfig(
   val marketDataChannelFreshnessWarmupMs: Long = 120_000,
   val marketDataReadIdleTimeoutMs: Long = 180_000,
   val latestMarketData: LatestMarketDataConfig? = null,
-  val qualifyIexSubscriptions: Boolean = false,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -142,6 +142,17 @@ data class ForwarderConfig(
       val alpacaFeed =
         mergedEnv["ALPACA_FEED"]?.trim()?.lowercase()
           ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) "opra" else "iex"
+      val consolidatedSip = alpacaMarketType == AlpacaMarketType.EQUITY && alpacaFeed == EquityFeed.Sip.id
+      val maxSymbolChannels = marketDataSubscriptionLimit(mergedEnv, consolidatedSip)
+      if (consolidatedSip) {
+        val symbols = configuredStaticSymbols.map { it.uppercase() }
+        require(symbols.isNotEmpty() && symbols.none { '*' in it } && symbols.distinct() == symbols) {
+          "consolidated SIP SYMBOLS must contain unique, explicit symbols without wildcards"
+        }
+        require(shardCount == 1) { "consolidated SIP requires one WebSocket owner" }
+        require(configuredObservationSymbols == null) { "consolidated SIP must bind the universe contract to SYMBOLS" }
+        require("ALPACA_LATEST_SYMBOLS" !in mergedEnv) { "ALPACA_LATEST_SYMBOLS is IEX-only and cannot be used on consolidated SIP" }
+      }
       val allowedChannels =
         when (alpacaMarketType) {
           AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
@@ -240,30 +251,6 @@ data class ForwarderConfig(
       ) {
         "latest observation settings require ALPACA_LATEST_SYMBOLS"
       }
-      val qualifyIexSubscriptions =
-        mergedEnv["ALPACA_IEX_SUBSCRIPTION_QUALIFICATION"]?.let {
-          requireNotNull(it.toBooleanStrictOrNull()) { "ALPACA_IEX_SUBSCRIPTION_QUALIFICATION must be true or false" }
-        } ?: false
-      if (qualifyIexSubscriptions) {
-        val candidates =
-          requireNotNull(
-            latestMarketData,
-          ) { "IEX qualification requires the existing latest REST observations" }.symbols.toSet()
-        val quotes = configuredSymbolOverrides["quotes"]?.toSet().orEmpty()
-        val trades = configuredSymbolOverrides["trades"]?.toSet().orEmpty()
-        val bars = configuredSymbolOverrides["bars"]?.toSet() ?: staticSymbolSet
-        require(
-          alpacaMarketType == AlpacaMarketType.EQUITY && alpacaFeed == "iex" && shardCount == 1 &&
-            mergedEnv["JANGAR_SYMBOLS_URL"].isNullOrBlank() &&
-            alpacaMarketDataChannels.toSet() == setOf("trades", "quotes", "bars") &&
-            staticSymbolSet.size == 16 && bars == staticSymbolSet && quotes.size == 7 && trades == quotes &&
-            candidates.size == 9 && quotes.intersect(candidates).isEmpty() && quotes + candidates == staticSymbolSet &&
-            latestMarketData.symbols == latestMarketData.symbols.sorted() && staticSymbols == staticSymbols.sorted() &&
-            configuredSymbolOverrides["quotes"] == quotes.sorted() && configuredSymbolOverrides["trades"] == trades.sorted() &&
-            configuredSymbolOverrides["bars"].let { it == null || it == bars.sorted() } &&
-            subscribeBatchSize >= staticSymbolSet.size,
-        ) { "IEX qualification requires the admitted 16-bar/7-quote/7-trade baseline and its nine REST-only symbols" }
-      }
       val optionsMarketHolidays = parseIsoDateSet(mergedEnv["OPTIONS_MARKET_HOLIDAYS"])
 
       val jangarSymbolsUrl =
@@ -284,6 +271,7 @@ data class ForwarderConfig(
       if ((universeId == null) != (universeSymbolHash == null)) {
         error("MARKET_DATA_UNIVERSE_ID and MARKET_DATA_UNIVERSE_SYMBOL_HASH must be set together")
       }
+      require(!consolidatedSip || universeId != null) { "consolidated SIP requires a versioned static market-data universe" }
       if (configuredObservationSymbols != null && universeId == null) {
         error("ALPACA_OBSERVATION_SYMBOLS requires a versioned market-data universe")
       }
@@ -327,6 +315,7 @@ data class ForwarderConfig(
           tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
           tradeUpdatesV2 = mergedEnv["TOPIC_TRADE_UPDATES_V2"],
         )
+      if (consolidatedSip) validateSipTopics(topics)
       val observationFeeds =
         parseObservationFeeds(
           raw = mergedEnv["ALPACA_OBSERVATION_FEEDS"],
@@ -345,6 +334,7 @@ data class ForwarderConfig(
           alpacaMarketDataChannels.associateWith { channel ->
             alpacaMarketDataSymbolOverrides[channel]?.size ?: coreSubscriptionCount
           },
+          maxSymbolChannels,
         )
       }
       observationFeeds.forEach { observation ->
@@ -439,6 +429,7 @@ data class ForwarderConfig(
         require(jangarSymbolsUrl == null && !enableBarsBackfill) { "native crypto ingestion requires static pairs and websocket events" }
       }
       return ForwarderConfig(
+        marketDataProxyUrl = mergedEnv["ALPACA_MARKET_DATA_PROXY_URL"],
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
         alpacaSecretKey = mergedEnv.getValue("ALPACA_SECRET_KEY"),
         alpacaMarketType = alpacaMarketType,
@@ -480,7 +471,6 @@ data class ForwarderConfig(
         marketDataChannelFreshnessWarmupMs = marketDataChannelFreshnessWarmupMs,
         marketDataReadIdleTimeoutMs = marketDataReadIdleTimeoutMs.coerceAtLeast(30_000),
         latestMarketData = latestMarketData,
-        qualifyIexSubscriptions = qualifyIexSubscriptions,
       )
     }
 
@@ -540,6 +530,7 @@ data class ForwarderConfig(
           if (feed == parsedCoreFeed) {
             error("ALPACA_OBSERVATION_FEEDS cannot duplicate the core ${feed.id} feed")
           }
+          require(feed != EquityFeed.Sip) { "consolidated SIP requires a separate forwarder with ALPACA_FEED=sip" }
           val envPrefix = feed.id.uppercase()
 
           fun topic(channel: String): String =
@@ -581,15 +572,29 @@ data class ForwarderConfig(
     private fun requireMarketDataSubscriptionBudget(
       feed: String,
       symbolCountsByChannel: Map<String, Int>,
+      maximum: Int = BASIC_SYMBOL_CHANNEL_LIMIT,
     ) {
       val subscriptionCount = symbolCountsByChannel.values.sumOf(Int::toLong)
-      if (subscriptionCount > 30) {
+      if (subscriptionCount > maximum) {
         val detail =
           symbolCountsByChannel.entries.sortedBy { it.key }.joinToString(",") { (channel, count) -> "$channel=$count" }
         error(
           "market-data feed $feed requires $subscriptionCount symbol-channel subscriptions " +
-            "($detail); maximum is 30",
+            "($detail); maximum is $maximum",
         )
+      }
+    }
+
+    private fun validateSipTopics(topics: TopicConfig) {
+      val sipTopics = listOf(topics.trades, topics.quotes, requireNotNull(topics.bars1m), topics.status)
+      require(
+        sipTopics.all {
+          it.matches(Regex("[A-Za-z0-9._-]{1,249}")) && it != "." && it != ".." &&
+            !it.startsWith("torghut.") && (!it.startsWith("bayn.market-data.") || it.startsWith("bayn.market-data.sip."))
+        },
+      ) { "consolidated SIP requires isolated TOPIC_TRADES, TOPIC_QUOTES, TOPIC_BARS_1M and TOPIC_STATUS" }
+      require(sipTopics.distinct() == sipTopics && sipTopics.none { it == topics.tradeUpdates || it == topics.tradeUpdatesV2 }) {
+        "consolidated SIP topics must be distinct from each other and from trade updates"
       }
     }
 

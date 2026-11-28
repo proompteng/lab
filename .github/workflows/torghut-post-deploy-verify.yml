@@ -201,6 +201,7 @@ jobs:
             echo "The verified Argo revision ${REVISION} is unavailable in Git"
             exit 1
           fi
+          echo "TORGHUT_VERIFIED_REVISION=${REVISION}" >> "${GITHUB_ENV}"
 
           for removal_attempt in $(seq 1 30); do
             RETIRED_DEPLOYMENTS="$(
@@ -243,13 +244,14 @@ jobs:
 
           for deployment in \
             torghut-ta \
-            market-data-archive \
-            torghut-ws; do
+            market-data-archive; do
             kubectl rollout status "deployment/${deployment}" -n torghut --timeout=10m
           done
 
+          kubectl rollout status deployment/torghut-ws -n bayn --timeout=10m
+
           pull_failures="$(
-            kubectl get pods -n torghut -o json |
+            { kubectl get pods -n torghut -o json && kubectl get pods -n bayn -l app=torghut-ws -o json; } |
               jq -r '
                 .items[] as $pod
                 | (($pod.status.initContainerStatuses // []) + ($pod.status.containerStatuses // []))[]?
@@ -342,6 +344,10 @@ jobs:
             echo "Torghut market-data freshness is not converged on attempt ${ta_attempt}; waiting for the next TA heartbeat."
             sleep "${TA_FRESHNESS_INTERVAL_SECONDS}"
           done
+
+      - name: Verify current streaming telemetry
+        timeout-minutes: 6
+        run: bun run packages/scripts/src/torghut/verify-streaming-telemetry.ts
 
       - name: Upload retained pipeline evidence
         if: always()

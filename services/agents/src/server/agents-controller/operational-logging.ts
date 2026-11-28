@@ -9,21 +9,21 @@ const COMPONENT = 'agents-controller'
 const normalizeError = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const writeLog = (level: LogLevel, event: string, payload: LogPayload = {}) => {
-  const entry = {
+  const message = JSON.stringify({
+    ...payload,
+    level,
     component: COMPONENT,
     event,
-    ...payload,
-  }
-  const message = `[agents][${COMPONENT}] ${event}`
+  })
   if (level === 'error') {
-    console.error(message, entry)
+    console.error(message)
     return
   }
   if (level === 'warn') {
-    console.warn(message, entry)
+    console.warn(message)
     return
   }
-  console.info(message, entry)
+  console.info(message)
 }
 
 export const isAgentsControllerDebugLoggingEnabled = () => resolveAgentsControllerBehaviorConfig(process.env).debugLogs

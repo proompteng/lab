@@ -62,10 +62,11 @@ export class ValkeyCacheInputError extends Data.TaggedError('ValkeyCacheInputErr
   readonly message: string
 }> {}
 
+export const maximumValkeyValueLength = 8 * 1024 * 1024
 export const ValkeyKey = Schema.String.check(Schema.isPattern(/^bayn:.{1,250}$/))
 export const ValkeyWrite = Schema.Struct({
   key: ValkeyKey,
-  value: Schema.String.check(Schema.isMaxLength(4_194_304)),
+  value: Schema.String.check(Schema.isMaxLength(maximumValkeyValueLength)),
   ttlMs: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(300_000)),
 })
 const ValkeyWriteBatch = Schema.NonEmptyArray(ValkeyWrite).check(Schema.isMaxLength(2))

@@ -1,37 +1,11 @@
 name: Ofz authorization
 
 on:
-  pull_request:
-    paths:
-      - 'services/ofz/**'
-      - 'argocd/applications/ofz/**'
-      - 'proto/proompteng/authz/**'
-      - 'services/relay/**'
-      - 'packages/platform-client/**'
-      - 'proto/proompteng/relay/**'
-      - 'apps/landing/src/lib/platform/**'
-      - 'apps/landing/src/app/api/platform/**'
-      - 'services/tengri/**'
-      - 'services/nanoagent/**'
-      - 'apps/landing/src/app/api/tengri/**'
-      - 'apps/landing/src/app/api/auth/**'
-      - 'apps/landing/src/lib/tengri/**'
-      - 'apps/landing/src/components/tengri/**'
-      - 'apps/landing/src/components/platform/**'
-      - 'argocd/applications/keycloak/tengri/**'
-      - 'argocd/applications/proompteng/ingressroute.yaml'
-      - 'apps/landing/package.json'
-      - 'bun.lock'
-      - '.github/scripts/install-tengri-chromium.mjs'
-      - 'nix/images/ofz.nix'
-      - 'nix/images/agentrun-tools.nix'
-      - 'nix/tengri-schema-hash.py'
-      - 'nix/packages.nix'
-      - 'flake.nix'
-      - 'flake.lock'
+  workflow_call:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/tengri-images.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'
@@ -81,17 +55,43 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!apps/landing/README.md'
+      - '!services/ofz/README.md'
+      - '!services/tengri/README.md'
+      - '!services/nanoagent/README.md'
   workflow_dispatch:
 
 concurrency:
-  group: ofz-authorization-${{ github.ref }}
+  group: ofz-authorization-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).ofz }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/ofz.yaml
+          dependency-aware-push: 'true'
+          workspaces: |
+            ofz: ['', 'apps/landing', 'packages/backend', 'packages/design']
+
   validate:
+    needs: changes
+    if: >-
+      !cancelled() && (github.event_name != 'push' ||
+      (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -129,6 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           tools="$(nix build --no-link --print-out-paths .#ofz-fixture-tools)"
+          "${tools}/bin/postgres" --version
           echo "${tools}/bin" >> "$GITHUB_PATH"
       - name: Validate Ofz
         working-directory: services/ofz
@@ -140,9 +141,8 @@ jobs:
           bash test-policy.sh
       - name: Verify initial bootstrap and archive-gated activation
         run: bash services/ofz/test-control.sh bootstrap
-      - name: Verify control authority and platform clients in isolated fixtures
+      - name: Verify platform clients in isolated fixtures
         run: |
-          bash services/ofz/test-control.sh control
           bash services/ofz/test-control.sh platform
           bash services/ofz/qualify-platform.sh
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -151,6 +151,7 @@ jobs:
           enable-cache: false
       - name: Verify independent immutable audit export
         run: bash services/ofz/test-control.sh archive
+      # The promotion fixture seeds its database by running the full control integration test.
       - name: Verify control state and synchronous physical database promotion
         run: bash services/tengri/test-database-failover.sh
       - uses: oven-sh/setup-bun@v2
@@ -160,6 +161,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Cache Keycloak 26.8.2 fixture archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ofz-keycloak/keycloak-26.8.2.tar.gz
+          key: keycloak-26.8.2-dd124787283918bc597628887168333465ee2a811a389e0003569e52be7e487f
       - name: Install identity fixture dependencies
         run: |
           set -euo pipefail
@@ -175,8 +181,13 @@ jobs:
         run: bash services/ofz/test-control.sh identity
 
   build-ofz:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: validate
+    if: >-
+      !cancelled() && needs.validate.result == 'success' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    concurrency:
+      group: ofz-publish-${{ github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: ofz

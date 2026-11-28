@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto'
 
+import { quantityToScalar } from '@kubernetes/client-node/dist/util.js'
+
 import { asRecord, asString, readNested } from '../primitives'
 import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
+import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../../workspace-cache'
+import { providerUsesControllerAuthSecret, resolveProviderSecretEnv } from './policy'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
@@ -16,6 +20,7 @@ import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_CODEX_HOME = '/root/.codex'
+const GIB_BYTES = 1024 ** 3
 
 const normalizeRunnerJobTtlSeconds = (value: number, source: string) => {
   if (!Number.isFinite(value)) return null
@@ -144,6 +149,13 @@ const normalizeResourceQuantityMap = (value: unknown) => {
   )
 }
 
+const resourceQuantityBytes = (quantity: string | undefined) => {
+  if (!quantity) return 0
+  // The client only accepts integer magnitudes with a suffix (e.g. 1Gi, not 1.5Gi).
+  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-zA-Z]+)$/.exec(quantity)
+  return match ? Number(match[1]) * Number(quantityToScalar(`1${match[2]}`)) : Number(quantityToScalar(quantity))
+}
+
 const buildJobResources = (
   workload: Record<string, unknown>,
   provider: Record<string, unknown>,
@@ -170,15 +182,6 @@ const buildJobResources = (
     ...(Object.keys(requests).length > 0 ? { requests } : {}),
     ...(Object.keys(limits).length > 0 ? { limits } : {}),
   }
-}
-
-const resolveProviderSecretEnv = (providerSpec: Record<string, unknown>) => {
-  if (Array.isArray(providerSpec.secretEnv)) return providerSpec.secretEnv
-  const adapter = asRecord(providerSpec.adapter) ?? {}
-  const adapterSecretEnv = adapter.secretEnv
-  if (Array.isArray(adapterSecretEnv)) return adapterSecretEnv
-  const codexAdapter = asRecord(adapter.codex) ?? {}
-  return Array.isArray(codexAdapter.secretEnv) ? codexAdapter.secretEnv : []
 }
 
 const buildProviderSecretEnv = (providerSpec: Record<string, unknown>): EnvVar[] => {
@@ -400,21 +403,22 @@ const createRunSpecConfigMap = async (
 const isAgentRunnerBinary = (binary: string | null) =>
   !binary || binary === '/usr/local/bin/agent-runner' || binary.endsWith('/agent-runner')
 
-const resolveProviderAdapterType = (providerSpec: Record<string, unknown>): 'codex-app-server' | 'exec' => {
+const resolveProviderAdapterType = (providerSpec: Record<string, unknown>): 'codex-app-server' | 'agy-cli' | 'exec' => {
   const explicitType = asString(readNested(providerSpec, ['adapter', 'type']))
   if (explicitType === 'exec') return 'exec'
+  if (explicitType === 'agy-cli') return 'agy-cli'
   if (explicitType === 'codex-app-server') return 'codex-app-server'
   return isAgentRunnerBinary(asString(providerSpec.binary)) ? 'codex-app-server' : 'exec'
 }
 
 const sanitizeProviderAdapterForRunner = (adapter: Record<string, unknown>) => {
-  const { secretEnv: _secretEnv, codex, ...rest } = adapter
+  const { secretEnv: _secretEnv, codex, agy, ...rest } = adapter
   const codexRecord = asRecord(codex)
-  if (!codexRecord) return rest
-  const { secretEnv: _codexSecretEnv, ...codexRest } = codexRecord
+  const agyRecord = asRecord(agy)
   return {
     ...rest,
-    codex: codexRest,
+    ...(codexRecord ? { codex: (({ secretEnv: _codexSecretEnv, ...codexRest }) => codexRest)(codexRecord) } : {}),
+    ...(agyRecord ? { agy: (({ secretEnv: _agySecretEnv, ...agyRest }) => agyRest)(agyRecord) } : {}),
   }
 }
 
@@ -423,6 +427,10 @@ const DEFAULT_CODEX_APP_SERVER_EFFORT = 'high'
 const DEFAULT_CODEX_APP_SERVER_SANDBOX = 'danger-full-access'
 const DEFAULT_CODEX_APP_SERVER_APPROVAL = 'never'
 const DEFAULT_CODEX_APP_SERVER_THREAD_CONFIG = { mcp_servers: {}, web_search: 'live' }
+const DEFAULT_AGY_CLI_MODEL = 'gemini-4-neon'
+const DEFAULT_AGY_CLI_EFFORT = 'high'
+const DEFAULT_AGY_CLI_LOCATION = 'global'
+const DEFAULT_GEMINI_HOME = '/root/.gemini'
 
 const compactRecord = (record: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined))
@@ -514,6 +522,48 @@ const buildCodexAppServerAdapterForRunner = (
   }
 }
 
+const buildAgyCliAdapterForRunner = (
+  runSpec: Record<string, unknown>,
+  parameters: Record<string, string>,
+  providerSpec: Record<string, unknown>,
+  options: {
+    systemPromptPath?: string
+    systemPromptExpectedHash?: string | null
+  } = {},
+) => {
+  const explicitAdapter = asRecord(providerSpec.adapter) ?? {}
+  const agy = asRecord(explicitAdapter.agy) ?? {}
+  const context = buildRunnerTemplateContext(runSpec, parameters)
+  const settings =
+    typeof agy.settings === 'string'
+      ? renderOptionalString(agy.settings, context)
+      : (asRecord(agy.settings) ?? undefined)
+
+  return {
+    type: 'agy-cli',
+    agy: compactRecord({
+      binaryPath: renderOptionalString(agy.binaryPath, context),
+      cwd: renderOptionalString(agy.cwd, context),
+      model: renderOptionalString(agy.model, context) ?? DEFAULT_AGY_CLI_MODEL,
+      effort: renderOptionalString(agy.effort, context) ?? DEFAULT_AGY_CLI_EFFORT,
+      agent: renderOptionalString(agy.agent, context),
+      mode: renderOptionalString(agy.mode, context),
+      printTimeout: renderOptionalString(agy.printTimeout, context),
+      dangerouslySkipPermissions: copyBoolean(agy.dangerouslySkipPermissions) ?? true,
+      disableSlashCommands: copyBoolean(agy.disableSlashCommands),
+      settings,
+      baseInstructions: renderOptionalString(agy.baseInstructions, context),
+      prompt: resolveCodexPrompt(agy, runSpec, context),
+      systemPromptPath: options.systemPromptPath,
+      systemPromptExpectedHash: options.systemPromptExpectedHash ?? undefined,
+      adcAuth: copyBoolean(agy.adcAuth) ?? true,
+      quotaProject: renderOptionalString(agy.quotaProject, context),
+      location: renderOptionalString(agy.location, context) ?? DEFAULT_AGY_CLI_LOCATION,
+      credentialsEnvVar: renderOptionalString(agy.credentialsEnvVar, context),
+    }),
+  }
+}
+
 const buildAgentRunnerSpec = (
   runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
@@ -528,8 +578,9 @@ const buildAgentRunnerSpec = (
   const explicitAdapter = asRecord(providerSpec.adapter)
   const binary = asString(providerSpec.binary)
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
+  const adapterType = resolveProviderAdapterType(providerSpec)
   const defaultAdapter =
-    resolveProviderAdapterType(providerSpec) === 'exec'
+    adapterType === 'exec'
       ? {
           type: 'exec',
           exec: {
@@ -540,13 +591,17 @@ const buildAgentRunnerSpec = (
             ...(Array.isArray(providerSpec.outputArtifacts) ? { outputArtifacts: providerSpec.outputArtifacts } : {}),
           },
         }
-      : buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, options)
+      : adapterType === 'agy-cli'
+        ? buildAgyCliAdapterForRunner(runSpec, parameters, providerSpec, options)
+        : buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, options)
   const adapter =
-    resolveProviderAdapterType(providerSpec) === 'codex-app-server'
+    adapterType === 'codex-app-server'
       ? buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, options)
-      : explicitAdapter
-        ? sanitizeProviderAdapterForRunner(explicitAdapter)
-        : defaultAdapter
+      : adapterType === 'agy-cli'
+        ? buildAgyCliAdapterForRunner(runSpec, parameters, providerSpec, options)
+        : explicitAdapter
+          ? sanitizeProviderAdapterForRunner(explicitAdapter)
+          : defaultAdapter
 
   return {
     schemaVersion: 'agents.proompteng.ai/runner/v1',
@@ -726,7 +781,8 @@ export const submitJobRun = async (
   )
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
-  const authSecret = resolveAuthSecretConfig()
+  const usesControllerAuthSecret = providerUsesControllerAuthSecret(provider)
+  const authSecret = usesControllerAuthSecret ? resolveAuthSecretConfig() : null
 
   const inputEntries = inputFiles
     .map((file: Record<string, unknown>) => ({
@@ -770,6 +826,14 @@ export const submitJobRun = async (
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig, provider)
   const serviceAccountToken = resolveProviderServiceAccountToken(provider)
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
+  const usesStandardRunner = workloadImage === runnerDefaultsConfig.defaultRunnerImage
+  const runnerAdapterType = asString(readNested(agentRunnerSpec, ['adapter', 'type']))
+  const usesManagedRunnerAdapter = runnerAdapterType === 'codex-app-server' || runnerAdapterType === 'agy-cli'
+  const usesStandardLabRunner =
+    usesStandardRunner &&
+    usesManagedRunnerAdapter &&
+    vcsContext?.repository === LAB_REPOSITORY &&
+    isGitHubCloneBaseUrl(asString(vcsContext.cloneBaseUrl))
   const nodeSelector =
     asRecord(runtimeConfig.nodeSelector) ??
     runnerDefaultsConfig.nodeSelector ??
@@ -850,10 +914,48 @@ export const submitJobRun = async (
   )
   if (existingJobRef) return existingJobRef
 
+  const resources = buildJobResources(workload, provider, runtimeConfig)
+  const memoryLimit = resources.limits?.memory
+  const memoryLimitBytes = usesStandardRunner ? resourceQuantityBytes(memoryLimit) : 0
+  const tmpfs = (sizeGiB: number) => ({
+    medium: 'Memory',
+    sizeLimit:
+      memoryLimit && memoryLimitBytes > 0 && memoryLimitBytes < sizeGiB * GIB_BYTES ? memoryLimit : `${sizeGiB}Gi`,
+  })
+  // Only shift the large checkout and package data to disk when the Job has the
+  // production Lab disk budget. An absent cache or a different node does not change it.
+  const useDiskScratch =
+    usesStandardLabRunner &&
+    resourceQuantityBytes(resources.requests?.['ephemeral-storage']) >= 8 * GIB_BYTES &&
+    resourceQuantityBytes(resources.limits?.['ephemeral-storage']) >= 16 * GIB_BYTES
+
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
   const configVolumeMounts = [] as Record<string, unknown>[]
   const volumes = [...volumeSpecs]
+
+  if (usesStandardRunner) {
+    const declaredMounts = [...volumeMounts, ...(vcsRuntime?.volumeMounts ?? [])]
+    for (const [suffix, mountPath, sizeGiB] of [
+      ['scratch-workspace', '/workspace', 16],
+      ['scratch-tmp', '/tmp', 6],
+      ['scratch-bun-cache', '/opt/bun/install/cache', 8],
+    ] as const) {
+      const name = makeName(runName, suffix)
+      if (
+        declaredMounts.some((mount) => {
+          const path = asString(mount.mountPath)?.replace(/\/+$/, '')
+          return path !== undefined && (path === mountPath || mountPath.startsWith(`${path}/`))
+        }) ||
+        volumes.some((volume) => volume.name === name)
+      ) {
+        continue
+      }
+      const emptyDir = useDiskScratch && mountPath !== '/tmp' ? { sizeLimit: `${sizeGiB}Gi` } : tmpfs(sizeGiB)
+      volumes.push({ name, spec: { emptyDir } })
+      volumeMounts.push({ name, mountPath })
+    }
+  }
 
   if (inputsConfig) {
     const volumeName = makeName(inputsConfig.name, 'vol')
@@ -922,7 +1024,7 @@ export const submitJobRun = async (
     )
     volumes.push({
       name: codexHomeVolumeName,
-      spec: { emptyDir: {} },
+      spec: { emptyDir: usesStandardRunner ? tmpfs(1) : {} },
     })
     configVolumeMounts.push({
       name: codexHomeVolumeName,
@@ -950,6 +1052,27 @@ export const submitJobRun = async (
       subPath: authSecret.key,
       readOnly: true,
     })
+  }
+
+  if (runnerAdapterType === 'agy-cli') {
+    const geminiHomeAlreadyMounted =
+      hasVolumeMountAtPath(volumeMounts, DEFAULT_GEMINI_HOME) ||
+      hasVolumeMountAtPath(configVolumeMounts, DEFAULT_GEMINI_HOME) ||
+      hasVolumeMountAtPath(vcsRuntime?.volumeMounts, DEFAULT_GEMINI_HOME)
+    if (!geminiHomeAlreadyMounted) {
+      const geminiHomeVolumeName = makeName(
+        runName,
+        options.nameSuffix ? `gemini-home-${options.nameSuffix}` : 'gemini-home',
+      )
+      volumes.push({
+        name: geminiHomeVolumeName,
+        spec: { emptyDir: usesStandardRunner ? tmpfs(1) : {} },
+      })
+      configVolumeMounts.push({
+        name: geminiHomeVolumeName,
+        mountPath: DEFAULT_GEMINI_HOME,
+      })
+    }
   }
 
   if (vcsRuntime?.volumes?.length) {
@@ -997,6 +1120,20 @@ export const submitJobRun = async (
     })
   }
 
+  const sharedCacheHostPath = runnerDefaultsConfig.sharedCacheHostPath
+  if (sharedCacheHostPath && usesStandardLabRunner) {
+    const name = makeName(runName, 'shared-workspace-cache')
+    if (
+      !volumes.some((volume) => volume.name === name) &&
+      !hasVolumeMountAtPath(volumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH) &&
+      !hasVolumeMountAtPath(configVolumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH)
+    ) {
+      // On nodes without the refresher, kubelet can mount an empty cache instead of blocking the Job.
+      volumes.push({ name, spec: { hostPath: { path: sharedCacheHostPath, type: 'DirectoryOrCreate' } } })
+      volumeMounts.push({ name, mountPath: SHARED_WORKSPACE_CACHE_MOUNT_PATH, readOnly: true })
+    }
+  }
+
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount,
     ...(serviceAccountToken ? { automountServiceAccountToken: false } : {}),
@@ -1010,8 +1147,8 @@ export const submitJobRun = async (
         env: [
           { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
           { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
-          { name: 'CODEX_HOME', value: codexHomePath },
-          ...(agentRunnerSpec?.adapter?.type === 'codex-app-server' && runUid
+          ...(usesControllerAuthSecret ? [{ name: 'CODEX_HOME', value: codexHomePath }] : []),
+          ...(usesManagedRunnerAdapter && runUid
             ? [
                 { name: 'AGENT_RUN_NAMESPACE', value: namespace },
                 { name: 'AGENT_RUN_UID', value: runUid },
@@ -1031,7 +1168,7 @@ export const submitJobRun = async (
             : []),
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
-        resources: buildJobResources(workload, provider, runtimeConfig),
+        resources,
         volumeMounts: [...volumeMounts, ...configVolumeMounts],
         terminationMessagePath: '/workspace/.agent/status.json',
         terminationMessagePolicy: 'File',

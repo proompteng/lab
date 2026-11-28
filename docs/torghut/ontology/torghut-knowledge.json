@@ -1,0 +1,91 @@
+{
+  "acronyms": [
+    {
+      "description": "Average daily volume across a stated lookback of completed sessions. State the source and adjustment convention; a partial session is not a daily observation.",
+      "name": "ADV"
+    },
+    {
+      "description": "Best bid and offer visible to a particular venue or feed, not necessarily the national best prices.",
+      "name": "BBO"
+    },
+    {
+      "description": "Level 1 market data: top-of-book bid and ask prices and sizes, not full order-book depth.",
+      "name": "L1"
+    },
+    {
+      "description": "National Best Bid and Offer across eligible US equity venues. A single-venue quote is not an NBBO.",
+      "name": "NBBO"
+    },
+    {
+      "description": "Open, high, low, close, and volume over a bar interval. Keep interval, feed, session, and adjustment convention explicit.",
+      "name": "OHLCV"
+    },
+    {
+      "description": "Point in time: what the research process could have known at the decision cutoff, without later corrections, publications, or feature values.",
+      "name": "PIT"
+    }
+  ],
+  "customAnalyses": [
+    {
+      "description": "Latest final minute-bar start by symbol and feed slice in the past seven days, oldest first. Symbols with no final bar in the window are absent; check the relevant session before calling a feed stale.",
+      "name": "Torghut: Minute-bar feed freshness by symbol",
+      "sql": "SELECT provider, universe_id, feed, source_topic, market_session, delay_class, symbol, MAX(COALESCE(event_ts_exact, event_ts)) AS latest_bar_start_utc, NOW() AS checked_at_utc\nFROM signal.intraday_bars_1m_v2\nWHERE event_ts >= NOW() - INTERVAL '7 days' AND event_ts < NOW() AND is_final = 1\nGROUP BY provider, universe_id, feed, source_topic, market_session, delay_class, symbol\nORDER BY latest_bar_start_utc, provider, universe_id, feed, source_topic, market_session, delay_class, symbol\nLIMIT 500"
+    },
+    {
+      "description": "Observed session dates per symbol over the last 90 calendar days in the latest finalized, as-of-eligible snapshot. Counts do not include symbols missing entirely and are not a completeness ratio; compare with the same snapshot's exchange calendar.",
+      "name": "Torghut: Adjusted daily bar coverage by symbol",
+      "sql": "SELECT snapshot_id, symbol, COUNT(DISTINCT session_date) AS observed_sessions, MIN(session_date) AS first_observed_session, MAX(session_date) AS last_observed_session\nFROM signal.adjusted_daily_bars_v2\nWHERE snapshot_id = (\n  SELECT snapshot_id FROM signal.snapshot_manifests_v2\n  WHERE finalized_at <= NOW() AND publication_asof <= CURRENT_DATE\n  ORDER BY finalized_at DESC, snapshot_id\n  LIMIT 1\n) AND session_date > CURRENT_DATE - INTERVAL '90 days' AND session_date <= CURRENT_DATE\nGROUP BY snapshot_id, symbol\nORDER BY observed_sessions, symbol\nLIMIT 500"
+    },
+    {
+      "description": "Up to 50 snapshots finalized in the past 90 days, with universe, feed, adjustment, calendar, publisher revision, image digest, and content fingerprints.",
+      "name": "Torghut: Snapshot manifest lineage",
+      "sql": "SELECT snapshot_id, schema_version, universe_id, universe_symbol_hash, provider, source_feed, adjustment, calendar_version, publication_asof, first_session, last_session, symbol_count, session_count, bar_count, publisher_source_revision, publisher_image_digest, bars_content_hash, sessions_content_hash, manifest_content_hash, finalized_at\nFROM signal.snapshot_manifests_v2\nWHERE finalized_at >= NOW() - INTERVAL '90 days' AND finalized_at <= NOW()\nORDER BY finalized_at DESC, snapshot_id\nLIMIT 50"
+    },
+    {
+      "description": "Latest final observation per minute and feed slice in the past 24 hours, summarized by symbol. Close times volume is a turnover proxy, not executable liquidity; do not sum overlapping feed slices.",
+      "name": "Torghut: Recent intraday liquidity and volume by symbol",
+      "sql": "WITH ranked_bars AS (\n  SELECT provider, universe_id, feed, source_topic, market_session, delay_class, symbol, volume, close,\n    ROW_NUMBER() OVER (\n      PARTITION BY provider, universe_id, feed, source_topic, market_session, delay_class, symbol, COALESCE(event_ts_exact, event_ts)\n      ORDER BY COALESCE(ingest_ts_exact, ingest_ts) DESC, source_partition DESC, source_offset DESC\n    ) AS bar_rank\n  FROM signal.intraday_bars_1m_v2\n  WHERE event_ts >= NOW() - INTERVAL '1 day' AND event_ts < NOW() AND is_final = 1\n)\nSELECT provider, universe_id, feed, source_topic, market_session, delay_class, symbol, COUNT(*) AS observed_minutes, SUM(volume) AS reported_volume, AVG(volume) AS volume_per_observed_minute, SUM(close * volume) AS close_times_volume\nFROM ranked_bars\nWHERE bar_rank = 1\nGROUP BY provider, universe_id, feed, source_topic, market_session, delay_class, symbol\nORDER BY reported_volume DESC, provider, universe_id, feed, source_topic, market_session, delay_class, symbol\nLIMIT 500"
+    }
+  ],
+  "dataSource": "torghut-clickhouse",
+  "database": "signal",
+  "ruleTag": "torghut canonical rule",
+  "rules": [
+    {
+      "description": "Use event time for market ordering and ingest time for receipt or lag. In intraday_bars_1m_v2, prefer event_ts_exact and ingest_ts_exact with their millisecond counterparts as fallbacks. Compare minute starts with the relevant market session, not continuous wall-clock expectations.",
+      "name": "Torghut: Market time and feed freshness",
+      "searchTerm": "intraday_bars_1m_v2"
+    },
+    {
+      "description": "Use intraday_bars_1m_v2 and require is_final = 1 for completed-minute analytics. Preserve provider, universe, feed, source topic, session, and delay boundaries. Select one final observation per logical minute before summing volume; Kafka offsets are ordered only within a partition.",
+      "name": "Torghut: Final bars and feed isolation",
+      "searchTerm": "is_final"
+    },
+    {
+      "description": "Use intraday_quotes_v1 for visible bid/ask spread and sizes and intraday_trades_v1 for reported prints and sizes. Use matching sources and event windows. A quote is not a trade or a fill, and overlapping feeds are not additive.",
+      "name": "Torghut: Quote and trade microstructure",
+      "searchTerm": "intraday_quotes_v1"
+    },
+    {
+      "description": "Use adjusted_daily_bars_v2 from one pinned snapshot_id for comparable returns. Check provider, feed, adjustment, publication_asof, and finalization against the research cutoff. Compare session_date with exchange_sessions_v1 for that snapshot, including holidays and early closes; missing rows are not zero-volume bars.",
+      "name": "Torghut: Adjusted bars and exchange sessions",
+      "searchTerm": "adjusted_daily_bars_v2"
+    },
+    {
+      "description": "Use snapshot_manifests_v2 to pin the universe hash, publisher revision and image digest, calendar version, and bars, sessions, and manifest content hashes. A manifest records lineage; its presence alone does not prove coverage, performance, or qualification.",
+      "name": "Torghut: Snapshot provenance",
+      "searchTerm": "snapshot_manifests_v2"
+    },
+    {
+      "description": "Keep crypto_market_events_v1 separate from US equity session logic. Preserve provider, location, channel, and symbol; use event_ts and ingest_ts for timing and retain topic, partition, and offset for stream provenance.",
+      "name": "Torghut: Crypto market event boundaries",
+      "searchTerm": "crypto_market_events_v1"
+    },
+    {
+      "description": "For causal research on intraday_features_v1, use the matching universe, feed, and symbol. Require window_end and feature availability by the decision cutoff; computed_at and archived_at distinguish computation from when the archived feature can be read.",
+      "name": "Torghut: Point-in-time feature inputs",
+      "searchTerm": "intraday_features_v1"
+    }
+  ],
+  "version": 1
+}

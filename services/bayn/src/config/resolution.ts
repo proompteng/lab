@@ -61,7 +61,6 @@ const decodeAlpaca = (
   const count = configuredCredentialCount(configured)
   if (count === 0) return fail({ _tag: 'MissingAlpacaCredentials' })
   if (count !== 3) return fail({ _tag: 'IncompleteAlpacaCredentials', configured })
-  if (parsed.authorityGenerationHash === undefined) return fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
 
   const accountId = parsed.configuredAlpaca.accountId
   const key = parsed.configuredAlpaca.key
@@ -84,7 +83,7 @@ const decodeAlpaca = (
     ? fail({ _tag: 'InvalidBrokerConnection', cause: decoded.failure })
     : Result.succeed({
         ...decoded.success,
-        authorityGenerationHash: parsed.authorityGenerationHash,
+        authorityGenerationHash: parsed.authorityGenerationHash ?? decoded.success.identity.identityHash,
         reconciliationIntervalMs: parsed.configuredAlpaca.reconciliationIntervalMs,
       })
 }

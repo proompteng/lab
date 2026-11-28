@@ -94,15 +94,21 @@ export const retainAutonomousCyclePassObservation = (
 
   return {
     result: 'SUCCESS',
-    // Admission evidence was recognized at the result clock; pass completion may cross its freshness cutoff.
+    // Admission evidence was recognized at the result clock; pass completion may cross its original boundary.
     observedAt:
-      observation.result.outcome === 'ADMISSION_WAITING' ? observation.result.observedAt : observation.observedAt,
+      observation.result.outcome === 'ADMISSION_WAITING' ||
+      (observation.result.outcome === 'ALREADY_TERMINAL' && observation.result.readiness !== undefined)
+        ? observation.result.observedAt
+        : observation.observedAt,
     outcome: observation.result.outcome,
     ...(observation.result.outcome === 'WINDOW_CLOSED' && observation.result.closedEntryWindow !== undefined
       ? { closedEntryWindow: observation.result.closedEntryWindow }
       : {}),
     ...(observation.result.outcome === 'ADMISSION_WAITING'
       ? { readiness: observation.result.readiness, admissionProtection: observation.result.admissionProtection }
+      : {}),
+    ...(observation.result.outcome === 'ALREADY_TERMINAL' && observation.result.readiness !== undefined
+      ? { readiness: observation.result.readiness }
       : {}),
     ...(observation.result.outcome === 'RECOVERED'
       ? {
@@ -195,6 +201,9 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           observedAt: result.observedAt,
+          ...(result.outcome === 'ALREADY_TERMINAL' && result.readiness !== undefined
+            ? { readiness: JSON.stringify(result.readiness) }
+            : {}),
           ...cycleAnnotations(result.cycle),
         },
       }
@@ -213,14 +222,3 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
       }
   }
 }
-
-export const validateCycleLoopInterval = (pollIntervalMs: number): Result.Result<number, CycleRunnerError> =>
-  Number.isSafeInteger(pollIntervalMs) && pollIntervalMs > 0
-    ? Result.succeed(pollIntervalMs)
-    : Result.fail(
-        runnerError({
-          operation: 'configure',
-          failure: 'invalid-config',
-          message: 'cycle loop interval must be a positive safe integer',
-        }),
-      )

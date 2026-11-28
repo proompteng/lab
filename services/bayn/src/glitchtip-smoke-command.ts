@@ -2,9 +2,8 @@ import * as Sentry from '@sentry/node'
 import { NodeRuntime } from '@effect/platform-node'
 import { Effect } from 'effect'
 import { CycleRunnerError } from './cycle/runner/model'
-import { flushErrorTracking, initializeErrorTracking, reportNativeArrivalFailure } from './error-tracking'
+import { flushErrorTracking, initializeErrorTracking } from './error-tracking'
 import { OperationalError } from './errors'
-import { NativeArrivalCaptureError } from './market-data/streaming/native-arrival'
 import { observePass } from './observe-composition/decision-builder'
 import { currentUtcInstant } from './time'
 
@@ -15,11 +14,8 @@ if (!initializeErrorTracking(service)) {
 }
 Sentry.setTag('synthetic', 'true')
 let captured = false
-let nativeArrivalCaptured = service !== 'bayn-execution-controller'
 Sentry.addEventProcessor((event) => {
   if (event.tags?.['stage'] === 'bayn.execution.cycle-pass' && event.tags?.['synthetic'] === 'true') captured = true
-  if (event.tags?.['stage'] === 'bayn.market-data.native-arrival' && event.tags?.['synthetic'] === 'true')
-    nativeArrivalCaptured = true
   return event
 })
 NodeRuntime.runMain(
@@ -33,12 +29,8 @@ NodeRuntime.runMain(
         message: 'GlitchTip synthetic handled cycle pass smoke',
       }),
     })
-    if (service === 'bayn-execution-controller')
-      yield* reportNativeArrivalFailure(
-        new NativeArrivalCaptureError({ message: 'GlitchTip synthetic native arrival failure smoke' }),
-      )
     const flushed = yield* Effect.promise(() => flushErrorTracking(5_000))
-    if (!captured || !nativeArrivalCaptured || !flushed) {
+    if (!captured || !flushed) {
       return yield* new OperationalError({
         component: 'http',
         operation: 'glitchtip-smoke',

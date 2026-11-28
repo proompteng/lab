@@ -80,6 +80,9 @@ const brokerPresentationReason = (broker: NonNullable<RuntimeState['broker']>): 
   if (broker.error?.startsWith('Alpaca account permission drift detected') === true) {
     return 'BROKER_ACCOUNT_PERMISSION_DRIFT'
   }
+  if (broker.readAvailable === false && broker.observationFailure === 'CASH_FEES_PENDING') {
+    return 'BROKER_CASH_FEES_PENDING'
+  }
   if (broker.readAvailable === false) return 'BROKER_READ_UNAVAILABLE'
   if (broker.accountBound === false) return 'BROKER_ACCOUNT_BINDING_UNAVAILABLE'
   return broker.error === null ? null : 'BROKER_STATUS_UNAVAILABLE'
@@ -629,33 +632,56 @@ const hasCurrentAdmissionProtection = (state: RuntimeState, checkedAtMs: number)
   )
 }
 
-const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) => {
-  const session = state.cycle.current ?? state.cycle.last
+const expectedSessionWithoutCycle = (state: RuntimeState) => {
+  const controller = state.executionController
+  const status = controller?.status
+  if (controller === undefined || status == null) return undefined
+  const expected = status.expectedSession
+  if (
+    expected === undefined ||
+    status.controllerKey !== controller.controllerKey ||
+    status.planHash !== controller.planHash ||
+    state.cycle.current !== null ||
+    (state.cycle.last !== null && state.cycle.last.executionSessionDate >= expected.date)
+  )
+    return undefined
+  return expected
+}
+
+const executionSessionReadiness = (
+  state: RuntimeState,
+  runtimeReady: boolean,
+  expected = expectedSessionWithoutCycle(state),
+) => {
+  const session = expected === undefined ? (state.cycle.current ?? state.cycle.last) : null
   const checkedAtMs = Date.parse(state.health.checkedAt ?? '')
   const firstObservationMs =
-    session === null
-      ? Number.NaN
-      : session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-        ? Date.parse(session.submissionOpenAt)
-        : Math.max(
-            Date.parse(session.submissionOpenAt),
-            Date.parse(session.executionOpenAt) + 60_000 + defaultJevProtocolDocument.decisionDelaySeconds * 1_000,
-          )
+    expected !== undefined
+      ? Date.parse(expected.firstObservationAt)
+      : session === null
+        ? Number.NaN
+        : session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+          ? Date.parse(session.submissionOpenAt)
+          : Math.max(
+              Date.parse(session.submissionOpenAt),
+              Date.parse(session.executionOpenAt) + 60_000 + defaultJevProtocolDocument.decisionDelaySeconds * 1_000,
+            )
   const deadlineMs =
     session === null
-      ? Number.NaN
+      ? firstObservationMs + defaultJevProtocolDocument.maximumDecisionLagMs
       : Math.max(firstObservationMs, Date.parse(session.createdAt)) + defaultJevProtocolDocument.maximumDecisionLagMs
   const result = (condition: ExecutionSessionCondition) => ({
     schemaVersion: 'bayn.execution-session-readiness.v1',
     condition,
     ready: readySessionConditions.has(condition),
-    executionSessionDate: session?.executionSessionDate ?? null,
+    executionSessionDate: expected?.date ?? session?.executionSessionDate ?? null,
     cycleId: session?.cycleId ?? null,
     controllerPlanHash: state.executionController?.planHash ?? null,
     checkedAt: state.health.checkedAt,
     firstObservationAt: Number.isFinite(firstObservationMs) ? new Date(firstObservationMs).toISOString() : null,
     decisionDeadlineAt: Number.isFinite(deadlineMs) ? new Date(deadlineMs).toISOString() : null,
   })
+  if (state.broker?.observationFailure === 'CASH_FEES_PENDING') return result(ExecutionSessionCondition.Blocked)
   if (state.capitalActivation?._tag === 'Realized' && state.cycle.authority?.kill === KillState.Active) {
     return result(ExecutionSessionCondition.RecoveryOnly)
   }
@@ -669,6 +695,14 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
     return result(ExecutionSessionCondition.Unavailable)
   }
   if (hasCurrentAdmissionProtection(state, checkedAtMs)) return result(ExecutionSessionCondition.Blocked)
+  if (expected !== undefined) {
+    if (checkedAtMs >= Date.parse(expected.submissionCutoffAt)) return result(ExecutionSessionCondition.Closed)
+    if (checkedAtMs < Date.parse(expected.submissionOpenAt)) return result(ExecutionSessionCondition.Preopen)
+    if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
+    return result(
+      checkedAtMs < deadlineMs ? ExecutionSessionCondition.AwaitingDecision : ExecutionSessionCondition.Unavailable,
+    )
+  }
   if (session === null) return result(ExecutionSessionCondition.Unavailable)
   if (session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1')
     return result(
@@ -759,7 +793,14 @@ export const renderPrometheusMetrics = (
   const cycleDecisionBound =
     state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined
   const sessionPreflightReady = executionSessionPreflightReady(state, runtimeReady)
-  const sessionReadiness = executionSessionReadiness(state, runtimeReady)
+  const expectedSession = expectedSessionWithoutCycle(state)
+  const sessionReadiness = executionSessionReadiness(state, runtimeReady, expectedSession)
+  const missingCycleAlertStart =
+    expectedSession === undefined
+      ? 0
+      : sessionReadiness.ready
+        ? epochSeconds(sessionReadiness.decisionDeadlineAt)
+        : epochSeconds(expectedSession.submissionOpenAt) - 600
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
@@ -1345,6 +1386,12 @@ export const renderPrometheusMetrics = (
     '# HELP bayn_execution_session_ready Whether the projected session is usable, including legitimate pre-open, warmup, holding and abstention states.',
     '# TYPE bayn_execution_session_ready gauge',
     `bayn_execution_session_ready ${sessionReadiness.ready ? 1 : 0}`,
+    '# HELP bayn_execution_missing_cycle_alert_start_timestamp_seconds Start of the unready interval for a verified equity session with no cycle, or zero if inapplicable.',
+    '# TYPE bayn_execution_missing_cycle_alert_start_timestamp_seconds gauge',
+    `bayn_execution_missing_cycle_alert_start_timestamp_seconds ${prometheusNumber(missingCycleAlertStart)}`,
+    '# HELP bayn_execution_missing_cycle_cutoff_timestamp_seconds Submission cutoff for a verified equity session with no cycle, or zero if inapplicable.',
+    '# TYPE bayn_execution_missing_cycle_cutoff_timestamp_seconds gauge',
+    `bayn_execution_missing_cycle_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(expectedSession?.submissionCutoffAt))}`,
     '# HELP bayn_execution_session_condition Current session acceptance condition, separate from controller startup.',
     '# TYPE bayn_execution_session_condition gauge',
     ...Object.values(ExecutionSessionCondition).map(

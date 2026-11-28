@@ -21,7 +21,7 @@ spec:
                   namespace: kargo
                   repoUrl: ghcr.io/akuity/kargo-charts
                   chart: kargo
-                  version: 1.12.6
+                  version: 1.12.7
                   releaseName: kargo
                   enabled: "true"
                   managedNamespaceMetadata:
@@ -33,6 +33,13 @@ spec:
                     api:
                       enabled: true
                       host: kargo.ide-newton.ts.net
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          cpu: "1"
+                          memory: 512Mi
                       secretManagementEnabled: false
                       adminAccount:
                         enabled: false
@@ -93,6 +100,26 @@ spec:
                         watchArgocdNamespaceOnly: true
                       rollouts:
                         integrationEnabled: true
+                    managementController:
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          cpu: "1"
+                          memory: 512Mi
+                    garbageCollector:
+                      successfulJobsHistoryLimit: 1
+                      failedJobsHistoryLimit: 1
+                      ttlSecondsAfterFinished: 1800
+                    webhooksServer:
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          cpu: "1"
+                          memory: 512Mi
                     extraObjects:
                       - apiVersion: networking.k8s.io/v1
                         kind: Ingress
@@ -121,7 +148,7 @@ spec:
                   namespace: restate-operator
                   repoUrl: ghcr.io/restatedev
                   chart: restate-operator-crds
-                  version: 3.2.1
+                  version: 3.2.2
                   releaseName: restate-operator-crds
                   enabled: "true"
                   managedNamespaceMetadata:
@@ -142,12 +169,12 @@ spec:
                   namespace: restate-operator
                   repoUrl: ghcr.io/restatedev
                   chart: restate-operator-helm
-                  version: 3.2.1
+                  version: 3.2.2
                   releaseName: restate-operator
                   enabled: "true"
                   valuesObject:
                     installCrds: false
-                    version: 3.2.1
+                    version: 3.2.2
                     podSecurityContext:
                       seccompProfile:
                         type: RuntimeDefault

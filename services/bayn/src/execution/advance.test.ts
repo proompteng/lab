@@ -8,6 +8,8 @@ import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { withObservedStage } from '../telemetry'
 import { advanceExecutionOnce } from './advance'
+import { CycleState } from '../cycle/model'
+import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 
 const command = {
   controllerKey: 'primary',
@@ -265,6 +267,42 @@ describe('advanceExecutionOnce', () => {
     expect(waiting).toMatchObject({ _tag: 'Waiting', reason: { _tag: 'RecoveryWaiting' } })
     expect(blocked).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } })
   })
+
+  test.each([CycleState.Blocked, CycleState.Completed, CycleState.NoTrade])(
+    'a consumed source window is waiting independently of prior terminal state %s',
+    async (state) => {
+      const { cycle } = candidateObservationFixture()
+      const observedAt = '2026-08-13T17:00:01.000Z'
+      const readiness = {
+        reason: DecisionReadinessReason.SignalWindowObserved as const,
+        message: 'Successor admission awaits its next source window',
+        availableAt: '2026-08-13T17:01:02.000Z',
+      }
+      const observation = { result: 'SUCCESS' as const, outcome: 'ALREADY_TERMINAL' as const, observedAt, readiness }
+      const result: CycleRunResult = { outcome: 'ALREADY_TERMINAL', observedAt, cycle: { ...cycle, state }, readiness }
+      const first = await Effect.runPromise(advanceExecutionOnce(command, driver(observation, result)))
+      const replay = await Effect.runPromise(advanceExecutionOnce(command, driver(observation, result)))
+      expect(first).toMatchObject({ _tag: 'Waiting', reason: { _tag: 'RecoveryWaiting' }, observation })
+      expect(replay).toEqual(first)
+      const changed = await Effect.runPromise(
+        advanceExecutionOnce(
+          command,
+          driver({ ...observation, readiness: { ...readiness, availableAt: '2026-08-13T17:02:02.000Z' } }, result),
+        ),
+      )
+      expect(changed.receiptHash).not.toBe(first.receiptHash)
+      const ordinary = await Effect.runPromise(
+        advanceExecutionOnce(
+          command,
+          driver(
+            { result: 'SUCCESS', outcome: 'ALREADY_TERMINAL', observedAt },
+            { outcome: 'ALREADY_TERMINAL', observedAt, cycle: { ...cycle, state } },
+          ),
+        ),
+      )
+      expect(ordinary._tag).toBe(state === CycleState.Blocked ? 'Blocked' : 'Completed')
+    },
+  )
 
   test('uses the one-shot delay returned by the bounded pass', async () => {
     const observedAt = '2026-08-13T17:00:01.000Z'

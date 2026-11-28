@@ -1,0 +1,137 @@
+{
+  "acronyms": [
+    {
+      "description": "The Nix binary cache used to share reusable build outputs and dependencies. Native image CI uploads existing build paths after successful main-branch publication.",
+      "name": "Attic"
+    },
+    {
+      "description": "The read-only CI metadata projection in the agents database. ci_audit.workflow_runs has the latest collected completed attempt per run_id; ci_audit.job_runs retains individual job_id values across attempts and joins to workflow_runs by run_id.",
+      "name": "CI Audit"
+    },
+    {
+      "description": "A group of recent job failures by workflow_name, job_name, and failure_category in ci_audit.failure_clusters. occurrences_24h is measured at synced_at; sample_run_id points to the latest observed failure in the group.",
+      "name": "CI Failure Cluster"
+    },
+    {
+      "description": "GitHub's merge queue, which validates queued changes against the target branch before merging them.",
+      "name": "MergeQueue"
+    },
+    {
+      "description": "Open Container Initiative. The final multi-architecture OCI image index carries source and revision annotations, plus build-run receipt annotations where required.",
+      "name": "OCI"
+    },
+    {
+      "description": "The repository's formatter for TypeScript and other supported files, configured by .oxfmtrc.json.",
+      "name": "Oxfmt"
+    },
+    {
+      "description": "The repository's linter for TypeScript and JavaScript, configured by .oxlintrc.json.",
+      "name": "Oxlint"
+    },
+    {
+      "description": "A Kargo operation that applies a Stage's configured promotion steps to selected Freight.",
+      "name": "Promotion"
+    },
+    {
+      "description": "The immutable kargo-sha-<40>-run-<github-run-id> alias for receipt-bearing builds. A new run can publish the same source revision without moving an existing tag.",
+      "name": "RunQualifiedTag"
+    },
+    {
+      "description": "A Kargo release target that consumes eligible Freight and defines how to update the application's deployment inputs.",
+      "name": "Stage"
+    },
+    {
+      "description": "A Kargo resource that watches configured artifact sources and creates Freight containing the exact eligible image digests.",
+      "name": "Warehouse"
+    }
+  ],
+  "customAnalyses": [
+    {
+      "description": "Shows the latest collected completed attempt for recent main workflow runs. A workflow conclusion does not prove image publication, Kargo promotion, or deployment.",
+      "name": "CI release: Recent main workflow runs",
+      "sql": "SELECT run_id, workflow_name, head_sha, event, conclusion, updated_at, duration_seconds, synced_at\nFROM ci_audit.workflow_runs\nWHERE head_branch = 'main' AND status = 'completed' AND updated_at >= now() - interval '7 days'\nORDER BY updated_at DESC, run_id DESC\nLIMIT 100"
+    },
+    {
+      "description": "Shows recent classified job failures with the parent run's branch and revision. A job's duration is runner execution time when available, not queue time.",
+      "name": "CI release: Recent failed jobs",
+      "sql": "SELECT j.job_id, j.run_id, j.workflow_name, j.job_name, j.runner_name, r.head_branch, r.head_sha,\n  j.conclusion, j.failure_category, j.completed_at, j.duration_seconds, j.synced_at\nFROM ci_audit.job_runs AS j JOIN ci_audit.workflow_runs AS r ON r.run_id = j.run_id\nWHERE j.failure_category IS NOT NULL AND j.completed_at >= now() - interval '7 days'\nORDER BY j.completed_at DESC, j.job_id DESC\nLIMIT 100"
+    },
+    {
+      "description": "Ranks observed job failure clusters in the 24-hour window ending at synced_at. Hides snapshots more than 15 minutes old; empty results are not proof that nothing failed.",
+      "name": "CI release: Top 24-hour failure clusters",
+      "sql": "SELECT workflow_name, job_name, failure_category, occurrences_24h, sample_run_id, last_seen_at, synced_at\nFROM ci_audit.failure_clusters\nWHERE synced_at >= now() - interval '15 minutes'\nORDER BY occurrences_24h DESC, last_seen_at DESC, cluster_key\nLIMIT 50"
+    }
+  ],
+  "dataSource": "agents-db-next",
+  "database": "agents",
+  "ruleTag": "ci-release canonical rule",
+  "rules": [
+    {
+      "description": "For changes limited to CI orchestration, publishing, caching, timing reports, or Kargo controls, run workflow and script validation instead of rebuilding service images or starting unrelated test matrices. Rebuild the ARC self-hosted runner image when its embedded CI tools change.",
+      "name": "CI release: ARC runner and workflow inputs",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Normal production path: runtime inputs and the embedded tool exception."
+      }
+    },
+    {
+      "description": "Publish repo-owned immutable Kargo aliases only from reviewed main builds after required checks and the final multi-architecture OCI index succeed. Use kargo-sha-<40> or the run-qualified form for receipt-bearing builds, never latest or legacy sha-* tags. Preserve the external-publisher exceptions: analysis uses latest for discovery but pins the digest, and bilig uses the publisher's bare 40-hex tag.",
+      "name": "CI release: Main-only immutable publication",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Artifact eligibility and Normal production path."
+      }
+    },
+    {
+      "description": "Withhold every Warehouse-discoverable Kargo alias until all images, terminal validation, and artifact uploads succeed. Exclude preparation tags from Warehouse discovery. Read each retained build receipt from the selected Freight image's OCI annotations, not a Freight name or an inferred conclusion.",
+      "name": "CI release: Multi-image receipt gate",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "AGENTS.md, Infrastructure contracts: multi-image receipts and preparation tags. docs/release-automation.md, Artifact eligibility: selected-image annotations."
+      }
+    },
+    {
+      "description": "Kargo alone promotes published images. Do not bypass it with SHA or digest bumps, release branches, deployment PRs, release automerge, or direct kubectl deployments. Operators must not create, retag, or manually select image aliases.",
+      "name": "CI release: No promotion bypass",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "AGENTS.md, Infrastructure contracts; docs/release-automation.md, Artifact eligibility and Normal production path."
+      }
+    },
+    {
+      "description": "Use an exact automatic promotion policy for the matching Stage to select eligible Freight, not a broad selector. The receiving Argo CD Application must authorize that Stage with kargo.akuity.io/authorized-stage.",
+      "name": "CI release: Exact automatic Stage promotion",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Normal production path and Application enrollment: exact Stage policy and authorization."
+      }
+    },
+    {
+      "description": "The Stage checks out the exact source revision, writes the full promoted digest and build/provenance metadata to the renderer's inputs, and pushes the generated kargo/<stage> commit that Argo CD reconciles. ApplicationSet must preserve that branch and deployment metadata. Retained post-deploy checks follow that branch and the Stage-written paths, not main. Verify the rendered digest and the running revision and image, then exercise service-specific behavior.",
+      "name": "CI release: Generated deployment revision",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Normal production path, Application enrollment, and Evidence."
+      }
+    },
+    {
+      "description": "Keep credentials, including tokens, passwords, and connection strings, and personal data out of CI logs, job summaries, and artifacts. Retain enough sanitized evidence to identify the failing phase without exposing sensitive values.",
+      "name": "CI release: Secret-free evidence",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "AGENTS.md, Make the responsible change: useful error context without secrets or personal data. docs/release-automation.md, Normal production path: failing-phase evidence."
+      }
+    },
+    {
+      "description": "Use ci_audit.workflow_runs.conclusion for the completed workflow outcome, not a job's outcome. Join ci_audit.job_runs to ci_audit.workflow_runs on run_id for branch and revision; do not treat matching jobs as part of the latest attempt.",
+      "name": "CI release: Workflow and job outcomes",
+      "searchTerm": "CI workflow outcome and job failures"
+    },
+    {
+      "description": "Read ci_audit.failure_clusters.occurrences_24h as of synced_at, not as a lifetime count or proof of release health. Use sample_run_id and the job's failure_category to investigate the underlying ci_audit.job_runs evidence.",
+      "name": "CI release: Failure cluster freshness",
+      "searchTerm": "CI recurring job failures in the last 24 hours"
+    }
+  ],
+  "version": 1
+}

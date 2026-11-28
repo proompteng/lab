@@ -17,7 +17,12 @@ const identity = Result.getOrThrow(
       parameterHash,
       parameterSchemaVersion: protocol.schemaVersion,
     })
-    const riskPolicy = yield* makeExecutionRiskPolicy('build-contract', protocol.universe, BrokerEnvironment.Sandbox)
+    const riskPolicy = yield* makeExecutionRiskPolicy(
+      'build-contract',
+      protocol.sharedProtocol.universe,
+      BrokerEnvironment.Sandbox,
+      true,
+    )
     return {
       strategyBehaviorHash: activeStrategyBehaviorHash,
       strategyParameterHash: parameterHash,

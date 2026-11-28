@@ -9,6 +9,7 @@ const agentsShellEntrypoint = () =>
   readFileSync(new URL('../../../scripts/agents-shell-entrypoint.sh', import.meta.url), 'utf8')
 const agentsNixImage = () => readFileSync(new URL('../../../../../nix/images/agents.nix', import.meta.url), 'utf8')
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url))
+const pstackCommit = '6d25df69f0baf6600807d82975d75139f3b1ab92'
 
 const listProductionSources = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
@@ -81,14 +82,19 @@ describe('Agents control-plane image layout', () => {
 
   it('bundles the pinned Poteto pstack skills for agents-shell startup', () => {
     const content = dockerfile()
+    const bundleTarget = dockerfileTarget('pstack-bundle')
     const shellTarget = dockerfileTarget('agents-shell')
 
     expect(content).toContain('ARG PSTACK_REPOSITORY=https://github.com/michael-denyer/pstack-claude.git')
-    expect(content).toContain('ARG PSTACK_COMMIT=0986f344496c9c8468003465261711f6bb2c5ec1')
-    expect(content).toContain('FROM agents-tools AS pstack-bundle')
-    expect(content).toContain('git -C /opt/agents-shell/pstack-source fetch -q --depth=1 origin "${PSTACK_COMMIT}"')
-    expect(content).toContain('plugins/pstack/skills/poteto-mode/SKILL.md')
-    expect(content).toContain('plugins/pstack/skills/poteto-mode/references/codex-tools.md')
+    expect(content).toContain(`ARG PSTACK_COMMIT=${pstackCommit}`)
+    expect(bundleTarget).toContain('FROM agents-tools AS pstack-bundle')
+    expect(bundleTarget).toContain(
+      'git -C /opt/agents-shell/pstack-source fetch -q --depth=1 origin "${PSTACK_COMMIT}"',
+    )
+    expect(bundleTarget).toContain('plugins/pstack/skills/poteto-mode/SKILL.md')
+    expect(bundleTarget).toContain('plugins/pstack/skills/poteto-mode/references/codex-tools.md')
+    expect(bundleTarget).toMatch(/SKILL\.md.*wc -l\)" = 68\b/)
+    expect(bundleTarget).not.toContain('.codex-plugin/prompts')
     expect(shellTarget).toContain(
       'COPY --from=pstack-bundle /opt/agents-shell/pstack-source/plugins/pstack /opt/agents-shell/pstack',
     )
@@ -99,11 +105,13 @@ describe('Agents control-plane image layout', () => {
   it('bundles the same pinned pstack tree in the production Nix agents-shell image', () => {
     const content = agentsNixImage()
 
-    expect(content).toContain('pstackVersion = "0.9.30"')
-    expect(content).toContain('pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1"')
-    expect(content).toContain('hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0="')
+    expect(content).toContain('pstackVersion = "0.9.159"')
+    expect(content).toContain(`pstackCommit = "${pstackCommit}"`)
+    expect(content).toContain('hash = "sha256-dtC7o5ombOIT+Zbow5730fShruncV/YJMZzXVTEXotY="')
     expect(content).toContain('pname = "agents-shell-pstack"')
     expect(content).toContain('cp -R plugins/pstack "$out/opt/agents-shell/pstack"')
+    expect(content).toMatch(/SKILL\.md.*wc -l\)" = 68\b/)
+    expect(content).not.toContain('.codex-plugin/prompts')
     expect(content).toContain('"$out/app/services/agents/scripts/install-agents-shell-pstack.sh"')
     const shellContents = content.match(/agentsShellContents\s*=\s*commonContents\s*\+\+\s*\[([\s\S]*?)\]/)?.[1]
     expect(shellContents?.trim().split(/\s+/)).toEqual(

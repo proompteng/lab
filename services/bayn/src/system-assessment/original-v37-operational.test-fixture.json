@@ -1,0 +1,468 @@
+{
+  "sourceRevision": "4467bce540bb135b96a59b1ee37396885914df0a",
+  "parameterHash": "4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6",
+  "registrationHash": "798905a53b45350690627b0d3240d432293d95211c4034e3e321cc4b8aca1186",
+  "sourceCutHash": "4a22b5dc47f56eadcd6f458298ae780c9dbc23a75f9041ecdd6be840cc1c25f8",
+  "assessmentHash": "914c06c5de5272aabd4b0352e6d1044995df2a28ea500fa38ce2f5a02b0db2b3",
+  "input": {
+    "schemaVersion": "bayn.operational-assessment-input.v1",
+    "registration": {
+      "schemaVersion": "bayn.operational-registration.v1",
+      "program": "BAYN_OPERATIONAL_RELIABILITY",
+      "environment": "PAPER",
+      "policyHash": "e5c0e4e897ee752d6f95d84da83e52a088f6409dd730ebb863db325d1ffb13b8",
+      "attemptIndex": 1,
+      "priorAttemptHash": "fd77a99634adf1114ca6957a2f16305726c07029a87d10482742fbf73fb04966",
+      "registeredAt": "2026-11-03T21:00:00.000Z",
+      "retainedIncidentSources": ["138eb40b2f482e8eec040dd4c9ab640210da62a3ba48f41b79a39833b07a47b8"],
+      "calendar": {
+        "referenceMarket": "NATIVE_POLICY",
+        "operatingHours": "NATIVE",
+        "tradingMarkets": ["EQUITY"],
+        "sourceHash": "7b44ac058cb89340d4607ced32458dc9507190035f7d5ffb3431570d376dfe14",
+        "marketCalendar": {
+          "schemaVersion": "bayn.alpaca-market-calendar-observation.v2",
+          "source": "alpaca-v2-calendar",
+          "requestedRange": {
+            "start": "2026-11-04",
+            "end": "2026-12-04"
+          },
+          "timeZone": "UTC",
+          "sessions": [
+            {
+              "date": "2026-11-04",
+              "openAt": "2026-11-04T13:00:00.000Z",
+              "closeAt": "2026-11-04T22:00:00.000Z"
+            }
+          ],
+          "providerSessions": [
+            {
+              "date": "2026-11-04",
+              "regularOpenAt": "2026-11-04T14:30:00.000Z",
+              "regularCloseAt": "2026-11-04T21:00:00.000Z",
+              "sessionOpenAt": "2026-11-04T13:00:00.000Z",
+              "sessionCloseAt": "2026-11-04T22:00:00.000Z"
+            }
+          ],
+          "normalizedResponseHash": "6cf0f1eb978796ce93e7dcf694f99fe46f9090dff8473912b5addf061a081413"
+        },
+        "sessions": [
+          {
+            "sessionDate": "2026-11-04",
+            "openAt": "2026-11-04T00:00:00.000Z",
+            "closeAt": "2026-11-04T00:02:00.000Z"
+          }
+        ]
+      },
+      "policies": [
+        {
+          "policy": "JEV",
+          "accountBindingHash": "34e8ee6bc1ccf5d0c01a5eeb5fddc2e414266050656d176ce7705a38440b9cd9",
+          "riskPolicyHash": "93c569c27a54ba921b40a666f43d7dfc8ab159e96a216723bd32cfb4661b3427",
+          "riskPolicy": {
+            "schemaVersion": "bayn.execution-risk-policy.v4",
+            "accountId": "JEV:account",
+            "brokerMode": "PAPER",
+            "allowedSymbols": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "BTC/USD",
+              "COHR",
+              "CRDO",
+              "ETH/USD",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SOL/USD",
+              "SPY",
+              "WDC"
+            ],
+            "allowedTimeInForce": ["DAY", "GTC", "IOC"],
+            "maxOrderNotionalMicros": "40000000000",
+            "maxSymbolExposureMicros": "40000000000",
+            "maxGrossExposureMicros": "100000000000",
+            "maxNetExposureMicros": "100000000000",
+            "maxDailyTradedNotionalMicros": "200000000000",
+            "maxDailyLossMicros": "5000000000",
+            "maxDrawdownMicros": "5000000000",
+            "maxIntentAgeMs": 300000,
+            "maxBrokerStateAgeMs": 300000,
+            "maxMarketDataAgeMs": 300000,
+            "maxAdverseSlippageBps": 10,
+            "maxOpenOrders": 19,
+            "decisionTtlMs": 300000,
+            "allowedOrderTypes": ["LIMIT", "STOP_LIMIT"]
+          },
+          "authorityGenerationHash": "ea62fd26159f87130d20e722318a24db516a97ced912a1be2976d329515394d7",
+          "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "imageDigest": "6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d",
+          "strategyHash": "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67",
+          "protocolHash": "7ff80d46eff090bd8d63ccd569fabbd0b1dafcb676e6af8f6fdff4f42ff1e393",
+          "parametersHash": "4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6",
+          "promptsHash": "009c4e4d119165aa7613b786aff3d8203d3a09c3de6871e3d42a790c8ceeda47",
+          "continuationAndExitsHash": "e352d0a93e6339b9dbfda58f87f6355699ece7dce27c0dc8c2363015660f5ca0",
+          "costAllocationRuleHash": "7ddb2f3ec6e82a811b35d8ee07b4d23d7cc6c679cf3f7ff0dcfbe6ac9767b2b1",
+          "inferenceRateCard": {
+            "schemaVersion": "bayn.inference-rate-card.v1",
+            "rates": [
+              {
+                "provider": "typesafe",
+                "model": "jev-1.13.0",
+                "currency": "USD",
+                "source": "Synthetic registered tariff",
+                "effectiveFrom": "2026-10-30T12:00:00.000Z",
+                "effectiveUntil": "2026-11-28T14:32:00.000Z",
+                "inputMicrosPerMillionTokens": "42000",
+                "outputMicrosPerMillionTokens": "0"
+              }
+            ]
+          },
+          "executionModelHash": "30e44edd4f5fb0765cf7124bba742caf4a75024324c387a4f6c013cd7137de23",
+          "capitalAuthorization": {
+            "request": {
+              "schemaVersion": "bayn.research-execution-mandate.v1",
+              "grant": {
+                "_tag": "Research",
+                "planHash": "ddc73efb7d1d9f225194c25f04a9c1fc43052dc232380043cbfb69ac7af7f7fc"
+              },
+              "activation": {
+                "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "imageRepository": "registry.example.test/lab/bayn",
+                "imageDigest": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d"
+              },
+              "strategy": {
+                "name": "jev",
+                "behaviorHash": "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67",
+                "parameterHash": "4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6",
+                "parameterSchemaVersion": "bayn.jev.protocol.v37",
+                "protocolHash": "7ff80d46eff090bd8d63ccd569fabbd0b1dafcb676e6af8f6fdff4f42ff1e393"
+              },
+              "broker": {
+                "environment": "sandbox",
+                "accountId": "JEV:account",
+                "identityHash": "a819fd6a3721cd3ef6d07b59508492afcd9b0ec29c4d1cef823b49ba8671c54f"
+              },
+              "riskPolicyHash": "93c569c27a54ba921b40a666f43d7dfc8ab159e96a216723bd32cfb4661b3427",
+              "limits": {
+                "maxOpenOrders": 0,
+                "maxPositions": 0
+              },
+              "requestHash": "754be4d5b3ed7c0e3f0cc7a80f817fc028c9633cdf01dbeb63debb6f5425af4b"
+            },
+            "buildLineage": {
+              "schemaVersion": "bayn.research-capital-build-lineage.v1",
+              "requestHash": "754be4d5b3ed7c0e3f0cc7a80f817fc028c9633cdf01dbeb63debb6f5425af4b",
+              "authoredActivation": {
+                "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "imageRepository": "registry.example.test/lab/bayn",
+                "imageDigest": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d"
+              },
+              "activation": {
+                "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "imageRepository": "registry.example.test/lab/bayn",
+                "imageDigest": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d"
+              }
+            },
+            "generation": {
+              "schemaVersion": "bayn.paper-authority-generation.v3",
+              "maximum": "PAPER",
+              "previousGenerationHash": "361de5ecf5ebfc7e81003b8a261bcd703cd74455543bcd7d491cc9d01c2dcf2a",
+              "grant": {
+                "_tag": "Research",
+                "planHash": "ddc73efb7d1d9f225194c25f04a9c1fc43052dc232380043cbfb69ac7af7f7fc"
+              },
+              "activationSourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "activationImageRepository": "registry.example.test/lab/bayn",
+              "activationImageDigest": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d",
+              "strategyName": "jev",
+              "strategyBehaviorHash": "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67",
+              "strategyParameterHash": "4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6",
+              "strategyParameterSchemaVersion": "bayn.jev.protocol.v37",
+              "strategyProtocolHash": "7ff80d46eff090bd8d63ccd569fabbd0b1dafcb676e6af8f6fdff4f42ff1e393",
+              "accountId": "JEV:account",
+              "brokerIdentityHash": "a819fd6a3721cd3ef6d07b59508492afcd9b0ec29c4d1cef823b49ba8671c54f",
+              "riskPolicyHash": "93c569c27a54ba921b40a666f43d7dfc8ab159e96a216723bd32cfb4661b3427",
+              "proofPlanHash": "ddc73efb7d1d9f225194c25f04a9c1fc43052dc232380043cbfb69ac7af7f7fc",
+              "reconciliationId": "599999dbd00487c20937b3b73200b32e232f3767822f47eaabf5b80c66d88286",
+              "reconciliationContentHash": "5154db8a51721916a2bc6a237f10c072b51e325b4aba6165e3858de62dc07173",
+              "generationHash": "ea62fd26159f87130d20e722318a24db516a97ced912a1be2976d329515394d7"
+            }
+          }
+        }
+      ],
+      "obligations": {
+        "configuration": {
+          "schemaVersion": "bayn.qualification-runtime.v1",
+          "controllerPlanHash": "7f352680395bffa12f7d19a77e71fdd74642976d232bf86ca427bb6e1938e57b",
+          "cyclePollIntervalMs": 60000,
+          "operationTimeoutMs": 30000,
+          "reconciliationIntervalMs": 60000,
+          "reconciliationStaleThresholdMs": 180001,
+          "unknownMutationThresholdMs": 120000,
+          "protocol": {
+            "entrySizingPolicy": "capital-weighted-session-limit",
+            "entryFeePolicy": "broker-tier-buy-and-maximum-sell",
+            "entrySelectionPolicy": "source-anchored-proposal-judgments",
+            "entryQuestionPolicyHash": "0dd4b9c1a0b98df2878ad7fbbe3a1bac11571a50138cb1f0c883f89e3fedf9c5",
+            "maximumEntryQuoteDriftBps": 10,
+            "maximumEntryLimitSlippageBps": 10,
+            "entrySignalPolicy": "jev-only",
+            "model": "jev-1.13.0",
+            "marketProfiles": [
+              {
+                "market": "EQUITY",
+                "maximumEntrySpreadBps": 5,
+                "estimatedTakerFeeBps": 0,
+                "universeId": "torghut-core-equity-v2",
+                "universeSymbolHash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+                "universe": [
+                  "AAPL",
+                  "AMD",
+                  "AMZN",
+                  "AVGO",
+                  "COHR",
+                  "CRDO",
+                  "IWM",
+                  "LITE",
+                  "MRVL",
+                  "MU",
+                  "NVDA",
+                  "QQQ",
+                  "SMH",
+                  "SNDK",
+                  "SPY",
+                  "WDC"
+                ],
+                "candidateSymbols": [
+                  "AAPL",
+                  "AMD",
+                  "AMZN",
+                  "AVGO",
+                  "COHR",
+                  "CRDO",
+                  "IWM",
+                  "LITE",
+                  "MRVL",
+                  "MU",
+                  "NVDA",
+                  "QQQ",
+                  "SMH",
+                  "SNDK",
+                  "WDC"
+                ],
+                "feed": "iex",
+                "delayClass": "real_time_exchange_only",
+                "sourceTopics": {
+                  "bars": "torghut.bars.1m.v1",
+                  "quotes": "torghut.quotes.v1",
+                  "trades": "torghut.trades.v1"
+                },
+                "streamingInput": {
+                  "schemaVersion": "bayn.streaming-strategy-input.v1",
+                  "snapshotSchemaVersion": "bayn.streaming-market-snapshot.v1",
+                  "featureTopic": "torghut.market-features.v1",
+                  "featureSchemaVersion": "dorvud.market-feature.v1",
+                  "requiredDefinitionId": "dorvud.observed-price-window.v2",
+                  "requiredDefinitionHash": "3ae356af1526d69047af3a773606433a0da7c46c71b377c5133257c7a7ce1590",
+                  "clockSkewAllowanceMs": 5000,
+                  "bootstrapTimestampPolicy": "dorvud.producer-clock.v1",
+                  "bootstrapDeadlineMs": 300000,
+                  "freshness": "exact-completed-window-and-matching-raw-inputs"
+                }
+              },
+              {
+                "market": "CRYPTO",
+                "maximumEntrySpreadBps": 25,
+                "estimatedTakerFeeBps": 25,
+                "universeId": "alpaca.crypto.us.v1",
+                "universeSymbolHash": "67d925f973bcc80b5fccaf83a1ad71e3f72b85cfeefcea0ed1b93dfacd83091b",
+                "universe": ["BTC/USD", "ETH/USD", "SOL/USD"],
+                "candidateSymbols": ["BTC/USD", "ETH/USD", "SOL/USD"],
+                "feed": "us",
+                "benchmarkEvidencePolicy": "bayn.benchmark-evidence.completed-bars.v1",
+                "delayClass": "real_time_crypto",
+                "sourceTopics": {
+                  "bars": "bayn.market-data.crypto.v1",
+                  "quotes": "bayn.market-data.crypto.v1",
+                  "trades": "bayn.market-data.crypto.v1"
+                },
+                "streamingInput": {
+                  "featureTopic": "bayn.market-data.crypto.features.v1",
+                  "requiredDefinitionId": "dorvud.crypto-continuous-1m.v2",
+                  "requiredDefinitionHash": "eb2568eb1debf5a0897afe76a6c8e9566d9d6730227dbf0632a37afba852ba7c"
+                }
+              }
+            ],
+            "universe": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "BTC/USD",
+              "COHR",
+              "CRDO",
+              "ETH/USD",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SOL/USD",
+              "SPY",
+              "WDC"
+            ],
+            "candidateSymbols": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "BTC/USD",
+              "COHR",
+              "CRDO",
+              "ETH/USD",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SOL/USD",
+              "WDC"
+            ],
+            "positionPolicy": "long-only",
+            "decisionDelaySeconds": 2,
+            "maximumDecisionLagMs": 60000,
+            "maximumQuoteAgeMs": 10000,
+            "candidateEvidencePolicy": "bayn.candidate-evidence.market-quotes.v2",
+            "warmupMinutesAfterOpen": 0,
+            "entryCutoffMinutesBeforeClose": 5,
+            "flattenBeforeCloseMinutes": 5,
+            "hardFlatBeforeCloseMinutes": 0,
+            "maximumPositions": 1,
+            "maximumGrossWeight": 0.2,
+            "maximumSymbolWeight": 0.2,
+            "inferenceValidityMs": 10000,
+            "horizonMinutes": 15,
+            "maximumHoldingMinutes": 15,
+            "allocation": "equal-weight",
+            "executionModel": {
+              "schemaVersion": "bayn.execution-model.v6",
+              "venue": "alpaca-cash-spot",
+              "assetClass": "cash-spot",
+              "precision": {
+                "quantityIncrementAtoms": "1",
+                "priceIncrementMicros": "100",
+                "minimumBuyNotionalMicros": "1000000"
+              },
+              "priceImpact": {
+                "halfSpreadBps": 2.5,
+                "slippageBps": 2.5
+              },
+              "fees": {
+                "scheduleVersion": "alpaca-brokerage-effective-dated-2026-10-12",
+                "commissionBps": 0,
+                "secSellBps": 0.206,
+                "tafSellPerShareMicros": "195",
+                "tafMaximumPerOrderMicros": "9790000",
+                "catPerShareMicros": "3",
+                "aggregation": "session-by-fee-type",
+                "roundingIncrementMicros": "10000"
+              },
+              "cash": {
+                "annualYieldBps": 0,
+                "dayCount": "actual-365",
+                "accrual": "session-open"
+              },
+              "partialFills": {
+                "policy": "deterministic-hash",
+                "probabilityPpm": 100000,
+                "filledFractionPpm": 500000,
+                "remainder": "cancel"
+              },
+              "doubleCostMultiplier": 2,
+              "order": {
+                "type": "limit",
+                "timeInForce": "asset-session",
+                "extendedHours": "equity-data-session",
+                "planAfter": "verified-intraday-window",
+                "submitAfter": "plan-committed",
+                "submitBefore": "intraday-entry-cutoff",
+                "planningPriceReference": "verified-adverse-top-of-book",
+                "planningBrokerStateReference": "reconciled-pre-plan-broker-state",
+                "fillPriceReference": "limit-or-better",
+                "buyingPowerPolicy": "pre-submit-cash-without-sell-proceeds",
+                "warmupAfterOpenMs": 0,
+                "submissionCutoffBeforeCloseMs": 300000
+              }
+            },
+            "inputDefinition": "bayn.jev-entry-state.v23",
+            "schemaVersion": "bayn.jev.protocol.v37",
+            "lookbackMinutes": {
+              "equity": 30,
+              "crypto": 120
+            }
+          },
+          "entryMarkets": ["EQUITY"]
+        },
+        "decisionScheduleHash": "61b574d79ff48ff86b16349f97fbd273aa11fee7f31e24a506b7d3bcb5010a30",
+        "reconciliationScheduleHash": "b40856be0c90ffd826224f35bbaa7467cf1d759526159a374e2204674f2e007b",
+        "decisionIntervalMs": 60000,
+        "decisionWindowMs": 60000,
+        "reconciliationIntervalMs": 60000,
+        "reconciliationFreshnessMs": 180001,
+        "mutationDeadlineMs": 30000,
+        "recoveryDeadlineMs": 120000,
+        "runtimeConfigurationHash": "3b41af9492fd8d17dfb6022294e55377c681ee4a5de16e44da68290ec3bb4cb5"
+      }
+    },
+    "sourceCutHash": "4a22b5dc47f56eadcd6f458298ae780c9dbc23a75f9041ecdd6be840cc1c25f8",
+    "safety": {
+      "schemaVersion": "bayn.operational-safety-audit.v1",
+      "coverage": "COMPLETE",
+      "registrationHash": "798905a53b45350690627b0d3240d432293d95211c4034e3e321cc4b8aca1186",
+      "asOf": "2026-11-04T00:00:00.000Z",
+      "violations": [],
+      "auditEvidenceHash": "e944d6883554dee9ce5c94b1e9644d9c07b8b78b9712833155560a137aa0ffde",
+      "sourceHash": "c5668198fd7f64d66ffab81abc6e0ede74920c9beb43f81533a080453acf815d"
+    }
+  },
+  "cut": {
+    "schemaVersion": "bayn.system-source-cut.v4",
+    "registrationHash": "798905a53b45350690627b0d3240d432293d95211c4034e3e321cc4b8aca1186",
+    "asOf": "2026-11-04T00:00:00.000Z",
+    "runtimeConfigurationHash": "3b41af9492fd8d17dfb6022294e55377c681ee4a5de16e44da68290ec3bb4cb5",
+    "financial": [],
+    "inference": [],
+    "inferenceLedgerEvidenceHash": "cea1f92cee5ee8fb9ce656bf82bc21ea43ecda3a551787bb264134d1f2de3d51",
+    "protectionIntents": [],
+    "decisions": [],
+    "batches": [],
+    "decisionAdmissions": [],
+    "mutations": [],
+    "fills": [],
+    "orders": [],
+    "accountMarks": [],
+    "controllerPasses": [],
+    "durableObservations": [],
+    "sourceMaterial": {},
+    "sourceMaterialHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  "verifiedSourceHashes": [
+    "138eb40b2f482e8eec040dd4c9ab640210da62a3ba48f41b79a39833b07a47b8",
+    "7b44ac058cb89340d4607ced32458dc9507190035f7d5ffb3431570d376dfe14",
+    "c5668198fd7f64d66ffab81abc6e0ede74920c9beb43f81533a080453acf815d",
+    "e944d6883554dee9ce5c94b1e9644d9c07b8b78b9712833155560a137aa0ffde"
+  ]
+}

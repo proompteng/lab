@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from tests.strategy_runtime.support import (
-    Decimal,
-    TestCase,
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.research_sleeves import (
     _rank_thresholds,
     evaluate_mean_reversion_exhaustion_short,
 )

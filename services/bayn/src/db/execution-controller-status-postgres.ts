@@ -2,7 +2,10 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 
+import { makeExecutionCalendarObservation, makeIntradayCycleWindow } from '../cycle/construction'
+import { firstIntradayObservationAtMs, selectIntradayExecutionSession } from '../cycle/runner/calendar-decisions'
 import {
+  ExpectedExecutionSessionSchema,
   ExecutionControllerOutcome,
   ExecutionControllerStatusSchema,
   ExecutionControllerStatusStore,
@@ -16,6 +19,7 @@ import {
 import { ExecutionControllerKeySchema } from '../execution/controller-key'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { utcInstantFromEpochMillis } from '../time'
 
 const StatusRow = Schema.Struct({
   controller_key: ExecutionControllerKeySchema,
@@ -29,6 +33,7 @@ const StatusRow = Schema.Struct({
   completed_at: Schema.NullOr(UtcInstantSchema),
   next_due_at: Schema.NullOr(UtcInstantSchema),
   last_pass: Schema.NullOr(Schema.Unknown),
+  expected_session: Schema.NullOr(ExpectedExecutionSessionSchema),
 })
 const StatusRows = Schema.Array(StatusRow).check(Schema.isMaxLength(1))
 
@@ -89,6 +94,7 @@ const statusFromRow = (
     active: row.active,
     epoch,
     nextSequence,
+    ...(row.expected_session === null ? {} : { expectedSession: row.expected_session }),
     ...(noCompletion
       ? {}
       : {
@@ -121,7 +127,8 @@ const selectStatus = (sql: PgClient.PgClient, controllerKey: string) =>
         WHEN next_due_at IS NULL THEN NULL
         ELSE to_char(next_due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       END AS next_due_at,
-      last_pass
+      last_pass,
+      expected_session
     FROM execution_controller_status
     WHERE controller_key = ${controllerKey}
   `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(StatusRows, strictParseOptions)))
@@ -173,6 +180,25 @@ const statusIsNewer = (left: ExecutionControllerStatus, right: ExecutionControll
     (left.nextSequence > right.nextSequence ||
       (left.nextSequence === right.nextSequence && left.active && !right.active)))
 
+const sessionFromPass = (pass: ExecutionControllerStatusWithCompletion['lastPass']) => {
+  const evidence = pass?.result === 'SUCCESS' ? pass.closedEntryWindow : undefined
+  if (evidence === undefined) return undefined
+  const { calendar, executionPolicy, evaluatedAt } = evidence
+  const session = selectIntradayExecutionSession(calendar, executionPolicy, evaluatedAt)
+  if (session === undefined) return null
+  const window = Result.flatMap(
+    makeExecutionCalendarObservation({ schemaVersion: calendar.schemaVersion, source: calendar.source, ...session }),
+    (observation) => makeIntradayCycleWindow(observation, executionPolicy),
+  )
+  if (Result.isFailure(window)) return null
+  return {
+    date: session.date,
+    submissionOpenAt: window.success.submissionOpenAt,
+    firstObservationAt: utcInstantFromEpochMillis(firstIntradayObservationAtMs(session, executionPolicy)),
+    submissionCutoffAt: window.success.submissionCutoffAt,
+  }
+}
+
 const project = (
   sql: PgClient.PgClient,
   candidate: ExecutionControllerStatus,
@@ -184,6 +210,7 @@ const project = (
     Effect.flatMap((status) => {
       const completion = executionControllerStatusHasCompletion(status) ? status : undefined
       const lastPass = completion?.lastPass === undefined ? null : sql.json(completion.lastPass)
+      const expectedSession = sessionFromPass(completion?.lastPass)
       return sql<Record<string, unknown>>`
         INSERT INTO execution_controller_status (
           controller_key,
@@ -196,7 +223,8 @@ const project = (
           last_receipt_hash,
           completed_at,
           next_due_at,
-          last_pass
+          last_pass,
+          expected_session
         ) VALUES (
           ${status.controllerKey},
           ${status.planHash},
@@ -208,7 +236,8 @@ const project = (
           ${completion?.lastReceiptHash ?? null},
           ${completion?.completedAt ?? null},
           ${completion?.nextDueAt ?? null},
-          ${lastPass}
+          ${lastPass},
+          ${expectedSession == null ? null : sql.json(expectedSession)}
         )
         ON CONFLICT (controller_key) DO UPDATE SET
           active = EXCLUDED.active,
@@ -221,6 +250,9 @@ const project = (
           completed_at = EXCLUDED.completed_at,
           next_due_at = EXCLUDED.next_due_at,
           last_pass = EXCLUDED.last_pass,
+          expected_session = CASE
+            WHEN EXCLUDED.plan_hash <> execution_controller_status.plan_hash OR ${expectedSession !== undefined}
+            THEN EXCLUDED.expected_session ELSE execution_controller_status.expected_session END,
           updated_at = clock_timestamp()
         WHERE EXCLUDED.epoch > execution_controller_status.epoch
            OR (
@@ -233,11 +265,23 @@ const project = (
              AND execution_controller_status.active = false
              AND EXCLUDED.active = true
            )
-        RETURNING controller_key
+        RETURNING expected_session
       `.pipe(
         Effect.flatMap((rows) => {
-          if (rows.length > 0) {
-            return Effect.succeed<ExecutionControllerStatusProjection>({ _tag: 'Applied', status })
+          const row = rows[0]
+          if (row !== undefined) {
+            return Schema.decodeUnknownEffect(
+              Schema.NullOr(ExpectedExecutionSessionSchema),
+              strictParseOptions,
+            )(row['expected_session']).pipe(
+              Effect.map(
+                (expectedSession): ExecutionControllerStatusProjection => ({
+                  _tag: 'Applied',
+                  status: expectedSession === null ? status : { ...status, expectedSession },
+                }),
+              ),
+              Effect.mapError((cause) => classifyCause('project', cause)),
+            )
           }
           return read(sql, status.controllerKey).pipe(
             Effect.flatMap((stored) => {
@@ -258,12 +302,11 @@ const project = (
         }),
       )
     }),
-    // A fresh statement observes the preceding commit; the SQL guard still excludes an ambient transaction's own writes.
+    // An unchanged update witnesses the preceding commit without retaining another copy of the pass.
     Effect.tap((projection) =>
       projection._tag === 'Stale' || !executionControllerStatusHasCompletion(projection.status)
         ? Effect.void
-        : sql`INSERT INTO execution_controller_observations(controller_key, status)
-          SELECT controller_key, to_jsonb(current_status) FROM execution_controller_status current_status
+        : sql`UPDATE execution_controller_status SET last_receipt_hash=last_receipt_hash
           WHERE controller_key=${projection.status.controllerKey} AND plan_hash=${projection.status.planHash}
             AND epoch=${projection.status.epoch} AND next_sequence=${projection.status.nextSequence}
             AND last_receipt_hash=${projection.status.lastReceiptHash}`.pipe(Effect.asVoid),

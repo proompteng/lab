@@ -1,25 +1,19 @@
 name: signal-publisher
 
 on:
-  pull_request:
-    paths:
-      - 'services/signal-publisher/**'
-      - 'packages/scripts/src/signal/**'
-      - 'argocd/applications/torghut/clickhouse/**'
-      - 'nix/images/signal-publisher.nix'
-      - 'flake.nix'
-      - 'bun.lock'
-      - 'package.json'
-      - '.github/workflows/signal-publisher-*.yml'
+  workflow_call:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: signal-publisher-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   pr-checks:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/common-monorepo.yml
     with:
       bun-version: 1.4.2
@@ -30,4 +24,3 @@ jobs:
       oxlint-type-command: bun run --cwd services/signal-publisher lint:oxlint:type
       test-command: bun run --cwd services/signal-publisher tsc && bun run --cwd services/signal-publisher test && bun test packages/scripts/src/signal
       build-command: bun run --cwd services/signal-publisher build
-    secrets: inherit

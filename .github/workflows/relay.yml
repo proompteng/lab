@@ -12,10 +12,13 @@ on:
       - 'services/ofz/**'
       - 'proto/proompteng/authz/**'
       - 'proto/proompteng/relay/**'
+      - '.github/workflows/relay.yml'
       - 'argocd/applications/relay/**'
       - 'nix/packages/relay.nix'
       - 'nix/images/relay.nix'
+      - 'nix/images/ofz-fixture-tools.nix'
       - 'nix/images/agentrun-tools.nix'
+  workflow_call:
   push:
     branches: [main]
     paths:

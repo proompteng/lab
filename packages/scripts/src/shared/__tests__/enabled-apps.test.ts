@@ -430,8 +430,6 @@ describe('enabled app inventory', () => {
     expect(tengriOperations).toContain('Measure at least 50 fresh prepared creations and 50 cold-cache resumes')
     expect(tengriOperations).not.toContain('`Manual OCI Mirror`')
     expect(tengriImagesWorkflow).toContain('TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri')
-    expect(tengriImagesWorkflow).toContain('runner: arc-amd64')
-    expect(tengriImagesWorkflow).toContain('runner: arc-arm64')
     expect(tengriImagesWorkflow).toContain('docker buildx imagetools create')
     expect(tengriImagesWorkflow).toContain('cosign sign --yes "${reference}"')
   })
@@ -460,11 +458,11 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.6.2/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.6.3/manifests/ha/install.yaml')
     expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
-    expect(applicationSetsReadme.split('argo-cd/v3.6.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme.split('argo-cd/v3.6.3/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
     expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
-    expect(argoCdReadme).toContain('## Argo CD v3.6.2 upgrade')
+    expect(argoCdReadme).toContain('## Argo CD v3.6.3 upgrade')
     expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
     expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
     expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
@@ -509,7 +507,7 @@ describe('enabled app inventory', () => {
       'sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189',
     )
     expect(natsKustomization).toContain('newTag: v1.22.0')
-    expect(observabilityKustomization).toContain('version: 8.4.2')
+    expect(observabilityKustomization).toContain('version: 9.1.0')
   })
 
   it('pins the enabled service image upgrade wave', () => {
@@ -519,10 +517,10 @@ describe('enabled app inventory', () => {
       'digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d',
+      'cloudflare/cloudflared:2026.11.2@sha256:55c7e3e8d89d5e8d20b75a82f3602cbf98e06db406e73e282073cfdc5a9a3af6',
     )
     expect(karapaceManifest).toContain(
-      'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
+      'ghcr.io/aiven-open/karapace:6.2.4@sha256:005eda40272a09f34e60605ae40b1c205c0a5119164b8a090a51ad7f939f79f3',
     )
     expect(karapaceManifest).toContain('app.proompteng.ai/schema-storage-generation: compact-v1')
   })
@@ -597,15 +595,15 @@ describe('enabled app inventory', () => {
     expect(openWebUIValues.image?.tag).toBe('v0.13.4')
   })
 
-  it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
+  it('pins both Saigak Ollama containers to the immutable ROCm image', () => {
     const podSpec = saigakStatefulSet.spec?.template?.spec
     const ollamaImages = [...(podSpec?.initContainers ?? []), ...(podSpec?.containers ?? [])]
       .filter((container) => container.name === 'model-init' || container.name === 'ollama')
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
-      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
+      'ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd',
+      'ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd',
     ])
   })
 
@@ -613,7 +611,7 @@ describe('enabled app inventory', () => {
     const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
 
     expect(vllm?.image).toBe(
-      'vllm/vllm-openai:v0.29.0-cu129@sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
+      'vllm/vllm-openai:v0.34.0@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1',
     )
   })
 
@@ -653,7 +651,7 @@ describe('enabled app inventory', () => {
   it('pins both custom NVIDIA device plugins to the immutable security release', () => {
     for (const manifest of nvidiaDevicePluginManifests) {
       expect(manifest).toContain(
-        'nvcr.io/nvidia/k8s-device-plugin:v0.20.0@sha256:a61ba9fd8efb82f3a79f877f7580e02c1e8e7593f62473644bc9c79e315c3312',
+        'nvcr.io/nvidia/k8s-device-plugin:v0.20.2@sha256:7673383d44a84bece724d9ca8feeadf4eee69cd46475fdff614cbbca6732d463',
       )
       expect(manifest).not.toContain('nvcr.io/nvidia/k8s-device-plugin:v0.19.0')
     }
@@ -816,7 +814,7 @@ describe('enabled app inventory', () => {
       repoImages: [
         'registry.ide-newton.ts.net/lab/buzz@sha256:16d08bf8e2772a93924de1a49746a034d3410387d6095b214ed2e798aa7d6cfb',
       ],
-      workflowPaths: ['.github/workflows/buzz-relay-build-push.yml'],
+      workflowPaths: ['.github/workflows/buzz-relay-build-push.yml', '.github/workflows/buzz-relay-cache.yml'],
     })
     expect(entry('buzz').deferredReason).toContain('block/buzz')
   })

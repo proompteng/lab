@@ -1,0 +1,92 @@
+name: Buzz Relay Compiler Cache
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'third_party/buzz/Dockerfile'
+      - 'third_party/buzz/ceph-rgw.patch'
+      - '.github/workflows/buzz-relay-build-push.yml'
+      - '.github/workflows/buzz-relay-cache.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: buzz-compiler-cache
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read the pinned upstream revision and cache destination
+        id: inputs
+        shell: bash
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          release=.github/workflows/buzz-relay-build-push.yml
+          revision=$(yq -er '.env.UPSTREAM_REVISION' "$release")
+          repository=$(yq -er '.env.IMAGE_REPOSITORY' "$release")
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$repository" == 'registry.ide-newton.ts.net/lab/buzz' ]]
+          printf 'revision=%s\ncache_reference=%s:cache-%s\n' "$revision" "$repository" "$ARCHITECTURE" >> "$GITHUB_OUTPUT"
+
+      - name: Check out pinned Buzz source
+        uses: actions/checkout@v5
+        with:
+          repository: block/buzz
+          ref: ${{ steps.inputs.outputs.revision }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Verify and apply compatibility patch
+        shell: bash
+        env:
+          UPSTREAM_REVISION: ${{ steps.inputs.outputs.revision }}
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream rev-parse HEAD)" = "$UPSTREAM_REVISION"
+          git -C upstream apply --check ../third_party/buzz/ceph-rgw.patch
+          git -C upstream apply ../third_party/buzz/ceph-rgw.patch
+          git -C upstream diff --check
+
+      - uses: ./.github/actions/setup-buildkit
+
+      - name: Export the compiled stage
+        uses: docker/build-push-action@v6
+        with:
+          context: upstream
+          file: third_party/buzz/Dockerfile
+          target: builder
+          ulimit: nofile=65536:65536
+          platforms: linux/${{ matrix.architecture }}
+          push: false
+          cache-from: type=registry,ref=${{ steps.inputs.outputs.cache_reference }}
+          cache-to: type=local,dest=${{ runner.temp }}/buzz-compiled-cache,mode=max
+
+      - name: Publish the compiled cache and verify its digest
+        shell: bash
+        env:
+          CACHE_REFERENCE: ${{ steps.inputs.outputs.cache_reference }}
+        run: |
+          set -euo pipefail
+          cache_path="$RUNNER_TEMP/buzz-compiled-cache"
+          digest=$(jq -er '.manifests | select(length == 1) | .[0].digest | select(test("^sha256:[a-f0-9]{64}$"))' "$cache_path/index.json")
+          du -sh "$cache_path"
+          crane push "$cache_path" "$CACHE_REFERENCE"
+          test "$(crane digest "$CACHE_REFERENCE")" = "$digest"

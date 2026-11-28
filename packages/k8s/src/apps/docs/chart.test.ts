@@ -33,6 +33,7 @@ describe('DocsChart', () => {
           namespace: 'docs',
         },
         spec: {
+          revisionHistoryLimit: 2,
           strategy: {
             type: 'RollingUpdate',
             rollingUpdate: {

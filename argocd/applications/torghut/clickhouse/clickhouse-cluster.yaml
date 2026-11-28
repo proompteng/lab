@@ -129,6 +129,15 @@ spec:
       notebook/result_overflow_mode: throw
       notebook/max_memory_usage: 2147483648
       notebook/max_threads: 4
+      auto_ontology_ro/readonly: 1
+      auto_ontology_ro/max_execution_time: 30
+      auto_ontology_ro/max_result_rows: 50000
+      auto_ontology_ro/result_overflow_mode: break
+      auto_ontology_ro/max_memory_usage: 2147483648
+      # Match the connector's fixed result settings and let probes shorten, never remove, the deadline.
+      auto_ontology_ro/constraints/max_execution_time/changeable_in_readonly: 1
+      auto_ontology_ro/constraints/max_execution_time/min: 1
+      auto_ontology_ro/constraints/max_execution_time/max: 30
     zookeeper:
       nodes:
         - host: keeper-torghut-keeper
@@ -213,6 +222,7 @@ spec:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16
+      # Enable torghut_audit_ro here in the same commit that seals torghut/torghut-audit-ro-clickhouse.
     clusters:
       - name: default
         layout:
@@ -237,7 +247,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: clickhouse
-              image: altinity/clickhouse-server:26.3.16.10001.altinitystable@sha256:8526a7742e6ef707dee68107876b18d45570b0448f284d3c785eb2d2e4417a5e
+              image: altinity/clickhouse-server:26.3.60.10002.altinitystable@sha256:53e81c410a22ab052a4d967adc2886b547c91e67370e2d02f5c2ea1177d4d3aa
               resources:
                 requests:
                   cpu: 1

@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agents-workspace-cache
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agents-workspace-cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agents-workspace-cache
+    spec:
+      automountServiceAccountToken: false
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - turin
+                      - talos-192-168-1-85
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - talos-192-168-1-194
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: refresh
+          # Kustomize substitutes the exact runner image selected by Kargo.
+          image: agents-codex-runner
+          imagePullPolicy: IfNotPresent
+          command: [bash, -ec]
+          args:
+            - |
+              while :; do
+                started=$SECONDS
+                timeout -k 10s 12m bash /etc/workspace-cache/refresh.sh /var/cache/agents-shared ||
+                  echo "workspace cache refresh failed; retaining last published snapshots" >&2
+                remaining=$((300 - (SECONDS - started)))
+                if ((remaining > 0)); then sleep "$remaining"; fi
+              done
+          env:
+            - name: HOME
+              value: /tmp
+            - name: GIT_TERMINAL_PROMPT
+              value: "0"
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -ec
+                - |
+                  root=/var/cache/agents-shared
+                  test -f "$root/bun-cache/.key"
+                  refreshed=$(stat -c %Y "$root/git/proompteng/lab.git/.refreshed")
+                  test "$(($(date +%s) - refreshed))" -lt 900
+            periodSeconds: 30
+          volumeMounts:
+            - name: workspace-cache
+              mountPath: /var/cache/agents-shared
+            - name: refresh-script
+              mountPath: /etc/workspace-cache
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: workspace-cache
+          hostPath:
+            path: /var/lib/agents-workspace-cache
+            type: DirectoryOrCreate
+        - name: refresh-script
+          configMap:
+            name: agents-workspace-cache-refresh
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

@@ -22,6 +22,18 @@ const arcKubeModeServiceAccount = readFileSync(
 )
 
 describe('torghut post-deploy verifier workflow', () => {
+  it('checks current telemetry after pipeline and market freshness without changing their budgets', () => {
+    expect(workflow).toContain('echo "TORGHUT_VERIFIED_REVISION=${REVISION}" >> "${GITHUB_ENV}"')
+    expect(workflow).toContain('run: bun run packages/scripts/src/torghut/verify-streaming-telemetry.ts')
+    expect(workflow).toContain('timeout-minutes: 6')
+    expect(workflow.indexOf('      - name: Verify current streaming telemetry')).toBeGreaterThan(
+      workflow.indexOf('      - name: Verify market-data freshness'),
+    )
+    expect(workflow).toContain('ARGO_SYNC_TIMEOUT_SECONDS=1800')
+    expect(workflow).toContain('for pipeline_attempt in $(seq 1 60)')
+    expect(workflow).toContain('TA_FRESHNESS_ATTEMPTS=4')
+  })
+
   it('observes the Kargo promotion and keeps Argo revision verification read-only', () => {
     const pushTrigger = workflow.slice(workflow.indexOf('  push:'), workflow.indexOf('  workflow_dispatch:'))
     expect(pushTrigger).toContain('- kargo/torghut')
@@ -33,14 +45,15 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('kubectl patch application')
     expect(workflow).not.toContain('kubectl annotate application')
     expect(workflow).not.toContain('contents: write')
-    expect(workflow).toContain('ARGO_SYNC_TIMEOUT_SECONDS=1800')
     expect(workflow).toContain('dump_argocd_app_diagnostics "${app}"')
   })
 
   it('checks retained deployments and both Flink jobs without contacting retired APIs', () => {
-    expect(workflow).toContain(
-      'for deployment in \\\n            torghut-ta \\\n            market-data-archive \\\n            torghut-ws; do',
+    const commands = workflow.replaceAll('\\\n', ' ').replace(/\s+/g, ' ')
+    expect(commands).toContain(
+      'for deployment in torghut-ta market-data-archive; do kubectl rollout status "deployment/${deployment}" -n torghut',
     )
+    expect(commands).toContain('kubectl rollout status deployment/torghut-ws -n bayn --timeout=10m')
     expect(workflow).toContain('for pipeline in torghut-ta market-data-archive; do')
     expect(workflow).toContain('kubectl rollout status "deployment/${deployment}"')
     expect(workflow).not.toContain('wait_knative_service_ready')
@@ -143,6 +156,8 @@ describe('torghut post-deploy verifier workflow', () => {
             '-c',
             `
           sleep() { :; }
+          # Static responses cannot change between polls. Exercise the first and final attempts.
+          seq() { printf '%s\\n' "$1" "$2"; }
           kubectl() {
             if [ "$TEST_EXIT_CODE" != '0' ]; then return "$TEST_EXIT_CODE"; fi
             case "$2" in

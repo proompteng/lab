@@ -12,47 +12,70 @@ let
   frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
   imageName = if research then "bayn-research" else "bayn";
   imageRepository = "registry.ide-newton.ts.net/lab/${imageName}";
-  runtimeCommands = if research then [
-    "restate-research-server"
-    "inference-cost-command"
-    "forward-performance-command"
-    "forward-performance-verification-worker"
-    "system-assessment-command"
-    "research-command"
-    "jev-evaluation-command"
+  runtimeEntrypoints = if research then [
+    "src/restate/restate-research-server.ts"
+    "src/inference-cost-command.ts"
+    "src/forward-performance-command.ts"
+    "src/forward-performance-verification-worker.ts"
+    "src/system-assessment-command.ts"
+    "src/research-command.ts"
+    "src/jev-evaluation-command.ts"
+    "src/native-arrival-export-command.ts"
+    "src/jev-study-export-command.ts"
+    "src/webull-research-command.ts"
+    "tools/equity-edge-screen.ts"
+    "tools/run-macro-etf-core-rebalance.ts"
+    "tools/run-macro-canary-etf-rebalance.ts"
+    "tools/bayn-daily-scorecard.ts"
+  ] else [
+    "src/decision-construction-worker.ts"
+    "src/index.ts"
+    "src/forward-performance-command.ts"
+    "src/forward-performance-verification-worker.ts"
+    "src/control-opening-command.ts"
+    "src/restate/restate-execution-server.ts"
+    "src/restate/restate-execution-activate.ts"
+    "src/market-data/streaming/market-projection-worker.ts"
+    "src/inference-cost-command.ts"
+    "src/streaming-diagnostics-command.ts"
+    "src/glitchtip-smoke-command.ts"
+    "src/valkey-command.ts"
+  ];
+  runtimeCommands = map (entrypoint: lib.removeSuffix ".ts" (builtins.baseNameOf entrypoint)) runtimeEntrypoints ++ [
+    # Qualification verifies the replay executable against the actual trading image digest.
     "backtest-command"
+  ] ++ lib.optionals research [
+    "control-study-command"
+    "frozen-control-command"
+  ];
+  bundledEntrypoints = runtimeEntrypoints ++ [ "src/verify-build-contract.ts" ];
+  helpCommands = builtins.filter (command: builtins.elem command runtimeCommands) [
+    "backtest-command"
+    "research-command"
+    "system-assessment-command"
+    "jev-evaluation-command"
     "frozen-control-command"
     "control-study-command"
     "native-arrival-export-command"
     "jev-study-export-command"
-    "webull-research-command"
     "equity-edge-screen"
-  ] else [
-    "decision-construction-worker"
-    "index"
-    "forward-performance-command"
-    "forward-performance-verification-worker"
+    "run-macro-etf-core-rebalance"
+    "run-macro-canary-etf-rebalance"
+    "bayn-daily-scorecard"
+    "webull-research-command"
     "control-opening-command"
-    "restate-execution-server"
-    "restate-execution-activate"
-    "market-projection-worker"
-    "inference-cost-command"
-    "streaming-diagnostics-command"
-    "glitchtip-smoke-command"
     "valkey-command"
-    # Qualification verifies the replay executable against the actual trading image digest.
-    "backtest-command"
   ];
-  # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
-  # Canonical hash of the compiled bayn.jev.protocol.v41 document.
-  strategyParameterHash = "004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696";
+  # SHA-256 identity for bayn.intraday-alpha.behavior.v4, verified by the production executable.
+  strategyBehaviorHash = "35534271edfc916e5a2801b31cfb3fc4b3d2640209666fc22c831401040fb58b";
+  # Canonical hash of the compiled bayn.intraday-alpha-policy.v3 document.
+  strategyParameterHash = "40d0643d63c368dd207d0f6a55b3feadb673dbd74b7c8b82bd7ee8d52e256eb5";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9";
-  # Canonical uncapped sandbox policy for the build-contract sentinel, without embedding a broker account identity.
+  strategyProtocolHash = "91fab8597a5a70b8aed72c5d709040a775f4718905293bc2f438ec5124a4d100";
+  # Canonical pure ETF sandbox policy (bayn.execution-risk-policy.v6) for the build-contract sentinel.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
-  executionRiskPolicyHash = "817efba3d61cf0c3845999988cf4507e015a60ccf3d13c7f840dac366173007e";
+  executionRiskPolicyHash = "c2aba157b7956d1f5a739928c7d6b8de3973de6868a25760fbc528d7aa1a8b1c";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -162,39 +185,29 @@ let
     "bun --cwd=services/bayn run tsc"
     # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
     "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
-    "bun --cwd=services/bayn run build ${buildDefines}"
-    "bun build services/bayn/src/jev-study-export-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=services/bayn/dist ${buildDefines}"
-    "bun build services/bayn/tools/equity-edge-screen.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=services/bayn/dist ${buildDefines}"
+    "bun --cwd=services/bayn build ${lib.concatStringsSep " " bundledEntrypoints} --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
+  ] ++ lib.optionals research [
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
+  ] ++ [
     "node services/bayn/dist/verify-build-contract.js"
-    "node --check services/bayn/dist/market-projection-worker.js"
-    "node --check services/bayn/dist/decision-construction-worker.js"
     "node --check services/bayn/dist/forward-performance-verification-worker.js"
-    "node services/bayn/dist/research-command.js --help"
-    "node services/bayn/dist/system-assessment-command.js --help"
-    "node services/bayn/dist/jev-evaluation-command.js --help"
-    "node services/bayn/dist/backtest-command.js --help"
-    "node services/bayn/dist/frozen-control-command.js --help"
-    "node services/bayn/dist/control-study-command.js --help"
-    "node services/bayn/dist/native-arrival-export-command.js --help"
-    "node services/bayn/dist/jev-study-export-command.js --help"
-    "node services/bayn/dist/equity-edge-screen.js --help"
-    "node services/bayn/dist/control-opening-command.js --help"
-    "node services/bayn/dist/webull-research-command.js --help"
-    "node services/bayn/dist/valkey-command.js --help"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-research-server.js"
-    "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
-    "grep -F -- ${lib.escapeShellArg strategyParameterHash} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyName} services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg strategyProtocolHash} services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg executionRiskPolicyHash} services/bayn/dist/verify-build-contract.js"
     "rm services/bayn/dist/verify-build-contract.js"
-  ];
+  ] ++ map (command: "node services/bayn/dist/${command}.js --help") helpCommands ++ (if research then [
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-research-server.js"
+  ] else [
+    "node --check services/bayn/dist/market-projection-worker.js"
+    "node --check services/bayn/dist/decision-construction-worker.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
+    "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
+    "grep -F -- ${lib.escapeShellArg strategyParameterHash} services/bayn/dist/index.js"
+  ]);
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
     for command in ${lib.concatStringsSep " " runtimeCommands}; do

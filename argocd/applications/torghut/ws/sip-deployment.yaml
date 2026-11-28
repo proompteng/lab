@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-ws-sip
+  namespace: bayn
+  labels:
+    app: torghut-ws-sip
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  # Activate only after the paid WebSocket preflight in docs/bayn/consolidated-sip-shadow-rollout.md.
+  replicas: 0
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: torghut-ws-sip
+  template:
+    metadata:
+      labels:
+        app: torghut-ws-sip
+        app.kubernetes.io/name: torghut-ws-sip
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: torghut-ws-sip
+          # The torghut Kargo Stage overrides this repository for both WebSocket Deployments.
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:4727d0017a6d9f425b1043014d1e29cbe65d08527c56401de73656fbdc14d0fd
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: torghut-ws-sip-config
+          env:
+            - name: ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: key-id
+            - name: ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: secret-key
+            - name: KAFKA_SASL_USER
+              value: torghut-ws
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+            - name: JAVA_TOOL_OPTIONS
+              value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=25.0 -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError
+            - name: DORVUD_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: dorvud-glitchtip
+                  key: DORVUD_GLITCHTIP_DSN
+            - name: DORVUD_ERROR_SERVICE
+              value: torghut-ws-sip
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
