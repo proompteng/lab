@@ -93,7 +93,6 @@ const SkipMaterial = Schema.Struct({
   recordedAt: UtcInstantSchema,
 })
 export const StagedSkipReceiptSchema = Schema.Struct({ ...SkipMaterial.fields, skipHash: Sha256Schema })
-export type StagedSkipReceipt = typeof StagedSkipReceiptSchema.Type
 export const StagedCheckpointSchema = Schema.Struct({
   claims: Schema.Array(StagedDispatchClaimSchema).check(Schema.isMaxLength(2)),
   terminals: Schema.Array(StagedTerminalReceiptSchema).check(Schema.isMaxLength(2)),

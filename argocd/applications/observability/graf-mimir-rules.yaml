@@ -822,7 +822,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI observability metrics are unavailable
               description: Alloy cannot scrape the central CI collector. Existing build runners are independent of this collector.
@@ -836,7 +835,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI timing collection is stale
               description: No successful GitHub poll has completed for at least five minutes. Check API authorization, rate-limit headroom and collector logs.
@@ -849,7 +847,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI historical rerun discovery is stale
               description: Historical run-index discovery has made no progress for 15 minutes. Check API errors, rate-limit headroom and collector logs.
@@ -862,7 +859,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: New build attempts are waiting for telemetry collection
               description: A newly completed attempt has waited at least five minutes for collection. Historical bootstrap samples are excluded from this gate.
@@ -875,7 +871,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI build records are not reaching Loki
               description: A durable build record has waited at least ten minutes for Loki acknowledgement. Metrics remain independent of the record outbox.
@@ -888,7 +883,6 @@ data:
               severity: warning
               team: platform
               service: ci-observability
-              notify: email
             annotations:
               summary: CI records need delivery recovery
               description: Expired or permanently rejected records are retained in SQLite loki_rejections. Newer records continue shipping. Inspect and recover these records without clearing their evidence.

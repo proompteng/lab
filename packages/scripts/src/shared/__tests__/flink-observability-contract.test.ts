@@ -2,9 +2,31 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
+import { parseDocument } from 'yaml'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
+
+test('Flink initializes the operator Prometheus reporter on the metrics Service target port', () => {
+  const operator = 'argocd/applications/flink/base/operator'
+  const chart = parseDocument(readRepoFile(`${operator}/kustomization.yaml`))
+  const service = parseDocument(readRepoFile(`${operator}/metrics-service.yaml`))
+  const values = ['helmCharts', 0, 'valuesInline']
+  const port = service.getIn(['spec', 'ports', 0, 'targetPort'])
+  const config = chart.getIn([...values, 'defaultConfiguration', 'config.yaml'])
+  if (typeof config !== 'string') throw new Error('Flink operator configuration is missing')
+
+  expect(chart.getIn([...values, 'metrics', 'port'])).toBe(port)
+  expect(parseDocument(config).toJS()).toMatchObject({
+    'kubernetes.operator': {
+      'metrics.reporter.prom.factory.class': 'org.apache.flink.metrics.prometheus.PrometheusReporterFactory',
+      'metrics.reporter.prom.port': String(port),
+    },
+  })
+  expect(chart.getIn([...values, 'operatorPod', 'annotations', 'observability.proompteng.ai/config-sha256'])).toBe(
+    createHash('sha256').update(config).digest('hex'),
+  )
+})
 
 test('Alloy scrapes Flink operator and TA metrics with alert-compatible labels', () => {
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
