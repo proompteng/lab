@@ -5,8 +5,10 @@ mkdir -p "$fixture_runtime"
 fixture_archive="$fixture_runtime/keycloak-26.8.2.tar.gz"
 if [[ ! -f "$fixture_archive" ]]; then
   curl --silent --show-error --fail --location --proto '=https' --tlsv1.2 \
+    --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 180 \
     https://repo.maven.apache.org/maven2/org/keycloak/keycloak-quarkus-dist/26.8.2/keycloak-quarkus-dist-26.8.2.tar.gz \
-    --output "$fixture_archive"
+    --output "${fixture_archive}.tmp"
+  mv -f "${fixture_archive}.tmp" "$fixture_archive"
 fi
 python3 - "$fixture_archive" "$fixture_runtime" <<'PY'
 import hashlib
