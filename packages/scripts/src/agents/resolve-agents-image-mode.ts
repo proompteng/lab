@@ -44,6 +44,8 @@ const PUBLISHED_SMOKE_PREFIXES = [
 const PUBLISHED_SMOKE_EXACT_PATHS = new Set([
   '.github/workflows/agents-ci.yml',
   'packages/scripts/src/agents/deploy-service.ts',
+  'packages/scripts/src/agents/resolve-published-agents-images.ts',
+  'packages/scripts/src/agents/resolve-smoke-runner-image.ts',
   'packages/scripts/src/agents/smoke-agents.ts',
 ])
 

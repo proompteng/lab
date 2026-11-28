@@ -93,9 +93,13 @@ uses Bun: Landing drives the Ofz/Tengri/Nanoagent/Proompteng cohort, and Signal 
 Publication slots are shared only after selection so unrelated pushes cannot displace a pending publish.
 Bayn retains its comparison against the last verified cohort. Manual selection retains each workflow's existing controls.
 
-The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
-commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted
-digests. The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
+The Agents Kind smoke test resolves unaffected control-plane and controller images from one fetched `kargo/agents`
+commit, records it as `gitops_revision`, and reads its values without changing the checkout. Kargo owns those digests.
+The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
+Lifecycle jobs use the slim `agents-smoke-runner` image. Local smoke builds it from the checkout. Published smoke
+uses the digest for `agents-smoke-runner:sha-<promoted source SHA>` and builds from checkout only if the registry
+confirms the tag is absent. The smoke image is published separately from the four-image Kargo receipt. CI still
+verifies the full toolchain in a fresh Pod when the plan selects a local production runner build.
 
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
