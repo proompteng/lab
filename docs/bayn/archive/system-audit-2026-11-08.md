@@ -16,15 +16,15 @@ large repeated evidence documents. It does not support changing disks, creating 
 checks, or deleting retained evidence. No runtime, capital authority, storage, or financial records changed during this
 audit. The findings describe that baseline; the source cleanup below records subsequent implemented changes.
 
-The accompanying [file inventory](evidence/2026-11-08-system-inventory.json) lists each tracked Bayn file, line count,
+The accompanying [file inventory](../evidence/2026-11-08-system-inventory.json) lists each tracked Bayn file, line count,
 classification, and whether it contributes bytes to each of four locally built runtime entry points. Absence from those
 four outputs is not proof that a file is unused: commands, tests, fixtures, research builds, and external callers remain
 separate consumers. Git introduction and last-change commits are included for each file so the addition and its
 subsequent changes can be inspected directly; file size alone does not attribute a design decision to a particular run.
 
-The [database inventory](evidence/2026-11-08-database-inventory.json) records all 92 tables across the two databases,
+The [database inventory](../evidence/2026-11-08-database-inventory.json) records all 92 tables across the two databases,
 their 742 columns and 184 indexes, relation sizes, and approximate row counts. The
-[workload inventory](evidence/2026-11-08-workload-inventory.json) records 45 workload/claim resources, their images,
+[workload inventory](../evidence/2026-11-08-workload-inventory.json) records 45 workload/claim resources, their images,
 resource budgets, and current volume references. Neither contains account records, credentials or raw broker payloads.
 
 ## Source cleanup after the audit
@@ -94,7 +94,7 @@ credentials and stored captures: GEPA uses that store through Python. Its enviro
 captures and egress directly; all callers migrate together, with no aliases. The research endpoint serves
 `BaynResearchRun` only. Existing public-collector timers must be canceled while their old endpoint remains reachable,
 then checked again after registration of the replacement; see the owning
-[retirement procedure](../../argocd/applications/bayn/README.md#research-capture-storage).
+[retirement procedure](../../../argocd/applications/bayn/README.md#research-capture-storage).
 The two remaining scheduled collector invocations were gracefully canceled on November 8. Readback showed zero
 outstanding invocations and the same two state records with an identical SHA-256 fingerprint before and after.
 Repeat that readback after replacement-endpoint registration.
@@ -130,7 +130,7 @@ Skipped integrations still require their configured CI environments.
 ## Runtime cleanup after PR #15794
 
 This work starts from `45579965308e14c07afd3d8960bc7d089de1986e`. The
-[measurement record](evidence/2026-11-08-runtime-cleanup.json) separates current readback from the original inventory.
+[measurement record](../evidence/2026-11-08-runtime-cleanup.json) separates current readback from the original inventory.
 PR [#15801](https://github.com/proompteng/lab/pull/15801) merges these changes as
 `cdb8fadf7c694a43296928253d8b9b61a46e8cec`. All 92 PR checks complete and both actionable review findings are resolved.
 The cleanup is deployed in source `3c102b02a902a289700b137868c86563b052cfe4`. Successful main run
@@ -374,24 +374,24 @@ Public collectors still have zero nonterminal invocations and the same two retai
 The old stateless bootstrap registration still pins two workers despite zero nonterminal invocations. Its separately
 reviewed retirement remains pending under the owning runbook. No retained records, registrations or volumes are deleted.
 
-![Matched scheduled delay and active worker timing, on separate clocks](evidence/2026-11-08-current-waiting.svg)
+![Matched scheduled delay and active worker timing, on separate clocks](../evidence/2026-11-08-current-waiting.svg)
 
 The upper panel uses Restate's schedule records. The lower panel uses spans from the matched Bayn process, relative
 to its own worker advance. This preserves causal correlation without assuming synchronized clocks across services.
 
-![Measured complete reconciliation passes before and after the deployed cleanup](evidence/2026-11-09-cleanup-before-after.svg)
+![Measured complete reconciliation passes before and after the deployed cleanup](../evidence/2026-11-09-cleanup-before-after.svg)
 
 This comparison uses actual nested spans from one pass near each phase's advance median. Each panel has its own
 process clock. The labels distinguish representative stage durations from the separately computed sample medians;
 parent durations include their children. It does not contain an inference request or the subsequent hash candidate.
 
-![Current v40 request with durable boundaries and native worker spans](evidence/2026-11-09-current-v40-request.svg)
+![Current v40 request with durable boundaries and native worker spans](../evidence/2026-11-09-current-v40-request.svg)
 
 The current request chart joins the actual batch and decision identities to a completed source-bound Restate tick.
 Its two panels keep durable record boundaries separate from worker-relative span timing. `NO_TRADE` is a completed
 strategy outcome; it supplies no evidence of a current order submission or broker fill.
 
-![Current v40 filled entry through submission and recovery](evidence/2026-11-09-current-v40-filled-entry.svg)
+![Current v40 filled entry through submission and recovery](../evidence/2026-11-09-current-v40-filled-entry.svg)
 
 This chart uses the deployed hash release. The [earlier cleanup-release filled chart](https://github.com/proompteng/lab/blob/55f1aad1e416e03ba4c3a7b9ce14ab2a20b7c4fc/docs/bayn/evidence/2026-11-09-current-v40-filled-entry.svg)
 and [v38 illustration](https://github.com/proompteng/lab/blob/b3aa14bb383fb06bd5d95196e1aad63346f1a08c/docs/bayn/evidence/2026-11-09-historical-entry.svg)
@@ -464,15 +464,15 @@ tests without understanding the financial or failure contract each one protects.
 
 ## Processes, owners, and shipped contents
 
-| Process                           | Entry point                                                                                                                                  | Acquired capabilities                                                                       | Writes or side effects                                                         |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Public status API                 | [`index.ts`](../../services/bayn/src/index.ts), [`composition/read-only-status.ts`](../../services/bayn/src/composition/read-only-status.ts) | HTTP, PostgreSQL reads, broker observations, accounting health                              | Status/metrics responses; it does not acquire trading mutation stores          |
-| Native execution endpoint         | [`restate-execution-server.ts`](../../services/bayn/src/restate/restate-execution-server.ts)                                                 | Restate identity validation, native runtime, broker observation runtime, expense projection | Authorized cycle/intent/mutation/accounting persistence and broker I/O         |
-| Market projection thread          | [`market-projection-worker.ts`](../../services/bayn/src/market-data/streaming/market-projection-worker.ts)                                   | Kafka consumers, in-memory verified projection, dedicated arrival archive                   | Append-only arrival evidence, worker replies                                   |
-| Broker observation virtual object | [`restate-broker-observations.ts`](../../services/bayn/src/restate/restate-broker-observations.ts)                                           | Broker reads, durable scheduling, Valkey materialization                                    | Cached observations; no order authority                                        |
-| Activation job                    | [`restate-execution-activate.ts`](../../services/bayn/src/restate/restate-execution-activate.ts)                                             | Exact build/account/request verification, private controller endpoint                       | Reviewed same-account activation/deactivation and successor identity           |
-| Independent research endpoint     | [`restate-research-server.ts`](../../services/bayn/src/restate/restate-research-server.ts)                                                   | Research approval, research database role, TypeSafe and object storage                      | Approved research receipts and separately enabled public-information captures  |
-| Offline/report commands           | [`package.json`](../../services/bayn/package.json), [`nix/images/bayn.nix`](../../nix/images/bayn.nix)                                       | Command-specific retained inputs, archive reads, reports, control compilers                 | Research outputs and explicitly invoked reports; not native trading scheduling |
+| Process                           | Entry point                                                                                                                                        | Acquired capabilities                                                                       | Writes or side effects                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Public status API                 | [`index.ts`](../../../services/bayn/src/index.ts), [`composition/read-only-status.ts`](../../../services/bayn/src/composition/read-only-status.ts) | HTTP, PostgreSQL reads, broker observations, accounting health                              | Status/metrics responses; it does not acquire trading mutation stores          |
+| Native execution endpoint         | [`restate-execution-server.ts`](../../../services/bayn/src/restate/restate-execution-server.ts)                                                    | Restate identity validation, native runtime, broker observation runtime, expense projection | Authorized cycle/intent/mutation/accounting persistence and broker I/O         |
+| Market projection thread          | [`market-projection-worker.ts`](../../../services/bayn/src/market-data/streaming/market-projection-worker.ts)                                      | Kafka consumers, in-memory verified projection, dedicated arrival archive                   | Append-only arrival evidence, worker replies                                   |
+| Broker observation virtual object | [`restate-broker-observations.ts`](../../../services/bayn/src/restate/restate-broker-observations.ts)                                              | Broker reads, durable scheduling, Valkey materialization                                    | Cached observations; no order authority                                        |
+| Activation job                    | [`restate-execution-activate.ts`](../../../services/bayn/src/restate/restate-execution-activate.ts)                                                | Exact build/account/request verification, private controller endpoint                       | Reviewed same-account activation/deactivation and successor identity           |
+| Independent research endpoint     | [`restate-research-server.ts`](../../../services/bayn/src/restate/restate-research-server.ts)                                                      | Research approval, research database role, TypeSafe and object storage                      | Approved research receipts and separately enabled public-information captures  |
+| Offline/report commands           | [`package.json`](../../../services/bayn/package.json), [`nix/images/bayn.nix`](../../../nix/images/bayn.nix)                                       | Command-specific retained inputs, archive reads, reports, control compilers                 | Research outputs and explicitly invoked reports; not native trading scheduling |
 
 The local Bun 1.4.0 build emitted the following unminified outputs. The package requests Bun 1.4.2. These are diagnostic
 source builds, not pinned release builds, OCI sizes or startup latency measurements. `nix develop` could not connect
@@ -530,21 +530,21 @@ broker I/O but before its completion is durable. The recorded request identity a
 
 ## Entry request, step by step
 
-| Step | Owning code                                                                                                                                                                                                 | Work and durable boundary                                                                              | Timing/concurrency                                                              | Failure behavior                                                                              |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 1    | [`restate-execution-controller.ts`](../../services/bayn/src/restate/restate-execution-controller.ts)                                                                                                        | Decode tick, verify key/revision/epoch/sequence and recorded controller state                          | One exclusive object handler per account; bounded recovery windows              | Foreign/stale work quiesces; accepted failures retain bounded recovery semantics              |
-| 2    | [`native-execution-runtime.ts`](../../services/bayn/src/composition/native-execution-runtime.ts), [`advance.ts`](../../services/bayn/src/execution/advance.ts)                                              | Bind the process runtime, recover already projected completion, execute one pass                       | Process-scoped resources; one bounded advance                                   | No new receipt is fabricated for an unfinished pass                                           |
-| 3    | [`recovery-driver.ts`](../../services/bayn/src/observe-composition/recovery-driver.ts)                                                                                                                      | Recover pending cancellation/submission and obtain fresh exact reconciliation                          | Existing narrow reuse is authority-, freshness-, and state-bound                | Unknown mutations and discrepancies block new exposure                                        |
-| 4    | [`streaming/worker.ts`](../../services/bayn/src/market-data/streaming/worker.ts), [`streaming/service.ts`](../../services/bayn/src/market-data/streaming/service.ts)                                        | Read verified projection, original arrival references and source-bound completed bars/quotes           | Ingestion runs in a separate thread; replacement workers warm before activation | Missing/late candidate evidence remains an exclusion; invalid global evidence fails admission |
-| 5    | [`candidate-observation-postgres.ts`](../../services/bayn/src/db/candidate-observation-postgres.ts)                                                                                                         | Reproduce candidate observation and bind source/account/reconciliation identities before insertion     | Financial database durability precedes strategy authority                       | Hash/source/readback mismatch fails closed                                                    |
-| 6    | [`entry-proposals.ts`](../../services/bayn/src/jev/entry-proposals.ts)                                                                                                                                      | Check whether source prices and fees permit any funded proposal                                        | Pure fixed-point arithmetic; skip paid work when source-infeasible              | No affordable plan means no paid final judgment and no entry                                  |
-| 7    | [`entry-inference-batch.ts`](../../services/bayn/src/jev/entry-inference-batch.ts)                                                                                                                          | Persist CHART claim, then ask structure presence and source-image Boxes                                | Candidate pipelines run concurrently; share original evidence deadline          | Cancellation, late results and unknown consumption retain receipts/cost uncertainty           |
-| 8    | Same module plus [`entry-inference-postgres.ts`](../../services/bayn/src/db/entry-inference-postgres.ts)                                                                                                    | Map valid source anchors, construct proposals, atomically commit CHART terminal and final-call handoff | Each ready candidate may advance before other CHART calls finish                | No final paid dispatch before its handoff commits                                             |
-| 9    | [`entry-questions.ts`](../../services/bayn/src/jev/entry-questions.ts)                                                                                                                                      | Ask setup confirmation and stop invalidation, then select an eligible proposal                         | Both judgments must be at least 0.70; no fresh ten-second budget                | Uncertain, invalid or expired evidence cannot become an approved trade                        |
-| 10   | [`decision-builder.ts`](../../services/bayn/src/observe-composition/decision-builder.ts), [`target-planner`](../../services/bayn/src/target-planner/index.ts), [`risk.ts`](../../services/bayn/src/risk.ts) | Construct target, whole-share delta, risk decisions and immutable decision evidence                    | Prices, fees, quantity and limits remain code-owned                             | A model answer does not override capital, liquidity, exposure, turnover, loss or cutoff gates |
-| 11   | [`cycle/store/postgres.ts`](../../services/bayn/src/cycle/store/postgres.ts), [`execution/coordinator.ts`](../../services/bayn/src/execution/coordinator.ts)                                                | Commit approved intent, deterministic client ID and canonical request, then `SUBMIT_STARTED`           | Recheck current gates immediately before broker I/O                             | Unknown submission blocks exposure and uses deterministic lookup; no blind POST retry         |
-| 12   | [`execution-cycle.ts`](../../services/bayn/src/observe-composition/execution-cycle.ts)                                                                                                                      | Manage protection, residual inventory, close and later exact reconciliation                            | Acknowledgement is distinct from fill and terminal flat completion              | An incomplete/partial/ambiguous close remains incomplete                                      |
-| 13   | [`native-execution-runtime.ts`](../../services/bayn/src/composition/native-execution-runtime.ts), Restate controller                                                                                        | Project pass receipt, advance sequence and schedule one successor                                      | The persisted due time includes projection/journaling elapsed time              | A projection failure is not silently reported as completed execution                          |
+| Step | Owning code                                                                                                                                                                                                          | Work and durable boundary                                                                              | Timing/concurrency                                                              | Failure behavior                                                                              |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1    | [`restate-execution-controller.ts`](../../../services/bayn/src/restate/restate-execution-controller.ts)                                                                                                              | Decode tick, verify key/revision/epoch/sequence and recorded controller state                          | One exclusive object handler per account; bounded recovery windows              | Foreign/stale work quiesces; accepted failures retain bounded recovery semantics              |
+| 2    | [`native-execution-runtime.ts`](../../../services/bayn/src/composition/native-execution-runtime.ts), [`advance.ts`](../../../services/bayn/src/execution/advance.ts)                                                 | Bind the process runtime, recover already projected completion, execute one pass                       | Process-scoped resources; one bounded advance                                   | No new receipt is fabricated for an unfinished pass                                           |
+| 3    | [`recovery-driver.ts`](../../../services/bayn/src/observe-composition/recovery-driver.ts)                                                                                                                            | Recover pending cancellation/submission and obtain fresh exact reconciliation                          | Existing narrow reuse is authority-, freshness-, and state-bound                | Unknown mutations and discrepancies block new exposure                                        |
+| 4    | [`streaming/worker.ts`](../../../services/bayn/src/market-data/streaming/worker.ts), [`streaming/service.ts`](../../../services/bayn/src/market-data/streaming/service.ts)                                           | Read verified projection, original arrival references and source-bound completed bars/quotes           | Ingestion runs in a separate thread; replacement workers warm before activation | Missing/late candidate evidence remains an exclusion; invalid global evidence fails admission |
+| 5    | [`candidate-observation-postgres.ts`](../../../services/bayn/src/db/candidate-observation-postgres.ts)                                                                                                               | Reproduce candidate observation and bind source/account/reconciliation identities before insertion     | Financial database durability precedes strategy authority                       | Hash/source/readback mismatch fails closed                                                    |
+| 6    | [`entry-proposals.ts`](../../../services/bayn/src/jev/entry-proposals.ts)                                                                                                                                            | Check whether source prices and fees permit any funded proposal                                        | Pure fixed-point arithmetic; skip paid work when source-infeasible              | No affordable plan means no paid final judgment and no entry                                  |
+| 7    | [`entry-inference-batch.ts`](../../../services/bayn/src/jev/entry-inference-batch.ts)                                                                                                                                | Persist CHART claim, then ask structure presence and source-image Boxes                                | Candidate pipelines run concurrently; share original evidence deadline          | Cancellation, late results and unknown consumption retain receipts/cost uncertainty           |
+| 8    | Same module plus [`entry-inference-postgres.ts`](../../../services/bayn/src/db/entry-inference-postgres.ts)                                                                                                          | Map valid source anchors, construct proposals, atomically commit CHART terminal and final-call handoff | Each ready candidate may advance before other CHART calls finish                | No final paid dispatch before its handoff commits                                             |
+| 9    | [`entry-questions.ts`](../../../services/bayn/src/jev/entry-questions.ts)                                                                                                                                            | Ask setup confirmation and stop invalidation, then select an eligible proposal                         | Both judgments must be at least 0.70; no fresh ten-second budget                | Uncertain, invalid or expired evidence cannot become an approved trade                        |
+| 10   | [`decision-builder.ts`](../../../services/bayn/src/observe-composition/decision-builder.ts), [`target-planner`](../../../services/bayn/src/target-planner/index.ts), [`risk.ts`](../../../services/bayn/src/risk.ts) | Construct target, whole-share delta, risk decisions and immutable decision evidence                    | Prices, fees, quantity and limits remain code-owned                             | A model answer does not override capital, liquidity, exposure, turnover, loss or cutoff gates |
+| 11   | [`cycle/store/postgres.ts`](../../../services/bayn/src/cycle/store/postgres.ts), [`execution/coordinator.ts`](../../../services/bayn/src/execution/coordinator.ts)                                                   | Commit approved intent, deterministic client ID and canonical request, then `SUBMIT_STARTED`           | Recheck current gates immediately before broker I/O                             | Unknown submission blocks exposure and uses deterministic lookup; no blind POST retry         |
+| 12   | [`execution-cycle.ts`](../../../services/bayn/src/observe-composition/execution-cycle.ts)                                                                                                                            | Manage protection, residual inventory, close and later exact reconciliation                            | Acknowledgement is distinct from fill and terminal flat completion              | An incomplete/partial/ambiguous close remains incomplete                                      |
+| 13   | [`native-execution-runtime.ts`](../../../services/bayn/src/composition/native-execution-runtime.ts), Restate controller                                                                                              | Project pass receipt, advance sequence and schedule one successor                                      | The persisted due time includes projection/journaling elapsed time              | A projection failure is not silently reported as completed execution                          |
 
 ```mermaid
 sequenceDiagram
@@ -596,8 +596,8 @@ exit and reconciliation path. Research supports additional policies; they are no
 | Time                      | First completed equity minute plus two seconds; no extra clock warmup                 | Original ten-second inference validity; ten-second quote age; fifteen-minute maximum hold            |
 | Session end               | Entries stop and flattening starts five minutes before actual close                   | Reconcile residual inventory and order state; an unfilled close is not a completed close             |
 
-Selection has two levels. [`selectSupportedEntryProposal`](../../services/bayn/src/jev/entry-questions.ts) selects a
-proposal within each symbol. [`selectJevEntryCandidates`](../../services/bayn/src/jev/decision.ts) then ranks symbols by
+Selection has two levels. [`selectSupportedEntryProposal`](../../../services/bayn/src/jev/entry-questions.ts) selects a
+proposal within each symbol. [`selectJevEntryCandidates`](../../../services/bayn/src/jev/decision.ts) then ranks symbols by
 the same minimum judgment, lower absolute modeled loss, and finally symbol name. It takes only `maximumPositions`,
 currently one. It does not rank by estimated net return, return per unit risk, or a calibrated win probability.
 
@@ -614,7 +614,7 @@ before adding another strategy or changing thresholds. No new profitability resu
 
 ## Reconciliation and accounting in detail
 
-[`broker-reconciler-program.ts`](../../services/bayn/src/simulation-reconciliation/broker-reconciler-program.ts) reads
+[`broker-reconciler-program.ts`](../../../services/bayn/src/simulation-reconciliation/broker-reconciler-program.ts) reads
 a stable broker snapshot, then normalizes and persists it. Broker observations may come from the required Valkey
 materialization; this does not imply a complete broker HTTP poll on every worker pass.
 
@@ -635,11 +635,11 @@ The persistence path does the following:
 The savepoint and two-phase posting paths exist because PostgreSQL and TigerBeetle do not share a transaction. They
 cannot be replaced by a generic retry without risking duplication or erasing prepared financial evidence.
 
-The expensive repeated work is visible in [`db/reconciliation.ts`](../../services/bayn/src/db/reconciliation.ts):
+The expensive repeated work is visible in [`db/reconciliation.ts`](../../../services/bayn/src/db/reconciliation.ts):
 `readAccountingPhase` selects all account intents with lateral mutation lookups, `readAccountingHistory` reconstructs
 the account's transactions, receipt reads cover the account's transaction history, and `readComparisonPhase` reads all
-durable fills and aggregates inventory. [`ledger.ts`](../../services/bayn/src/ledger.ts) assembles the complete expected
-account plan and [`ledger/account-read.ts`](../../services/bayn/src/ledger/account-read.ts) paginates ledger records.
+durable fills and aggregates inventory. [`ledger.ts`](../../../services/bayn/src/ledger.ts) assembles the complete expected
+account plan and [`ledger/account-read.ts`](../../../services/bayn/src/ledger/account-read.ts) paginates ledger records.
 
 This scales with accumulated history, not just changes since the previous pass. The observed account has approximately
 851 fills/transactions, 966 receipts and 687 intents according to PostgreSQL statistics. These are approximate table
@@ -652,7 +652,7 @@ The retained trace is `68fb4647c96b52673b880b64678bfc0`, captured November 8 at 
 `1a291e1ad1ce0931efa307b0090df3080ec7379b`. It predates the source audit baseline. Its outcome was `Waiting`; it has
 no CHART, JEV, or broker order submission. It is a reconciliation example, not an entry latency benchmark.
 
-![Measured worker waterfall with nested span offsets and inclusive durations](evidence/2026-11-08-execution-waiting.svg)
+![Measured worker waterfall with nested span offsets and inclusive durations](../evidence/2026-11-08-execution-waiting.svg)
 
 | Span                       | Start relative to worker pass, ms | Inclusive duration, ms | Interpretation                                                       |
 | -------------------------- | --------------------------------: | ---------------------: | -------------------------------------------------------------------- |
@@ -672,7 +672,7 @@ Nested inclusive times cannot be added. The complete captured Restate lifecycle 
 The controller intentionally schedules delayed ticks; the interval must be joined to its due time before calling
 it scheduling lateness. The trace is not evidence of a 31-second model call or slow storage.
 
-The [sanitized timing data](evidence/2026-11-08-execution-waiting.json) retains the span hierarchy. A bounded 48-hour
+The [sanitized timing data](../evidence/2026-11-08-execution-waiting.json) retains the span hierarchy. A bounded 48-hour
 inference trace search in the preceding investigation found no inference-containing trace. Missing search results do
 not prove that no inference occurred. A natural-session CHART/JEV/order waterfall and representative latency
 distribution remain unverified.
