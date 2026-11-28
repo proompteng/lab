@@ -257,9 +257,8 @@ Raw block-device capacity does not establish free space inside a VM; that requir
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
-and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
-`torghut`. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
-Other Torghut containers remain excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn`, including its shared `torghut-ws` producer. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
+Containers in the `torghut` namespace are excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
 than zero throttling. See [producer stall diagnostics](../../../services/dorvud/README.md#producer-stall-diagnostics)
 for JVM, Kafka, probe, and restart correlation.
 The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic

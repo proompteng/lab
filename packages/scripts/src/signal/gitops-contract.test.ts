@@ -326,6 +326,13 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(websocket.data.ALPACA_LATEST_BAR_SYMBOLS).toBeUndefined()
     expect(coreTopics.find((topic) => topic.metadata.name === 'torghut.quotes.v1')?.spec.partitions).toBe(13)
     expect(websocket.data.ALPACA_FEED).toBe('iex')
+    expect(websocketDeployment.metadata.namespace).toBe('bayn')
+    expect(websocketDeployment.spec.replicas).toBe(1)
+    expect(websocketDeployment.spec.strategy.type).toBe('Recreate')
+    expect(websocket.data.ALPACA_MARKET_DATA_PROXY_URL).toBe('http://bayn-egress-proxy.bayn.svc.cluster.local:3130')
+    expect(websocket.data.ENABLE_TRADE_UPDATES).toBe('false')
+    expect(websocket.data.ALPACA_TRADE_STREAM_URL).toBeUndefined()
+    expect(websocket.data.TORGHUT_ACCOUNT_LABEL).toBeUndefined()
     expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
     expect(websocket.data.ALPACA_CRYPTO_LOCATION).toBe(config.data.ARCHIVE_CRYPTO_LOCATION)
     expect(websocket.data.ALPACA_CRYPTO_SYMBOLS).toBe(config.data.ARCHIVE_CRYPTO_SYMBOLS)
@@ -338,11 +345,11 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).not.toBe(ta.data.TA_CRYPTO_TOPIC)
     expect(environment(websocketDeployment.spec.template.spec.containers[0]).get('ALPACA_KEY_ID')).toEqual({
       name: 'ALPACA_KEY_ID',
-      valueFrom: { secretKeyRef: { name: 'torghut-alpaca', key: 'APCA_API_KEY_ID' } },
+      valueFrom: { secretKeyRef: { name: 'bayn-alpaca-auth', key: 'key-id' } },
     })
     expect(environment(websocketDeployment.spec.template.spec.containers[0]).get('ALPACA_SECRET_KEY')).toEqual({
       name: 'ALPACA_SECRET_KEY',
-      valueFrom: { secretKeyRef: { name: 'torghut-alpaca', key: 'APCA_API_SECRET_KEY' } },
+      valueFrom: { secretKeyRef: { name: 'bayn-alpaca-auth', key: 'secret-key' } },
     })
     const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
     expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
@@ -402,7 +409,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(deployment.spec.replicas).toBe(0)
     expect(deployment.spec.strategy.type).toBe('Recreate')
     expect(deployment.spec.selector.matchLabels).toEqual({ app: 'torghut-ws-sip' })
-    expect(deployment.spec.template.metadata.labels).toEqual(deployment.spec.selector.matchLabels)
+    expect(deployment.spec.template.metadata.labels).toMatchObject(deployment.spec.selector.matchLabels)
     expect(service.spec.selector).toEqual(deployment.spec.selector.matchLabels)
     const liveProducer = parse(readWsDeployment()).spec.template.spec.containers[0]
     expect(producer.image.split('@')[0]).toBe(liveProducer.image.split('@')[0])

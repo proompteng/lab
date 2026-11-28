@@ -44,12 +44,16 @@ describe('Bayn egress proxy contract', () => {
       deployedConfig.replace('http_access deny all', 'http_access allow all\nhttp_access deny all'),
     ],
     [
+      'broker access on the market data listener',
+      deployedConfig.replace('marketdata_api dstdomain ', 'marketdata_api dstdomain paper-api.alpaca.markets '),
+    ],
+    [
       'allow before deny',
       deployedConfig
-        .replace('http_access allow CONNECT !opencode_listener trading_api\n', '')
+        .replace('http_access allow CONNECT !marketdata_listener !opencode_listener trading_api\n', '')
         .replace(
           'http_access deny !CONNECT',
-          'http_access allow CONNECT !opencode_listener trading_api\nhttp_access deny !CONNECT',
+          'http_access allow CONNECT !marketdata_listener !opencode_listener trading_api\nhttp_access deny !CONNECT',
         ),
     ],
   ])('rejects %s expansion', (_name, config) => {

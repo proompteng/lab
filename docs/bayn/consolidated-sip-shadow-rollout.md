@@ -46,7 +46,7 @@ for the implementation details.
    [capacity gates](sip-and-universe-expansion-plan.md#capacity-proof-before-adoption). This lane adds no running work
    while parked, but full SIP tick capture can stress shared Kafka, Flink, and ClickHouse after activation.
 4. Have the owner confirm paid Consolidated SIP market-data WebSocket access for the account behind
-   `torghut/torghut-alpaca`, and confirm a free `/v2/sip` connection that cannot evict any live stream. The local
+   `bayn/bayn-alpaca-auth`, and confirm a free `/v2/sip` connection that cannot evict any live stream. The local
    `algo_trader_plus` setting does not confer provider access. If either check fails or only another account is
    entitled, stop; do not copy or swap secrets, disconnect IEX, or buy an entitlement as part of this procedure.
 
@@ -60,9 +60,9 @@ before activation. Neither a REST response nor an Alpaca test/delayed-SIP socket
 (
   set +x
   set -euo pipefail
-  k=(kubectl --context galactic-tailscale -n torghut)
+  k=(kubectl --context galactic-tailscale -n bayn)
   sip_symbols="$("${k[@]}" get configmap torghut-ws-sip-config -o jsonpath='{.data.SYMBOLS}')"
-  "${k[@]}" get secret torghut-alpaca -o json | SIP_SYMBOLS="$sip_symbols" bun -e '
+  "${k[@]}" get secret bayn-alpaca-auth -o json | SIP_SYMBOLS="$sip_symbols" bun -e '
     const { data } = await Bun.stdin.json().catch(() => { throw new Error("Could not read Alpaca Secret JSON") })
     const csv = Bun.env.SIP_SYMBOLS ?? ""
     const symbols = csv.split(",")
@@ -70,7 +70,7 @@ before activation. Neither a REST response nor an Alpaca test/delayed-SIP socket
     if (symbols.length !== 73 || hash !== "89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b") {
       throw new Error("Unexpected SIP roster")
     }
-    if (!data?.APCA_API_KEY_ID || !data?.APCA_API_SECRET_KEY) throw new Error("Missing Alpaca credentials")
+    if (!data?.["key-id"] || !data?.["secret-key"]) throw new Error("Missing Alpaca credentials")
     const channels = ["bars", "quotes", "trades"]
     const socket = new WebSocket("wss://stream.data.alpaca.markets/v2/sip")
     const fail = (reason) => { console.error(reason); process.exit(1) }
@@ -78,8 +78,8 @@ before activation. Neither a REST response nor an Alpaca test/delayed-SIP socket
     let acknowledged = false
     socket.onopen = () => socket.send(JSON.stringify({
       action: "auth",
-      key: Buffer.from(data.APCA_API_KEY_ID, "base64").toString(),
-      secret: Buffer.from(data.APCA_API_SECRET_KEY, "base64").toString(),
+      key: Buffer.from(data["key-id"], "base64").toString(),
+      secret: Buffer.from(data["secret-key"], "base64").toString(),
     }))
     socket.onmessage = ({ data: frame }) => {
       let messages
@@ -120,7 +120,7 @@ the check before activation.
 1. In a reviewed change, set `replicas: 1` in
    [the SIP Deployment](../../argocd/applications/torghut/ws/sip-deployment.yaml). After promotion, verify the
    rollout during a supervised market-data window:
-   `kubectl --context galactic-tailscale -n torghut rollout status deployment/torghut-ws-sip --timeout=3m`.
+   `kubectl --context galactic-tailscale -n bayn rollout status deployment/torghut-ws-sip --timeout=3m`.
    Check the SIP Pod logs for complete channel acknowledgement and no entitlement or Kafka delivery errors.
    Verify that bars, quotes, and trades advance on their SIP topics with `feed=sip`,
    `delay_class=real_time_consolidated`, universe `torghut-core-equity-sip-v1`, and the expected hash. Compare
