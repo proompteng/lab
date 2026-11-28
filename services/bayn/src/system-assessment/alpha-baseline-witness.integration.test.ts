@@ -37,6 +37,7 @@ import { derivePreparedAlphaBaselineSources } from './alpha-baseline-witness'
 import { readPreparedAlphaSystemDurableObservations, readSystemAlphaBaselinePreparations } from './capture-queries'
 import { nativeRegistrationFixture, registrationFixture, testHash } from './fixtures.test-support'
 import { initializeQualificationHistory, registerSystemQualification } from './postgres'
+import { ResearchStrategyEngine } from './strategy-binding'
 import { preparedAlphaRegistrationFixture } from './prepared-alpha-registration.test-support'
 import { persistSystemSourceCut, PreparedAlphaSystemSourceCutSchema, readSystemSourceCut } from './source-cut'
 
@@ -218,6 +219,80 @@ postgres('committed prospective alpha baseline preparation', () => {
   afterAll(async () => {
     await template?.dispose()
   })
+
+  test('admits a v3 registration, commits its prepared baseline, and witnesses it later', async () => {
+    const registration = preparedAlphaRegistrationFixture(
+      nativeRegistrationFixture(
+        { ...registrationFixture('2026-09-03T11:00:00.000Z', 1), priorAttemptHash: testHash(history) },
+        fixture.payload.calendar,
+      ),
+      { candidate: ResearchStrategyEngine.PureEtf },
+    )
+    const candidate = registration.policies.find((row) => row.policy === 'JEV')
+    if (candidate?.strategyBinding.engine !== ResearchStrategyEngine.PureEtf || session === undefined)
+      throw new Error('Expected the exact v3 policy')
+    const policy = candidate.strategyBinding.parameters
+    const fixtureV3 = preparedAlphaBaselineFixture(fixture.payload.sessionDate, policy)
+    const draftV3 = Result.getOrThrow(
+      makeIntradayCycleDraft(
+        {
+          cycleBindingId: candidate.authorityGenerationHash,
+          strategyName: 'jev',
+          strategyProtocolHash: candidate.protocolHash,
+          accountId,
+          executionPolicy,
+        },
+        fixture.payload.calendar,
+        session,
+      ),
+    )
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* setClock('2026-09-03T12:00:00.000Z')
+        yield* registerSystemQualification(
+          registration,
+          new Set([
+            registration.calendar.sourceHash,
+            ...registration.costAllocationPlans.map((plan) => plan.basisSourceHash),
+            ...registration.statisticalPlan.supports.map((support) => support.sourceHash),
+          ]),
+        )
+        yield* setClock(fixtureV3.recordedAt)
+        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,account_id,
+        broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,activated_at)
+        VALUES (${candidate.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${accountId},
+          'bayn.broker-identity.v2',${identity.identityHash},'alpaca','sandbox',${startedAt})`
+        yield* (yield* makeCycleStore({ now: sql`${startedAt}::timestamptz` })).acquire(draftV3, startedAt)
+        yield* sql`INSERT INTO execution_controller_status(controller_key,plan_hash,active,epoch,next_sequence)
+        VALUES (${identity.identityHash},${registration.obligations.configuration.controllerPlanHash},true,1,0)`
+        const stored = yield* recordNativeAlphaBaselinePreparation(sql, {
+          ...fixtureV3.payload,
+          cycleId: draftV3.identity.cycleId,
+          authorityGenerationHash: candidate.authorityGenerationHash,
+          accountId,
+          executionBuild: {
+            sourceRevision: candidate.sourceRevision,
+            imageRepository:
+              candidate.capitalAuthorization?.buildLineage.activation.imageRepository ?? 'ghcr.io/proompteng/bayn',
+            imageDigest: `sha256:${candidate.imageDigest}`,
+          },
+        })
+        const witnessed = () => sql`SELECT source_hash FROM system_durable_observations
+        WHERE registration_hash=${testHash(registration)} AND kind='ALPHA_BASELINE'`
+        expect(yield* witnessed()).toEqual([])
+        yield* setClock('2026-09-04T12:02:00.000Z')
+        yield* witness
+        expect(yield* witnessed()).toEqual([{ source_hash: stored.contentHash }])
+        // Independent SQL admission arithmetic must agree with the application at the actual weighted fill.
+        expect(
+          yield* sql`SELECT
+        intraday_alpha_v3_protective_price(10204000000000000000000,20000000000,-299,false)::text AS stop,
+        intraday_alpha_v3_protective_price(10204000000000000000000,20000000000,-349,true)::text AS collar`,
+        ).toEqual([{ stop: '494940000', collar: '492400000' }])
+      }),
+    )
+  }, 20000)
 
   for (const regularCoverage of ['improved', 'still-partial'] as const) {
     test(`pending preopen coverage leaves no source or witness and a new regular acquisition is ${regularCoverage}`, async () => {

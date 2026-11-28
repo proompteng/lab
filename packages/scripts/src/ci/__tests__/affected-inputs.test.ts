@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { changedRange, matchesOnlyPaths, matchesPaths, parseTargets, selectAffectedInputs } from '../affected-inputs'
-import { matchesGlob } from '../impact-router'
+import { loadImpactMap, matchesGlob, selectImpactPlan } from '../impact-router'
 
 const before = {
   lockfileVersion: 1,
@@ -216,7 +216,7 @@ test('OpenCode PR validation selects the PR head without publication secrets', (
   const image = property(property(validation, 'jobs'), 'image')
   expect(property(image, 'secrets')).toBeUndefined()
   expect(property(image, 'if')).toBeUndefined()
-  expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
+  expect(property(property(property(publication, 'jobs'), 'image'), 'needs')).toBe('changes')
   expect(property(property(validation, 'permissions'), 'contents')).toBe('read')
   const source = text(property(property(image, 'with'), 'source_revision')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
   expect(
@@ -710,7 +710,6 @@ test('Jangar CI selects runtime and dependency changes without taking Agents or 
     'charts/agents/templates/deployment.yaml',
     'argocd/applications/observability/graf-mimir-rules.yaml',
     'services/agents/src/server/control-plane.ts',
-    'docs/jangar/architecture-inventory.md',
     'packages/codex/src/app-server-client.test.ts',
     'packages/temporal-bun-sdk/tests/client.test.ts',
     'packages/temporal-bun-sdk/README.md',
@@ -837,7 +836,7 @@ test('the shared Warehouse binds desktop and runtime artifacts to the same immut
   }
 })
 
-const imagePlanners = ['bayn-ci.yml', 'signal-publisher-build-push.yml', 'restate-images.yml', 'product-nix-images.yml']
+const imagePlanners = ['signal-publisher-build-push.yml', 'restate-images.yml', 'product-nix-images.yml']
 test.each(imagePlanners)('%s skips unrelated work for a Landing-only PR', (filename) => {
   const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
@@ -948,6 +947,8 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     expect(run('push', base).affected).toEqual({ bayn: true, landing: true })
     expect(run('push', initial, 'true').affected).toEqual({ bayn: false, landing: true })
     expect(run('push', base, 'true').affected).toEqual({ bayn: true, landing: true })
+    expect(() => run('push', '0'.repeat(40), 'true')).toThrow()
+    expect(() => run('push', '1'.repeat(40), 'true')).toThrow()
     expect(() => run('push', initial, 'typo')).toThrow()
     expect(run('workflow_dispatch', '')).toEqual({
       affected: { bayn: true, landing: true },
@@ -989,15 +990,15 @@ test('Bayn selects fast checks only for offline PRs and retains full and indepen
     '',
     'pull_request',
   )
-  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8'))
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8')) as { workspaces: Record<string, object> }
   const onlyPaths: unknown = Bun.YAML.parse(text(property(inputs, 'only-paths')))
   if (!Array.isArray(onlyPaths)) throw new Error('Missing Bayn fast path allowlist')
-  const outputNames = ['fast', 'full', 'pr_checks', 'formal', 'gepa']
-  const selected = (paths: string[], event = 'pull_request') => {
+  const outputNames = ['fast', 'full', 'pr_checks', 'postgres', 'archive', 'formal', 'gepa']
+  const selected = (paths: string[], event = 'pull_request', head = lock) => {
     const outputs =
       event === 'pull_request'
         ? {
-            affected: JSON.stringify(selectAffectedInputs(paths, targets, lock, lock)),
+            affected: JSON.stringify(selectAffectedInputs(paths, targets, lock, head)),
             only_paths: String(matchesOnlyPaths(paths, onlyPaths.map(text))),
           }
         : {}
@@ -1010,39 +1011,61 @@ test('Bayn selects fast checks only for offline PRs and retains full and indepen
       })
     })
   }
-  const full = ['full', 'pr_checks', 'formal', 'gepa']
+  const full = ['full', 'pr_checks', 'postgres', 'archive']
+  const complete = [...full, 'formal', 'gepa']
   const docs = 'docs/bayn/test-suite-audit-2026-11-27.md'
   const tool = 'services/bayn/tools/research-10yr-pure-etf-dual-horizon.ts'
   for (const paths of [[docs], [tool], [docs, tool], ['services/bayn/tools/native-arrival-coverage.md']])
     expect(selected(paths)).toEqual(['fast'])
-  for (const event of ['merge_group', 'workflow_dispatch', 'push']) expect(selected([tool], event)).toEqual(full)
+  for (const event of ['merge_group', 'workflow_dispatch', 'push']) expect(selected([tool], event)).toEqual(complete)
 
   for (const path of [
-    'services/bayn/src/execution/controller.ts',
     'services/bayn/src/risk.test.ts',
+    'services/bayn/src/http.ts',
     'services/bayn/src/system-assessment/README.md',
-    'services/bayn/migrations/20261106-cost-evidence.sql',
-    'argocd/applications/bayn/research-networkpolicy.yaml',
-    'argocd/applications/bayn/postgres-monitoring.yaml',
-    'argocd/applications/bayn/README.md',
-    '.github/workflows/bayn-ci.yml',
-    '.github/workflows/bayn-formal.yml',
     '.github/workflows/common-monorepo.yml',
-    'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql',
+    '.github/actions/affected-inputs/action.yml',
     'nix/images/bayn.nix',
     'services/bayn/tools/compile-frozen-control.ts',
     'services/bayn/tools/test-postgres.ts',
     'services/bayn/tools/test-ledger.ts',
     'services/bayn/tools/retire-broker-polls.integration.test.ts',
     'services/bayn/tools/run-macro-etf-core-rebalance.ts',
-    ...baynPostgresTestHelpers,
-    'docs/bayn/jev-migration-acceptance-v2.json',
+    ...baynPostgresTestHelpers.filter((path) => path.startsWith('services/bayn/tools/')),
   ]) {
-    expect(selected([path])).toEqual(full)
-    expect(selected([docs, tool, path])).toEqual(full)
+    expect(selected([path]), path).toEqual(full)
+    expect(selected([docs, tool, path]), path).toEqual(full)
   }
   for (const path of ['nix/ci-run-timed.sh', 'apps/landing/src/index.ts', 'bun.lock'])
     expect(selected([docs, path])).toEqual(full)
+
+  for (const path of [
+    'services/bayn/src/execution/controller.ts',
+    'services/bayn/migrations/20261106-cost-evidence.sql',
+    'services/bayn/src/db/risk-clock-rejection.integration.test.ts',
+    'services/bayn/src/testing/postgres-template.test-support.ts',
+    'services/bayn/package.json',
+    'docs/bayn/jev-migration-acceptance-v2.json',
+    '.github/workflows/bayn-formal.yml',
+    'tsconfig.base.json',
+    '.npmrc',
+    'bunfig.toml',
+    'patches/effect@4.1.4.patch',
+  ]) {
+    expect(selected([path]), path).toEqual([...full, 'formal'])
+    expect(selected([path, '.github/workflows/ofz.yaml', 'argocd/applications/bayn/configmap.yaml']), path).toEqual([
+      ...full,
+      'formal',
+    ])
+  }
+  for (const path of [
+    '.github/workflows/bayn-ci.yml',
+    'services/bayn/src/strategy/intraday-momentum/decision-core.ts',
+    'services/bayn/src/jev/instructions.ts',
+    'package.json',
+  ])
+    expect(selected([path]), path).toEqual(complete)
+  expect(selected(['services/bayn/tools/build-jev-instruction-variant.ts'])).toEqual([...full, 'gepa'])
 
   for (const path of [
     'services/bayn/formal/Bayn/Reliability.lean',
@@ -1050,12 +1073,54 @@ test('Bayn selects fast checks only for offline PRs and retains full and indepen
     'services/bayn/formal/conformance/economics.test.ts',
   ])
     expect(selected([path])).toEqual(['formal'])
-  for (const path of ['packages/scripts/src/bayn/verify-egress-proxy-restart.sh', 'packages/scripts/package.json'])
-    expect(selected([path])).toEqual(['pr_checks'])
+  for (const path of [
+    'packages/scripts/src/bayn/verify-egress-proxy-restart.sh',
+    'packages/scripts/package.json',
+    'argocd/applications/bayn/execution-controller.yaml',
+    'argocd/applications/bayn/research-networkpolicy.yaml',
+    'argocd/applications/bayn/README.md',
+    'argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml',
+  ])
+    expect(selected([path]), path).toEqual(['pr_checks'])
+  expect(selected(['argocd/applications/bayn/postgres-monitoring.yaml'])).toEqual(['pr_checks', 'postgres'])
+  for (const path of [
+    'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql',
+    'argocd/applications/torghut/clickhouse/schema/intraday-bars.sql',
+  ])
+    expect(selected([path]), path).toEqual(['archive'])
   for (const path of ['apps/landing/src/index.ts', 'services/bayn/formal/tla/README.md', 'services/dorvud/README.md'])
     expect(selected([path])).toEqual([])
+  for (const path of [
+    'services/agents/agentctl/cmd/root.go',
+    'services/agents/package.json',
+    'apps/landing/package.json',
+    '.github/workflows/agentctl-release.yml',
+    '.github/workflows/ofz.yaml',
+    '.github/workflows/pull-request.yml',
+    'argocd/applications/torghut/clickhouse/clickhouse-keeper.yaml',
+    'argocd/applications/torghut/clickhouse/auto-ontology-networkpolicy.yaml',
+    'argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml',
+    'argocd/applications/observability/graf-mimir-rules.yaml',
+  ])
+    expect(selected([path]), path).toEqual([])
   expect(selected([])).toEqual([])
   expect(selected(['services/bayn/gepa/runner.py'])).toEqual(['pr_checks', 'gepa'])
+
+  const changeWorkspace = (workspace: string) => ({
+    ...lock,
+    workspaces: { ...lock.workspaces, [workspace]: { ...lock.workspaces[workspace], version: '0.0.999' } },
+  })
+  expect(selected(['bun.lock', 'apps/landing/package.json'], 'pull_request', changeWorkspace('apps/landing'))).toEqual(
+    [],
+  )
+  expect(selected(['bun.lock'], 'pull_request', changeWorkspace('services/bayn'))).toEqual([...full, 'formal'])
+})
+
+test('the root PR workflow still routes Bayn manifests to Argo and schema validation', () => {
+  const map = loadImpactMap('.github/ci/impact-map.yml')
+  expect(selectImpactPlan(['argocd/applications/bayn/execution-controller.yaml'], map).validationTargets).toEqual(
+    expect.arrayContaining(['argo-lint', 'kubeconform']),
+  )
 })
 
 test('Bayn publication still watches runtime rather than test or offline inputs', () => {

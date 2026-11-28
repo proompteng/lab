@@ -189,6 +189,21 @@ test('pre-open execution prerequisites are ready before a snapshot or decision e
   )
 })
 
+test.each(['2026-10-01T13:20:00.000Z', '2026-10-01T13:30:00.000Z'])(
+  'cash fee settlement blocks the session even with otherwise ready prerequisites at %s',
+  (checkedAt) => {
+    const state = sessionState(checkedAt)
+    if (state.broker === null) throw new Error('Missing broker fixture')
+    expect(executionSessionPreflightReady(state)).toBe(true)
+    const blocked: RuntimeState = {
+      ...state,
+      broker: { ...state.broker, readAvailable: false, observationFailure: 'CASH_FEES_PENDING' },
+    }
+    expect(executionSessionPreflightReady(blocked)).toBe(false)
+    expectSession(blocked, 'BLOCKED', false)
+  },
+)
+
 test.each([
   ['2026-10-01T13:30:00.000Z', 'WARMUP', true],
   ['2026-10-01T13:31:01.999Z', 'WARMUP', true],

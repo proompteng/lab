@@ -56,6 +56,28 @@ and reusable callers from workflow YAML and fails if a new image workflow is mis
 `bun run packages/scripts/src/ci/generate-observability-workflows.ts` when adding a workflow. Diagnostic image builds
 can be included; ordinary semantic checks are excluded.
 
+## Optional SQL projection
+
+The [CI release ontology](../../../../docs/ci/ontology/README.md) reads a subset of the SQLite facts from
+`agents-db-next`. The default deployment does not configure `CI_AUDIT_DATABASE_URL` and does not load a
+Postgres driver or start a projection process. To enable it in a reviewed deployment, package Psycopg 3 in the
+collector image and inject the dedicated `ci_audit_writer` URL for the `agents` database via the approved
+credential path. Use the primary Service and verified TLS settings; never reuse the reader or database owner.
+
+Projection runs only after the Loki drain and metric refresh, if the cycle still has time. A separate process
+gets at most five seconds (including connect and commit); the collector kills a timed-out worker and continues
+without changing its collection heartbeat, errors, or Loki outbox. Failures emit a separate sanitized
+`ci_audit_projection_failed` log.
+
+Each pass upserts up to 100 workflow and job rows combined from retained completed attempts, newest first. The
+SQLite checkpoint advances only after Postgres commits. Retry reuses the same run and job IDs, including after
+a timeout with uncertain commit status. Jobs collected before an attempt ends still reach Loki on schedule but
+enter SQL after the attempt completes. Each pass also refreshes up to 100 failure clusters, drops up to 100 stale
+clusters, and prunes up to 100 rows per fact table for runs last updated more than 90 days ago. These limits leave
+the projection eventually consistent; sustained collector load or a database outage can make it stale.
+If Postgres is restored to a point older than the SQLite checkpoint, clear only `ci_audit_checkpoints` through
+the approved recovery path to replay retained attempts. Keep the original job facts and Loki outbox intact.
+
 ## Interpreting the dashboard
 
 The default view selects ARC, image-build jobs, and push events. Hosted runners, publishing jobs, validation jobs,

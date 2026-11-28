@@ -37,6 +37,7 @@ patches:
           spec:
             containers:
               - name: postgres
+                args: ["-c", "synchronous_commit=off"]
                 env:
                   - name: PGDATA
                     $patch: delete

@@ -22,20 +22,38 @@ spec:
     - jsonPath: .spec.agentRef.name
       name: Agent
       type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - description: Backing Job name or other runtime reference
+      jsonPath: .status.runtimeRef.name
+      name: Job
+      type: string
+    - jsonPath: .status.vcs.headBranch
+      name: Head
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Blocked")].reason
+      name: Blocked
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Succeeded")].status
       name: Succeeded
+      priority: 1
       type: string
     - jsonPath: .status.conditions[?(@.type=="Succeeded")].reason
       name: Reason
+      priority: 1
       type: string
     - jsonPath: .status.startedAt
       name: StartTime
+      priority: 1
       type: date
     - jsonPath: .status.finishedAt
       name: CompletionTime
+      priority: 1
       type: date
     - jsonPath: .spec.runtime.type
       name: Runtime
+      priority: 1
       type: string
     name: v1alpha1
     schema:

@@ -40,7 +40,7 @@ const gatewayEnv = z.object({
   AUTO_ONTOLOGY_MCP_MAX_REQUEST_BYTES: integer(32 * 1024, 1024, 256 * 1024),
   AUTO_ONTOLOGY_MCP_MAX_RESPONSE_BYTES: integer(1024 * 1024, 1024, 4 * 1024 * 1024),
   AUTO_ONTOLOGY_MCP_UPSTREAM_TIMEOUT_MS: integer(10_000, 1000, 30_000),
-  AUTO_ONTOLOGY_MCP_CHAT_TIMEOUT_MS: integer(60_000, 1000, 120_000),
+  AUTO_ONTOLOGY_MCP_CHAT_TIMEOUT_MS: integer(90_000, 1000, 150_000),
 })
 
 export const resolveAutoOntologyGatewayConfig = (env: NodeJS.ProcessEnv = process.env) => {
@@ -63,7 +63,7 @@ export const resolveAutoOntologyGatewayConfig = (env: NodeJS.ProcessEnv = proces
 
 const bridgeEnv = z.object({
   AUTO_ONTOLOGY_MCP_GATEWAY_URL: urlAt('/mcp').prefault(DEFAULT_GATEWAY_URL),
-  AUTO_ONTOLOGY_MCP_BRIDGE_TIMEOUT_MS: integer(90_000, 1000, 180_000),
+  AUTO_ONTOLOGY_MCP_BRIDGE_TIMEOUT_MS: integer(120_000, 1000, 180_000),
   AGENTS_MCP_IDENTITY_TOKEN_PATH: z
     .string()
     .trim()

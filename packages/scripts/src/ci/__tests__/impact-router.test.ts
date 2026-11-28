@@ -293,12 +293,6 @@ describe('impact router', () => {
     ).toThrow('Full CI plan has no validation targets')
   })
 
-  test('Jangar source still validates the architecture inventory', () => {
-    const plan = selectImpactPlan(['services/jangar/src/server.ts'], map)
-    expect(plan.validationTargets).toEqual(['jangar-inventory'])
-    expect(plan.delegatedWorkflows).toEqual([])
-  })
-
   test('routes Olden changes to app validation', () => {
     const plan = selectImpactPlan(['apps/olden/src/app.tsx'], map)
     expect(plan.validationTargets).toEqual(['olden'])
@@ -335,22 +329,18 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes only inventory-owning Agents sources through Jangar inventory validation', () => {
+  test('routes Agents sources directly to Agents CI without extra Jangar inventory validation', () => {
     const sourcePlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.ts'], map)
-    expect(sourcePlan.validationTargets).toEqual(['jangar-inventory'])
+    expect(sourcePlan.validationTargets).toEqual(['planner'])
     expect(sourcePlan.delegatedWorkflows).toEqual(['agents-ci'])
 
     const uiPlan = selectImpactPlan(['services/agents/src/app-routes/primitives.tsx'], map)
-    expect(uiPlan.validationTargets).toEqual(['jangar-inventory'])
+    expect(uiPlan.validationTargets).toEqual(['planner'])
     expect(uiPlan.delegatedWorkflows).toEqual(['agents-ci'])
 
     const testPlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.test.ts'], map)
     expect(testPlan.validationTargets).toEqual(['planner'])
     expect(testPlan.delegatedWorkflows).toEqual(['agents-ci'])
-
-    expect(selectImpactPlan(['docs/jangar/architecture-inventory.md'], map).validationTargets).toEqual([
-      'jangar-inventory',
-    ])
   })
 
   test('routes Agents chart changes to published-image smoke', () => {
@@ -467,8 +457,8 @@ describe('impact router', () => {
   })
 
   test('keeps mixed service changes deterministic', () => {
-    const plan = selectImpactPlan(['services/jangar/src/server.ts', 'services/torghut/src/main.py'], map)
-    expect(plan.validationTargets).toEqual(['jangar-inventory'])
+    const plan = selectImpactPlan(['apps/olden/src/app.tsx', 'services/torghut/src/main.py'], map)
+    expect(plan.validationTargets).toEqual(['olden'])
     expect(plan.delegatedWorkflows).toEqual(['torghut-ci'])
   })
 

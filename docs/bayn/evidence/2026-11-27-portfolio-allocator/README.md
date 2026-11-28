@@ -6,7 +6,7 @@ risk target, a live 5-day bootstrap, or ex-top-five profitability. The separate 
 stress is also negative at 5 and 10 bp, including after removing the five best days. Keep the allocator
 primitives unbound for Wave 2 research. The live v2 hash, migrations 0222/0223, and capital authority are unchanged.
 
-[Results](results.json) retains exact matched estimates, nullable daily paths, input hashes, all arms and gate
+[Results][archived-results] retains exact matched estimates, nullable daily paths, input hashes, all arms and gate
 decisions, folds, regimes, leave-one-symbol-out runs, bootstrap distributions, DSR, and gross headroom.
 The [protocol](protocol.md) defines promotion. A missing input produces an unknown return, not zero.
 
@@ -132,7 +132,7 @@ skew/kurtosis; neither calculation supplies missing market evidence.
 
 ## Reproduce
 
-From the repository root with the authorized `agents-artifacts` secret mounted in the environment:
+From the repository root in the [archived checkout][study-revision], with the authorized `agents-artifacts` secret mounted in the environment:
 
 ```sh
 frozen=$(mktemp -d)
@@ -162,3 +162,6 @@ cmp "$frozen/results.json" docs/bayn/evidence/2026-11-27-portfolio-allocator/res
 The runner verifies the manifest hash, object sizes, gzip and raw SHA-256 checksums, and minute row counts
 before scoring. No downloaded object belongs in Git. A complete live-universe tape with executable NBBO
 and borrow/arrival evidence is required before rerunning the qualification gates.
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-portfolio-allocator/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

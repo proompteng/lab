@@ -2,10 +2,14 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import process from 'node:process'
 
-import { runCodexAppServerAdapter } from '../../src/runner/codex-app-server'
+import { runAgyCliAdapter } from '../../src/runner/agy-cli'
 import { uploadOutputArtifacts } from '../../src/runner/artifact-upload'
+import { runCodexAppServerAdapter } from '../../src/runner/codex-app-server'
+import { installPstackSkills } from '../../src/runner/pstack'
 import {
   buildTemplateContext,
   type AgentProviderInputFile,
@@ -245,7 +249,7 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
 const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> => {
   const spec = normalizeRunnerSpec(rawSpec)
   const adapter = resolveAdapter(spec)
-  if (adapter.type === 'codex-app-server') {
+  if (adapter.type === 'codex-app-server' || adapter.type === 'agy-cli') {
     const abortController = new AbortController()
     const abort = (signal: NodeJS.Signals) => {
       if (!abortController.signal.aborted) {
@@ -255,6 +259,13 @@ const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> => {
     process.once('SIGTERM', abort)
     process.once('SIGINT', abort)
     try {
+      if (adapter.type === 'agy-cli') {
+        return await runAgyCliAdapter(spec, adapter.agy, { abortSignal: abortController.signal })
+      }
+      installPstackSkills({
+        codexHome: process.env.CODEX_HOME || join(homedir(), '.codex'),
+        enabled: process.env.AGENTS_RUNNER_PSTACK_ENABLED,
+      })
       return await runCodexAppServerAdapter(spec, adapter.codex, { abortSignal: abortController.signal })
     } finally {
       process.off('SIGTERM', abort)

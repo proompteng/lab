@@ -17,7 +17,7 @@ export interface NativeAlphaDecisionEvidence {
   readonly strategyProtocolHash: string
   readonly strategyBehaviorHash: string
   readonly strategyParameterHash: string
-  readonly policySchemaVersion: 'bayn.intraday-alpha-policy.v2'
+  readonly policySchemaVersion: 'bayn.intraday-alpha-policy.v2' | 'bayn.intraday-alpha-policy.v3'
   readonly riskPolicyHash: string
   readonly qualificationBuild: ForwardPerformanceBuildBinding | null
   readonly activationBuild: ForwardPerformanceBuildBinding | null

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.candidate_specs.support import (
-    Decimal,
     _CHIP_UNIVERSE_SYMBOLS,
+    Decimal,
     _TestCandidateSpecsBase,
     build_factor_acceptance_artifact,
     build_factor_acceptance_artifact_from_scorecard,
@@ -11,6 +13,8 @@ from tests.candidate_specs.support import (
     candidate_specs_module,
     compile_candidate_specs,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestFactorAcceptanceArtifactAcceptsRankicCostStressedFactor(

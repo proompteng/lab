@@ -1,3 +1,4 @@
+import { ledgerTotalsFixture } from './ledger-totals.test-support'
 import {
   makeIntradayPerformanceFixture,
   makeStreamingPerformanceFixture,
@@ -36,6 +37,11 @@ import { ForwardPerformanceScopeKind } from './report'
 import { ReportVerificationLive } from './verification'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
+
+const noExpenses = {
+  inferenceExpenseSnapshots: () => Effect.succeed([]),
+  inferenceExpenses: () => Effect.succeed([]),
+} satisfies Pick<ForwardPerformanceReaders, 'inferenceExpenseSnapshots' | 'inferenceExpenses'>
 
 const identityResult = makeBrokerIdentity({
   schemaVersion: 'bayn.broker-identity.v2',
@@ -287,24 +293,17 @@ const marketVolumeRequestBase = {
   sourceFeed: 'sip',
   adjustment: 'all',
 } as const
-const marketSessionMaterial = [
-  {
-    calendar_version: 'fixture-calendar-v1',
-    session_date: '2026-07-19',
-    open_time: '09:30',
-    close_time: '16:00',
-    timezone: 'America/New_York',
-    provider: 'alpaca',
-  },
-  {
-    calendar_version: 'fixture-calendar-v1',
-    session_date: '2026-07-20',
-    open_time: '09:30',
-    close_time: '16:00',
-    timezone: 'America/New_York',
-    provider: 'alpaca',
-  },
-] as const
+const marketSessionMaterial = ['2026-07-19', '2026-07-20'].map(
+  (session_date) =>
+    ({
+      calendar_version: 'fixture-calendar-v1',
+      session_date,
+      open_time: '09:30',
+      close_time: '16:00',
+      timezone: 'America/New_York',
+      provider: 'alpaca',
+    }) as const,
+)
 const marketBarMaterial = [
   {
     symbol: 'NVDA',
@@ -337,24 +336,26 @@ const marketBarMaterial = [
     publication_asof: '2026-07-20',
   },
 ] as const
-const marketBarsContentHash = Result.getOrThrow(canonicalHashV1Result(marketBarMaterial))
 const marketSessionsContentHash = Result.getOrThrow(canonicalHashV1Result(marketSessionMaterial))
-const marketSnapshotId = Result.getOrThrow(
-  canonicalHashV1Result({
-    schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-    provider: 'alpaca',
-    feed: 'sip',
-    adjustment: 'all',
-    calendarVersion: 'fixture-calendar-v1',
-    requestedStart: '2026-07-19',
-    publicationAsOf: '2026-07-20',
-    symbols: marketSymbols,
-    barsContentHash: marketBarsContentHash,
-    sessionsContentHash: marketSessionsContentHash,
-    universeId: 'cross-asset-taa-v1',
-    universeSymbolHash: marketUniverseSymbolHash,
-  }),
-)
+const marketSnapshotIdentity = (barsContentHash: string) =>
+  Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'signal.adjusted-daily-snapshot.v2',
+      provider: 'alpaca',
+      feed: 'sip',
+      adjustment: 'all',
+      calendarVersion: 'fixture-calendar-v1',
+      requestedStart: '2026-07-19',
+      publicationAsOf: '2026-07-20',
+      symbols: marketSymbols,
+      barsContentHash,
+      sessionsContentHash: marketSessionsContentHash,
+      universeId: 'cross-asset-taa-v1',
+      universeSymbolHash: marketUniverseSymbolHash,
+    }),
+  )
+const marketBarsContentHash = Result.getOrThrow(canonicalHashV1Result(marketBarMaterial))
+const marketSnapshotId = marketSnapshotIdentity(marketBarsContentHash)
 const marketVolumeRequest: ForwardPerformanceMarketVolumeRequest = {
   ...marketVolumeRequestBase,
 }
@@ -397,22 +398,7 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
     bar.session_date === '2026-07-20' ? { ...bar, adjusted_close: close, adjusted_volume: volume } : bar,
   )
   const barsContentHash = Result.getOrThrow(canonicalHashV1Result(bars))
-  const snapshotId = Result.getOrThrow(
-    canonicalHashV1Result({
-      schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-      provider: 'alpaca',
-      feed: 'sip',
-      adjustment: 'all',
-      calendarVersion: 'fixture-calendar-v1',
-      requestedStart: '2026-07-19',
-      publicationAsOf: '2026-07-20',
-      symbols: marketSymbols,
-      barsContentHash,
-      sessionsContentHash: marketSessionsContentHash,
-      universeId: 'cross-asset-taa-v1',
-      universeSymbolHash: marketUniverseSymbolHash,
-    }),
-  )
+  const snapshotId = marketSnapshotIdentity(barsContentHash)
   const manifestMaterial = {
     ...marketManifestMaterial,
     snapshot_id: snapshotId,
@@ -745,61 +731,13 @@ describe('forward performance read program', () => {
     ).toBe(true)
   })
 
-  test('binds partial terminal prices independently of later broker observation order', () => {
-    const marketVolume = success(
-      makeForwardPerformanceMarketVolumeEvidence(marketVolumeRequest, marketSnapshotRows, marketEvaluationStart),
-    )
-    if (marketVolume === undefined) throw new Error('market-volume fixture failed')
-    const execution = {
-      cycleId: marketVolumeRequest.cycleId,
-      decisionDocumentHash: hash('6'),
-      decisionHash: hash('7'),
-      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
-      intentId: hash('8'),
-      accountId: identityResult.success.accountId,
-      symbol: 'NVDA',
-      side: 'BUY' as const,
-      plannedQuantityAtoms: '1000000000',
-      referencePriceMicros: '100000000',
-      terminalOrder: {
-        eventId: hash('9'),
-        brokerOrderId: 'partial-broker-order',
-        clientOrderId: 'partial-client-order',
-        intentId: hash('8'),
-        accountId: identityResult.success.accountId,
-        symbol: 'NVDA',
-        side: 'BUY' as const,
-        quantityAtoms: '1000000000',
-        filledQuantityAtoms: '400000000',
-        status: 'CANCELED' as const,
-        occurredAt: '2026-07-20T20:00:00.000Z',
-        observedAt: '2026-07-20T21:06:00.000Z',
-      },
-      fills: [],
-    }
-    const first = success(bindForwardPerformanceTerminalReferencePrices([execution], [marketVolume]))
-    const second = success(bindForwardPerformanceTerminalReferencePrices([execution], [marketVolume]))
-
-    expect(first).toEqual(second)
-    expect(first[0]?.terminalReferencePrice).toMatchObject({
-      schemaVersion: 'bayn.forward-performance-terminal-reference-price.v1',
-      cycleId: marketVolumeRequest.cycleId,
-      symbol: 'NVDA',
-      executionSessionDate: '2026-07-20',
-      priceMicros: '103000000',
-      observedAt: '2026-07-20T21:05:00.000Z',
-      sourceEvidenceHash: marketVolume.contentHash,
-    })
-    expect(first[0]?.terminalReferencePrice?.contentHash).toMatch(/^[a-f0-9]{64}$/)
-  })
-
-  test('binds a blocked intent terminal price without fabricating a broker order', () => {
+  test.each(['partial', 'blocked'] as const)('binds an immutable terminal price for a %s execution', (kind) => {
     const marketVolume = success(
       makeForwardPerformanceMarketVolumeEvidence(marketVolumeRequest, marketSnapshotRows, marketEvaluationStart),
     )
     if (marketVolume === undefined) throw new Error('market-volume fixture failed')
     const intentId = hash('8')
-    const execution = {
+    const binding = {
       cycleId: marketVolumeRequest.cycleId,
       decisionDocumentHash: hash('6'),
       decisionHash: hash('7'),
@@ -810,35 +748,58 @@ describe('forward performance read program', () => {
       side: 'BUY' as const,
       plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
-      intent: {
-        intentId,
-        accountId: identityResult.success.accountId,
-        clientOrderId: 'blocked-client-order',
-        cycleId: marketVolumeRequest.cycleId,
-        decisionHash: hash('7'),
-        symbol: 'NVDA',
-        side: 'BUY' as const,
-        quantityAtoms: '1000000000',
-        terminalOutcome: 'BLOCKED' as const,
-        createdAt: '2026-07-20T13:00:00.000Z',
-        updatedAt: '2026-07-20T13:05:00.000Z',
-      },
       fills: [],
     }
-
+    const execution =
+      kind === 'partial'
+        ? {
+            ...binding,
+            terminalOrder: {
+              eventId: hash('9'),
+              brokerOrderId: 'partial-broker-order',
+              clientOrderId: 'partial-client-order',
+              intentId: hash('8'),
+              accountId: identityResult.success.accountId,
+              symbol: 'NVDA',
+              side: 'BUY' as const,
+              quantityAtoms: '1000000000',
+              filledQuantityAtoms: '400000000',
+              status: 'CANCELED' as const,
+              occurredAt: '2026-07-20T20:00:00.000Z',
+              observedAt: '2026-07-20T21:06:00.000Z',
+            },
+          }
+        : {
+            ...binding,
+            intent: {
+              intentId,
+              accountId: identityResult.success.accountId,
+              clientOrderId: 'blocked-client-order',
+              cycleId: marketVolumeRequest.cycleId,
+              decisionHash: hash('7'),
+              symbol: 'NVDA',
+              side: 'BUY' as const,
+              quantityAtoms: '1000000000',
+              terminalOutcome: 'BLOCKED' as const,
+              createdAt: '2026-07-20T13:00:00.000Z',
+              updatedAt: '2026-07-20T13:05:00.000Z',
+            },
+          }
     const first = success(bindForwardPerformanceTerminalReferencePrices([execution], [marketVolume]))
     const second = success(bindForwardPerformanceTerminalReferencePrices([execution], [marketVolume]))
 
     expect(first).toEqual(second)
-    expect(first[0]?.terminalOrder).toBeUndefined()
     expect(first[0]?.terminalReferencePrice).toMatchObject({
       schemaVersion: 'bayn.forward-performance-terminal-reference-price.v1',
       cycleId: marketVolumeRequest.cycleId,
       symbol: 'NVDA',
+      ...(kind === 'partial' ? { executionSessionDate: '2026-07-20' } : {}),
       priceMicros: '103000000',
       observedAt: '2026-07-20T21:05:00.000Z',
       sourceEvidenceHash: marketVolume.contentHash,
     })
+    if (kind === 'blocked') expect(first[0]?.terminalOrder).toBeUndefined()
+    else expect(first[0]?.terminalReferencePrice?.contentHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
   test.each([undefined, hash('9')])(
@@ -866,14 +827,7 @@ describe('forward performance read program', () => {
         ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
           observedCashYieldEvidence = cashYieldEvidence
           return Effect.succeed({
-            totals: {
-              realizedGainMicros: '0',
-              cashSettlementRoundingMicros: '0',
-              realizedLossMicros: '0',
-              brokerExecutionFeesMicros: '0',
-              otherChargedCostsMicros: '0',
-              cashYieldMicros: '0',
-            },
+            totals: ledgerTotalsFixture(),
             ledgerExact: true,
             missingLedgerAccountCount: 0,
             openPositionCount: 0,
@@ -1085,8 +1039,7 @@ describe('forward performance read program', () => {
       recordedAt: '2026-09-18T16:00:00.000Z',
     }))
     const readers: ForwardPerformanceReaders = {
-      inferenceExpenseSnapshots: () => Effect.succeed([]),
-      inferenceExpenses: () => Effect.succeed([]),
+      ...noExpenses,
       marketVolume: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
@@ -1125,14 +1078,7 @@ describe('forward performance read program', () => {
         expect(plans).toContainEqual(settlement.plan)
         expect(generationPlans).not.toContainEqual(settlement.plan)
         return Effect.succeed({
-          totals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: null,
-            cashYieldMicros: '0',
-          },
+          totals: ledgerTotalsFixture({ otherChargedCostsMicros: null }),
           ledgerExact: true,
           missingLedgerAccountCount: 0,
           openPositionCount: 0,
@@ -1252,14 +1198,7 @@ describe('forward performance read program', () => {
           }),
         ledger: () =>
           Effect.succeed({
-            totals: {
-              realizedGainMicros: '0',
-              cashSettlementRoundingMicros: '0',
-              realizedLossMicros: '0',
-              brokerExecutionFeesMicros: '0',
-              otherChargedCostsMicros: null,
-              cashYieldMicros: '0',
-            },
+            totals: ledgerTotalsFixture({ otherChargedCostsMicros: null }),
             ledgerExact: true,
             missingLedgerAccountCount: 0,
             openPositionCount: 0,
@@ -1398,20 +1337,12 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation, { extraReconciliationDiscrepancy: true })
     const readers: ForwardPerformanceReaders = {
-      inferenceExpenseSnapshots: () => Effect.succeed([]),
-      inferenceExpenses: () => Effect.succeed([]),
+      ...noExpenses,
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: () =>
         Effect.succeed({
-          totals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '200',
-          },
+          totals: ledgerTotalsFixture({ cashYieldMicros: '200' }),
           ledgerExact: true,
           missingLedgerAccountCount: 0,
           openPositionCount: 0,
@@ -1469,10 +1400,33 @@ describe('forward performance read program', () => {
       makeForwardPerformanceMarketVolumeEvidence(marketVolumeRequest, marketSnapshotRows, marketEvaluationStart),
     )
     if (marketVolumeEvidence === undefined) throw new Error('market-volume fixture failed')
+    const cashEvidence: ForwardPerformanceCashYieldEvidence = {
+      schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
+      reconciliationId: hash('7'),
+      reconciliationContentHash: hash('8'),
+      reconciledAt: '2026-07-20T21:01:00.000Z',
+      baselineAccountEventId: hash('b'),
+      baselineObservedAt: '2026-07-19T13:00:00.000Z',
+      baselineCashMicros: '1000',
+      baselineCashReportingOffsetMicros: '0',
+      openingAccountEventId: hash('9'),
+      openingObservedAt: '2026-07-20T13:00:00.000Z',
+      openingCashMicros: '1000',
+      openingCashReportingOffsetMicros: '0',
+      openingCashReportingQuantumMicros: '1',
+      preWindowAccountedCashDeltaMicros: '0',
+      preWindowCashResidualMicros: '0',
+      closingAccountEventId: hash('a'),
+      closingObservedAt: '2026-07-20T21:00:00.000Z',
+      closingCashMicros: '2100',
+      closingCashReportingOffsetMicros: '0',
+      closingCashReportingQuantumMicros: '1',
+      accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
+      cashYieldMicros: '200',
+    }
     let observedMarketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[] | undefined
     const readers: ForwardPerformanceReaders = {
-      inferenceExpenseSnapshots: () => Effect.succeed([]),
-      inferenceExpenses: () => Effect.succeed([]),
+      ...noExpenses,
       postgres: () =>
         Effect.succeed({
           cashReportingPrecisionKnown: true,
@@ -1513,30 +1467,7 @@ describe('forward performance read program', () => {
             reconciledAt: '2026-07-20T21:01:00.000Z',
           },
           startingCapitalMicros: '1000',
-          cashYieldEvidence: {
-            schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
-            reconciliationId: hash('7'),
-            reconciliationContentHash: hash('8'),
-            reconciledAt: '2026-07-20T21:01:00.000Z',
-            baselineAccountEventId: hash('b'),
-            baselineObservedAt: '2026-07-19T13:00:00.000Z',
-            baselineCashMicros: '1000',
-            baselineCashReportingOffsetMicros: '0',
-            openingAccountEventId: hash('9'),
-            openingObservedAt: '2026-07-20T13:00:00.000Z',
-            openingCashMicros: '1000',
-            openingCashReportingOffsetMicros: '0',
-            openingCashReportingQuantumMicros: '1',
-            preWindowAccountedCashDeltaMicros: '0',
-            preWindowCashResidualMicros: '0',
-            closingAccountEventId: hash('a'),
-            closingObservedAt: '2026-07-20T21:00:00.000Z',
-            closingCashMicros: '2100',
-            closingCashReportingOffsetMicros: '0',
-            closingCashReportingQuantumMicros: '1',
-            accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
-            cashYieldMicros: '200',
-          },
+          cashYieldEvidence: { ...cashEvidence },
           transactions: [prepared.transaction],
           ledgerTransactions: [prepared.transaction],
           transactionEvidence: [
@@ -1582,39 +1513,9 @@ describe('forward performance read program', () => {
         return Effect.succeed([marketVolumeEvidence])
       },
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
-        expect(cashYieldEvidence).toEqual({
-          schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
-          reconciliationId: hash('7'),
-          reconciliationContentHash: hash('8'),
-          reconciledAt: '2026-07-20T21:01:00.000Z',
-          baselineAccountEventId: hash('b'),
-          baselineObservedAt: '2026-07-19T13:00:00.000Z',
-          baselineCashMicros: '1000',
-          baselineCashReportingOffsetMicros: '0',
-          openingAccountEventId: hash('9'),
-          openingObservedAt: '2026-07-20T13:00:00.000Z',
-          openingCashMicros: '1000',
-          openingCashReportingOffsetMicros: '0',
-          openingCashReportingQuantumMicros: '1',
-          preWindowAccountedCashDeltaMicros: '0',
-          preWindowCashResidualMicros: '0',
-          closingAccountEventId: hash('a'),
-          closingObservedAt: '2026-07-20T21:00:00.000Z',
-          closingCashMicros: '2100',
-          closingCashReportingOffsetMicros: '0',
-          closingCashReportingQuantumMicros: '1',
-          accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
-          cashYieldMicros: '200',
-        })
+        expect(cashYieldEvidence).toEqual(cashEvidence)
         return Effect.succeed({
-          totals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '100',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '200',
-          },
+          totals: ledgerTotalsFixture({ realizedLossMicros: '100', cashYieldMicros: '200' }),
           ledgerExact: true,
           missingLedgerAccountCount: 0,
           openPositionCount: 0,

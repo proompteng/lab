@@ -17,6 +17,7 @@ resources:
   - ingressroute-openwebui-k8s-private.yaml
   - postgres-upgrade-final-backup.yaml
   - postgres-cluster.yaml
+  - auto-ontology-db-networkpolicy.yaml
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
   - redis-upgrade-backup.yaml
@@ -42,5 +43,5 @@ images:
     newTag: v0.13.4
     digest: sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: kargo-sha-ca108b3bc2ce32d1992c664026333a870d95022e-run-46121103372
-    digest: sha256:5e0c5a28be02faef5ef08d10536d879838e5282c3e366b974e7961782ff6a33d
+    newTag: kargo-sha-600141368777b3c5e981493178b646181a4ed4f0-run-46135760440
+    digest: sha256:e275d1cee81da803e996c26db361bb885a964595ba3ec1a5f5c64ac36fda8511

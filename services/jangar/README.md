@@ -22,7 +22,6 @@ Operational build/release contract: `docs/jangar/build-contract.md`.
 Runtime boot is now explicit: `src/server/app.ts` only builds the HTTP surface, while `src/server/index.ts` and
 `src/server/dev.ts` opt into startup behavior through `src/server/runtime-profile.ts`. The tech-debt program source of
 truth is the current source map in `docs/jangar/application-architecture.md`.
-The generated architecture inventory lives in `docs/jangar/architecture-inventory.md`.
 
 ```mermaid
 flowchart TD

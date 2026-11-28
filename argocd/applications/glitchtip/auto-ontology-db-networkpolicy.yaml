@@ -1,0 +1,64 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: glitchtip-pg-auto-ontology-ingress
+  namespace: glitchtip
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: glitchtip-pg
+      cnpg.io/instanceRole: replica
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-ontology
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: 9187
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: glitchtip-pg-replica-status-ingress
+  namespace: glitchtip
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: glitchtip-pg
+      cnpg.io/instanceRole: replica
+  policyTypes: [Ingress]
+  ingress:
+    # The SQL policy isolates replica ingress; CNPG still needs its status channel.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudnative-pg
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: glitchtip-pg
+        # Flannel can source-NAT cross-node status traffic to its VTEP.
+        - ipBlock:
+            cidr: 10.244.0.0/31
+        - ipBlock:
+            cidr: 10.244.3.0/31
+        - ipBlock:
+            cidr: 10.244.5.0/31
+      ports:
+        - port: 8000
+          protocol: TCP

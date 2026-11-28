@@ -48,12 +48,30 @@ on:
       - nix/oci-inspect-archive.sh
       - nix/oci-release-contract.sh
 
-concurrency:
-  group: ${{ github.workflow }}-main
-  cancel-in-progress: false
-
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/opencode-build-push.yml
+          dependency-aware-push: 'true'
+          workspaces: |
+            image: ['', 'services/bayn']
+
   image:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    concurrency:
+      group: ${{ github.workflow }}-main
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: opencode

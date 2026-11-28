@@ -141,7 +141,7 @@ Daily Pearson matrix at 5 bp one-way, **Holdout**:
 
 ## Reproduce
 
-From the repository root with read access to the existing Bayn S3 research archives:
+From the repository root in the [archived checkout][study-revision], with read access to the existing Bayn S3 research archives:
 
 ```sh
 evidence=docs/bayn/evidence/2026-11-27-10yr-etf-mean-reversion
@@ -154,3 +154,5 @@ cmp "$evidence/results.json" "$work/results.json"
 
 The [machine-readable results](results.json) bind the published protocol, archive receipts, and daily ledger
 digests without committing source prices or credentials.
+
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

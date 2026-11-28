@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { writeFileSync } from 'node:fs'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { describe, expect, it } from 'bun:test'
+import { rejects } from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -29,13 +29,13 @@ describe('cx-codex-run prompt parsing', () => {
 
     const parsed = parseCodexRunArgs(['--prompt-file', filePath, '--prompt', 'inline'])
 
-    await expect(parsePrompt(parsed)).rejects.toMatchObject({
+    await rejects(parsePrompt(parsed), {
       message: 'Use either --prompt or --prompt-file, not both.',
     })
 
     const parsedFileOnly = parseCodexRunArgs(['--prompt-file', filePath])
 
-    await expect(parsePrompt(parsedFileOnly)).resolves.toBe('prompt from file')
+    expect(await parsePrompt(parsedFileOnly)).toBe('prompt from file')
 
     rmSync(temp, { recursive: true, force: true })
   })

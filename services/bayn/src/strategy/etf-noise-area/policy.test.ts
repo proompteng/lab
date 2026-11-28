@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { loadActiveStrategyProtocol } from '../../strategy'
-import { intradayAlphaStrategyIdentity } from '../intraday-alpha/policy'
+import { loadSharedJevProtocol } from '../../strategy'
+import { intradayAlphaStrategyIdentity, makeIntradayAlphaPolicy } from '../intraday-alpha/policy'
 import { currentEquityUniverse } from '../intraday-market'
 import {
   decodeEtfNoiseAreaPolicy,
@@ -61,14 +61,14 @@ describe('ETF Noise Area policy identity', () => {
     }
   })
 
-  test('fits the current 22-symbol source universe without changing the active v2 policy hash', () => {
+  test('fits the current 22-symbol source universe while preserving the historical v2 policy hash', () => {
     expect(defaultEtfNoiseAreaPolicy.symbols).toEqual(['QQQ', 'SMH'])
     expect(currentEquityUniverse.symbols).toHaveLength(22)
     expect(defaultEtfNoiseAreaPolicy.symbols.every((symbol) => currentEquityUniverse.symbols.includes(symbol))).toBe(
       true,
     )
-    const live = Result.getOrThrow(loadActiveStrategyProtocol())
-    expect(Result.getOrThrow(intradayAlphaStrategyIdentity(live)).strategy.parameterHash).toBe(
+    const retainedV2 = makeIntradayAlphaPolicy(Result.getOrThrow(loadSharedJevProtocol()))
+    expect(Result.getOrThrow(intradayAlphaStrategyIdentity(retainedV2)).strategy.parameterHash).toBe(
       'f632170473534577a59a98c800bca69917b710c3857a68d0c52ec776ebcdd509',
     )
   })

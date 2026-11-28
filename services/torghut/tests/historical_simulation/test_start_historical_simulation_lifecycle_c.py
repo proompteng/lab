@@ -1,25 +1,34 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    Any,
-    ArgocdAutomationConfig,
-    ClickHouseRuntimeConfig,
-    ExitStack,
-    KafkaRuntimeConfig,
-    Path,
-    PostgresRuntimeConfig,
+from contextlib import ExitStack
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import call, patch
+
+from scripts.historical_simulation_startup import (
     RolloutsAnalysisConfig,
-    SimpleNamespace,
-    StartHistoricalSimulationTestCaseBase,
     _build_resources,
     _run_full_lifecycle,
     _runtime_verify,
-    call,
-    patch,
+    argocd_rollouts,
+    lifecycle,
+)
+from tests.historical_simulation.fixtures import (
+    SimulationOrchestrationTestCase,
+    disabled_rollouts_config,
+    make_argocd_config,
+    make_clickhouse_config,
+    make_kafka_config,
+    make_postgres_config,
+    open_hour_resources,
+    open_hour_trading_env,
+    patch_ready_compute,
+    ready_knative_service,
+    simulation_resources,
 )
 
 
-class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseBase):
+class TestStartHistoricalSimulationLifecycleC(SimulationOrchestrationTestCase):
     def test_run_full_lifecycle_fails_before_teardown_clean_when_teardown_settle_not_ready(
         self,
     ) -> None:
@@ -41,33 +50,16 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 "end": "2026-02-27T21:00:00Z",
             },
         }
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
+        postgres_config = make_postgres_config(
             simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_teardown_settle_fail",
             simulation_db="torghut_sim_teardown_settle_fail",
-            migrations_command="true",
         )
-        argocd_config = ArgocdAutomationConfig(
+        argocd_config = make_argocd_config(
             manage_automation=True,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
-            verify_timeout_seconds=600,
         )
         rollouts_config = RolloutsAnalysisConfig(
             enabled=True,
@@ -81,59 +73,67 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
         )
         call_order: list[str] = []
 
-        def _rollouts_side_effect(*, phase: str, **_: Any) -> dict[str, Any]:
+        def _rollouts_side_effect(*, phase: str, **_: object) -> dict[str, object]:
             call_order.append(phase)
             return {"phase": "Successful"}
 
         with ExitStack() as stack:
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
+                patch.object(
+                    lifecycle,
+                    "_ensure_supported_binary",
                     return_value=None,
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._update_run_state",
+                patch.object(
+                    lifecycle,
+                    "_update_run_state",
                     return_value=None,
                 )
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._save_json",
+                patch.object(
+                    lifecycle,
+                    "_save_json",
                     return_value=None,
                 )
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle.persist_completion_trace",
+                patch.object(
+                    lifecycle,
+                    "persist_completion_trace",
                     return_value={},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._upsert_simulation_progress_row",
+                patch.object(
+                    lifecycle,
+                    "_upsert_simulation_progress_row",
                     return_value=None,
                 ),
             )
             mock_session_local = stack.enter_context(
-                patch("scripts.historical_simulation_startup.lifecycle.SessionLocal")
+                patch.object(lifecycle, "SessionLocal")
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._read_argocd_automation_mode",
+                patch.object(
+                    lifecycle,
+                    "_read_argocd_automation_mode",
                     return_value={"mode": "auto"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._read_named_argocd_application_sync_policy",
+                patch.object(
+                    lifecycle,
+                    "_read_named_argocd_application_sync_policy",
                     return_value={"sync_policy": {"automated": {"enabled": True}}},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._read_argocd_application_sync_policy",
+                patch.object(
+                    lifecycle,
+                    "_read_argocd_application_sync_policy",
                     return_value={
                         "sync_policy": {"automated": {"enabled": True}},
                         "automation_mode": "auto",
@@ -142,46 +142,53 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._prepare_argocd_for_run",
+                patch.object(
+                    lifecycle,
+                    "_prepare_argocd_for_run",
                     return_value={"managed": False},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._restore_argocd_after_run",
+                patch.object(
+                    lifecycle,
+                    "_restore_argocd_after_run",
                     side_effect=lambda **_: (
                         call_order.append("argocd_restore") or {"managed": False}
                     ),
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._apply",
+                patch.object(
+                    lifecycle,
+                    "_apply",
                     return_value={"status": "ok"},
                 )
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._run_rollouts_analysis",
+                patch.object(
+                    lifecycle,
+                    "_run_rollouts_analysis",
                     side_effect=_rollouts_side_effect,
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._runtime_verify",
+                patch.object(
+                    lifecycle,
+                    "_runtime_verify",
                     return_value={"runtime_state": "ready"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._replay_dump",
+                patch.object(
+                    lifecycle,
+                    "_replay_dump",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._monitor_run_completion",
+                patch.object(
+                    lifecycle,
+                    "_monitor_run_completion",
                     return_value={
                         "status": "ok",
                         "activity_classification": "success",
@@ -198,26 +205,30 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._report_simulation",
+                patch.object(
+                    lifecycle,
+                    "_report_simulation",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._build_strategy_proof_artifact",
+                patch.object(
+                    lifecycle,
+                    "_build_strategy_proof_artifact",
                     return_value={"status": "ok", "legacy_path_count": 0},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._teardown",
+                patch.object(
+                    lifecycle,
+                    "_teardown",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._wait_for_torghut_service_revision_ready",
+                patch.object(
+                    lifecycle,
+                    "_wait_for_torghut_service_revision_ready",
                     return_value={
                         "ready": False,
                         "condition_ready": "Unknown",
@@ -267,33 +278,16 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 "end": "2026-02-27T21:00:00Z",
             },
         }
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
+        postgres_config = make_postgres_config(
             simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_teardown_fail",
             simulation_db="torghut_sim_teardown_fail",
-            migrations_command="true",
         )
-        argocd_config = ArgocdAutomationConfig(
+        argocd_config = make_argocd_config(
             manage_automation=False,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
-            verify_timeout_seconds=600,
         )
         rollouts_config = RolloutsAnalysisConfig(
             enabled=True,
@@ -306,84 +300,96 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
             verify_poll_seconds=5,
         )
 
-        def _rollouts_side_effect(*, phase: str, **_: Any) -> dict[str, Any]:
+        def _rollouts_side_effect(*, phase: str, **_: object) -> dict[str, object]:
             if phase == "teardown-clean":
                 return {"phase": "Failed"}
             return {"phase": "Successful"}
 
         with ExitStack() as stack:
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
+                patch.object(
+                    lifecycle,
+                    "_ensure_supported_binary",
                     return_value=None,
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._update_run_state",
+                patch.object(
+                    lifecycle,
+                    "_update_run_state",
                     return_value=None,
                 )
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._save_json",
+                patch.object(
+                    lifecycle,
+                    "_save_json",
                     return_value=None,
                 )
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle.persist_completion_trace",
+                patch.object(
+                    lifecycle,
+                    "persist_completion_trace",
                     return_value={},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._upsert_simulation_progress_row",
+                patch.object(
+                    lifecycle,
+                    "_upsert_simulation_progress_row",
                     return_value=None,
                 ),
             )
             mock_session_local = stack.enter_context(
-                patch("scripts.historical_simulation_startup.lifecycle.SessionLocal")
+                patch.object(lifecycle, "SessionLocal")
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._prepare_argocd_for_run",
+                patch.object(
+                    lifecycle,
+                    "_prepare_argocd_for_run",
                     return_value={"managed": False},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._restore_argocd_after_run",
+                patch.object(
+                    lifecycle,
+                    "_restore_argocd_after_run",
                     return_value={"managed": False},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._apply",
+                patch.object(
+                    lifecycle,
+                    "_apply",
                     return_value={"status": "ok"},
                 )
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._run_rollouts_analysis",
+                patch.object(
+                    lifecycle,
+                    "_run_rollouts_analysis",
                     side_effect=_rollouts_side_effect,
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._runtime_verify",
+                patch.object(
+                    lifecycle,
+                    "_runtime_verify",
                     return_value={"runtime_state": "ready"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._replay_dump",
+                patch.object(
+                    lifecycle,
+                    "_replay_dump",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._monitor_run_completion",
+                patch.object(
+                    lifecycle,
+                    "_monitor_run_completion",
                     return_value={
                         "status": "ok",
                         "activity_classification": "success",
@@ -400,20 +406,23 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._report_simulation",
+                patch.object(
+                    lifecycle,
+                    "_report_simulation",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._build_strategy_proof_artifact",
+                patch.object(
+                    lifecycle,
+                    "_build_strategy_proof_artifact",
                     return_value={"status": "ok", "legacy_path_count": 0},
                 ),
             )
             stack.enter_context(
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._teardown",
+                patch.object(
+                    lifecycle,
+                    "_teardown",
                     return_value={"status": "ok"},
                 ),
             )
@@ -455,33 +464,16 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 "end": "2026-02-27T21:00:00Z",
             },
         }
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
+        postgres_config = make_postgres_config(
             simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_runtime_gate",
             simulation_db="torghut_sim_runtime_gate",
-            migrations_command="true",
         )
-        argocd_config = ArgocdAutomationConfig(
+        argocd_config = make_argocd_config(
             manage_automation=False,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
-            verify_timeout_seconds=600,
         )
         rollouts_config = RolloutsAnalysisConfig(
             enabled=True,
@@ -495,58 +487,66 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
         )
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
+            patch.object(
+                lifecycle,
+                "_ensure_supported_binary",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._update_run_state",
+            patch.object(
+                lifecycle,
+                "_update_run_state",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._save_json",
+            patch.object(
+                lifecycle,
+                "_save_json",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle.persist_completion_trace",
+            patch.object(
+                lifecycle,
+                "persist_completion_trace",
                 return_value={},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._upsert_simulation_progress_row",
+            patch.object(
+                lifecycle,
+                "_upsert_simulation_progress_row",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle.SessionLocal"
-            ) as mock_session_local,
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._prepare_argocd_for_run",
+            patch.object(lifecycle, "SessionLocal") as mock_session_local,
+            patch.object(
+                lifecycle,
+                "_prepare_argocd_for_run",
                 return_value={"managed": False},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._restore_argocd_after_run",
+            patch.object(
+                lifecycle,
+                "_restore_argocd_after_run",
                 return_value={"managed": False},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._apply",
+            patch.object(
+                lifecycle,
+                "_apply",
                 return_value={"status": "ok"},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._run_rollouts_analysis",
+            patch.object(
+                lifecycle,
+                "_run_rollouts_analysis",
                 return_value={"phase": "Failed"},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._runtime_verify",
+            patch.object(
+                lifecycle,
+                "_runtime_verify",
                 return_value={"runtime_state": "not_ready"},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._replay_dump"
-            ) as replay_dump,
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._report_simulation",
+            patch.object(lifecycle, "_replay_dump") as replay_dump,
+            patch.object(
+                lifecycle,
+                "_report_simulation",
                 return_value={"status": "ok"},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._build_strategy_proof_artifact",
+            patch.object(
+                lifecycle,
+                "_build_strategy_proof_artifact",
                 return_value={"status": "ok", "legacy_path_count": 0},
             ),
         ):
@@ -575,12 +575,7 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
         replay_dump.assert_not_called()
 
     def test_run_full_lifecycle_waits_for_runtime_verify_without_rollouts(self) -> None:
-        resources = _build_resources(
-            "sim-1",
-            {
-                "dataset_id": "dataset-a",
-            },
-        )
+        resources = simulation_resources()
         manifest = {
             "dataset_id": "dataset-a",
             "window": {
@@ -588,79 +583,58 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 "end": "2026-02-27T21:00:00Z",
             },
         }
-        kafka_config = KafkaRuntimeConfig(
-            bootstrap_servers="kafka:9092",
-            security_protocol=None,
-            sasl_mechanism=None,
-            sasl_username=None,
-            sasl_password=None,
-        )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        kafka_config = make_kafka_config()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
-        argocd_config = ArgocdAutomationConfig(
+        postgres_config = make_postgres_config()
+        argocd_config = make_argocd_config(
             manage_automation=False,
-            applicationset_name="product",
-            applicationset_namespace="argocd",
-            app_name="torghut",
-            root_app_name="root",
-            desired_mode_during_run="manual",
-            restore_mode_after_run="previous",
-            verify_timeout_seconds=600,
         )
-        rollouts_config = RolloutsAnalysisConfig(
-            enabled=False,
-            namespace="agents",
-            runtime_template="torghut-runtime-ready-v1",
-            activity_template="torghut-sim-activity-v1",
-            teardown_template="torghut-teardown-v1",
-            artifact_template="torghut-artifact-v1",
+        rollouts_config = disabled_rollouts_config(
             verify_timeout_seconds=30,
-            verify_poll_seconds=5,
         )
 
         with (
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
+            patch.object(
+                lifecycle,
+                "_ensure_supported_binary",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._update_run_state",
+            patch.object(
+                lifecycle,
+                "_update_run_state",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._save_json",
+            patch.object(
+                lifecycle,
+                "_save_json",
                 return_value=None,
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle.persist_completion_trace",
+            patch.object(
+                lifecycle,
+                "persist_completion_trace",
                 return_value={},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle.SessionLocal"
-            ) as mock_session_local,
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._prepare_argocd_for_run",
+            patch.object(lifecycle, "SessionLocal") as mock_session_local,
+            patch.object(
+                lifecycle,
+                "_prepare_argocd_for_run",
                 return_value={"managed": False},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._restore_argocd_after_run",
+            patch.object(
+                lifecycle,
+                "_restore_argocd_after_run",
                 return_value={"managed": False},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._apply",
+            patch.object(
+                lifecycle,
+                "_apply",
                 return_value={"status": "ok"},
             ),
-            patch(
-                "scripts.historical_simulation_startup.argocd_rollouts._runtime_verify",
+            patch.object(
+                argocd_rollouts,
+                "_runtime_verify",
                 side_effect=[
                     {"runtime_state": "not_ready"},
                     {"runtime_state": "ready"},
@@ -670,12 +644,14 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 "scripts.historical_simulation_startup.argocd_rollouts.time.sleep",
                 return_value=None,
             ) as sleep_mock,
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._replay_dump",
+            patch.object(
+                lifecycle,
+                "_replay_dump",
                 return_value={"status": "ok"},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._monitor_run_completion",
+            patch.object(
+                lifecycle,
+                "_monitor_run_completion",
                 return_value={
                     "status": "ok",
                     "activity_classification": "success",
@@ -690,12 +666,14 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                     },
                 },
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._report_simulation",
+            patch.object(
+                lifecycle,
+                "_report_simulation",
                 return_value={"status": "ok"},
             ),
-            patch(
-                "scripts.historical_simulation_startup.lifecycle._build_strategy_proof_artifact",
+            patch.object(
+                lifecycle,
+                "_build_strategy_proof_artifact",
                 return_value={"status": "ok", "legacy_path_count": 0},
             ),
         ):
@@ -730,92 +708,15 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                 "end": "2026-03-06T15:30:00Z",
             }
         }
-        resources = _build_resources(
-            "sim-2026-03-06-open-hour",
-            {
-                "dataset_id": "dataset-a",
-                "runtime": {
-                    "target_mode": "dedicated_service",
-                    "namespace": "torghut",
-                    "ta_configmap": "torghut-ta-sim-config",
-                    "ta_deployment": "torghut-ta-sim",
-                    "torghut_service": "torghut-sim",
-                },
-            },
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_PIPELINE_MODE="simple",
+                TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED="true",
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+                TRADING_ORDER_FEED_AUTO_OFFSET_RESET="earliest",
+            ),
         )
-        kservice_payload = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": "user-container",
-                                "env": [
-                                    {"name": "TRADING_ENABLED", "value": "true"},
-                                    {
-                                        "name": "TRADING_PIPELINE_MODE",
-                                        "value": "simple",
-                                    },
-                                    {
-                                        "name": "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_RUNTIME_MODE",
-                                        "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_TABLE",
-                                        "value": "torghut_sim_sim_2026_03_06_open_hour.ta_signals",
-                                    },
-                                    {
-                                        "name": "TRADING_PRICE_TABLE",
-                                        "value": "torghut_sim_sim_2026_03_06_open_hour.ta_microbars",
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_TOPIC",
-                                        "value": "torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour",
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_AUTO_OFFSET_RESET",
-                                        "value": "earliest",
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_ORDER_UPDATES_TOPIC",
-                                        "value": "torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour",
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_RUN_ID",
-                                        "value": "sim-2026-03-06-open-hour",
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_ALLOWED_SOURCES",
-                                        "value": "ws,ta",
-                                    },
-                                ],
-                            }
-                        ]
-                    }
-                }
-            },
-            "status": {
-                "latestReadyRevisionName": "torghut-sim-00001",
-                "conditions": [
-                    {
-                        "type": "Ready",
-                        "status": "True",
-                    }
-                ],
-            },
-        }
         ta_configmap_payload = {
             "data": {
                 "TA_TRADES_TOPIC": "torghut.sim.trades.v1.sim_2026_03_06_open_hour",
@@ -828,30 +729,7 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._kubectl_json",
-                side_effect=[kservice_payload, ta_configmap_payload],
-            ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._deployment_replica_health",
-                side_effect=[
-                    {
-                        "name": "torghut-sim-00001-deployment",
-                        "ready_replicas": 1,
-                        "available_replicas": 1,
-                        "replicas": 1,
-                    },
-                ],
-            ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._flink_runtime_health",
-                return_value={
-                    "name": "torghut-ta-sim",
-                    "desired_state": "running",
-                    "lifecycle_state": "RUNNING",
-                    "job_manager_status": "DEPLOYED",
-                },
-            ),
+            patch_ready_compute(kservice_payload, ta_configmap_payload),
         ):
             report = _runtime_verify(resources=resources, manifest=manifest)
 

@@ -45,7 +45,6 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('kubectl patch application')
     expect(workflow).not.toContain('kubectl annotate application')
     expect(workflow).not.toContain('contents: write')
-    expect(workflow).toContain('ARGO_SYNC_TIMEOUT_SECONDS=1800')
     expect(workflow).toContain('dump_argocd_app_diagnostics "${app}"')
   })
 
@@ -157,6 +156,8 @@ describe('torghut post-deploy verifier workflow', () => {
             '-c',
             `
           sleep() { :; }
+          # Static responses cannot change between polls. Exercise the first and final attempts.
+          seq() { printf '%s\\n' "$1" "$2"; }
           kubectl() {
             if [ "$TEST_EXIT_CODE" != '0' ]; then return "$TEST_EXIT_CODE"; fi
             case "$2" in

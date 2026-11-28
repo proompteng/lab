@@ -233,8 +233,34 @@ const save = () =>
     operations: ['status'],
     targets: [{ kind: 'kubernetes.namespace', id: 'galactic/immutable-uid' }],
   })
-const disconnect = () =>
-  disconnectConnection(identity, { operationId: randomUUID(), agentId: 'microvm-fixture', connectionId })
+const agentId = 'microvm-fixture'
+const submitConnection = (request = save()) => saveConnection(identity, request)
+const reconcile = () => reconcileConnections(identity, agentId)
+const disconnectRequest = () => ({ operationId: randomUUID(), agentId, connectionId })
+const disconnect = () => disconnectConnection(identity, disconnectRequest())
+const recorded = (name: string) => events.filter((event) => event.name === name)
+const eventNames = () => events.map(({ name }) => name)
+
+function storedConnection() {
+  if (!connection) throw new Error('Missing fixture connection')
+  return connection
+}
+
+function expireConnection() {
+  const saved = storedConnection()
+  saved.expiresAtUnixMs = BigInt(Date.now() - 1)
+  return saved
+}
+
+function repairRequired() {
+  providers = [
+    create(ProviderConnectionSchema, {
+      profileId: 'inventory',
+      connectorId: 'galactic',
+      state: ProviderConnectionState.RECONNECT,
+    }),
+  ]
+}
 
 beforeEach(() => {
   identity.session.idleDeadlineUnixMs = BigInt(Date.now() + 3_600_000)
@@ -260,12 +286,12 @@ beforeEach(() => {
 })
 
 test('BFF keeps idle workspaces untouched and activates only after exact guest acknowledgement', async () => {
-  await reconcileConnections(identity, 'microvm-fixture')
-  expect(events.map((event) => event.name)).toEqual(['ListPlatformConnections'])
+  await reconcile()
+  expect(eventNames()).toEqual(['ListPlatformConnections'])
   events.length = 0
-  const result = await saveConnection(identity, save())
+  const result = await submitConnection()
   expect(result.connections[0]?.credentialActive).toBe(true)
-  expect(events.map((event) => event.name)).toEqual([
+  expect(eventNames()).toEqual([
     'catalog',
     'PutPlatformConnection',
     'ListPlatformConnections',
@@ -282,36 +308,24 @@ test('BFF keeps idle workspaces untouched and activates only after exact guest a
 })
 
 test('an unconnected provider prevents consent and credential installation, then resumes the same intent', async () => {
-  providers = [
-    create(ProviderConnectionSchema, {
-      profileId: 'inventory',
-      connectorId: 'galactic',
-      state: ProviderConnectionState.RECONNECT,
-    }),
-  ]
+  repairRequired()
   const request = save()
-  await expect(saveConnection(identity, request)).rejects.toMatchObject({ code: 'provider_reconnect_required' })
-  expect(events.some((event) => event.name === 'PutPlatformConnection')).toBe(false)
+  await expect(submitConnection(request)).rejects.toMatchObject({ code: 'provider_reconnect_required' })
+  expect(recorded('PutPlatformConnection')).toHaveLength(0)
   expect(installed).toHaveLength(0)
   providers[0]!.state = ProviderConnectionState.READY
-  const result = await saveConnection(identity, request)
+  const result = await submitConnection(request)
   expect(result.connections[0]?.id).toBe(request.connectionId)
   expect(result.connections[0]?.credentialActive).toBe(true)
 })
 
 test('a provider needing repair is not shown active or renewed with a guest credential', async () => {
-  await saveConnection(identity, save())
-  providers = [
-    create(ProviderConnectionSchema, {
-      profileId: 'inventory',
-      connectorId: 'galactic',
-      state: ProviderConnectionState.RECONNECT,
-    }),
-  ]
+  await submitConnection()
+  repairRequired()
   events.length = 0
-  const result = await reconcileConnections(identity, 'microvm-fixture')
+  const result = await reconcile()
   expect(result.connections[0]?.credentialActive).toBe(false)
-  expect(events.some((event) => event.name === 'CreatePlatformDelegation')).toBe(false)
+  expect(recorded('CreatePlatformDelegation')).toHaveLength(0)
 })
 
 for (const [status, code] of [
@@ -320,41 +334,36 @@ for (const [status, code] of [
 ] as const) {
   test(`a rejected consent write has a definite outcome and never installs a credential: ${status}`, async () => {
     consentFailure = status
-    await expect(saveConnection(identity, save())).rejects.toMatchObject({ status, code })
+    await expect(submitConnection()).rejects.toMatchObject({ status, code })
     expect(connection).toBeUndefined()
-    expect(events.map((event) => event.name)).toEqual(['catalog', 'PutPlatformConnection'])
+    expect(eventNames()).toEqual(['catalog', 'PutPlatformConnection'])
     expect(installed).toEqual([])
   })
 }
 
 test('expiry and runtime changes renew credentials without writing consent again', async () => {
-  await saveConnection(identity, save())
-  expect(connection).toBeDefined()
-  if (!connection) throw new Error('Missing fixture connection')
+  await submitConnection()
+  const connection = expireConnection()
   const first = connection.delegationId
-  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
   events.length = 0
-  await reconcileConnections(identity, 'microvm-fixture')
+  await reconcile()
   expect(connection.delegationId).not.toBe(first)
-  expect(events.some((event) => event.name === 'PutPlatformConnection')).toBe(false)
+  expect(recorded('PutPlatformConnection')).toHaveLength(0)
   runtime = '44444444-4444-4444-8444-444444444444'
-  await reconcileConnections(identity, 'microvm-fixture')
+  await reconcile()
   expect(connection.credentialBinding?.generation).toBe(runtime)
   expect(connection.version).toBe(BigInt(1))
 })
 
 test('credential issuance cannot outlive the current human idle deadline', async () => {
   identity.session.idleDeadlineUnixMs = BigInt(Date.now() + 120_000)
-  await saveConnection(identity, save())
-  expect(events.find((event) => event.name === 'CreatePlatformDelegation')?.body.expiresAtUnixMs).toBe(
-    identity.session.idleDeadlineUnixMs,
-  )
+  await submitConnection()
+  expect(recorded('CreatePlatformDelegation')[0]?.body.expiresAtUnixMs).toBe(identity.session.idleDeadlineUnixMs)
 })
 
 test('unavailable saved scopes stay denied while later connections renew', async () => {
-  await saveConnection(identity, save())
-  if (!connection) throw new Error('Missing fixture connection')
-  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
+  await submitConnection()
+  const connection = expireConnection()
   connection.credentialActive = false
   const saved = connection
   precedingConnections = ['removed', 'recreated'].map((connectorId) => {
@@ -372,15 +381,13 @@ test('unavailable saved scopes stay denied while later connections renew', async
   events.length = 0
   let failure: unknown
   try {
-    await reconcileConnections(identity, 'microvm-fixture')
+    await reconcile()
   } catch (error) {
     failure = error
   }
   expect(connection.credentialActive).toBe(true)
   expect(precedingConnections.every((entry) => !entry.credentialActive)).toBe(true)
-  expect(
-    events.filter((event) => event.name === 'CreatePlatformDelegation').map((event) => event.body.connectionId),
-  ).toEqual([connectionId])
+  expect(recorded('CreatePlatformDelegation').map((event) => event.body.connectionId)).toEqual([connectionId])
   expect(failure).toMatchObject({ status: 409 })
   if (!(failure instanceof Error)) throw new Error('Missing renewal failure')
   for (const entry of precedingConnections) {
@@ -390,22 +397,21 @@ test('unavailable saved scopes stay denied while later connections renew', async
 })
 
 test('replaces an inactive installation after gateway interruption with a freshly acknowledged credential', async () => {
-  await saveConnection(identity, save())
+  await submitConnection()
   if (!connection) throw new Error('Missing fixture connection')
   const inactive = connection.delegationId
   connection.credentialActive = false
   events.length = 0
-  await reconcileConnections(identity, 'microvm-fixture')
-  expect(events.map((event) => event.name)).toContain('CreatePlatformDelegation')
-  expect(events.map((event) => event.name)).toContain('configure')
+  await reconcile()
+  expect(eventNames()).toContain('CreatePlatformDelegation')
+  expect(eventNames()).toContain('configure')
   expect(connection.delegationId).not.toBe(inactive)
   expect(connection.credentialActive).toBe(true)
 })
 
 test('denied connection permissions do not prevent a later authorized renewal', async () => {
-  await saveConnection(identity, save())
-  if (!connection) throw new Error('Missing fixture connection')
-  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
+  await submitConnection()
+  const connection = expireConnection()
   connection.credentialActive = false
   const denied = clone(PlatformConnectionSchema, connection)
   denied.id = randomUUID()
@@ -417,15 +423,13 @@ test('denied connection permissions do not prevent a later authorized renewal', 
   events.length = 0
   let failure: unknown
   try {
-    await reconcileConnections(identity, 'microvm-fixture')
+    await reconcile()
   } catch (error) {
     failure = error
   }
   expect(connection.credentialActive).toBe(true)
   expect(denied.credentialActive).toBe(false)
-  expect(events.filter((event) => event.name === 'configure').map((event) => event.body.connectionId)).toEqual([
-    connectionId,
-  ])
+  expect(recorded('configure').map((event) => event.body.connectionId)).toEqual([connectionId])
   expect(failure).toMatchObject({ status: 403 })
   if (!(failure instanceof Error)) throw new Error('Missing permission denial')
   expect(failure.message).toContain('denied: Access to the selected resources is no longer allowed.')
@@ -435,21 +439,20 @@ test('denied connection permissions do not prevent a later authorized renewal', 
 test('disconnect wins against a delayed installation and a replayed original save', async () => {
   const request = save()
   duringConfigure = disconnect
-  await expect(saveConnection(identity, request)).rejects.toThrow()
+  await expect(submitConnection(request)).rejects.toThrow()
   expect(connection?.enabled).toBe(false)
   expect(connection?.credentialActive).toBe(false)
   duringConfigure = undefined
   events.length = 0
-  const replayed = await saveConnection(identity, request)
+  const replayed = await submitConnection(request)
   expect(replayed.connections[0]?.enabled).toBe(false)
-  expect(events.some((event) => event.name === 'CreatePlatformDelegation')).toBe(false)
-  expect(events.some((event) => event.name === 'configure')).toBe(false)
+  expect(recorded('CreatePlatformDelegation')).toHaveLength(0)
+  expect(recorded('configure')).toHaveLength(0)
 })
 
 test('failed cleanup of a disconnected connection does not stop another renewal or expose private errors', async () => {
-  await saveConnection(identity, save())
-  if (!connection) throw new Error('Missing fixture connection')
-  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
+  await submitConnection()
+  const connection = expireConnection()
   connection.credentialActive = false
   const disconnected = clone(PlatformConnectionSchema, connection)
   disconnected.id = randomUUID()
@@ -458,7 +461,7 @@ test('failed cleanup of a disconnected connection does not stop another renewal 
   removalUnavailable = true
   let failure: unknown
   try {
-    await reconcileConnections(identity, 'microvm-fixture')
+    await reconcile()
   } catch (error) {
     failure = error
   }
@@ -472,11 +475,11 @@ test('failed cleanup of a disconnected connection does not stop another renewal 
 
 test('mismatched acknowledgement revokes the child and cleans only its original generation', async () => {
   wrongAcknowledgement = true
-  await expect(saveConnection(identity, save())).rejects.toThrow()
+  await expect(submitConnection()).rejects.toThrow()
   expect(connection?.enabled).toBe(true)
   expect(connection?.credentialActive).toBe(false)
-  expect(events.some((event) => event.name === 'ActivatePlatformDelegation')).toBe(false)
-  const cleanup = events.find((event) => event.name === 'remove')
+  expect(recorded('ActivatePlatformDelegation')).toHaveLength(0)
+  const cleanup = recorded('remove')[0]
   expect(cleanup?.body).toMatchObject({
     connectionId,
     delegationId: connection?.delegationId,
@@ -484,35 +487,30 @@ test('mismatched acknowledgement revokes the child and cleans only its original 
     credentialGeneration: String(connection?.credentialGeneration),
   })
   wrongAcknowledgement = false
-  await reconcileConnections(identity, 'microvm-fixture')
+  await reconcile()
   expect(connection?.credentialActive).toBe(true)
 })
 
 test('renewal needs fresh authority and offline revocation never needs the guest', async () => {
-  await saveConnection(identity, save())
-  if (!connection) throw new Error('Missing fixture connection')
-  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
+  await submitConnection()
+  expireConnection()
   permitted = false
   events.length = 0
-  await expect(reconcileConnections(identity, 'microvm-fixture')).rejects.toThrow()
-  expect(events.some((event) => event.name === 'configure')).toBe(false)
+  await expect(reconcile()).rejects.toThrow()
+  expect(recorded('configure')).toHaveLength(0)
   ready = false
   events.length = 0
   expect(await disconnect()).toEqual({ revoked: true, cleanupPending: true })
-  expect(events.map((event) => event.name)).toEqual([
-    'ListPlatformConnections',
-    'RevokePlatformConnection',
-    'ListPlatformConnections',
-  ])
+  expect(eventNames()).toEqual(['ListPlatformConnections', 'RevokePlatformConnection', 'ListPlatformConnections'])
   ready = true
-  await reconcileConnections(identity, 'microvm-fixture')
+  await reconcile()
   expect(installed).toEqual([])
 })
 
 test('replaces a revoked installed credential after failed guest cleanup', async () => {
   wrongAcknowledgement = true
   removalUnavailable = true
-  await expect(saveConnection(identity, save())).rejects.toThrow()
+  await expect(submitConnection()).rejects.toThrow()
   if (!connection) throw new Error('Missing fixture connection')
   const revoked = connection.delegationId
   expect(revokedDelegations.has(revoked)).toBe(true)
@@ -520,7 +518,7 @@ test('replaces a revoked installed credential after failed guest cleanup', async
   wrongAcknowledgement = false
   removalUnavailable = false
   events.length = 0
-  await reconcileConnections(identity, 'microvm-fixture')
+  await reconcile()
   expect(connection.delegationId).not.toBe(revoked)
   expect(connection.credentialActive).toBe(true)
   expect(
@@ -531,8 +529,8 @@ test('replaces a revoked installed credential after failed guest cleanup', async
 })
 
 test('a replayed disconnect receipt cannot claim current revocation after an explicit reconnect', async () => {
-  await saveConnection(identity, save())
-  const request = { operationId: randomUUID(), agentId: 'microvm-fixture', connectionId }
+  await submitConnection()
+  const request = disconnectRequest()
   await disconnectConnection(identity, request)
   if (!connection) throw new Error('Missing fixture connection')
   connection.enabled = true
@@ -542,16 +540,16 @@ test('a replayed disconnect receipt cannot claim current revocation after an exp
   events.length = 0
   await expect(disconnectConnection(identity, request)).rejects.toMatchObject({ status: 409 })
   expect(connection.enabled).toBe(true)
-  expect(events.some((event) => event.name === 'remove')).toBe(false)
+  expect(recorded('remove')).toHaveLength(0)
 })
 
 test('revoked intent uses the current recovery epoch to retire retained guest state after recovery', async () => {
-  await saveConnection(identity, save())
+  await submitConnection()
   await disconnect()
   recoveryGeneration = BigInt(4)
   events.length = 0
-  await reconcileConnections(identity, 'microvm-fixture')
-  expect(events.find((event) => event.name === 'remove')?.body.recoveryGeneration).toBe('4')
+  await reconcile()
+  expect(recorded('remove')[0]?.body.recoveryGeneration).toBe('4')
   expect(connection?.enabled).toBe(false)
 })
 
@@ -581,7 +579,7 @@ test('run card actions use the current connection, exact target and fresh Relay 
     operation: 'cancel_run' as const,
   }
   expect((await runConnectionCommand(identity, command)).canCancel).toBe(true)
-  expect(events.find((event) => event.name === 'Execute')?.body).toMatchObject({
+  expect(recorded('Execute')[0]?.body).toMatchObject({
     operationId: command.operationId,
     connectorId: 'agents',
     operation: 'cancel_run',
@@ -598,5 +596,5 @@ test('run card actions use the current connection, exact target and fresh Relay 
   connection.enabled = true
   permitted = false
   await expect(runConnectionCommand(identity, command)).rejects.toMatchObject({ status: 403 })
-  expect(events.filter((event) => event.name === 'Execute')).toHaveLength(0)
+  expect(recorded('Execute')).toHaveLength(0)
 })

@@ -20,7 +20,9 @@ data:
     - Once the PR is open, report the link and exit. Do not wait for CI or review, watch or poll GitHub checks
       (including `gh pr checks --watch` and `gh run watch`), or merge unless the task prompt explicitly asks.
     - Do not request Codex review automatically. Do not post `@codex review` or `codex:review-request` comments.
-    - Use relevant repo skills in `skills/` when applicable; do not restate their instructions.
+    - Use relevant repo skills in `skills/` and bundled `pstack` skills in `~/.codex/skills` when applicable; do not
+      restate their instructions. Bundled skills include `poteto-mode`, `unslop`, `principle-prove-it-works`,
+      `principle-fix-root-causes`, `principle-laziness-protocol`, and `blast-radius`.
 
     Memory:
     - Retrieve relevant memories before and during work.
