@@ -76,6 +76,8 @@ targets:
       - argocd/applications/buzz/networkpolicy.yaml
       - argocd/applications/devbox/network-policy.yaml
       - argocd/applications/froussard/approval-networkpolicy.yaml
+      - argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml
+      - argocd/applications/jangar/auto-ontology-db-networkpolicy.yaml
       - argocd/applications/kargo/smoke-access.yaml
       - argocd/applications/keycloak/network-policy.yaml
       - argocd/applications/ofz/control-plane/network-policy.yaml
@@ -91,7 +93,6 @@ targets:
       - argocd/applications/proompteng/network-policy.yaml
       - argocd/applications/proompteng/admin-network-policy.yaml
       - argocd/applications/relay/network-policy.yaml
-      - argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml
       - argocd/applications/restate/networkpolicy.yaml
       - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
       - argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml

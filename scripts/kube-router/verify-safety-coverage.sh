@@ -23,6 +23,11 @@ desired_namespaces=$(
         jq -e '.items | length > 0' >/dev/null; then
       printf '%s\n' glitchtip
     fi
+    if kubectl -n kube-system get namespace jangar >/dev/null 2>&1 &&
+      kubectl -n jangar get networkpolicies.networking.k8s.io -o json |
+        jq -e '.items | length > 0' >/dev/null; then
+      printf '%s\n' jangar
+    fi
   } | sort -u
 )
 actual_namespaces=$(
