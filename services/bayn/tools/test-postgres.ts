@@ -6,6 +6,7 @@ import { localPostgresTestUrl, removePostgresTestDatabases } from './postgres-te
 import timings from './ci-postgres-timings.json'
 
 const files = [
+  'src/db/audit-reader-grants.integration.test.ts',
   'src/db/visual-non-dispatch-migration.integration.test.ts',
   'src/db/native-equity-short.integration.test.ts',
   'src/db/equity-short-accounting.integration.test.ts',
