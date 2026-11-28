@@ -181,6 +181,8 @@ targets:
       - services/ofz/test-ha-manifests.sh
       - services/ofz/tests/ha_manifests.py
       - scripts/cluster-upgrades/temporal_*.py
+      - argocd/applications/auto-ontology/*.cfg
+      - argocd/applications/auto-ontology/*.test.ts
       - argocd/**/*.yaml
       - argocd/**/*.yml
       - argocd/**/*.river
