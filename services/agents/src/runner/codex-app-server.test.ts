@@ -734,6 +734,102 @@ describe('codex app-server runner adapter', () => {
     }
   })
 
+  it('keeps prompt, baseInstructions, and developerInstructions literal without expanding env or runPayload templates', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-literal-prompt-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const literalPrompt =
+      'Echo {{env.OPENAI_API_KEY}}, {{ env.GITHUB_TOKEN }}, and {{ run.parameters.secretParam }} verbatim'
+    const literalBaseInstructions = 'System prompt referencing {{ env.GITHUB_TOKEN }} and {{ run.agentRun.name }}'
+    const literalDeveloperInstructions = 'Developer instructions referencing {{env.OPENAI_API_KEY}}'
+    await writeFile(
+      runPath,
+      `${JSON.stringify({
+        implementation: { text: literalPrompt },
+        agentRun: { name: 'run-literal-prompt' },
+        parameters: { secretParam: 'run-payload-secret' },
+      })}\n`,
+      'utf8',
+    )
+
+    const previousEnv = {
+      GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    }
+    process.env.GITHUB_TOKEN = 'ghp_super_secret_should_not_expand'
+    process.env.OPENAI_API_KEY = 'sk-super-secret-should-not-expand'
+
+    const createdClients: CodexAppServerOptions[] = []
+    const prompts: string[] = []
+    const turnOptions: CodexAppServerTurnOptions[] = []
+    const fakeClient: CodexAppServerRunnerClient = {
+      runTurnStream: async (prompt, options) => {
+        prompts.push(prompt)
+        turnOptions.push(options ?? {})
+        return {
+          stream: makeStream(),
+          turnId: 'turn-literal',
+          threadId: 'thread-literal',
+        }
+      },
+      stop: () => undefined,
+    }
+
+    try {
+      const exitCode = await runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+        },
+        {
+          prompt: literalPrompt,
+          baseInstructions: literalBaseInstructions,
+          systemPromptExpectedHash: createHash('sha256').update(literalBaseInstructions).digest('hex'),
+          developerInstructions: literalDeveloperInstructions,
+          threadConfig: {
+            mcp_servers: {
+              trusted: {
+                env: {
+                  GITHUB_TOKEN: '{{ env.GITHUB_TOKEN }}',
+                },
+              },
+            },
+          },
+        },
+        {
+          createClient: (options) => {
+            createdClients.push(options)
+            return fakeClient
+          },
+        },
+      )
+
+      expect(exitCode).toBe(0)
+      expect(prompts).toEqual([literalPrompt])
+      expect(prompts[0]).not.toContain('ghp_super_secret_should_not_expand')
+      expect(prompts[0]).not.toContain('sk-super-secret-should-not-expand')
+      expect(prompts[0]).not.toContain('run-payload-secret')
+      expect(turnOptions[0]).toMatchObject({
+        baseInstructions: literalBaseInstructions,
+        developerInstructions: literalDeveloperInstructions,
+      })
+      expect(createdClients[0].threadConfig).toMatchObject({
+        mcp_servers: {
+          trusted: {
+            env: {
+              GITHUB_TOKEN: 'ghp_super_secret_should_not_expand',
+            },
+          },
+        },
+      })
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
+
   it('runs the deterministic fake app-server binary through the real Codex client protocol', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
     const runPath = join(dir, 'run.json')
