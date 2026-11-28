@@ -13,7 +13,10 @@ import { shortNativeEntryFixture } from '../jev/short-entry.test-support'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
-import { armedNativeProtectionRequiresStopCancellation } from './position-protection-interpreter'
+import {
+  armedNativeProtectionRequiresStopCancellation,
+  shouldReanchorProtectionCancel,
+} from './position-protection-interpreter'
 
 describe('armed native protection IEX stop confirmation', () => {
   const buildLongStopTarget = (
@@ -301,5 +304,113 @@ describe('armed native protection IEX stop confirmation', () => {
       }),
     )
     expect(armedNativeProtectionRequiresStopCancellation(profitTarget, plan)).toBe(true)
+  })
+})
+
+describe('fill-anchored protection reanchor cancel classification', () => {
+  const bracketProtection = {
+    _tag: 'Bracket' as const,
+    stopPriceMicros: '490000000',
+    stopLimitPriceMicros: '485000000',
+    profitLimitPriceMicros: '575000000',
+  }
+  const shortBracketProtection = {
+    _tag: 'EquityShortBracket' as const,
+    stopPriceMicros: '510000000',
+    stopLimitPriceMicros: '515000000',
+    profitLimitPriceMicros: '425000000',
+  }
+  const ocoProtection = {
+    _tag: 'Oco' as const,
+    stopPriceMicros: '490000000',
+    stopLimitPriceMicros: '485000000',
+    profitLimitPriceMicros: '575000000',
+    entryDecisionHash: 'a'.repeat(64),
+  }
+
+  test('preserves reanchor intent when draining a remaining bracket profit child after the stop child canceled', () => {
+    for (const owner of [bracketProtection, shortBracketProtection]) {
+      expect(
+        shouldReanchorProtectionCancel({
+          fillAnchored: true,
+          closeDue: false,
+          exitRequested: false,
+          quantityAtoms: 10_000_000_000n,
+          action: { _tag: 'Arm', method: 'OCO', quantityAtoms: 10_000_000_000n },
+          protection: { _tag: 'Absent' },
+          orderOwnerProtection: owner,
+        }),
+      ).toBe(true)
+    }
+  })
+
+  test('marks initial armed bracket cancellation as reanchor and rejects exits, close windows, flat inventory, and non-bracket orders', () => {
+    expect(
+      shouldReanchorProtectionCancel({
+        fillAnchored: true,
+        closeDue: false,
+        exitRequested: false,
+        quantityAtoms: 10_000_000_000n,
+        action: { _tag: 'CancelProtection', intentId: 'entry-1' },
+        protection: {
+          _tag: 'Armed',
+          intentId: 'entry-1',
+          method: 'BRACKET',
+          quantityAtoms: 10_000_000_000n,
+          stopPriceMicros: 490_000_000n,
+          stopLimitPriceMicros: 485_000_000n,
+          profitLimitPriceMicros: 575_000_000n,
+        },
+        orderOwnerProtection: bracketProtection,
+      }),
+    ).toBe(true)
+
+    expect(
+      shouldReanchorProtectionCancel({
+        fillAnchored: true,
+        closeDue: false,
+        exitRequested: true,
+        quantityAtoms: 10_000_000_000n,
+        action: { _tag: 'Liquidate', quantityAtoms: 10_000_000_000n },
+        protection: { _tag: 'Absent' },
+        orderOwnerProtection: bracketProtection,
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldReanchorProtectionCancel({
+        fillAnchored: true,
+        closeDue: true,
+        exitRequested: false,
+        quantityAtoms: 10_000_000_000n,
+        action: { _tag: 'Arm', method: 'OCO', quantityAtoms: 10_000_000_000n },
+        protection: { _tag: 'Absent' },
+        orderOwnerProtection: bracketProtection,
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldReanchorProtectionCancel({
+        fillAnchored: true,
+        closeDue: false,
+        exitRequested: false,
+        quantityAtoms: 0n,
+        action: { _tag: 'Complete' },
+        protection: { _tag: 'Absent' },
+        orderOwnerProtection: bracketProtection,
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldReanchorProtectionCancel({
+        fillAnchored: true,
+        closeDue: false,
+        exitRequested: false,
+        quantityAtoms: 10_000_000_000n,
+        action: { _tag: 'Arm', method: 'OCO', quantityAtoms: 10_000_000_000n },
+        protection: { _tag: 'Absent' },
+        orderOwnerProtection: ocoProtection,
+      }),
+    ).toBe(false)
   })
 })

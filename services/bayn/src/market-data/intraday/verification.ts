@@ -329,8 +329,15 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
     )
   }
   if (request.purpose !== undefined && request.symbols === undefined) {
-    return Result.fail(failure('request', 'quote-only snapshots require an explicit canonical symbol subset'))
+    return Result.fail(failure('request', 'pricing snapshots require an explicit canonical symbol subset'))
   }
+  if (
+    request.purpose === IntradaySnapshotPurpose.PositionCheckpoint &&
+    (request.feed !== 'iex' ||
+      requestedSymbols.length !== 1 ||
+      epoch(request.rangeEndAt) - epoch(request.rangeStartAt) !== minuteMs)
+  )
+    return Result.fail(failure('request', 'position checkpoint requires one completed IEX minute and symbol'))
   if (
     request.candidateEvidencePolicy !== undefined &&
     (!Object.values(IntradayCandidateEvidencePolicy).includes(request.candidateEvidencePolicy) ||

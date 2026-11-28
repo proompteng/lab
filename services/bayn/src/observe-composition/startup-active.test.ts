@@ -26,7 +26,7 @@ const prepare = (strategy: StrategyRuntime) =>
 
 test('autonomous startup admits the exact source-selected intraday-alpha active identity', () => {
   const activePolicy = Result.getOrThrow(loadActiveStrategyProtocol())
-  expect(activePolicy.schemaVersion).toBe('bayn.intraday-alpha-policy.v2')
+  expect(activePolicy.schemaVersion).toBe('bayn.intraday-alpha-policy.v3')
   const provenance = Result.getOrThrow(
     makeRuntimeProvenanceResult({
       ...fixtureRuntime.provenance,
@@ -41,7 +41,7 @@ test('autonomous startup admits the exact source-selected intraday-alpha active 
   const activeRuntime = makeActiveStrategyRuntime(activePolicy, provenance)
   const result = Result.getOrThrow(prepare(activeRuntime))
   expect(result.strategyProtocolHash).toBe(Result.getOrThrow(makeStrategyProtocolHashResult(provenance.strategy)))
-  expect(result.strategyProtocolHash).toBe('5863a919110021b7bf7f27872aafe0bed44092cf832f8d0e3a6fdb66fb73ff2d')
+  expect(result.strategyProtocolHash).toBe('91fab8597a5a70b8aed72c5d709040a775f4718905293bc2f438ec5124a4d100')
 })
 
 test('autonomous startup also admits retained shared v44 protocol evidence', () => {
