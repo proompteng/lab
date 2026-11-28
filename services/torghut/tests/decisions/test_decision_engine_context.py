@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from tests.decisions.support import (
-    Decimal,
-    DecisionEngine,
-    SignalEnvelope,
-    Strategy,
-    TestCase,
-    datetime,
-    patch,
-    settings,
-    timezone,
-    uuid,
-)
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+from unittest.mock import patch
+
+from app.config import settings
+from app.trading.decisions import DecisionEngine
+from tests.trading_fixtures import make_runtime_strategy, make_signal, make_strategy
 
 
 class TestDecisionEngineContext(TestCase):
@@ -19,23 +15,19 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="tsmom-only",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
                 '{"strategy_type":"intraday_tsmom_v1","version":"1.0.0","compiler_source":"spec_v2"}'
             ),
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="intraday_tsmom_v1",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=Decimal("500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             payload={
                 "ema12": Decimal("100.0"),
                 "ema26": Decimal("101.0"),
@@ -43,7 +35,6 @@ class TestDecisionEngineContext(TestCase):
                 "rsi14": Decimal("72"),
                 "price": 100,
             },
-            timeframe="1Min",
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
@@ -64,26 +55,21 @@ class TestDecisionEngineContext(TestCase):
 
     def test_scheduler_runtime_fails_closed_when_plugin_missing(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="fallback",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="unknown_custom",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=Decimal("500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
                 "price": 100,
             },
-            timeframe="1Min",
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
@@ -103,26 +89,21 @@ class TestDecisionEngineContext(TestCase):
             )
 
     def test_scheduler_runtime_attaches_forecast_contract_and_telemetry(self) -> None:
-        strategy = Strategy(
-            id=uuid.uuid4(),
+        strategy = make_runtime_strategy(
             name="runtime-forecast",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
             universe_type="legacy_macd_rsi",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=Decimal("500"),
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
                 "price": 100,
             },
-            timeframe="1Min",
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
@@ -149,18 +130,14 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="wiring",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             symbol="aapl",
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
@@ -192,7 +169,6 @@ class TestDecisionEngineContext(TestCase):
                 "correlation_concentration": Decimal("0.45"),
                 "fragility_state": "elevated",
             },
-            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
@@ -220,18 +196,14 @@ class TestDecisionEngineContext(TestCase):
 
     def test_decision_params_include_microstructure_signal_alias_payload(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="signal-alias",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             symbol="aapl",
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
@@ -260,7 +232,6 @@ class TestDecisionEngineContext(TestCase):
                     },
                 },
             },
-            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
@@ -275,18 +246,14 @@ class TestDecisionEngineContext(TestCase):
 
     def test_decision_params_fallback_for_malformed_microstructure_signal(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="signal-alias-fallback",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             symbol="aapl",
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
@@ -307,7 +274,6 @@ class TestDecisionEngineContext(TestCase):
                     },
                 },
             },
-            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
@@ -319,19 +285,14 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="synthesis-safe",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -343,7 +304,6 @@ class TestDecisionEngineContext(TestCase):
                 "fill_hazard": Decimal("0.65"),
                 "liquidity_regime": "compressed",
             },
-            timeframe="1Min",
         )
 
         decisions = engine.evaluate(signal, [strategy])
@@ -353,20 +313,14 @@ class TestDecisionEngineContext(TestCase):
 
     def test_decision_params_include_signal_seq(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="seq-wiring",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             seq=17,
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
@@ -382,20 +336,14 @@ class TestDecisionEngineContext(TestCase):
 
     def test_decision_params_include_simulation_context(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="sim-wiring",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             seq=321,
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
@@ -433,20 +381,14 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="no-sim",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             seq=11,
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
@@ -463,20 +405,14 @@ class TestDecisionEngineContext(TestCase):
 
     def test_decision_params_include_regime_hmm_canonical_payload(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 27, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -524,19 +460,13 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-invalid-schema",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 27, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -574,19 +504,13 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-invalid-posterior",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 27, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 27, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -625,19 +549,13 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-stale-preserves-lineage",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 3, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 3, 1, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -683,20 +601,14 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-fallback",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 28, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -717,20 +629,14 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-nested-fallback",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 28, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -752,19 +658,13 @@ class TestDecisionEngineContext(TestCase):
 
     def test_decision_regime_route_label_falls_back_when_hmm_stale(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-stale-fallback",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 28, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -788,19 +688,13 @@ class TestDecisionEngineContext(TestCase):
 
     def test_decision_regime_route_label_ignores_transition_shock(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-transition-shock",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 28, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -823,19 +717,13 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-omitted",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 28, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -854,19 +742,13 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-placeholder",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 28, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -888,20 +770,14 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="regime-hmm-route-hint",
-            description=None,
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 2, 28, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 2, 28, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
@@ -927,20 +803,15 @@ class TestDecisionEngineContext(TestCase):
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
-        strategy = Strategy(
+        strategy = make_strategy(
             name="runtime-disabled-no-flag",
             description="version=1.0.0",
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
             universe_symbols=None,
             max_notional_per_trade=Decimal("500"),
             max_position_pct_equity=None,
         )
-        signal = SignalEnvelope(
-            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol="AAPL",
-            timeframe="1Min",
+        signal = make_signal(
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),

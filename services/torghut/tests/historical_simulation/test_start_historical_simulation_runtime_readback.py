@@ -1,18 +1,205 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    SimpleNamespace,
-    StartHistoricalSimulationTestCaseBase,
-    _build_resources,
-    _runtime_verify,
-    runtime_verification,
-    patch,
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import historical_simulation_runtime_verification as runtime_verification
+from scripts.historical_simulation_runtime_verification import (
+    artifact_verification,
+    runtime_health,
+    shared_runtime,
+)
+from scripts.historical_simulation_startup import _build_resources, _runtime_verify
+from tests.historical_simulation.fixtures import (
+    open_hour_resources,
+    open_hour_trading_env,
+    patch_ready_compute,
+    ready_knative_service,
 )
 
 
-class TestStartHistoricalSimulationRuntimeVerifyC(
-    StartHistoricalSimulationTestCaseBase
-):
+class TestHistoricalSimulationRuntimeReadback(TestCase):
+    def test_runtime_verify_reads_strategy_runtime_flags_from_envfrom_configmap(
+        self,
+    ) -> None:
+        manifest = {
+            "window": {
+                "start": "2026-03-06T14:30:00Z",
+                "end": "2026-03-06T15:30:00Z",
+            }
+        }
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(),
+            env_from=[{"configMapRef": {"name": "torghut-autonomy-config"}}],
+        )
+        autonomy_configmap_payload = {
+            "data": {
+                "TRADING_STRATEGY_RUNTIME_MODE": "scheduler_v3",
+            }
+        }
+        ta_configmap_payload = {
+            "data": {
+                "TA_TRADES_TOPIC": "torghut.sim.trades.v1.sim_2026_03_06_open_hour",
+                "TA_QUOTES_TOPIC": "torghut.sim.quotes.v1.sim_2026_03_06_open_hour",
+                "TA_BARS1M_TOPIC": "torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour",
+                "TA_MICROBARS_TOPIC": "torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour",
+                "TA_SIGNALS_TOPIC": "torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour",
+                "TA_CLICKHOUSE_URL": f"jdbc:clickhouse://clickhouse/{resources.clickhouse_db}",
+            }
+        }
+
+        with (
+            patch_ready_compute(
+                kservice_payload, autonomy_configmap_payload, ta_configmap_payload
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report["runtime_state"], "ready")
+        self.assertTrue(
+            report["torghut_service"]["trading_config"]["strategy_runtime_active"]
+        )
+
+    def test_runtime_verify_uses_scheduler_runtime_without_migration_flag(self) -> None:
+        manifest = {
+            "window": {
+                "start": "2026-03-06T14:30:00Z",
+                "end": "2026-03-06T15:30:00Z",
+            }
+        }
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+            ),
+        )
+        ta_configmap_payload = {
+            "data": {
+                "TA_TRADES_TOPIC": "torghut.sim.trades.v1.sim_2026_03_06_open_hour",
+                "TA_QUOTES_TOPIC": "torghut.sim.quotes.v1.sim_2026_03_06_open_hour",
+                "TA_BARS1M_TOPIC": "torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour",
+                "TA_MICROBARS_TOPIC": "torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour",
+                "TA_SIGNALS_TOPIC": "torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour",
+                "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour",
+            }
+        }
+
+        with (
+            patch_ready_compute(kservice_payload, ta_configmap_payload),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report["runtime_state"], "not_ready")
+        self.assertTrue(
+            report["torghut_service"]["trading_config"]["strategy_runtime_active"]
+        )
+
+    def test_runtime_verify_rejects_trading_disabled_sim_revision(self) -> None:
+        manifest = {
+            "window": {
+                "start": "2026-03-06T14:30:00Z",
+                "end": "2026-03-06T15:30:00Z",
+            }
+        }
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_ENABLED="false",
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+            ),
+        )
+        ta_configmap_payload = {
+            "data": {
+                "TA_TRADES_TOPIC": "torghut.sim.trades.v1.sim_2026_03_06_open_hour",
+                "TA_QUOTES_TOPIC": "torghut.sim.quotes.v1.sim_2026_03_06_open_hour",
+                "TA_BARS1M_TOPIC": "torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour",
+                "TA_MICROBARS_TOPIC": "torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour",
+                "TA_SIGNALS_TOPIC": "torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour",
+                "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour",
+            }
+        }
+
+        with (
+            patch_ready_compute(kservice_payload, ta_configmap_payload),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report["runtime_state"], "not_ready")
+        self.assertEqual(report["environment_state"], "environment_incomplete")
+        self.assertFalse(report["torghut_service"]["trading_config"]["trading_enabled"])
+
+    def test_runtime_verify_rejects_ta_topic_mismatch(self) -> None:
+        manifest = {
+            "window": {
+                "start": "2026-03-06T14:30:00Z",
+                "end": "2026-03-06T15:30:00Z",
+            }
+        }
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+                TRADING_SIGNAL_ALLOWED_SOURCES="ws",
+            ),
+        )
+        ta_configmap_payload = {
+            "data": {
+                "TA_TRADES_TOPIC": "torghut.sim.trades.v1.sim_2026_03_06_open_hour_r18",
+                "TA_QUOTES_TOPIC": "torghut.sim.quotes.v1.sim_2026_03_06_open_hour_r18",
+                "TA_BARS1M_TOPIC": "torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour_r18",
+                "TA_MICROBARS_TOPIC": "torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour_r18",
+                "TA_SIGNALS_TOPIC": "torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour_r18",
+                "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour_r18",
+            }
+        }
+
+        with (
+            patch_ready_compute(kservice_payload, ta_configmap_payload),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report["runtime_state"], "not_ready")
+        self.assertEqual(report["environment_state"], "environment_incomplete")
+        self.assertFalse(report["ta_runtime_config"]["trades_topic"])
+
+    def test_runtime_verify_rejects_missing_ta_signal_source_allowlist(self) -> None:
+        manifest = {
+            "window": {
+                "start": "2026-03-06T14:30:00Z",
+                "end": "2026-03-06T15:30:00Z",
+            }
+        }
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+                TRADING_SIGNAL_ALLOWED_SOURCES="ws",
+            ),
+        )
+        ta_configmap_payload = {
+            "data": {
+                "TA_TRADES_TOPIC": "torghut.sim.trades.v1.sim_2026_03_06_open_hour",
+                "TA_QUOTES_TOPIC": "torghut.sim.quotes.v1.sim_2026_03_06_open_hour",
+                "TA_BARS1M_TOPIC": "torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour",
+                "TA_MICROBARS_TOPIC": "torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour",
+                "TA_SIGNALS_TOPIC": "torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour",
+                "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour",
+            }
+        }
+
+        with (
+            patch_ready_compute(kservice_payload, ta_configmap_payload),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report["runtime_state"], "not_ready")
+        self.assertEqual(report["environment_state"], "environment_incomplete")
+        self.assertFalse(
+            report["torghut_service"]["trading_config"]["signal_allowed_sources"]
+        )
+
     def test_runtime_verify_rejects_schema_registry_subject_failure(self) -> None:
         manifest = {
             "window": {
@@ -20,79 +207,21 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                 "end": "2026-03-06T15:30:00Z",
             }
         }
-        resources = _build_resources(
-            "sim-2026-03-06-open-hour",
-            {
-                "dataset_id": "dataset-a",
-                "runtime": {
-                    "target_mode": "dedicated_service",
-                    "namespace": "torghut",
-                    "ta_configmap": "torghut-ta-sim-config",
-                    "ta_deployment": "torghut-ta-sim",
-                    "torghut_service": "torghut-sim",
-                },
-            },
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+                TRADING_SIGNAL_TABLE=resources.clickhouse_signal_table,
+                TRADING_PRICE_TABLE=resources.clickhouse_price_table,
+                TRADING_ORDER_FEED_TOPIC=resources.simulation_topic_by_role[
+                    "order_updates"
+                ],
+                TRADING_SIMULATION_ORDER_UPDATES_TOPIC=resources.simulation_topic_by_role[
+                    "order_updates"
+                ],
+                TRADING_SIMULATION_RUN_ID=resources.run_id,
+            ),
         )
-        kservice_payload = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": "user-container",
-                                "env": [
-                                    {"name": "TRADING_ENABLED", "value": "true"},
-                                    {
-                                        "name": "TRADING_SIMULATION_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_RUNTIME_MODE",
-                                        "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_TABLE",
-                                        "value": resources.clickhouse_signal_table,
-                                    },
-                                    {
-                                        "name": "TRADING_PRICE_TABLE",
-                                        "value": resources.clickhouse_price_table,
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_TOPIC",
-                                        "value": resources.simulation_topic_by_role[
-                                            "order_updates"
-                                        ],
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_ORDER_UPDATES_TOPIC",
-                                        "value": resources.simulation_topic_by_role[
-                                            "order_updates"
-                                        ],
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_RUN_ID",
-                                        "value": resources.run_id,
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_ALLOWED_SOURCES",
-                                        "value": "ws,ta",
-                                    },
-                                ],
-                            }
-                        ]
-                    }
-                }
-            },
-            "status": {
-                "latestReadyRevisionName": "torghut-sim-00001",
-                "conditions": [{"type": "Ready", "status": "True"}],
-            },
-        }
         ta_configmap_payload = {
             "data": {
                 "TA_SCHEMA_REGISTRY_URL": "http://karapace.kafka:8081",
@@ -108,32 +237,10 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._kubectl_json",
-                side_effect=[kservice_payload, ta_configmap_payload],
-            ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._deployment_replica_health",
-                side_effect=[
-                    {
-                        "name": "torghut-sim-00001-deployment",
-                        "ready_replicas": 1,
-                        "available_replicas": 1,
-                        "replicas": 1,
-                    },
-                ],
-            ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._flink_runtime_health",
-                return_value={
-                    "name": "torghut-ta-sim",
-                    "desired_state": "running",
-                    "lifecycle_state": "RUNNING",
-                    "job_manager_status": "DEPLOYED",
-                },
-            ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._http_json_get",
+            patch_ready_compute(kservice_payload, ta_configmap_payload),
+            patch.object(
+                artifact_verification,
+                "_http_json_get",
                 side_effect=[(200, "[]"), (404, "{}"), (200, "{}")],
             ),
         ):
@@ -170,8 +277,9 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
             },
         }
 
-        with patch(
-            "scripts.historical_simulation_runtime_verification.shared_runtime._kubectl_json",
+        with patch.object(
+            shared_runtime,
+            "_kubectl_json",
             return_value=deployment,
         ):
             health = runtime_verification._flink_runtime_health(
@@ -189,80 +297,22 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                 "end": "2026-03-06T15:30:00Z",
             }
         }
-        resources = _build_resources(
-            "sim-2026-03-06-open-hour",
-            {
-                "dataset_id": "dataset-a",
-                "runtime": {
-                    "target_mode": "dedicated_service",
-                    "namespace": "torghut",
-                    "ta_configmap": "torghut-ta-sim-config",
-                    "ta_deployment": "torghut-ta-sim",
-                    "torghut_service": "torghut-sim",
-                },
-            },
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+                TRADING_SIGNAL_TABLE=resources.clickhouse_signal_table,
+                TRADING_PRICE_TABLE=resources.clickhouse_price_table,
+                TRADING_ORDER_FEED_TOPIC=resources.simulation_topic_by_role[
+                    "order_updates"
+                ],
+                TRADING_SIMULATION_ORDER_UPDATES_TOPIC=resources.simulation_topic_by_role[
+                    "order_updates"
+                ],
+                TRADING_SIMULATION_RUN_ID=resources.run_id,
+            ),
+            image="registry.ide-newton.ts.net/lab/torghut@sha256:service",
         )
-        kservice_payload = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": "user-container",
-                                "image": "registry.ide-newton.ts.net/lab/torghut@sha256:service",
-                                "env": [
-                                    {"name": "TRADING_ENABLED", "value": "true"},
-                                    {
-                                        "name": "TRADING_SIMULATION_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_RUNTIME_MODE",
-                                        "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_TABLE",
-                                        "value": resources.clickhouse_signal_table,
-                                    },
-                                    {
-                                        "name": "TRADING_PRICE_TABLE",
-                                        "value": resources.clickhouse_price_table,
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_TOPIC",
-                                        "value": resources.simulation_topic_by_role[
-                                            "order_updates"
-                                        ],
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_ORDER_UPDATES_TOPIC",
-                                        "value": resources.simulation_topic_by_role[
-                                            "order_updates"
-                                        ],
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_RUN_ID",
-                                        "value": resources.run_id,
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_ALLOWED_SOURCES",
-                                        "value": "ws,ta",
-                                    },
-                                ],
-                            }
-                        ]
-                    }
-                }
-            },
-            "status": {
-                "latestReadyRevisionName": "torghut-sim-00001",
-                "conditions": [{"type": "Ready", "status": "True"}],
-            },
-        }
         ta_configmap_payload = {
             "data": {
                 "TA_TRADES_TOPIC": resources.simulation_topic_by_role["trades"],
@@ -323,22 +373,25 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._kubectl_json",
+            patch.object(
+                runtime_health,
+                "_kubectl_json",
                 side_effect=[
                     kservice_payload,
                     ta_configmap_payload,
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._kubectl_json",
+            patch.object(
+                artifact_verification,
+                "_kubectl_json",
                 side_effect=[
                     runtime_template_payload,
                     activity_template_payload,
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._deployment_replica_health",
+            patch.object(
+                runtime_health,
+                "_deployment_replica_health",
                 side_effect=[
                     {
                         "name": "torghut-sim-00001-deployment",
@@ -348,8 +401,9 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                     },
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._flink_runtime_health",
+            patch.object(
+                runtime_health,
+                "_flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -378,80 +432,22 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                 "activity_template": "torghut-sim-activity-v1",
             },
         }
-        resources = _build_resources(
-            "sim-2026-03-06-open-hour",
-            {
-                "dataset_id": "dataset-a",
-                "runtime": {
-                    "target_mode": "dedicated_service",
-                    "namespace": "torghut",
-                    "ta_configmap": "torghut-ta-sim-config",
-                    "ta_deployment": "torghut-ta-sim",
-                    "torghut_service": "torghut-sim",
-                },
-            },
+        resources = open_hour_resources()
+        kservice_payload = ready_knative_service(
+            open_hour_trading_env(
+                TRADING_STRATEGY_RUNTIME_MODE="scheduler_v3",
+                TRADING_SIGNAL_TABLE=resources.clickhouse_signal_table,
+                TRADING_PRICE_TABLE=resources.clickhouse_price_table,
+                TRADING_ORDER_FEED_TOPIC=resources.simulation_topic_by_role[
+                    "order_updates"
+                ],
+                TRADING_SIMULATION_ORDER_UPDATES_TOPIC=resources.simulation_topic_by_role[
+                    "order_updates"
+                ],
+                TRADING_SIMULATION_RUN_ID=resources.run_id,
+            ),
+            image="registry.ide-newton.ts.net/lab/torghut@sha256:service",
         )
-        kservice_payload = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": "user-container",
-                                "image": "registry.ide-newton.ts.net/lab/torghut@sha256:service",
-                                "env": [
-                                    {"name": "TRADING_ENABLED", "value": "true"},
-                                    {
-                                        "name": "TRADING_SIMULATION_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_RUNTIME_MODE",
-                                        "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_TABLE",
-                                        "value": resources.clickhouse_signal_table,
-                                    },
-                                    {
-                                        "name": "TRADING_PRICE_TABLE",
-                                        "value": resources.clickhouse_price_table,
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
-                                        "name": "TRADING_ORDER_FEED_TOPIC",
-                                        "value": resources.simulation_topic_by_role[
-                                            "order_updates"
-                                        ],
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_ORDER_UPDATES_TOPIC",
-                                        "value": resources.simulation_topic_by_role[
-                                            "order_updates"
-                                        ],
-                                    },
-                                    {
-                                        "name": "TRADING_SIMULATION_RUN_ID",
-                                        "value": resources.run_id,
-                                    },
-                                    {
-                                        "name": "TRADING_SIGNAL_ALLOWED_SOURCES",
-                                        "value": "ws,ta",
-                                    },
-                                ],
-                            }
-                        ]
-                    }
-                }
-            },
-            "status": {
-                "latestReadyRevisionName": "torghut-sim-00001",
-                "conditions": [{"type": "Ready", "status": "True"}],
-            },
-        }
         ta_configmap_payload = {
             "data": {
                 "TA_TRADES_TOPIC": resources.simulation_topic_by_role["trades"],
@@ -490,22 +486,25 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
         activity_template_payload = runtime_template_payload
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._kubectl_json",
+            patch.object(
+                runtime_health,
+                "_kubectl_json",
                 side_effect=[
                     kservice_payload,
                     ta_configmap_payload,
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._kubectl_json",
+            patch.object(
+                artifact_verification,
+                "_kubectl_json",
                 side_effect=[
                     runtime_template_payload,
                     activity_template_payload,
                 ],
             ) as analysis_kubectl_json,
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._deployment_replica_health",
+            patch.object(
+                runtime_health,
+                "_deployment_replica_health",
                 side_effect=[
                     {
                         "name": "torghut-sim-00001-deployment",
@@ -515,8 +514,9 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                     },
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_health._flink_runtime_health",
+            patch.object(
+                runtime_health,
+                "_flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -590,12 +590,14 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._kubectl_json",
+            patch.object(
+                artifact_verification,
+                "_kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._flink_runtime_health",
+            patch.object(
+                artifact_verification,
+                "_flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -686,12 +688,14 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._kubectl_json",
+            patch.object(
+                artifact_verification,
+                "_kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._flink_runtime_health",
+            patch.object(
+                artifact_verification,
+                "_flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "suspended",
@@ -774,12 +778,14 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._kubectl_json",
+            patch.object(
+                artifact_verification,
+                "_kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._flink_runtime_health",
+            patch.object(
+                artifact_verification,
+                "_flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -869,12 +875,14 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
         }
 
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._kubectl_json",
+            patch.object(
+                artifact_verification,
+                "_kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.artifact_verification._flink_runtime_health",
+            patch.object(
+                artifact_verification,
+                "_flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",

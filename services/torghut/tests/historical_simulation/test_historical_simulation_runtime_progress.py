@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import patch
+
+import psycopg
 
 from scripts.historical_simulation_runtime_verification import runtime_progress
+from scripts.historical_simulation_startup import kubernetes_argocd, state_and_cache
+from tests.historical_simulation.fixtures import (
+    make_postgres_config,
+    simulation_resources,
+)
 
 
 def _ts(value: str) -> datetime:
@@ -424,3 +432,28 @@ def test_runtime_progress_database_parsers_and_cursor_helpers() -> None:
         _ts("2026-03-13T20:00:00Z"),
         tolerance_seconds=10,
     )
+
+
+def test_progress_write_retries_without_aborting_the_simulation() -> None:
+    resources = simulation_resources()
+    with (
+        patch.object(
+            state_and_cache.psycopg,
+            "connect",
+            side_effect=psycopg.OperationalError("connection refused"),
+        ) as connect,
+        patch.object(kubernetes_argocd.time, "sleep") as sleep,
+        patch.object(state_and_cache, "_log_script_event") as log,
+    ):
+        state_and_cache._upsert_simulation_progress_row(
+            postgres_config=make_postgres_config(),
+            resources=resources,
+            component="replay",
+            status="pending",
+        )
+
+    assert connect.call_count > 1
+    assert sleep.call_count == connect.call_count - 1
+    assert log.call_args.args == ("Failed to write simulation progress row",)
+    assert log.call_args.kwargs["component"] == "replay"
+    assert "connection refused" in log.call_args.kwargs["error"]

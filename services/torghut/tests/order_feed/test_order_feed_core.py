@@ -1,40 +1,51 @@
 from __future__ import annotations
 
-from tests.order_feed.support import (
-    Decimal,
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from unittest.mock import patch
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.models import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
-    FakeConsumer,
-    FakeRecord,
-    FakeTigerBeetleClient,
-    NormalizedOrderEvent,
-    OrderFeedIngestor,
     OrderFeedSourceWindow,
-    OrderFeedTestCase,
     RejectedSignalOutcomeEvent,
-    SOURCE_TYPE_EXECUTION,
-    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-    Session,
     Strategy,
-    TRANSFER_KIND_EXECUTION_FILL,
-    TRANSFER_KIND_FILL_POST,
     TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
     TradeDecision,
+)
+from app.trading.order_feed import (
+    NormalizedOrderEvent,
+    OrderFeedIngestor,
     apply_order_event_to_execution,
-    datetime,
     latest_order_event_for_execution,
-    logger,
     merge_execution_raw_order_update,
     normalize_order_feed_record,
-    order_identity_matches_account_scope,
-    patch,
     persist_order_event,
-    select,
-    settings,
-    timedelta,
-    timezone,
+)
+from app.trading.order_feed.normalize_order_feed_record import (
+    order_identity_matches_account_scope,
+)
+from app.trading.order_feed.shared_context import logger
+from app.trading.tigerbeetle_client import FakeTigerBeetleClient
+from app.trading.tigerbeetle_journal import (
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+)
+from app.trading.tigerbeetle_ledger_model import (
+    TRANSFER_KIND_EXECUTION_FILL,
+    TRANSFER_KIND_FILL_POST,
+)
+from tests.order_feed.support import (
+    FakeConsumer,
+    FakeRecord,
+    OrderFeedTestCase,
+    filled_order_event,
 )
 
 
@@ -679,19 +690,12 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 "cost_basis": "modeled_paper_cost_budget",
                 "execution_policy": {"max_order_notional": "1000"},
             }
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="fill-event",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=101,
-                alpaca_account_label="paper",
                 feed_seq=31,
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="order-1",
                 client_order_id="client-1",
-                event_type="fill",
-                status="filled",
                 qty=Decimal("1"),
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("190.2"),

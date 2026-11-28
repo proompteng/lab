@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Mapping,
-    RuntimeWindowImportTestCaseBase,
-    _SourceLedgerConnection,
-    _SourceLedgerCursor,
+from datetime import datetime, timezone
+from typing import Mapping, cast
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import import_hypothesis_runtime_windows as runtime_import_cli
+from scripts.import_hypothesis_runtime_windows import (
     _parse_target_metadata,
     _runtime_ledger_target_metadata_blockers,
     _runtime_ledger_tca_rows_from_source_dsn,
@@ -12,14 +14,15 @@ from tests.runtime_window_import.runtime_window_import_base import (
     _runtime_window_source_kind_is_informational,
     _source_activity_missing_summary,
     _source_kind_allows_runtime_ledger_materialization,
-    cast,
-    datetime,
-    patch,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.runtime_window_import_support import (
+    _SourceLedgerConnection,
+    _SourceLedgerCursor,
 )
 
 
-class TestRuntimeWindowImportProofHygiene(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportProofHygiene(TestCase):
     def test_runtime_ledger_tca_rows_from_source_dsn_block_no_source_refs(
         self,
     ) -> None:
@@ -30,12 +33,11 @@ class TestRuntimeWindowImportProofHygiene(RuntimeWindowImportTestCaseBase):
         row[-1] = payload
         cursor._results[0] = [tuple(row)]
         connection = _SourceLedgerConnection(cursor)
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             rows, metadata = _runtime_ledger_tca_rows_from_source_dsn(
                 dsn="postgresql://source",
@@ -85,7 +87,7 @@ class TestRuntimeWindowImportProofHygiene(RuntimeWindowImportTestCaseBase):
     def test_runtime_ledger_target_metadata_blockers_fail_closed_on_mismatch(
         self,
     ) -> None:
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         artifact_metadata = {
             "runtime_ledger_artifact_refs": ["exact-ledger.json"],
@@ -163,7 +165,7 @@ class TestRuntimeWindowImportProofHygiene(RuntimeWindowImportTestCaseBase):
     def test_runtime_ledger_target_metadata_blocks_missing_or_mixed_candidate_ids(
         self,
     ) -> None:
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         target_metadata = {
             "runtime_ledger_artifact_refs": ["exact-ledger.json"],
@@ -451,7 +453,7 @@ class TestRuntimeWindowImportProofHygiene(RuntimeWindowImportTestCaseBase):
     def test_source_activity_missing_summary_includes_proof_hygiene_blockers(
         self,
     ) -> None:
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         summary = _source_activity_missing_summary(
             run_id="run-source-missing",
             candidate_id="cand-1",

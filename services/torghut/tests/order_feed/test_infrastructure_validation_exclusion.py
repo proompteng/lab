@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
-from app.models import ExecutionOrderEvent, SimulationRunProgress
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.models import (
+    ExecutionOrderEvent,
+    SimulationRunProgress,
+    TigerBeetleTransferRef,
+)
 from app.trading.broker_mutation_coordinator import (
     BrokerMutationCoordinator,
     InfrastructureValidationOrderSubmission,
@@ -31,24 +41,14 @@ from app.trading.infrastructure_validation_records import (
     load_infrastructure_validation_evidence,
     strip_unproven_infrastructure_validation_evidence,
 )
-
-from tests.order_feed.support import (
-    FakeRecord,
-    FakeTigerBeetleClient,
-    OrderFeedTestCase,
-    Session,
-    TigerBeetleTransferRef,
-    datetime,
+from app.trading.order_feed import (
     link_order_events_to_execution,
     normalize_order_feed_record,
-    patch,
     persist_order_event,
     repair_order_feed_execution_links,
-    select,
-    settings,
-    timedelta,
-    timezone,
 )
+from app.trading.tigerbeetle_client import FakeTigerBeetleClient
+from tests.order_feed.support import FakeRecord, OrderFeedTestCase
 
 
 class TestInfrastructureValidationExclusion(OrderFeedTestCase):

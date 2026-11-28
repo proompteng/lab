@@ -1,34 +1,40 @@
 from __future__ import annotations
 
-from tests.order_feed.support import (
-    Decimal,
-    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
-    ExecutionLinkageResolution,
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest.mock import patch
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.models import (
     ExecutionOrderEvent,
-    NormalizedOrderEvent,
-    ORDER_FEED_SOURCE_REVISION,
     OrderFeedSourceWindow,
-    OrderFeedTestCase,
-    Session,
     Strategy,
     TradeDecision,
+)
+from app.trading.order_feed import (
+    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+    ORDER_FEED_SOURCE_REVISION,
+    NormalizedOrderEvent,
     backfill_order_feed_events_from_executions,
-    datetime,
-    dedupe,
-    func,
     latest_order_event_for_execution,
     link_order_events_to_execution,
+    persist_order_event,
+    repair_order_feed_execution_links,
+)
+from app.trading.order_feed.classify_source_window_drop import (
+    dedupe,
     order_event_client_identity,
     order_event_linkage_blockers,
-    patch,
-    persist_order_event,
     raw_event_with_linkage_blockers,
-    repair_order_feed_execution_links,
+)
+from app.trading.order_feed.resolve_execution_linkage_for_identity import (
     resolve_execution_linkage_for_identity,
     resolve_trade_decision_linkage_for_identity,
-    select,
-    timezone,
 )
+from app.trading.order_feed.shared_context import ExecutionLinkageResolution
+from tests.order_feed.support import OrderFeedTestCase, filled_order_event
 
 
 class TestOrderFeedRepairLinksB(OrderFeedTestCase):
@@ -58,21 +64,14 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             session.add(decision)
             session.flush()
             decision_id = decision.id
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="repair-decision-only-fill",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=388,
                 alpaca_account_label="TORGHUT_SIM",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="missing-execution-order",
                 client_order_id="decision-only-client-1",
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
             )
             session.add(event)
             session.commit()
@@ -165,21 +164,14 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             )
             session.add(source_window)
             session.flush()
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="repair-decision-alias-only-fill",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=389,
                 alpaca_account_label="PA3SX7FYNUTF",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="missing-execution-order",
                 client_order_id="decision-alias-client-1",
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
                 source_window_id=source_window.id,
             )
             session.add(event)
@@ -235,21 +227,14 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
         self,
     ) -> None:
         with Session(self.engine) as session:
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="repair-missing-decision-identity",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=389,
                 alpaca_account_label="TORGHUT_SIM",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="missing-execution-order-no-client",
                 client_order_id=None,
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
             )
             session.add(event)
             session.commit()
@@ -291,21 +276,14 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             session.add(decision)
             session.flush()
             decision_id = decision.id
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="repair-existing-decision-missing-execution",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=390,
                 alpaca_account_label="TORGHUT_SIM",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="missing-execution-existing-decision-order",
                 client_order_id="existing-decision-client",
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
                 trade_decision_id=decision_id,
             )
             session.add(event)
@@ -349,21 +327,14 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
         self,
     ) -> None:
         with Session(self.engine) as session:
-            old_unmatchable_event = ExecutionOrderEvent(
+            old_unmatchable_event = filled_order_event(
                 event_fingerprint="repair-old-unmatchable-fill",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=390,
                 alpaca_account_label="TORGHUT_SIM",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="old-missing-order",
                 client_order_id="old-missing-client",
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
             )
             execution = self._seed_execution(
                 session,
@@ -373,21 +344,15 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             )
             execution_id = execution.id
             trade_decision_id = execution.trade_decision_id
-            linkable_event = ExecutionOrderEvent(
+            linkable_event = filled_order_event(
                 event_fingerprint="repair-new-linkable-fill",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=391,
                 alpaca_account_label="TORGHUT_SIM",
                 event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="new-linkable-order",
                 client_order_id="new-linkable-client",
-                event_type="fill",
-                status="filled",
                 filled_qty=Decimal("1"),
                 avg_fill_price=Decimal("191.25"),
-                raw_event={"event": "fill"},
             )
             session.add_all([old_unmatchable_event, linkable_event])
             session.commit()
@@ -545,19 +510,11 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
                 session,
                 execution_idempotency_key="exec-idem-1",
             )
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="latest-idempotency-event",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=411,
-                alpaca_account_label="paper",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id="different-order",
                 client_order_id="exec-idem-1",
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
             )
             session.add(event)
             session.commit()
@@ -582,33 +539,18 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
                 order_id="link-other-order",
                 client_order_id="link-other-client",
             )
-            ambiguous_event = ExecutionOrderEvent(
+            ambiguous_event = filled_order_event(
                 event_fingerprint="link-ambiguous-event",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=412,
-                alpaca_account_label="paper",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=other_execution.client_order_id,
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
             )
-            skip_event = ExecutionOrderEvent(
+            skip_event = filled_order_event(
                 event_fingerprint="link-skip-event",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=413,
-                alpaca_account_label="paper",
                 event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=execution.client_order_id,
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
             )
             session.add_all([ambiguous_event, skip_event])
             session.commit()
@@ -645,19 +587,11 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
                 client_order_id="missing-decision-client",
             )
             execution.trade_decision_id = None
-            event = ExecutionOrderEvent(
+            event = filled_order_event(
                 event_fingerprint="missing-decision-link-event",
-                source_topic="torghut.trade-updates.v1",
-                source_partition=0,
                 source_offset=414,
-                alpaca_account_label="paper",
-                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
-                symbol="AAPL",
                 alpaca_order_id=execution.alpaca_order_id,
                 client_order_id=None,
-                event_type="fill",
-                status="filled",
-                raw_event={"event": "fill"},
             )
             session.add(event)
             session.commit()
@@ -729,21 +663,14 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
         with Session(self.engine) as session:
             execution = self._seed_execution(session)
             events = [
-                ExecutionOrderEvent(
+                filled_order_event(
                     event_fingerprint=f"repair-fanout-fill-{index}",
-                    source_topic="torghut.trade-updates.v1",
-                    source_partition=0,
                     source_offset=400 + index,
-                    alpaca_account_label="paper",
                     event_ts=datetime(2026, 2, 1, 10, index, tzinfo=timezone.utc),
-                    symbol="AAPL",
                     alpaca_order_id=execution.alpaca_order_id,
                     client_order_id=execution.client_order_id,
-                    event_type="fill",
-                    status="filled",
                     filled_qty=Decimal("1"),
                     avg_fill_price=Decimal("191.25"),
-                    raw_event={"event": "fill"},
                 )
                 for index in range(5)
             ]

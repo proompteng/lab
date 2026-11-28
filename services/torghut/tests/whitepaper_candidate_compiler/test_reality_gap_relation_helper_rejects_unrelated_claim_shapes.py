@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.whitepaper_candidate_compiler.support import (
     Decimal,
     Path,
-    _TestWhitepaperCandidateCompilerBase,
     _expected_portfolio_target_candidate_count,
+    _TestWhitepaperCandidateCompilerBase,
     candidate_specs_module,
     compile_claim_payloads_to_whitepaper_experiments,
     compiler_module,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestRealityGapRelationHelperRejectsUnrelatedClaimShapes(
