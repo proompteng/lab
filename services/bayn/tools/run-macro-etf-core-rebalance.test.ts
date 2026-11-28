@@ -93,7 +93,7 @@ const mock = (options: Mock = {}) => {
   const now = options.time ?? timestamp(executionDate, '08:00')
   const nextOpen = timestamp(executionDate, '09:30')
   const lastMidnight = timestamp(signalDate, '00:00')
-  const end = new Date(Date.parse(timestamp(executionDate, '00:00')) - 1).toISOString()
+  const end = timestamp(signalDate, '16:00')
   const calls: { url: URL; method: string }[] = []
   const posts: OrderRequest[] = []
   const pending = Promise.withResolvers<void>()

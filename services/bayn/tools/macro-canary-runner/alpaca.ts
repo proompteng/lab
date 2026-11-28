@@ -80,6 +80,7 @@ export type OrderRequest = {
   readonly extended_hours: false
   readonly client_order_id: string
 }
+const NonNegativeFinite = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 export const Bar = Schema.Struct({
   t: UtcSourceTimestampSchema,
   o: PositiveFiniteSchema,
@@ -88,7 +89,7 @@ export const Bar = Schema.Struct({
   c: PositiveFiniteSchema,
   v: NonNegativeIntegerSchema,
   n: Schema.optionalKey(NonNegativeIntegerSchema),
-  vw: Schema.optionalKey(PositiveFiniteSchema),
+  vw: Schema.optionalKey(NonNegativeFinite),
 })
 export type Bar = typeof Bar.Type
 export enum BarAdjustment {
