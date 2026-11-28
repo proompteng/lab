@@ -12,6 +12,8 @@ import pathlib
 import re
 import signal
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -20,6 +22,7 @@ import urllib.request
 from collections.abc import Iterator
 
 UTC = dt.timezone.utc
+REPOSITORY = "proompteng/lab"
 NIX_CACHE_FIELDS = {
     "attic_substitutions": "Attic substitutions",
     "nixos_substitutions": "cache.nixos.org substitutions",
@@ -39,6 +42,7 @@ RUN_FIELDS = (
     "created_at",
     "run_started_at",
     "updated_at",
+    "head_branch",
     "head_sha",
     "event",
     "html_url",
@@ -67,8 +71,12 @@ COLLECTION_PHASES = (
 )
 MAX_LOG_BYTES = 16 * 1024 * 1024
 LOKI_MAX_SAMPLE_AGE_SECONDS = 168 * 3600
+COLLECTION_INTERVAL_SECONDS = 60
 POLL_BUDGET_SECONDS = 30
 LOKI_FLUSH_BUDGET_SECONDS = 15
+JOB_RETENTION_SECONDS = 90 * 86400
+CI_AUDIT_BUDGET_SECONDS = 5
+CI_AUDIT_ROW_LIMIT = 100
 METRICS = {
     "ci_observability_phase_active": (
         "gauge",
@@ -361,7 +369,7 @@ def job_record(run, job, families=()):
     }
     return {
         "kind": "job",
-        "repository": "proompteng/lab",
+        "repository": REPOSITORY,
         "workflow": workflow,
         "run_id": run["id"],
         "attempt": run["run_attempt"],
@@ -633,6 +641,8 @@ class Store:
             else None,
             "run_url": f"https://github.com/proompteng/lab/actions/runs/{run['id']}/attempts/{run['run_attempt']}",
         }
+        # Retain the branch for SQL without expanding the existing Loki records.
+        head_branch = record.pop("head_branch")
         attrs = {
             "workflow": record["workflow"],
             "event": run["event"] if run["event"] in EVENTS else "other",
@@ -649,7 +659,11 @@ class Store:
                 return
             self.db.execute(
                 "UPDATE attempts SET state='complete', run=? WHERE run_id=? AND attempt=?",
-                (json.dumps(record), run["id"], run["run_attempt"]),
+                (
+                    json.dumps(record | {"head_branch": head_branch}),
+                    run["id"],
+                    run["run_attempt"],
+                ),
             )
             self.db.execute(
                 "INSERT INTO outbox(stamp, labels, line) VALUES (?, ?, ?)",
@@ -878,6 +892,232 @@ class GitHubQuotaError(RuntimeError):
 
 class CollectionBudgetExceeded(RuntimeError):
     pass
+
+
+def ci_audit_timestamp(value):
+    stamp = timestamp(value)
+    return dt.datetime.fromtimestamp(stamp, UTC) if stamp is not None else None
+
+
+def ci_audit_failure_category(job):
+    conclusion = job["github_conclusion"]
+    if conclusion in {"timed_out", "startup_failure"}:
+        return conclusion
+    if conclusion == "failure":
+        return next(
+            (step["phase"] for step in job["steps"] if step["outcome"] == "failure"),
+            "unattributed",
+        )
+    return None
+
+
+def ci_audit_batch(db, cutoff):
+    # Keep checkpoints separate so reverting the collector does not change the
+    # SQLite tables older collectors write. A terminal attempt's job set can be paged by ID.
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS ci_audit_checkpoints (
+            run_id INTEGER NOT NULL, attempt INTEGER NOT NULL, job_cursor INTEGER NOT NULL,
+            priority REAL NOT NULL, PRIMARY KEY (run_id, attempt)
+        );
+        CREATE INDEX IF NOT EXISTS ci_audit_checkpoints_expiry ON ci_audit_checkpoints(priority);
+        CREATE INDEX IF NOT EXISTS ci_audit_completed_attempts ON attempts(priority DESC, run_id, attempt)
+          WHERE state='complete';
+        CREATE INDEX IF NOT EXISTS ci_audit_attempt_jobs ON jobs(run_id, attempt, job_id);
+    """)
+    workflows, jobs, checkpoints = {}, [], []
+    pending = db.execute(
+        """SELECT a.run_id, a.attempt, COALESCE(c.job_cursor, 0), a.priority
+           FROM attempts AS a LEFT JOIN ci_audit_checkpoints AS c USING (run_id, attempt)
+           WHERE a.state='complete' AND a.priority >= ? AND COALESCE(c.job_cursor, 0) >= 0
+           ORDER BY a.priority DESC, a.run_id, a.attempt LIMIT ?""",
+        (cutoff.timestamp(), CI_AUDIT_ROW_LIMIT),
+    )
+    for run_id, attempt, cursor, priority in pending:
+        room = CI_AUDIT_ROW_LIMIT - len(workflows) - len(jobs)
+        if run_id not in workflows:
+            if room < 2:
+                break
+            # A late backfill of an old attempt must not replace the latest outcome.
+            run = json.loads(
+                db.execute(
+                    """SELECT run FROM attempts WHERE run_id=? AND state='complete'
+                       ORDER BY attempt DESC LIMIT 1""",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+            workflows[run_id] = (
+                run_id,
+                run["workflow"][:255],
+                (run.get("head_branch") or "")[:255] or None,
+                run["head_sha"],
+                run["event"],
+                run["status"],
+                run["conclusion"],
+                ci_audit_timestamp(run["created_at"]),
+                ci_audit_timestamp(run["updated_at"]),
+                run["duration_seconds"],
+                REPOSITORY,
+            )
+            room -= 1
+        if not room:
+            break
+        batch = db.execute(
+            """SELECT job_id, record FROM jobs
+               WHERE run_id=? AND attempt=? AND job_id>? ORDER BY job_id LIMIT ?""",
+            (run_id, attempt, cursor, room + 1),
+        ).fetchall()
+        for job_id, record in batch[:room]:
+            job = json.loads(record)
+            jobs.append(
+                (
+                    job_id,
+                    run_id,
+                    job["workflow"][:255],
+                    job["job_name"][:512],
+                    job["runner_name"][:255] or None,
+                    "completed",
+                    job["github_conclusion"],
+                    ci_audit_timestamp(job["started_at"]),
+                    ci_audit_timestamp(job["completed_at"]),
+                    job["durations"].get("execution"),
+                    ci_audit_failure_category(job),
+                )
+            )
+        checkpoints.append(
+            (run_id, attempt, batch[room - 1][0] if len(batch) > room else -1, priority)
+        )
+    return workflows.values(), jobs, checkpoints
+
+
+def project_ci_audit(path, database_url):
+    if not database_url:
+        return
+    try:
+        import psycopg
+
+        cutoff = dt.datetime.fromtimestamp(time.time() - JOB_RETENTION_SECONDS, UTC)
+        with contextlib.closing(sqlite3.connect(path)) as cache:
+            cache.row_factory = sqlite3.Row
+            workflows, jobs, checkpoints = ci_audit_batch(cache, cutoff)
+            with (
+                psycopg.connect(
+                    database_url,
+                    user="ci_audit_writer",
+                    connect_timeout=2,
+                    options="-c lock_timeout=1000 -c statement_timeout=2000 -c transaction_timeout=4000",
+                ) as db,
+                db.cursor() as cursor,
+            ):
+                if workflows:
+                    cursor.executemany(
+                        """INSERT INTO ci_audit.workflow_runs
+                           (run_id, workflow_name, head_branch, head_sha, event, status, conclusion,
+                            created_at, updated_at, duration_seconds, repository)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (run_id) DO UPDATE SET
+                             workflow_name=EXCLUDED.workflow_name, head_branch=EXCLUDED.head_branch,
+                             head_sha=EXCLUDED.head_sha, event=EXCLUDED.event, status=EXCLUDED.status,
+                             conclusion=EXCLUDED.conclusion, created_at=EXCLUDED.created_at,
+                             updated_at=EXCLUDED.updated_at, duration_seconds=EXCLUDED.duration_seconds,
+                             repository=EXCLUDED.repository, synced_at=EXCLUDED.synced_at
+                           WHERE workflow_runs.updated_at <= EXCLUDED.updated_at""",
+                        workflows,
+                    )
+                if jobs:
+                    cursor.executemany(
+                        """INSERT INTO ci_audit.job_runs
+                           (job_id, run_id, workflow_name, job_name, runner_name, status, conclusion,
+                            started_at, completed_at, duration_seconds, failure_category)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (job_id) DO NOTHING""",
+                        jobs,
+                    )
+                cursor.execute(
+                    """WITH refreshed AS (
+                         INSERT INTO ci_audit.failure_clusters
+                           (cluster_key, workflow_name, job_name, failure_category,
+                            sample_run_id, occurrences_24h, last_seen_at)
+                         SELECT encode(sha256(convert_to(
+                                  jsonb_build_array(workflow_name, job_name, failure_category)::text,
+                                  'UTF8')), 'hex'),
+                                workflow_name, job_name, failure_category,
+                                (array_agg(run_id ORDER BY completed_at DESC, job_id DESC))[1],
+                                count(*), max(completed_at)
+                         FROM ci_audit.job_runs
+                         WHERE failure_category IS NOT NULL
+                           AND completed_at BETWEEN now() - interval '24 hours' AND now()
+                         GROUP BY workflow_name, job_name, failure_category
+                         ORDER BY count(*) DESC, max(completed_at) DESC, 1
+                         LIMIT %s
+                         ON CONFLICT (cluster_key) DO UPDATE SET
+                           sample_run_id=EXCLUDED.sample_run_id, occurrences_24h=EXCLUDED.occurrences_24h,
+                           last_seen_at=EXCLUDED.last_seen_at, synced_at=EXCLUDED.synced_at
+                         RETURNING cluster_key
+                       )
+                       DELETE FROM ci_audit.failure_clusters WHERE cluster_key IN (
+                         SELECT cluster_key FROM ci_audit.failure_clusters AS previous
+                         WHERE NOT EXISTS (SELECT 1 FROM refreshed WHERE cluster_key=previous.cluster_key)
+                         ORDER BY cluster_key LIMIT %s
+                       )""",
+                    (CI_AUDIT_ROW_LIMIT, CI_AUDIT_ROW_LIMIT),
+                )
+                cursor.execute(
+                    """DELETE FROM ci_audit.job_runs WHERE job_id IN (
+                           SELECT job_id FROM ci_audit.workflow_runs JOIN ci_audit.job_runs USING (run_id)
+                           WHERE updated_at < %s ORDER BY updated_at, run_id, job_id LIMIT %s
+                       )""",
+                    (cutoff, CI_AUDIT_ROW_LIMIT),
+                )
+                cursor.execute(
+                    """DELETE FROM ci_audit.workflow_runs WHERE run_id IN (
+                           SELECT run_id FROM ci_audit.workflow_runs AS run WHERE updated_at < %s
+                           AND NOT EXISTS (SELECT 1 FROM ci_audit.job_runs WHERE run_id=run.run_id)
+                           ORDER BY updated_at, run_id LIMIT %s
+                       )""",
+                    (cutoff, CI_AUDIT_ROW_LIMIT),
+                )
+            # Commit Postgres first. An interruption before this mark replays safe upserts.
+            with cache:
+                cache.executemany(
+                    """INSERT INTO ci_audit_checkpoints VALUES (?, ?, ?, ?)
+                       ON CONFLICT (run_id, attempt) DO UPDATE SET job_cursor=excluded.job_cursor""",
+                    checkpoints,
+                )
+                cache.execute(
+                    """DELETE FROM ci_audit_checkpoints WHERE (run_id, attempt) IN (
+                           SELECT run_id, attempt FROM ci_audit_checkpoints
+                           WHERE priority < ? ORDER BY priority LIMIT ?
+                       )""",
+                    (cutoff.timestamp(), CI_AUDIT_ROW_LIMIT),
+                )
+    except Exception as error:
+        ci_audit_error(error)
+
+
+def ci_audit_error(error):
+    # Driver exceptions can include connection details; never print their text.
+    print(
+        json.dumps(
+            {"event": "ci_audit_projection_failed", "error_type": type(error).__name__}
+        ),
+        flush=True,
+    )
+
+
+def run_ci_audit(deadline):
+    timeout = min(CI_AUDIT_BUDGET_SECONDS, deadline - time.monotonic())
+    if timeout < 1:
+        return
+    # Isolate DNS, libpq and rollback so even a stuck native call can be killed.
+    try:
+        subprocess.run(
+            [sys.executable, __file__, "--project-ci-audit"],
+            timeout=timeout,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        ci_audit_error(error)
 
 
 @contextlib.contextmanager
@@ -1442,8 +1682,12 @@ class Collector:
         return self.metrics + self.phases.render().encode()
 
     def run(self):
+        audit_enabled = bool(os.environ.get("CI_AUDIT_DATABASE_URL"))
         while True:
             begin = time.time()
+            if audit_enabled:
+                # Reserve the minimum sleep.
+                audit_deadline = time.monotonic() + COLLECTION_INTERVAL_SECONDS - 1
             try:
                 with self.phases.track("poll"):
                     self.poll(begin)
@@ -1463,7 +1707,8 @@ class Collector:
                     self.collect_pending(time.monotonic() + 10)
                 with self.phases.track("prune"), self.store.db:
                     self.store.db.execute(
-                        "DELETE FROM jobs WHERE completed < ?", (begin - 90 * 86400,)
+                        "DELETE FROM jobs WHERE completed < ?",
+                        (begin - JOB_RETENTION_SECONDS,),
                     )
             except Exception as error:
                 self.failure(error)
@@ -1482,12 +1727,17 @@ class Collector:
                 self.failure(error)
             with self.phases.track("refresh"):
                 self.refresh()
+            if audit_enabled:
+                run_ci_audit(audit_deadline)
             with self.phases.track("sleep"):
-                time.sleep(max(1, 60 - (time.time() - begin)))
+                time.sleep(max(1, COLLECTION_INTERVAL_SECONDS - (time.time() - begin)))
 
 
 def main():
     root = pathlib.Path(os.environ.get("CI_STATE_DIR", "/data"))
+    if sys.argv[1:] == ["--project-ci-audit"]:
+        project_ci_audit(root / "ci.sqlite3", os.environ.get("CI_AUDIT_DATABASE_URL"))
+        return
     root.mkdir(parents=True, exist_ok=True)
     workflows = json.loads(
         pathlib.Path(

@@ -2,6 +2,7 @@ import * as agentsRelaySubmissions from './migrations/20261106_agents_relay_subm
 import * as agentsMemoryNoteRetirement from './migrations/20261111_agents_memory_note_retirement'
 import * as agentsMemorySaveKeys from './migrations/20261112_agents_memory_save_keys'
 import * as agentsAuditReaderGrants from './migrations/20261128_agents_audit_reader_grants'
+import * as ciAuditProjection from './migrations/20261128_ci_audit_projection'
 import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from './db'
@@ -34,6 +35,7 @@ class StaticMigrationProvider implements MigrationProvider {
 }
 
 const migrations: MigrationMap = {
+  '20261128_ci_audit_projection': ciAuditProjection,
   '20261128_agents_audit_reader_grants': agentsAuditReaderGrants,
   '20261112_agents_memory_save_keys': agentsMemorySaveKeys,
   '20261111_agents_memory_note_retirement': agentsMemoryNoteRetirement,

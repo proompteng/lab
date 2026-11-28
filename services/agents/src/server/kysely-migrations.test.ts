@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentsDatabase } from './db'
 import { __test__ } from './kysely-migrations'
 import { up as grantAuditReader } from './migrations/20261128_agents_audit_reader_grants'
+import { up as createCiAuditProjection } from './migrations/20261128_ci_audit_projection'
 
 const listTypeScriptFiles = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
@@ -15,6 +16,27 @@ const listTypeScriptFiles = (dir: string): string[] =>
     if (stat.isDirectory()) return listTypeScriptFiles(path)
     return entry.endsWith('.ts') && !entry.endsWith('.test.ts') ? [path] : []
   })
+
+const migrationSql = async (up: (db: Kysely<AgentsDatabase>) => Promise<void>) => {
+  const statements: string[] = []
+  const db = new Kysely<AgentsDatabase>({
+    dialect: {
+      createDriver: () => new DummyDriver(),
+      createAdapter: () => new PostgresAdapter(),
+      createIntrospector: (db) => new PostgresIntrospector(db),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    },
+    log: ({ level, query }) => {
+      if (level === 'query') statements.push(query.sql.replace(/\s+/g, ' ').trim())
+    },
+  })
+  try {
+    await up(db)
+  } finally {
+    await db.destroy()
+  }
+  return statements
+}
 
 describe('Agents migration registration', () => {
   it('keeps the migration provider registry in lockstep with migration files', () => {
@@ -74,24 +96,10 @@ describe('Agents migration registration', () => {
 
 describe('Agents audit reader migration', () => {
   it('replays a guarded, replaceable projection with only the approved read grants', async () => {
-    const statements: string[] = []
-    const db = new Kysely<AgentsDatabase>({
-      dialect: {
-        createDriver: () => new DummyDriver(),
-        createAdapter: () => new PostgresAdapter(),
-        createIntrospector: (db) => new PostgresIntrospector(db),
-        createQueryCompiler: () => new PostgresQueryCompiler(),
-      },
-      log: ({ level, query }) => {
-        if (level === 'query') statements.push(query.sql.replace(/\s+/g, ' ').trim())
-      },
+    const statements = await migrationSql(async (db) => {
+      await grantAuditReader(db)
+      await grantAuditReader(db)
     })
-    try {
-      await grantAuditReader(db)
-      await grantAuditReader(db)
-    } finally {
-      await db.destroy()
-    }
 
     const [statement] = statements
     expect(statements).toEqual([statement, statement])
@@ -110,5 +118,32 @@ describe('Agents audit reader migration', () => {
         'agents_audit.agent_run_activity TO agents_audit_ro',
     ])
     expect(statement).not.toMatch(/\b(connection_secret|content|prompt|request_payload|response_payload)\b|SELECT \*/)
+  })
+})
+
+describe('CI audit projection migration', () => {
+  it('creates indexed facts even without login roles and grants only schema-scoped access', async () => {
+    const [statement] = await migrationSql(createCiAuditProjection)
+
+    expect(statement?.split('DO $grants$')[0]).toMatch(
+      /^CREATE SCHEMA IF NOT EXISTS ci_audit; CREATE TABLE IF NOT EXISTS ci_audit\.workflow_runs \( run_id bigint PRIMARY KEY,/,
+    )
+    expect(statement).toContain('run_id bigint NOT NULL REFERENCES ci_audit.workflow_runs (run_id)')
+    expect(statement).toContain(
+      'CREATE TABLE IF NOT EXISTS ci_audit.failure_clusters ( cluster_key varchar(64) PRIMARY KEY',
+    )
+    expect(statement).toContain('ON ci_audit.workflow_runs (updated_at DESC, run_id)')
+    expect(statement).toContain('ON ci_audit.job_runs (run_id, job_id)')
+    expect(statement).toContain('ON ci_audit.job_runs (completed_at DESC) WHERE failure_category IS NOT NULL')
+    expect(statement).toContain('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ci_audit FROM PUBLIC')
+    expect(statement).toContain("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agents_audit_ro') THEN")
+    expect(statement).toContain("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ci_audit_writer') THEN")
+    expect(statement?.match(/(?:ALTER DEFAULT PRIVILEGES IN SCHEMA ci_audit )?\bGRANT [^;]+/g)).toEqual([
+      'GRANT USAGE ON SCHEMA ci_audit TO agents_audit_ro',
+      'GRANT SELECT ON ALL TABLES IN SCHEMA ci_audit TO agents_audit_ro',
+      'ALTER DEFAULT PRIVILEGES IN SCHEMA ci_audit GRANT SELECT ON TABLES TO agents_audit_ro',
+      'GRANT USAGE ON SCHEMA ci_audit TO ci_audit_writer',
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ci_audit TO ci_audit_writer',
+    ])
   })
 })
