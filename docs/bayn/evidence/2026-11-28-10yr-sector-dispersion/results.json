@@ -1,0 +1,3714 @@
+{
+  "schemaVersion": "bayn.wave21h.sector-dispersion.v1",
+  "verdict": "DO NOT PROMOTE",
+  "input": {
+    "receipts": {
+      "bucket": "agents-artifacts",
+      "datasets": {
+        "daily": {
+          "prefix": "bayn-research-datasets/2026-11-27-sip-10yr-sp100",
+          "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+          "name": "alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz",
+          "sha256": "fdda4017ee662fae548d8111a970ea90d83b3e8ee6f61abd6153be0fe83547d2",
+          "bytes": 9338659,
+          "rawSha256": "e5331bb57e6f6427449d0cd3ab59291f56e508cb8c3961557bfd1374a635c9a8",
+          "rawBytes": 29435892,
+          "rows": 450712
+        },
+        "macro": {
+          "prefix": "bayn-research-datasets/2026-11-27-sip-10yr-sp100-supplement-dia-uup",
+          "manifestSha256": "ea0324abff46b2a44ea718dfbac625b9c434a1d21addc77eb5491d0249a79355",
+          "name": "alpaca_sip_daily_dia_uup_20160104_20261125.tsv.gz",
+          "sha256": "0c8daf58178d0de84f9c8183ab01ba0708fcac395f0623d901864ed5ad96d620",
+          "bytes": 100078,
+          "rows": 5482
+        },
+        "blind": {
+          "prefix": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2",
+          "manifestSha256": "c18d9c4d537ae17a6322dc8a2d5a9338b8851706d58c5ea62f02a31b37ea0eb0",
+          "name": "alpaca_sip_5m_rth_exact62_20160104_20231229.tsv.gz",
+          "sha256": "b077755a745238dad9e64234e9ca4cde63b08808aeb9fef4cf74210af349b141",
+          "bytes": 174598869,
+          "memberBytes": 174597176,
+          "rows": 8641719
+        },
+        "recent": {
+          "prefix": "bayn-research-datasets/2026-11-27-sip-multiyear",
+          "manifestSha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead",
+          "name": "alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+          "sha256": "105972d7825b4deb14a30295fab153b1e734929e1c321642964ec8d35bbbc697",
+          "bytes": 80649568,
+          "rawSha256": "c053ede2875ad791c99aae517db9efa9a4587b08c9907d55e0960dade59d567e",
+          "rawBytes": 273982883,
+          "rows": 3923737
+        }
+      },
+      "calendars": {
+        "blind": {
+          "prefix": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2",
+          "name": "calendar_2016_2023.json",
+          "sha256": "0165400d9544973b0971a2397969e65bd2543beff5d8bd47510f09b015ef7f86"
+        },
+        "recent": {
+          "prefix": "bayn-research-datasets/2026-11-27",
+          "name": "calendar_2024_2026.json",
+          "sha256": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71"
+        }
+      }
+    },
+    "confirmedTickers": [
+      "XLK",
+      "XLF",
+      "XLE",
+      "XLV",
+      "XLI",
+      "XLY",
+      "XLP",
+      "XLU",
+      "XLB",
+      "XLC",
+      "XLRE",
+      "SMH",
+      "QQQ",
+      "SPY",
+      "SHY"
+    ],
+    "coverage": {
+      "XLK": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLF": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLE": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLV": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLI": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLY": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLP": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLU": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLB": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "XLC": {
+        "sessions": 2122,
+        "first": "2018-06-19",
+        "last": "2026-11-25"
+      },
+      "XLRE": {
+        "sessions": 2739,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "SMH": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "QQQ": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "SPY": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      },
+      "SHY": {
+        "sessions": 2741,
+        "first": "2016-01-04",
+        "last": "2026-11-25"
+      }
+    }
+  },
+  "protocol": {
+    "firstMark": "2016-11-25",
+    "firstFill": "2016-11-28",
+    "lastMark": "2026-11-25",
+    "momentumSessions": 63,
+    "volatilitySessions": 21,
+    "calibrationSessions": 126,
+    "gateQuantile": 0.6,
+    "minimumBreadth": 10,
+    "topK": 3,
+    "deadband": 0.1,
+    "roundTripBps": [0, 2, 5, 10],
+    "decisionCosts": [5, 10],
+    "blendAllocation": 0.25,
+    "bootstrap": {
+      "draws": 10000,
+      "meanBlock": 10,
+      "seed": 35266598
+    }
+  },
+  "firstDecision": {
+    "date": "2016-11-28",
+    "signalDate": "2016-11-25",
+    "signal": {
+      "leaders": ["SMH", "XLI", "XLE"],
+      "dispersion": 0.051104591872137915,
+      "breadth": 11
+    },
+    "gateOpen": true
+  },
+  "folds": [
+    {
+      "year": "2016",
+      "firstFill": "2016-11-28",
+      "calibrationFrom": "2016-05-31",
+      "calibrationThrough": "2016-11-25",
+      "threshold": 0.04815895274507506,
+      "sessions": 24,
+      "lastMark": "2016-12-30"
+    },
+    {
+      "year": "2017",
+      "firstFill": "2017-01-03",
+      "calibrationFrom": "2016-07-05",
+      "calibrationThrough": "2016-12-30",
+      "threshold": 0.052340350668394084,
+      "sessions": 251,
+      "lastMark": "2017-12-29"
+    },
+    {
+      "year": "2018",
+      "firstFill": "2018-01-02",
+      "calibrationFrom": "2017-07-03",
+      "calibrationThrough": "2017-12-29",
+      "threshold": 0.029825051320207414,
+      "sessions": 251,
+      "lastMark": "2018-12-31"
+    },
+    {
+      "year": "2019",
+      "firstFill": "2019-01-02",
+      "calibrationFrom": "2018-07-02",
+      "calibrationThrough": "2018-12-31",
+      "threshold": 0.048404435154221756,
+      "sessions": 252,
+      "lastMark": "2019-12-31"
+    },
+    {
+      "year": "2020",
+      "firstFill": "2020-01-02",
+      "calibrationFrom": "2019-07-03",
+      "calibrationThrough": "2019-12-31",
+      "threshold": 0.038874031649827376,
+      "sessions": 253,
+      "lastMark": "2020-12-31"
+    },
+    {
+      "year": "2021",
+      "firstFill": "2021-01-04",
+      "calibrationFrom": "2020-07-06",
+      "calibrationThrough": "2020-12-31",
+      "threshold": 0.0670213141176028,
+      "sessions": 252,
+      "lastMark": "2021-12-31"
+    },
+    {
+      "year": "2022",
+      "firstFill": "2022-01-03",
+      "calibrationFrom": "2021-07-06",
+      "calibrationThrough": "2021-12-31",
+      "threshold": 0.05127408611766159,
+      "sessions": 251,
+      "lastMark": "2022-12-30"
+    },
+    {
+      "year": "2023",
+      "firstFill": "2023-01-03",
+      "calibrationFrom": "2022-07-05",
+      "calibrationThrough": "2022-12-30",
+      "threshold": 0.06786803563963244,
+      "sessions": 250,
+      "lastMark": "2023-12-29"
+    },
+    {
+      "year": "2024",
+      "firstFill": "2024-01-02",
+      "calibrationFrom": "2023-07-03",
+      "calibrationThrough": "2023-12-29",
+      "threshold": 0.043698754218745466,
+      "sessions": 252,
+      "lastMark": "2024-12-31"
+    },
+    {
+      "year": "2025",
+      "firstFill": "2025-01-02",
+      "calibrationFrom": "2024-07-03",
+      "calibrationThrough": "2024-12-31",
+      "threshold": 0.06285113470968319,
+      "sessions": 250,
+      "lastMark": "2025-12-31"
+    },
+    {
+      "year": "2026",
+      "firstFill": "2026-01-02",
+      "calibrationFrom": "2025-07-03",
+      "calibrationThrough": "2025-12-31",
+      "threshold": 0.04319709261774632,
+      "sessions": 227,
+      "lastMark": "2026-11-25"
+    }
+  ],
+  "controlIds": {
+    "SPY": "buy-and-hold",
+    "F4": "F4-42-1-LQD-parity",
+    "O1": "ensemble/base/21/0.05",
+    "B0": "B0/30/1.4/opposite_band/inverse_vol_parity"
+  },
+  "controlOracle": {
+    "foldOrder": ["train", "validation", "holdout", "full"],
+    "B0": [
+      {
+        "roundTripBps": 2,
+        "pinned": [33107.45, 29982.77, 40443.36, 103533.58],
+        "reproduced": [33107.451215012465, 29982.766727238843, 40443.35896153737, 103533.57690378872]
+      },
+      {
+        "roundTripBps": 5,
+        "pinned": [14806, 23345.9, 31628.26, 69780.16],
+        "reproduced": [14805.99691699041, 23345.89505536258, 31628.2632341435, 69780.15520649655]
+      }
+    ],
+    "F4": [
+      {
+        "roundTripBps": 10,
+        "pinned": [0.426060485, 0.078919864, 0.372083365, 1.111094304],
+        "reproduced": [0.42606048459710877, 0.07891986395953055, 0.3720833647617776, 1.1110943035402752]
+      },
+      {
+        "roundTripBps": 20,
+        "pinned": [0.41836733, 0.077613006, 0.36920683, 1.092765661],
+        "reproduced": [0.41836732995904646, 0.077613006309742, 0.3692068298591753, 1.092765661249179]
+      }
+    ],
+    "O1": [
+      {
+        "roundTripBps": 2,
+        "pinned": [0.3457835155, 0.1258225331, 0.2832680135, 0.9442965714],
+        "reproduced": [0.34578351552848874, 0.12582253314008618, 0.28326801353111986, 0.9442965714470313]
+      },
+      {
+        "roundTripBps": 5,
+        "pinned": [0.340562174, 0.1236780518, 0.2803505836, 0.9286692789],
+        "reproduced": [0.3405621739507052, 0.12367805183257508, 0.28035058356373144, 0.9286692789006974]
+      },
+      {
+        "roundTripBps": 10,
+        "pinned": [0.3319073922, 0.120115304, 0.2755039391, 0.9029113849],
+        "reproduced": [0.3319073922424056, 0.12011530401341775, 0.27550393908871973, 0.9029113849269141]
+      }
+    ]
+  },
+  "gates": {
+    "positiveNet": true,
+    "alpha": false,
+    "portfolio": false
+  },
+  "byCost": [
+    {
+      "roundTripBps": 0,
+      "oos": {
+        "firstFill": "2016-11-28",
+        "lastMark": "2026-11-25",
+        "sessions": 2513,
+        "rotation": {
+          "netReturn": 0.2874933050568227,
+          "cagr": 0.02566389415609116,
+          "sharpe": 0.23827093755984477,
+          "calmar": 0.06753752797115223,
+          "maxDrawdown": 0.37999457378797097,
+          "annualOneWayTurnover": 23.07244089744416
+        },
+        "ungated": {
+          "netReturn": 1.4833489511491282,
+          "cagr": 0.0955036107009708,
+          "sharpe": 0.568790267211743,
+          "calmar": 0.2621913301706202,
+          "maxDrawdown": 0.36425159687325326,
+          "annualOneWayTurnover": 28.928163951677387
+        },
+        "execution": {
+          "tradedSessions": 499,
+          "defensiveSessions": 1227,
+          "sumFeesAsPriorCloseEquityFractions": 0
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 2.7717082412377563,
+            "cagr": 0.14239003109649206,
+            "sharpe": 0.83413815412845,
+            "calmar": 0.4213484710464738,
+            "maxDrawdown": 0.33793888166449937,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 4.728628230616289,
+            "cagr": 0.19128649942684195,
+            "sharpe": 0.8773695282839488,
+            "calmar": 0.5464929625961025,
+            "maxDrawdown": 0.35002554931016816,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.19426565242831595,
+            "cagr": 0.01796201048272872,
+            "sharpe": 1.1208143754816868,
+            "calmar": 0.31507829262848375,
+            "maxDrawdown": 0.05700808625336862,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 1.0793472698868918,
+            "cagr": 0.07617094287375892,
+            "sharpe": 1.290569211916971,
+            "calmar": 0.7587930646727477,
+            "maxDrawdown": 0.10038434247762917,
+            "annualOneWayTurnover": 0.7204355284709736
+          },
+          "O1": {
+            "netReturn": 0.9450648851075947,
+            "cagr": 0.06899061490425251,
+            "sharpe": 0.9558891185436839,
+            "calmar": 0.3344567412940413,
+            "maxDrawdown": 0.20627664623329767,
+            "annualOneWayTurnover": 2.6622224584817245
+          },
+          "B0": {
+            "netReturn": 2.3612117986227896,
+            "cagr": 0.12926597813764262,
+            "sharpe": 1.4343120104794884,
+            "calmar": 1.6407790339099382,
+            "maxDrawdown": 0.07878329468265133,
+            "annualOneWayTurnover": 103.36346735802267
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.6410870982000356,
+            "annualAlpha": -0.06361128117919312
+          },
+          "ci95": {
+            "lower": -0.1346415299087724,
+            "upper": 0.011409123483923733
+          }
+        },
+        "correlation": {
+          "SPY": 0.7120500777663041,
+          "QQQ": 0.6425399111753441,
+          "SHY": 0.041763320869275186,
+          "F4": 0.5244945879078409,
+          "O1": 0.540312812144242,
+          "B0": -0.03828318942536278
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 2.7717082412377563,
+              "cagr": 0.14239003109649206,
+              "sharpe": 0.83413815412845,
+              "calmar": 0.4213484710464738,
+              "maxDrawdown": 0.33793888166449937,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 1.929056894088557,
+              "cagr": 0.11378865147219508,
+              "sharpe": 0.7349581799282101,
+              "calmar": 0.3306019829433088,
+              "maxDrawdown": 0.34418623403026416,
+              "annualOneWayTurnover": 6.043791253987178
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.09917997420023994,
+                "ci95": {
+                  "lower": -0.19972697918700263,
+                  "upper": 0.01672975117273189
+                }
+              },
+              "calmar": -0.09074648810316505,
+              "maxDrawdownReduction": -0.006247352365764791
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 1.0793472698868918,
+              "cagr": 0.07617094287375892,
+              "sharpe": 1.290569211916971,
+              "calmar": 0.7587930646727477,
+              "maxDrawdown": 0.10038434247762917,
+              "annualOneWayTurnover": 0.7204355284709736
+            },
+            "mixed": {
+              "netReturn": 0.8789277596275298,
+              "cagr": 0.06528866582458348,
+              "sharpe": 0.898938736197634,
+              "calmar": 0.41784868693055016,
+              "maxDrawdown": 0.15624954168022787,
+              "annualOneWayTurnover": 6.558648279892528
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.39163047571933696,
+                "ci95": {
+                  "lower": -0.6621182512501412,
+                  "upper": -0.08560408844120951
+                }
+              },
+              "calmar": -0.3409443777421975,
+              "maxDrawdownReduction": -0.05586519920259869
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.9450648851075947,
+              "cagr": 0.06899061490425251,
+              "sharpe": 0.9558891185436839,
+              "calmar": 0.3344567412940413,
+              "maxDrawdown": 0.20627664623329767,
+              "annualOneWayTurnover": 2.6622224584817245
+            },
+            "mixed": {
+              "netReturn": 0.785578379715498,
+              "cagr": 0.05985883701595496,
+              "sharpe": 0.7385916433839301,
+              "calmar": 0.2590917333964922,
+              "maxDrawdown": 0.23103337274119828,
+              "annualOneWayTurnover": 8.016566964741699
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.21729747515975373,
+                "ci95": {
+                  "lower": -0.4331378878317005,
+                  "upper": 0.01741686968733781
+                }
+              },
+              "calmar": -0.07536500789754907,
+              "maxDrawdownReduction": -0.024756726507900617
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 2.3612117986227896,
+              "cagr": 0.12926597813764262,
+              "sharpe": 1.4343120104794884,
+              "calmar": 1.6407790339099382,
+              "maxDrawdown": 0.07878329468265133,
+              "annualOneWayTurnover": 103.36346735802267
+            },
+            "mixed": {
+              "netReturn": 1.7323096903800992,
+              "cagr": 0.10604956253193953,
+              "sharpe": 1.3699475544494444,
+              "calmar": 1.484126937258932,
+              "maxDrawdown": 0.07145585722458814,
+              "annualOneWayTurnover": 83.60519335206021
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.06436445603004404,
+                "ci95": {
+                  "lower": -0.4441041581539256,
+                  "upper": 0.2913449428814879
+                }
+              },
+              "calmar": -0.1566520966510061,
+              "maxDrawdownReduction": 0.007327437458063191
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 1.4207802816135326,
+            "cagr": 0.09270388878254399,
+            "sharpe": 1.7711791939829362,
+            "calmar": 1.022159980789118,
+            "maxDrawdown": 0.09069410906791286,
+            "annualOneWayTurnover": 35.840535998705136
+          },
+          "mixed": {
+            "netReturn": 1.109709330560933,
+            "cagr": 0.0777364592861296,
+            "sharpe": 1.159463774020758,
+            "calmar": 0.5203342058521222,
+            "maxDrawdown": 0.14939717283976162,
+            "annualOneWayTurnover": 32.812944778784995
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.6117154199621782,
+              "ci95": {
+                "lower": -0.9313769886032318,
+                "upper": -0.24325470737730678
+              }
+            },
+            "calmar": -0.5018257749369958,
+            "maxDrawdownReduction": -0.05870306377184875
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "validation": {
+        "firstFill": "2022-01-03",
+        "lastMark": "2023-12-29",
+        "sessions": 501,
+        "rotation": {
+          "netReturn": -0.09871447378674558,
+          "cagr": -0.050934785287871875,
+          "sharpe": -0.2641758920130117,
+          "calmar": -0.16905754058717362,
+          "maxDrawdown": 0.3012866809191964,
+          "annualOneWayTurnover": 23.210913027305487
+        },
+        "ungated": {
+          "netReturn": 0.02589540481486452,
+          "cagr": 0.012942480959663216,
+          "sharpe": 0.1651561025143414,
+          "calmar": 0.041221407387117624,
+          "maxDrawdown": 0.31397474710453377,
+          "annualOneWayTurnover": 24.29609127573699
+        },
+        "execution": {
+          "tradedSessions": 89,
+          "defensiveSessions": 282,
+          "sumFeesAsPriorCloseEquityFractions": 0
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.03243825291069369,
+            "cagr": 0.0161868084696144,
+            "sharpe": 0.17973027106833578,
+            "calmar": 0.06607808046391359,
+            "maxDrawdown": 0.24496487119437893,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.04593978338601823,
+            "cagr": 0.022849516741913378,
+            "sharpe": 0.21693103301509153,
+            "calmar": 0.06582857078363441,
+            "maxDrawdown": 0.34710637751828544,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.0012223278554956973,
+            "cagr": 0.0006146369518318373,
+            "sharpe": 0.03665914879456307,
+            "calmar": 0.012364950481797449,
+            "maxDrawdown": 0.049707999456742646,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.08022833951025121,
+            "cagr": 0.039580511391782425,
+            "sharpe": 0.6589287611263593,
+            "calmar": 0.7050059466001317,
+            "maxDrawdown": 0.056142095797430014,
+            "annualOneWayTurnover": 0.6096438554392019
+          },
+          "O1": {
+            "netReturn": 0.12725504174295654,
+            "cagr": 0.062103520193372175,
+            "sharpe": 0.9404218473061626,
+            "calmar": 1.0580313672727726,
+            "maxDrawdown": 0.058697239150340974,
+            "annualOneWayTurnover": 3.2032268640340136
+          },
+          "B0": {
+            "netReturn": 0.3951945694247818,
+            "cagr": 0.18236190030139188,
+            "sharpe": 1.649319755014862,
+            "calmar": 2.934592274722919,
+            "maxDrawdown": 0.062142159192663415,
+            "annualOneWayTurnover": 111.27805964741319
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.4631527163890955,
+            "annualAlpha": -0.05725318095306026
+          },
+          "ci95": {
+            "lower": -0.2343015064670948,
+            "upper": 0.12036326808348599
+          }
+        },
+        "correlation": {
+          "SPY": 0.6130226782625313,
+          "QQQ": 0.5190443728841522,
+          "SHY": 0.25557120368993685,
+          "F4": 0.5807814070773977,
+          "O1": 0.3557544991811952,
+          "B0": -0.10114948755700616
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.03243825291069369,
+              "cagr": 0.0161868084696144,
+              "sharpe": 0.17973027106833578,
+              "calmar": 0.06607808046391359,
+              "maxDrawdown": 0.24496487119437893,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 0.00258535318071762,
+              "cagr": 0.0012995827684274541,
+              "sharpe": 0.09375947291927955,
+              "calmar": 0.005436556858401672,
+              "maxDrawdown": 0.23904519023268833,
+              "annualOneWayTurnover": 6.157042368339762
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.08597079814905623,
+                "ci95": {
+                  "lower": -0.34183029970479534,
+                  "upper": 0.1758650228382978
+                }
+              },
+              "calmar": -0.060641523605511914,
+              "maxDrawdownReduction": 0.005919680961690599
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.08022833951025121,
+              "cagr": 0.039580511391782425,
+              "sharpe": 0.6589287611263593,
+              "calmar": 0.7050059466001317,
+              "maxDrawdown": 0.056142095797430014,
+              "annualOneWayTurnover": 0.6096438554392019
+            },
+            "mixed": {
+              "netReturn": 0.03556799946684763,
+              "cagr": 0.01773510685603763,
+              "sharpe": 0.2708893810952932,
+              "calmar": 0.15509332122328862,
+              "maxDrawdown": 0.11435119653221115,
+              "annualOneWayTurnover": 6.514808469637799
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.38803938003106614,
+                "ci95": {
+                  "lower": -0.9786694852153635,
+                  "upper": 0.21609669467539347
+                }
+              },
+              "calmar": -0.5499126253768432,
+              "maxDrawdownReduction": -0.05820910073478114
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.12725504174295654,
+              "cagr": 0.062103520193372175,
+              "sharpe": 0.9404218473061626,
+              "calmar": 1.0580313672727726,
+              "maxDrawdown": 0.058697239150340974,
+              "annualOneWayTurnover": 3.2032268640340136
+            },
+            "mixed": {
+              "netReturn": 0.07007124917849428,
+              "cagr": 0.034652257633496,
+              "sharpe": 0.503954175008174,
+              "calmar": 0.3258315496948514,
+              "maxDrawdown": 0.10635022196576305,
+              "annualOneWayTurnover": 8.498081711817763
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.43646767229798866,
+                "ci95": {
+                  "lower": -1.176390674828901,
+                  "upper": 0.29356095477258987
+                }
+              },
+              "calmar": -0.7321998175779212,
+              "maxDrawdownReduction": -0.047652982815422074
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.3951945694247818,
+              "cagr": 0.18236190030139188,
+              "sharpe": 1.649319755014862,
+              "calmar": 2.934592274722919,
+              "maxDrawdown": 0.062142159192663415,
+              "annualOneWayTurnover": 111.27805964741319
+            },
+            "mixed": {
+              "netReturn": 0.25970695273518096,
+              "cagr": 0.12314278442556836,
+              "sharpe": 1.4250476681051845,
+              "calmar": 1.9867660943143832,
+              "maxDrawdown": 0.061981521014462415,
+              "annualOneWayTurnover": 89.62812362395944
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.22427208690967748,
+                "ci95": {
+                  "lower": -0.9077225255249777,
+                  "upper": 0.375211572157198
+                }
+              },
+              "calmar": -0.9478261804085357,
+              "maxDrawdownReduction": 0.00016063817820100024
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.19752980331460623,
+            "cagr": 0.09490781485372524,
+            "sharpe": 1.7385551125407421,
+            "calmar": 3.0613734776302706,
+            "maxDrawdown": 0.031001710685489736,
+            "annualOneWayTurnover": 38.675183777125596
+          },
+          "mixed": {
+            "netReturn": 0.11986634362393245,
+            "cagr": 0.058596126327493225,
+            "sharpe": 0.9336857960715347,
+            "calmar": 0.6494031678287191,
+            "maxDrawdown": 0.09023073682164118,
+            "annualOneWayTurnover": 34.985332322997685
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.8048693164692075,
+              "ci95": {
+                "lower": -1.60234441701907,
+                "upper": 0.01245573600497685
+              }
+            },
+            "calmar": -2.4119703098015517,
+            "maxDrawdownReduction": -0.05922902613615144
+          }
+        },
+        "gates": {
+          "positiveNet": false,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "holdout": {
+        "firstFill": "2024-01-02",
+        "lastMark": "2026-11-25",
+        "sessions": 729,
+        "rotation": {
+          "netReturn": 0.3796452264770309,
+          "cagr": 0.1176727553978747,
+          "sharpe": 0.8661600095317101,
+          "calmar": 0.7589010659351774,
+          "maxDrawdown": 0.15505677970404363,
+          "annualOneWayTurnover": 28.592379732962293
+        },
+        "ungated": {
+          "netReturn": 0.552043449723181,
+          "cagr": 0.1641031463374374,
+          "sharpe": 0.960908893548936,
+          "calmar": 0.977799921846722,
+          "maxDrawdown": 0.1678289624195346,
+          "annualOneWayTurnover": 27.970238472159657
+        },
+        "execution": {
+          "tradedSessions": 180,
+          "defensiveSessions": 264,
+          "sumFeesAsPriorCloseEquityFractions": 0
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.5572648458379479,
+            "cagr": 0.1654554364243943,
+            "sharpe": 1.0322427377061136,
+            "calmar": 0.8822284066383326,
+            "maxDrawdown": 0.18754263088722145,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.5704164292615237,
+            "cagr": 0.16884847046879803,
+            "sharpe": 0.818726034508489,
+            "calmar": 0.7415692860306842,
+            "maxDrawdown": 0.22769075479457157,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.1074335322843174,
+            "cagr": 0.03590442500701929,
+            "sharpe": 2.2364039088241525,
+            "calmar": 3.676613120718692,
+            "maxDrawdown": 0.009765625000000222,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.37496577812499643,
+            "cagr": 0.11636086526665368,
+            "sharpe": 1.8591531246992128,
+            "calmar": 1.89747102481344,
+            "maxDrawdown": 0.06132418558438557,
+            "annualOneWayTurnover": 0.7253956394353244
+          },
+          "O1": {
+            "netReturn": 0.285216912463359,
+            "cagr": 0.09061349023726795,
+            "sharpe": 1.2978448038038088,
+            "calmar": 1.4374356092550409,
+            "maxDrawdown": 0.06303829517916903,
+            "annualOneWayTurnover": 2.6209955646320755
+          },
+          "B0": {
+            "netReturn": 0.5690679397892615,
+            "cagr": 0.1685014253014132,
+            "sharpe": 1.6989360765407562,
+            "calmar": 3.462287951013846,
+            "maxDrawdown": 0.04866765205131818,
+            "annualOneWayTurnover": 101.57418687339774
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.4849532775399227,
+            "annualAlpha": 0.022331670016848024
+          },
+          "ci95": {
+            "lower": -0.1101145839608084,
+            "upper": 0.14798561732624008
+          }
+        },
+        "correlation": {
+          "SPY": 0.5629040074642992,
+          "QQQ": 0.5822295048027496,
+          "SHY": 0.10828192844098812,
+          "F4": 0.4774950144258446,
+          "O1": 0.5089276730904725,
+          "B0": 0.05921010595357856
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.5572648458379479,
+              "cagr": 0.1654554364243943,
+              "sharpe": 1.0322427377061136,
+              "calmar": 0.8822284066383326,
+              "maxDrawdown": 0.18754263088722145,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 0.5190465936971054,
+              "cagr": 0.1554876734297843,
+              "sharpe": 1.0805970028631622,
+              "calmar": 0.9460750483951538,
+              "maxDrawdown": 0.16435025286158977,
+              "annualOneWayTurnover": 7.450742365934536
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.04835426515704855,
+                "ci95": {
+                  "lower": -0.19813284375361137,
+                  "upper": 0.273857493412083
+                }
+              },
+              "calmar": 0.0638466417568212,
+              "maxDrawdownReduction": 0.023192378025631677
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.37496577812499643,
+              "cagr": 0.11636086526665368,
+              "sharpe": 1.8591531246992128,
+              "calmar": 1.89747102481344,
+              "maxDrawdown": 0.06132418558438557,
+              "annualOneWayTurnover": 0.7253956394353244
+            },
+            "mixed": {
+              "netReturn": 0.38181684255224946,
+              "cagr": 0.11828058212508896,
+              "sharpe": 1.654228923743027,
+              "calmar": 1.7097290759712016,
+              "maxDrawdown": 0.06918089174912134,
+              "annualOneWayTurnover": 7.941254261847518
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.2049242009561858,
+                "ci95": {
+                  "lower": -0.7595073747967106,
+                  "upper": 0.32563248925997373
+                }
+              },
+              "calmar": -0.1877419488422385,
+              "maxDrawdownReduction": -0.007856706164735772
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.285216912463359,
+              "cagr": 0.09061349023726795,
+              "sharpe": 1.2978448038038088,
+              "calmar": 1.4374356092550409,
+              "maxDrawdown": 0.06303829517916903,
+              "annualOneWayTurnover": 2.6209955646320755
+            },
+            "mixed": {
+              "netReturn": 0.31337017006927614,
+              "cagr": 0.09881341380263176,
+              "sharpe": 1.285615888947444,
+              "calmar": 1.401736111873681,
+              "maxDrawdown": 0.070493592171603,
+              "annualOneWayTurnover": 9.358787959701433
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.012228914856364792,
+                "ci95": {
+                  "lower": -0.46829378972365127,
+                  "upper": 0.4531424846622686
+                }
+              },
+              "calmar": -0.0356994973813598,
+              "maxDrawdownReduction": -0.0074552969924339685
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.5690679397892615,
+              "cagr": 0.1685014253014132,
+              "sharpe": 1.6989360765407562,
+              "calmar": 3.462287951013846,
+              "maxDrawdown": 0.04866765205131818,
+              "annualOneWayTurnover": 101.57418687339774
+            },
+            "mixed": {
+              "netReturn": 0.530483067802954,
+              "cagr": 0.15848747677457942,
+              "sharpe": 1.8635149081542275,
+              "calmar": 4.929554294585131,
+              "maxDrawdown": 0.03215046783208575,
+              "annualOneWayTurnover": 83.63415978578756
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.1645788316134713,
+                "ci95": {
+                  "lower": -0.31602567448046837,
+                  "upper": 0.7252461512171006
+                }
+              },
+              "calmar": 1.4672663435712852,
+              "maxDrawdownReduction": 0.016517184219232428
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.41042629499969974,
+            "cagr": 0.12623053343641089,
+            "sharpe": 2.2052824965993247,
+            "calmar": 3.267362436143223,
+            "maxDrawdown": 0.03863377139923685,
+            "annualOneWayTurnover": 35.224248022091324
+          },
+          "mixed": {
+            "netReturn": 0.4088245913522077,
+            "cagr": 0.12578825730468934,
+            "sharpe": 1.880995039055089,
+            "calmar": 2.655713463920323,
+            "maxDrawdown": 0.047365146509067535,
+            "annualOneWayTurnover": 33.72814772378755
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.3242874575442358,
+              "ci95": {
+                "lower": -1.0316651982771519,
+                "upper": 0.25041554983493486
+              }
+            },
+            "calmar": -0.6116489722229002,
+            "maxDrawdownReduction": -0.008731375109830686
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "annual": [
+        {
+          "year": "2016",
+          "rotation": -0.005259808843136593,
+          "ungated": -0.005259808843136593,
+          "SPY": 0.014945795179454713,
+          "stack": 0.015896592204031057,
+          "stackWithRotation": 0.010697219291743387
+        },
+        {
+          "year": "2017",
+          "rotation": 0.015397720901209055,
+          "ungated": 0.18273979837996124,
+          "SPY": 0.21746344498600045,
+          "stack": 0.07265945152543885,
+          "stackWithRotation": 0.05814003309325955
+        },
+        {
+          "year": "2018",
+          "rotation": -0.0750595029340897,
+          "ungated": -0.05606228351920417,
+          "SPY": -0.04961669505962507,
+          "stack": 0.052304163879245635,
+          "stackWithRotation": 0.020655197101809186
+        },
+        {
+          "year": "2019",
+          "rotation": 0.17888863371887753,
+          "ungated": 0.22483684156215666,
+          "SPY": 0.3113600717006515,
+          "stack": 0.07519940025777028,
+          "stackWithRotation": 0.10058867047648379
+        },
+        {
+          "year": "2020",
+          "rotation": -0.15225567192908784,
+          "ungated": -0.07574095866456187,
+          "SPY": 0.18453336978436896,
+          "stack": 0.044192543787573424,
+          "stackWithRotation": -0.00012895827588432773
+        },
+        {
+          "year": "2021",
+          "rotation": 0.10896500694720368,
+          "ungated": 0.240556719630874,
+          "SPY": 0.28601102039638526,
+          "stack": 0.11325944670653354,
+          "stackWithRotation": 0.11323592069201371
+        },
+        {
+          "year": "2022",
+          "rotation": -0.11551518404285488,
+          "ungated": -0.2190826510279701,
+          "SPY": -0.1817529219104016,
+          "stack": 0.09588392216954666,
+          "stackWithRotation": 0.04240177118039945
+        },
+        {
+          "year": "2023",
+          "rotation": 0.018994910882590643,
+          "ungated": 0.3137054851775454,
+          "SPY": 0.2617683344756656,
+          "stack": 0.0927524157338031,
+          "stackWithRotation": 0.07431354645130028
+        },
+        {
+          "year": "2024",
+          "rotation": 0.20460569265119366,
+          "ungated": 0.12041406132907628,
+          "SPY": 0.24885383395258787,
+          "stack": 0.10172482677359196,
+          "stackWithRotation": 0.1282302869364118
+        },
+        {
+          "year": "2025",
+          "rotation": 0.0427725129759402,
+          "ungated": 0.22822641718956072,
+          "SPY": 0.17718699979121655,
+          "stack": 0.14294148344280067,
+          "stackWithRotation": 0.11779282780640798
+        },
+        {
+          "year": "2026",
+          "rotation": 0.09833022870784891,
+          "ungated": 0.12783843470840983,
+          "SPY": 0.05926692284954105,
+          "stack": 0.12009088751699193,
+          "stackWithRotation": 0.11711491693067466
+        }
+      ],
+      "pathsSha256": {
+        "rotation": "e30d83f980232608f1f9b03ec59609afc608ea79da3e581a40825cda8e358bbf",
+        "ungated": "ef291ed49c56ed5fe32372e7268d56b9cdead2e700c7c361f0a4987e6a57b3d8",
+        "SPY": "44b20acfb5c584fe944ffecabc0ee5691b8bfbf7940aef45c36f5bf3c474644e",
+        "QQQ": "d134c1cd9042d74f05a21f39fe43e962797ae3a8e7e25ec6bee637b25c760e35",
+        "SHY": "d62ff44cb0daab990dc54363bc6d9f5e8c908dc76dcd8ff885e07bd4dbee70ab",
+        "F4": "1061250e817a677e71220f2d263610f5ede7ee7844979db1529166d9fbe7abeb",
+        "O1": "301be10efc5032537137aa2095068d309970a0babd53976da9e85b8ae6a23c37",
+        "B0": "8a5940c3ed5247efe40c2dad79b7eb04f6d2dfce1ee4728b8aa205d263acc860",
+        "stack": "99cdf8bb8aeb75246c6a41ccd51ef8bdfedccbe859ecd2e66e887a3325ae84fa",
+        "withRotation": "30b0498c9659fbd3a1c75e20c593e67d190627400ce8e8fef6e6ce7454373b6b"
+      }
+    },
+    {
+      "roundTripBps": 2,
+      "oos": {
+        "firstFill": "2016-11-28",
+        "lastMark": "2026-11-25",
+        "sessions": 2513,
+        "rotation": {
+          "netReturn": 0.2295891684113125,
+          "cagr": 0.02094184783833164,
+          "sharpe": 0.2096947475328882,
+          "calmar": 0.05494880251310432,
+          "maxDrawdown": 0.38111563638420287,
+          "annualOneWayTurnover": 23.07123610168955
+        },
+        "ungated": {
+          "netReturn": 1.3441239438158274,
+          "cagr": 0.08918365585107568,
+          "sharpe": 0.5389019134809274,
+          "calmar": 0.244523728147804,
+          "maxDrawdown": 0.3647239330375661,
+          "annualOneWayTurnover": 28.92743741124798
+        },
+        "execution": {
+          "tradedSessions": 499,
+          "defensiveSessions": 1227,
+          "sumFeesAsPriorCloseEquityFractions": 0.0460392854394088
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 2.7717082412377563,
+            "cagr": 0.14239003109649206,
+            "sharpe": 0.83413815412845,
+            "calmar": 0.4213484710464738,
+            "maxDrawdown": 0.33793888166449937,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 4.728628230616289,
+            "cagr": 0.19128649942684195,
+            "sharpe": 0.8773695282839488,
+            "calmar": 0.5464929625961025,
+            "maxDrawdown": 0.35002554931016816,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.19426565242831595,
+            "cagr": 0.01796201048272872,
+            "sharpe": 1.1208143754816868,
+            "calmar": 0.31507829262848375,
+            "maxDrawdown": 0.05700808625336862,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 1.0763616335060875,
+            "cagr": 0.07601588997441655,
+            "sharpe": 1.288104014455785,
+            "calmar": 0.7572484722042915,
+            "maxDrawdown": 0.10038434247762851,
+            "annualOneWayTurnover": 0.7204184566089962
+          },
+          "O1": {
+            "netReturn": 0.9348197468564317,
+            "cagr": 0.06842464027017536,
+            "sharpe": 0.9484773240457604,
+            "calmar": 0.33157991025080125,
+            "maxDrawdown": 0.20635942695810539,
+            "annualOneWayTurnover": 2.661905325477438
+          },
+          "B0": {
+            "netReturn": 1.7357288179270025,
+            "cagr": 0.10618827760739036,
+            "sharpe": 1.2004785865951515,
+            "calmar": 1.2413225066618923,
+            "maxDrawdown": 0.08554447135011434,
+            "annualOneWayTurnover": 103.36346735802267
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.641131719510702,
+            "annualAlpha": -0.06823314937633373
+          },
+          "ci95": {
+            "lower": -0.13929111638433236,
+            "upper": 0.006888042226898502
+          }
+        },
+        "correlation": {
+          "SPY": 0.7121487707118541,
+          "QQQ": 0.6426251213272178,
+          "SHY": 0.041772802153373985,
+          "F4": 0.5245454240590975,
+          "O1": 0.5404962872908691,
+          "B0": -0.03771897023658683
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 2.7717082412377563,
+              "cagr": 0.14239003109649206,
+              "sharpe": 0.83413815412845,
+              "calmar": 0.4213484710464738,
+              "maxDrawdown": 0.33793888166449937,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 1.8939561452663334,
+              "cagr": 0.11244293917911552,
+              "sharpe": 0.7276402413880847,
+              "calmar": 0.32650855114570043,
+              "maxDrawdown": 0.34437976826199335,
+              "annualOneWayTurnover": 6.043464466594735
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.10649791274036535,
+                "ci95": {
+                  "lower": -0.20679132542768516,
+                  "upper": 0.008834330615721557
+                }
+              },
+              "calmar": -0.0948399199007734,
+              "maxDrawdownReduction": -0.006440886597493978
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 1.0763616335060875,
+              "cagr": 0.07601588997441655,
+              "sharpe": 1.288104014455785,
+              "calmar": 0.7572484722042915,
+              "maxDrawdown": 0.10038434247762851,
+              "annualOneWayTurnover": 0.7204184566089962
+            },
+            "mixed": {
+              "netReturn": 0.854508962169287,
+              "cagr": 0.06389216174873491,
+              "sharpe": 0.881069391972268,
+              "calmar": 0.40833238066067734,
+              "maxDrawdown": 0.15647096525962034,
+              "annualOneWayTurnover": 6.558321099765321
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.40703462248351696,
+                "ci95": {
+                  "lower": -0.6779333671205467,
+                  "upper": -0.10184506412571001
+                }
+              },
+              "calmar": -0.34891609154361414,
+              "maxDrawdownReduction": -0.056086622781991835
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.9348197468564317,
+              "cagr": 0.06842464027017536,
+              "sharpe": 0.9484773240457604,
+              "calmar": 0.33157991025080125,
+              "maxDrawdown": 0.20635942695810539,
+              "annualOneWayTurnover": 2.661905325477438
+            },
+            "mixed": {
+              "netReturn": 0.7572869243629194,
+              "cagr": 0.05816274964450474,
+              "sharpe": 0.719327955904952,
+              "calmar": 0.25126805372264127,
+              "maxDrawdown": 0.2314768980091153,
+              "annualOneWayTurnover": 8.01599615022124
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.22914936814080833,
+                "ci95": {
+                  "lower": -0.44511876743196516,
+                  "upper": 0.005015659076629233
+                }
+              },
+              "calmar": -0.08031185652815997,
+              "maxDrawdownReduction": -0.02511747105100992
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 1.7357288179270025,
+              "cagr": 0.10618827760739036,
+              "sharpe": 1.2004785865951515,
+              "calmar": 1.2413225066618923,
+              "maxDrawdown": 0.08554447135011434,
+              "annualOneWayTurnover": 103.36346735802267
+            },
+            "mixed": {
+              "netReturn": 1.3129710768675675,
+              "cagr": 0.08772337205012581,
+              "sharpe": 1.1505362167502826,
+              "calmar": 1.0301260071075713,
+              "maxDrawdown": 0.08515790441641113,
+              "annualOneWayTurnover": 83.60475901187567
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.049942369844868884,
+                "ci95": {
+                  "lower": -0.42042980552361037,
+                  "upper": 0.2997019256543715
+                }
+              },
+              "calmar": -0.21119649955432096,
+              "maxDrawdownReduction": 0.00038656693370320294
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 1.2538751387326332,
+            "cagr": 0.08490396011650225,
+            "sharpe": 1.6305829952830098,
+            "calmar": 0.9307078606221475,
+            "maxDrawdown": 0.09122514562168493,
+            "annualOneWayTurnover": 35.84048843054827
+          },
+          "mixed": {
+            "netReturn": 0.9761038996155478,
+            "cagr": 0.07068908609905811,
+            "sharpe": 1.0607184799108953,
+            "calmar": 0.47081957917745043,
+            "maxDrawdown": 0.1501404980280474,
+            "annualOneWayTurnover": 32.81263719756166
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.5698645153721145,
+              "ci95": {
+                "lower": -0.8866858133643883,
+                "upper": -0.20516800045236044
+              }
+            },
+            "calmar": -0.45988828144469707,
+            "maxDrawdownReduction": -0.058915352406362476
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "validation": {
+        "firstFill": "2022-01-03",
+        "lastMark": "2023-12-29",
+        "sessions": 501,
+        "rotation": {
+          "netReturn": -0.10699431915846735,
+          "cagr": -0.05533033901109752,
+          "sharpe": -0.2945329284201772,
+          "calmar": -0.18201105912527346,
+          "maxDrawdown": 0.30399437966577125,
+          "annualOneWayTurnover": 23.209479738194144
+        },
+        "ungated": {
+          "netReturn": 0.01603223201798376,
+          "cagr": 0.008032243280860385,
+          "sharpe": 0.14147970459322487,
+          "calmar": 0.025315997266524348,
+          "maxDrawdown": 0.317279354879751,
+          "annualOneWayTurnover": 24.29557148622346
+        },
+        "execution": {
+          "tradedSessions": 89,
+          "defensiveSessions": 282,
+          "sumFeesAsPriorCloseEquityFractions": 0.009232406823278754
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.03243825291069369,
+            "cagr": 0.0161868084696144,
+            "sharpe": 0.17973027106833578,
+            "calmar": 0.06607808046391359,
+            "maxDrawdown": 0.24496487119437893,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.04593978338601823,
+            "cagr": 0.022849516741913378,
+            "sharpe": 0.21693103301509153,
+            "calmar": 0.06582857078363441,
+            "maxDrawdown": 0.34710637751828544,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.0012223278554956973,
+            "cagr": 0.0006146369518318373,
+            "sharpe": 0.03665914879456307,
+            "calmar": 0.012364950481797449,
+            "maxDrawdown": 0.049707999456742646,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.07996651486212647,
+            "cagr": 0.03945376311403126,
+            "sharpe": 0.656969180115111,
+            "calmar": 0.7027483130730812,
+            "maxDrawdown": 0.056142095797430014,
+            "annualOneWayTurnover": 0.6096306303380727
+          },
+          "O1": {
+            "netReturn": 0.12582253314008618,
+            "cagr": 0.06142440737272192,
+            "sharpe": 0.9309780111186153,
+            "calmar": 1.0385550781599753,
+            "maxDrawdown": 0.05914410190121888,
+            "annualOneWayTurnover": 3.2025722450976377
+          },
+          "B0": {
+            "netReturn": 0.3348918097684819,
+            "cagr": 0.15637480640916612,
+            "sharpe": 1.439725477188919,
+            "calmar": 2.4379536667240767,
+            "maxDrawdown": 0.06414182867523066,
+            "annualOneWayTurnover": 111.27805964741319
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.46310916356349585,
+            "annualAlpha": -0.06189699538075941
+          },
+          "ci95": {
+            "lower": -0.23957507612865186,
+            "upper": 0.1155912735637891
+          }
+        },
+        "correlation": {
+          "SPY": 0.6130867356792974,
+          "QQQ": 0.519100591840789,
+          "SHY": 0.2555909381561437,
+          "F4": 0.580633748363814,
+          "O1": 0.35594006978808984,
+          "B0": -0.10095048856156036
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.03243825291069369,
+              "cagr": 0.0161868084696144,
+              "sharpe": 0.17973027106833578,
+              "calmar": 0.06607808046391359,
+              "maxDrawdown": 0.24496487119437893,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 0.00013333489865097192,
+              "cagr": 0.0000670644335620807,
+              "sharpe": 0.0866183602368288,
+              "calmar": 0.0002794284639004518,
+              "maxDrawdown": 0.240005733939735,
+              "annualOneWayTurnover": 6.156653323288968
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.09311191083150698,
+                "ci95": {
+                  "lower": -0.3491854799443964,
+                  "upper": 0.1695156783905312
+                }
+              },
+              "calmar": -0.06579865200001313,
+              "maxDrawdownReduction": 0.004959137254643919
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.07996651486212647,
+              "cagr": 0.03945376311403126,
+              "sharpe": 0.656969180115111,
+              "calmar": 0.7027483130730812,
+              "maxDrawdown": 0.056142095797430014,
+              "annualOneWayTurnover": 0.6096306303380727
+            },
+            "mixed": {
+              "netReturn": 0.03288898061941259,
+              "cagr": 0.016409928946690577,
+              "sharpe": 0.2536283775199969,
+              "calmar": 0.14236979048390883,
+              "maxDrawdown": 0.11526271753940165,
+              "annualOneWayTurnover": 6.51444825909007
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.40334080259511407,
+                "ci95": {
+                  "lower": -0.9950491930216749,
+                  "upper": 0.20061072401528734
+                }
+              },
+              "calmar": -0.5603785225891723,
+              "maxDrawdownReduction": -0.059120621741971635
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.12582253314008618,
+              "cagr": 0.06142440737272192,
+              "sharpe": 0.9309780111186153,
+              "calmar": 1.0385550781599753,
+              "maxDrawdown": 0.05914410190121888,
+              "annualOneWayTurnover": 3.2025722450976377
+            },
+            "mixed": {
+              "netReturn": 0.06646187676608806,
+              "cagr": 0.032895383240900467,
+              "sharpe": 0.48068238430850463,
+              "calmar": 0.30742551294587656,
+              "maxDrawdown": 0.10700277581285789,
+              "annualOneWayTurnover": 8.497167297219013
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.4502956268101107,
+                "ci95": {
+                  "lower": -1.189893914553218,
+                  "upper": 0.2802329668562778
+                }
+              },
+              "calmar": -0.7311295652140988,
+              "maxDrawdownReduction": -0.047858673911639005
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.3348918097684819,
+              "cagr": 0.15637480640916612,
+              "sharpe": 1.439725477188919,
+              "calmar": 2.4379536667240767,
+              "maxDrawdown": 0.06414182867523066,
+              "annualOneWayTurnover": 111.27805964741319
+            },
+            "mixed": {
+              "netReturn": 0.21564329983029018,
+              "cagr": 0.10320695479779451,
+              "sharpe": 1.2132804839240146,
+              "calmar": 1.5150937293995534,
+              "maxDrawdown": 0.06811918813676066,
+              "annualOneWayTurnover": 89.62750342141221
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.22644499326490442,
+                "ci95": {
+                  "lower": -0.9052307706299025,
+                  "upper": 0.3741394273813672
+                }
+              },
+              "calmar": -0.9228599373245232,
+              "maxDrawdownReduction": -0.0039773594615299945
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.17926774988613858,
+            "cagr": 0.08647720594617869,
+            "sharpe": 1.5940726214539365,
+            "calmar": 2.6627533648637702,
+            "maxDrawdown": 0.03247661127285928,
+            "annualOneWayTurnover": 38.6744386471853
+          },
+          "mixed": {
+            "netReturn": 0.10440079192546459,
+            "cagr": 0.05121724449586251,
+            "sharpe": 0.8231476867591845,
+            "calmar": 0.553815853080374,
+            "maxDrawdown": 0.092480639929297,
+            "annualOneWayTurnover": 34.98461371646428
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.770924934694752,
+              "ci95": {
+                "lower": -1.5627756353029985,
+                "upper": 0.03965265390796139
+              }
+            },
+            "calmar": -2.108937511783396,
+            "maxDrawdownReduction": -0.060004028656437725
+          }
+        },
+        "gates": {
+          "positiveNet": false,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "holdout": {
+        "firstFill": "2024-01-02",
+        "lastMark": "2026-11-25",
+        "sessions": 729,
+        "rotation": {
+          "netReturn": 0.35700966905559683,
+          "cagr": 0.11129955512452772,
+          "sharpe": 0.8249077263811601,
+          "calmar": 0.7069404569186846,
+          "maxDrawdown": 0.1574383726879135,
+          "annualOneWayTurnover": 28.590933035985916
+        },
+        "ungated": {
+          "netReturn": 0.5271289510180817,
+          "cagr": 0.15760921161545838,
+          "sharpe": 0.9287072879964728,
+          "calmar": 0.9347619860275678,
+          "maxDrawdown": 0.16860892288233276,
+          "annualOneWayTurnover": 27.969502414821715
+        },
+        "execution": {
+          "tradedSessions": 180,
+          "defensiveSessions": 264,
+          "sumFeesAsPriorCloseEquityFractions": 0.01654208964986877
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.5572648458379479,
+            "cagr": 0.1654554364243943,
+            "sharpe": 1.0322427377061136,
+            "calmar": 0.8822284066383326,
+            "maxDrawdown": 0.18754263088722145,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.5704164292615237,
+            "cagr": 0.16884847046879803,
+            "sharpe": 0.818726034508489,
+            "calmar": 0.7415692860306842,
+            "maxDrawdown": 0.22769075479457157,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.1074335322843174,
+            "cagr": 0.03590442500701929,
+            "sharpe": 2.2364039088241525,
+            "calmar": 3.676613120718692,
+            "maxDrawdown": 0.009765625000000222,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.37438882459147793,
+            "cagr": 0.11619891331180376,
+            "sharpe": 1.8565954807924263,
+            "calmar": 1.8933400558339695,
+            "maxDrawdown": 0.06137244757155946,
+            "annualOneWayTurnover": 0.7253859992096459
+          },
+          "O1": {
+            "netReturn": 0.28326801353111986,
+            "cagr": 0.090041521428333,
+            "sharpe": 1.290148967897357,
+            "calmar": 1.4269511017105216,
+            "maxDrawdown": 0.06310063555814771,
+            "annualOneWayTurnover": 2.620778632652341
+          },
+          "B0": {
+            "netReturn": 0.47965989159995637,
+            "cagr": 0.14504195070650527,
+            "sharpe": 1.4873133648231602,
+            "calmar": 2.6975546849683276,
+            "maxDrawdown": 0.05376793713014505,
+            "annualOneWayTurnover": 101.57418687339774
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.4854251017804259,
+            "annualAlpha": 0.016558849954178237
+          },
+          "ci95": {
+            "lower": -0.11584818167614243,
+            "upper": 0.14225521910844596
+          }
+        },
+        "correlation": {
+          "SPY": 0.5632026243058436,
+          "QQQ": 0.5825019490882684,
+          "SHY": 0.10843617758618267,
+          "F4": 0.47794680608951035,
+          "O1": 0.509230828401284,
+          "B0": 0.06010579645054874
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.5572648458379479,
+              "cagr": 0.1654554364243943,
+              "sharpe": 1.0322427377061136,
+              "calmar": 0.8822284066383326,
+              "maxDrawdown": 0.18754263088722145,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 0.5125105435515542,
+              "cagr": 0.15376661750884324,
+              "sharpe": 1.0700486556025048,
+              "calmar": 0.9335544330543271,
+              "maxDrawdown": 0.16471092853767744,
+              "annualOneWayTurnover": 7.450316433304753
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.037805917896391206,
+                "ci95": {
+                  "lower": -0.20947752997173275,
+                  "upper": 0.26232287152575995
+                }
+              },
+              "calmar": 0.051326026415994486,
+              "maxDrawdownReduction": 0.022831702349544014
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.37438882459147793,
+              "cagr": 0.11619891331180376,
+              "sharpe": 1.8565954807924263,
+              "calmar": 1.8933400558339695,
+              "maxDrawdown": 0.06137244757155946,
+              "annualOneWayTurnover": 0.7253859992096459
+            },
+            "mixed": {
+              "netReturn": 0.37548546646034175,
+              "cagr": 0.1165067047110715,
+              "sharpe": 1.63060188812923,
+              "calmar": 1.6737133467186982,
+              "maxDrawdown": 0.06960971240354985,
+              "annualOneWayTurnover": 7.9409773741418395
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.2259935926631964,
+                "ci95": {
+                  "lower": -0.780996009582376,
+                  "upper": 0.3016529257698244
+                }
+              },
+              "calmar": -0.21962670911527127,
+              "maxDrawdownReduction": -0.008237264831990387
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.28326801353111986,
+              "cagr": 0.090041521428333,
+              "sharpe": 1.290148967897357,
+              "calmar": 1.4269511017105216,
+              "maxDrawdown": 0.06310063555814771,
+              "annualOneWayTurnover": 2.620778632652341
+            },
+            "mixed": {
+              "netReturn": 0.30627948434969454,
+              "cagr": 0.09675910014029032,
+              "sharpe": 1.260470942785389,
+              "calmar": 1.364093781359881,
+              "maxDrawdown": 0.07093287973487428,
+              "annualOneWayTurnover": 9.358423007722322
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.02967802511196793,
+                "ci95": {
+                  "lower": -0.48660423092738353,
+                  "upper": 0.435279060931308
+                }
+              },
+              "calmar": -0.06285732035064062,
+              "maxDrawdownReduction": -0.007832244176726566
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.47965989159995637,
+              "cagr": 0.14504195070650527,
+              "sharpe": 1.4873133648231602,
+              "calmar": 2.6975546849683276,
+              "maxDrawdown": 0.05376793713014505,
+              "annualOneWayTurnover": 101.57418687339774
+            },
+            "mixed": {
+              "netReturn": 0.4582779620904516,
+              "cagr": 0.13929491096134017,
+              "sharpe": 1.6589567248347132,
+              "calmar": 4.004922803202553,
+              "maxDrawdown": 0.034780922830760286,
+              "annualOneWayTurnover": 83.63387148328863
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.171643360011553,
+                "ci95": {
+                  "lower": -0.3105670620549529,
+                  "upper": 0.7423467277364171
+                }
+              },
+              "calmar": 1.3073681182342254,
+              "maxDrawdownReduction": 0.018987014299384763
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.381990001222267,
+            "cagr": 0.11832902163627224,
+            "sharpe": 2.076976309177237,
+            "calmar": 3.0413341886891745,
+            "maxDrawdown": 0.038906944878449035,
+            "annualOneWayTurnover": 35.22407976470932
+          },
+          "mixed": {
+            "netReturn": 0.38161280951389975,
+            "cagr": 0.11822350070198206,
+            "sharpe": 1.775195495947464,
+            "calmar": 2.463201343950459,
+            "maxDrawdown": 0.047995873740624195,
+            "annualOneWayTurnover": 33.72785758167363
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.3017808132297728,
+              "ci95": {
+                "lower": -0.9973829183063778,
+                "upper": 0.2700949369909057
+              }
+            },
+            "calmar": -0.5781328447387155,
+            "maxDrawdownReduction": -0.00908892886217516
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "annual": [
+        {
+          "year": "2016",
+          "rotation": -0.005826093260919096,
+          "ungated": -0.005826093260919096,
+          "SPY": 0.014945795179454713,
+          "stack": 0.01520161675293763,
+          "stackWithRotation": 0.010031811693075543
+        },
+        {
+          "year": "2017",
+          "rotation": 0.01519466166295369,
+          "ungated": 0.1743836464011541,
+          "SPY": 0.21746344498600045,
+          "stack": 0.0649848579257013,
+          "stackWithRotation": 0.0523958256486321
+        },
+        {
+          "year": "2018",
+          "rotation": -0.08078821353381505,
+          "ungated": -0.0604114654777399,
+          "SPY": -0.04961669505962507,
+          "stack": 0.04478849158277254,
+          "stackWithRotation": 0.013569310278893854
+        },
+        {
+          "year": "2019",
+          "rotation": 0.17605480152816133,
+          "ungated": 0.21617723588541793,
+          "SPY": 0.3113600717006515,
+          "stack": 0.06808920981541378,
+          "stackWithRotation": 0.09445213786388074
+        },
+        {
+          "year": "2020",
+          "rotation": -0.15961302944683997,
+          "ungated": -0.082602153169689,
+          "SPY": 0.18453336978436896,
+          "stack": 0.03679252108038411,
+          "stackWithRotation": -0.007700218460460095
+        },
+        {
+          "year": "2021",
+          "rotation": 0.10659505458051233,
+          "ungated": 0.2343340924717734,
+          "SPY": 0.28601102039638526,
+          "stack": 0.1055770964067122,
+          "stackWithRotation": 0.10685166755331577
+        },
+        {
+          "year": "2022",
+          "rotation": -0.1211246799071527,
+          "ungated": -0.2240459585033675,
+          "SPY": -0.1817529219104016,
+          "stack": 0.08731471143318359,
+          "stackWithRotation": 0.03457553925339174
+        },
+        {
+          "year": "2023",
+          "rotation": 0.01607777625066542,
+          "ungated": 0.3093974355211757,
+          "SPY": 0.2617683344756656,
+          "stack": 0.0845689269960801,
+          "stackWithRotation": 0.06749169105859809
+        },
+        {
+          "year": "2024",
+          "rotation": 0.19513280907973907,
+          "ungated": 0.1132191650895693,
+          "SPY": 0.24885383395258787,
+          "stack": 0.09338064458280093,
+          "stackWithRotation": 0.11956684349609659
+        },
+        {
+          "year": "2025",
+          "rotation": 0.040407605557712944,
+          "ungated": 0.2228010925254229,
+          "SPY": 0.17718699979121655,
+          "stack": 0.13568345427532646,
+          "stackWithRotation": 0.11181439896367107
+        },
+        {
+          "year": "2026",
+          "rotation": 0.09134799501513458,
+          "ungated": 0.12186143216939382,
+          "SPY": 0.05926692284954105,
+          "stack": 0.11295145275657781,
+          "stackWithRotation": 0.1099515671793656
+        }
+      ],
+      "pathsSha256": {
+        "rotation": "c12283f9278c1ac00c43471e514dc765a33530c71125f8762c75cbd25d5054c2",
+        "ungated": "c9592cb487e7dc6b94b6439d96bc8f8a4c425a81c97f6f33da077719a33e9d20",
+        "SPY": "44b20acfb5c584fe944ffecabc0ee5691b8bfbf7940aef45c36f5bf3c474644e",
+        "QQQ": "d134c1cd9042d74f05a21f39fe43e962797ae3a8e7e25ec6bee637b25c760e35",
+        "SHY": "d62ff44cb0daab990dc54363bc6d9f5e8c908dc76dcd8ff885e07bd4dbee70ab",
+        "F4": "19ff53ceb56f1843f334abaf8798563d62d022aadccaad8b9d4cd8ade59a0757",
+        "O1": "20954347e37aa4ad5965052e485214720663e8e3723b598cd94cd929a4fd3d8f",
+        "B0": "d3389937d2dfc2f59c45ace541adef1cbc24d4acc63f87d1f4ae5f9e976e3e6f",
+        "stack": "d42849bd81988b65471306a5201ee7cf98ca3e575a5e49603f951979e89c91a6",
+        "withRotation": "9d430a5e65f439ee0d453fd7beb507d0446da2dd208e9a3f3fc688d46bf7a7b5"
+      }
+    },
+    {
+      "roundTripBps": 5,
+      "oos": {
+        "firstFill": "2016-11-28",
+        "lastMark": "2026-11-25",
+        "sessions": 2513,
+        "rotation": {
+          "netReturn": 0.1475775184072705,
+          "cagr": 0.013899375459418328,
+          "sharpe": 0.16682323840379865,
+          "calmar": 0.03631038034910621,
+          "maxDrawdown": 0.38279344159391226,
+          "annualOneWayTurnover": 23.069431284087273
+        },
+        "ungated": {
+          "netReturn": 1.1497782878756775,
+          "cagr": 0.0797717379030396,
+          "sharpe": 0.49405847459850505,
+          "calmar": 0.21829446688904963,
+          "maxDrawdown": 0.36543179055282415,
+          "annualOneWayTurnover": 28.926366411332666
+        },
+        "execution": {
+          "tradedSessions": 499,
+          "defensiveSessions": 1227,
+          "sumFeesAsPriorCloseEquityFractions": 0.11508920896638894
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 2.7717082412377563,
+            "cagr": 0.14239003109649206,
+            "sharpe": 0.83413815412845,
+            "calmar": 0.4213484710464738,
+            "maxDrawdown": 0.33793888166449937,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 4.728628230616289,
+            "cagr": 0.19128649942684195,
+            "sharpe": 0.8773695282839488,
+            "calmar": 0.5464929625961025,
+            "maxDrawdown": 0.35002554931016816,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.19426565242831595,
+            "cagr": 0.01796201048272872,
+            "sharpe": 1.1208143754816868,
+            "calmar": 0.31507829262848375,
+            "maxDrawdown": 0.05700808625336862,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 1.071891232834147,
+            "cagr": 0.07578335343938614,
+            "sharpe": 1.284401872287615,
+            "calmar": 0.754932010002199,
+            "maxDrawdown": 0.10038434247762973,
+            "annualOneWayTurnover": 0.7203928531359219
+          },
+          "O1": {
+            "netReturn": 0.9195564858384044,
+            "cagr": 0.06757642713915768,
+            "sharpe": 0.9373553043481817,
+            "calmar": 0.3272726644418276,
+            "maxDrawdown": 0.20648356701104598,
+            "annualOneWayTurnover": 2.6614294465732136
+          },
+          "B0": {
+            "netReturn": 1.008678752134621,
+            "cagr": 0.07244597780054352,
+            "sharpe": 0.8474230466333851,
+            "calmar": 0.6867877991938302,
+            "maxDrawdown": 0.10548524287353755,
+            "annualOneWayTurnover": 103.36346735802267
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.6411986378354878,
+            "annualAlpha": -0.07516504741413448
+          },
+          "ci95": {
+            "lower": -0.1463559049025845,
+            "upper": 0.00029217478560458846
+          }
+        },
+        "correlation": {
+          "SPY": 0.7122728577945513,
+          "QQQ": 0.6427313171035062,
+          "SHY": 0.041785615475589746,
+          "F4": 0.5246022159754385,
+          "O1": 0.540746496119162,
+          "B0": -0.036855177158912684
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 2.7717082412377563,
+              "cagr": 0.14239003109649206,
+              "sharpe": 0.83413815412845,
+              "calmar": 0.4213484710464738,
+              "maxDrawdown": 0.33793888166449937,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 1.842096767834287,
+              "cagr": 0.11042760028505194,
+              "sharpe": 0.7166634464583146,
+              "calmar": 0.320386501056002,
+              "maxDrawdown": 0.34466995307567505,
+              "annualOneWayTurnover": 6.043006041530694
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.11747470767013546,
+                "ci95": {
+                  "lower": -0.2178642296413375,
+                  "upper": -0.0027742786156901658
+                }
+              },
+              "calmar": -0.1009619699904718,
+              "maxDrawdownReduction": -0.006731071411175682
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 1.071891232834147,
+              "cagr": 0.07578335343938614,
+              "sharpe": 1.284401872287615,
+              "calmar": 0.754932010002199,
+              "maxDrawdown": 0.10038434247762973,
+              "annualOneWayTurnover": 0.7203928531359219
+            },
+            "mixed": {
+              "netReturn": 0.818477450441256,
+              "cagr": 0.06180100983734138,
+              "sharpe": 0.8542576379418696,
+              "calmar": 0.39413157594750503,
+              "maxDrawdown": 0.15680299069865122,
+              "annualOneWayTurnover": 6.557846978055549
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.43014423434574534,
+                "ci95": {
+                  "lower": -0.6998866568795196,
+                  "upper": -0.12792817808027074
+                }
+              },
+              "calmar": -0.360800434054694,
+              "maxDrawdownReduction": -0.056418648221021495
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.9195564858384044,
+              "cagr": 0.06757642713915768,
+              "sharpe": 0.9373553043481817,
+              "calmar": 0.3272726644418276,
+              "maxDrawdown": 0.20648356701104598,
+              "annualOneWayTurnover": 2.6614294465732136
+            },
+            "mixed": {
+              "netReturn": 0.7156932281139545,
+              "cagr": 0.05562402849907255,
+              "sharpe": 0.6904363722129229,
+              "calmar": 0.23961248347155328,
+              "maxDrawdown": 0.23214161337998995,
+              "annualOneWayTurnover": 8.0151712472954
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.24691893213525884,
+                "ci95": {
+                  "lower": -0.4638089799546986,
+                  "upper": -0.013363745437620127
+                }
+              },
+              "calmar": -0.08766018097027434,
+              "maxDrawdownReduction": -0.025658046368943976
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 1.008678752134621,
+              "cagr": 0.07244597780054352,
+              "sharpe": 0.8474230466333851,
+              "calmar": 0.6867877991938302,
+              "maxDrawdown": 0.10548524287353755,
+              "annualOneWayTurnover": 103.36346735802267
+            },
+            "mixed": {
+              "netReturn": 0.8014171160993606,
+              "cagr": 0.06079784851714809,
+              "sharpe": 0.8200168985392056,
+              "calmar": 0.5771820601074681,
+              "maxDrawdown": 0.10533565181465943,
+              "annualOneWayTurnover": 83.60427270417367
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.027406148094179517,
+                "ci95": {
+                  "lower": -0.3828511781464187,
+                  "upper": 0.31521659426323423
+                }
+              },
+              "calmar": -0.10960573908636206,
+              "maxDrawdownReduction": 0.00014959105887812907
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 1.0248272234542846,
+            "cagr": 0.0733074452556215,
+            "sharpe": 1.4193090702421431,
+            "calmar": 0.7952687495653836,
+            "maxDrawdown": 0.09217946171741842,
+            "annualOneWayTurnover": 35.840621120666356
+          },
+          "mixed": {
+            "netReturn": 0.7913836489123791,
+            "cagr": 0.060203873619768755,
+            "sharpe": 0.9125624276263644,
+            "calmar": 0.3980309654553378,
+            "maxDrawdown": 0.15125424613860627,
+            "annualOneWayTurnover": 32.81233925752749
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.5067466426157787,
+              "ci95": {
+                "lower": -0.8181516848599095,
+                "upper": -0.1484274122019315
+              }
+            },
+            "calmar": -0.39723778411004584,
+            "maxDrawdownReduction": -0.059074784421187854
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "validation": {
+        "firstFill": "2022-01-03",
+        "lastMark": "2023-12-29",
+        "sessions": 501,
+        "rotation": {
+          "netReturn": -0.11927189359022983,
+          "cagr": -0.06188563999441976,
+          "sharpe": -0.3400691787098061,
+          "calmar": -0.20090367829561726,
+          "maxDrawdown": 0.30803637105816895,
+          "annualOneWayTurnover": 23.20733032594518
+        },
+        "ungated": {
+          "netReturn": 0.001414442169490826,
+          "cagr": 0.0007112060460232605,
+          "sharpe": 0.1059679112499823,
+          "calmar": 0.0022072980122133,
+          "maxDrawdown": 0.32220662642201203,
+          "annualOneWayTurnover": 24.294829628032986
+        },
+        "execution": {
+          "tradedSessions": 89,
+          "defensiveSessions": 282,
+          "sumFeesAsPriorCloseEquityFractions": 0.023078878268806488
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.03243825291069369,
+            "cagr": 0.0161868084696144,
+            "sharpe": 0.17973027106833578,
+            "calmar": 0.06607808046391359,
+            "maxDrawdown": 0.24496487119437893,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.04593978338601823,
+            "cagr": 0.022849516741913378,
+            "sharpe": 0.21693103301509153,
+            "calmar": 0.06582857078363441,
+            "maxDrawdown": 0.34710637751828544,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.0012223278554956973,
+            "cagr": 0.0006146369518318373,
+            "sharpe": 0.03665914879456307,
+            "calmar": 0.012364950481797449,
+            "maxDrawdown": 0.049707999456742646,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.07957389935939263,
+            "cagr": 0.039263670875472334,
+            "sharpe": 0.6540283230903776,
+            "calmar": 0.6993624003126186,
+            "maxDrawdown": 0.05614209579743101,
+            "annualOneWayTurnover": 0.6096107951184973
+          },
+          "O1": {
+            "netReturn": 0.12367805183257508,
+            "cagr": 0.060406964733643376,
+            "sharpe": 0.9167921843149187,
+            "calmar": 1.0099168323215653,
+            "maxDrawdown": 0.059813801295678704,
+            "annualOneWayTurnover": 3.20158972907797
+          },
+          "B0": {
+            "netReturn": 0.24927178761989133,
+            "cagr": 0.11845330764032269,
+            "sharpe": 1.1236230506577078,
+            "calmar": 1.7644298514785488,
+            "maxDrawdown": 0.06713404193488437,
+            "annualOneWayTurnover": 111.27805964741319
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.4630438401711026,
+            "annualAlpha": -0.06886164159526088
+          },
+          "ci95": {
+            "lower": -0.24690307302642242,
+            "upper": 0.10889535112903795
+          }
+        },
+        "correlation": {
+          "SPY": 0.6131557545199527,
+          "QQQ": 0.5191620168896761,
+          "SHY": 0.2556092767410798,
+          "F4": 0.5803852657800442,
+          "O1": 0.35619234705044783,
+          "B0": -0.100640224190118
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.03243825291069369,
+              "cagr": 0.0161868084696144,
+              "sharpe": 0.17973027106833578,
+              "calmar": 0.06607808046391359,
+              "maxDrawdown": 0.24496487119437893,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": -0.0035330255862766613,
+              "cagr": -0.0017786536985758827,
+              "sharpe": 0.075907633634894,
+              "calmar": -0.0073667270358969365,
+              "maxDrawdown": 0.24144422481093364,
+              "annualOneWayTurnover": 6.156069871045859
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.10382263743344178,
+                "ci95": {
+                  "lower": -0.3601194438156398,
+                  "upper": 0.1588858075520801
+                }
+              },
+              "calmar": -0.07344480749981053,
+              "maxDrawdownReduction": 0.0035206463834452917
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.07957389935939263,
+              "cagr": 0.039263670875472334,
+              "sharpe": 0.6540283230903776,
+              "calmar": 0.6993624003126186,
+              "maxDrawdown": 0.05614209579743101,
+              "annualOneWayTurnover": 0.6096107951184973
+            },
+            "mixed": {
+              "netReturn": 0.028883753981159277,
+              "cagr": 0.014425551560769412,
+              "sharpe": 0.2277280779336877,
+              "calmar": 0.12368819959487244,
+              "maxDrawdown": 0.11662835749908862,
+              "annualOneWayTurnover": 6.513977307575413
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.4263002451566899,
+                "ci95": {
+                  "lower": -1.0196976796357753,
+                  "upper": 0.1781049054541829
+                }
+              },
+              "calmar": -0.5756742007177462,
+              "maxDrawdownReduction": -0.060486261701657607
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.12367805183257508,
+              "cagr": 0.060406964733643376,
+              "sharpe": 0.9167921843149187,
+              "calmar": 1.0099168323215653,
+              "maxDrawdown": 0.059813801295678704,
+              "annualOneWayTurnover": 3.20158972907797
+            },
+            "mixed": {
+              "netReturn": 0.061071789106685426,
+              "cagr": 0.030266228517622284,
+              "sharpe": 0.4457627685666222,
+              "calmar": 0.280293007020376,
+              "maxDrawdown": 0.10798067650479082,
+              "annualOneWayTurnover": 8.49579534389541
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.4710294157482965,
+                "ci95": {
+                  "lower": -1.2113430919270913,
+                  "upper": 0.2594355637307509
+                }
+              },
+              "calmar": -0.7296238253011893,
+              "maxDrawdownReduction": -0.048166875209112114
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.24927178761989133,
+              "cagr": 0.11845330764032269,
+              "sharpe": 1.1236230506577078,
+              "calmar": 1.7644298514785488,
+              "maxDrawdown": 0.06713404193488437,
+              "annualOneWayTurnover": 111.27805964741319
+            },
+            "mixed": {
+              "netReturn": 0.1524120621778382,
+              "cagr": 0.07396060815560523,
+              "sharpe": 0.8942852502579436,
+              "calmar": 0.9359193031532903,
+              "maxDrawdown": 0.07902455682495046,
+              "annualOneWayTurnover": 89.62665168469097
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.22933780039976426,
+                "ci95": {
+                  "lower": -0.8989978941679538,
+                  "upper": 0.37096706033034654
+                }
+              },
+              "calmar": -0.8285105483252585,
+              "maxDrawdownReduction": -0.011890514890066095
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.15239465977556388,
+            "cagr": 0.07395245070965228,
+            "sharpe": 1.3766337420512815,
+            "calmar": 2.13211590615476,
+            "maxDrawdown": 0.03468500492687776,
+            "annualOneWayTurnover": 38.6734908354116
+          },
+          "mixed": {
+            "netReturn": 0.0816016658994978,
+            "cagr": 0.04024508333433041,
+            "sharpe": 0.6571432181309775,
+            "calmar": 0.41823272773667575,
+            "maxDrawdown": 0.09622652811539223,
+            "annualOneWayTurnover": 34.98367378383377
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.719490523920304,
+              "ci95": {
+                "lower": -1.5059713773678969,
+                "upper": 0.08211133831808205
+              }
+            },
+            "calmar": -1.7138831784180841,
+            "maxDrawdownReduction": -0.06154152318851447
+          }
+        },
+        "gates": {
+          "positiveNet": false,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "holdout": {
+        "firstFill": "2024-01-02",
+        "lastMark": "2026-11-25",
+        "sessions": 729,
+        "rotation": {
+          "netReturn": 0.3237500427398683,
+          "cagr": 0.10180762442249658,
+          "sharpe": 0.7630713748369836,
+          "calmar": 0.6323523593768363,
+          "maxDrawdown": 0.16099825186518613,
+          "annualOneWayTurnover": 28.588763521528403
+        },
+        "ungated": {
+          "netReturn": 0.4905041562561656,
+          "cagr": 0.14793592218515306,
+          "sharpe": 0.8803980248580283,
+          "calmar": 0.8713514307333913,
+          "maxDrawdown": 0.16977756272304467,
+          "annualOneWayTurnover": 27.96839960343431
+        },
+        "execution": {
+          "tradedSessions": 180,
+          "defensiveSessions": 264,
+          "sumFeesAsPriorCloseEquityFractions": 0.04135208771247244
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.5572648458379479,
+            "cagr": 0.1654554364243943,
+            "sharpe": 1.0322427377061136,
+            "calmar": 0.8822284066383326,
+            "maxDrawdown": 0.18754263088722145,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.5704164292615237,
+            "cagr": 0.16884847046879803,
+            "sharpe": 0.818726034508489,
+            "calmar": 0.7415692860306842,
+            "maxDrawdown": 0.22769075479457157,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.1074335322843174,
+            "cagr": 0.03590442500701929,
+            "sharpe": 2.2364039088241525,
+            "calmar": 3.676613120718692,
+            "maxDrawdown": 0.009765625000000222,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.3735238358754893,
+            "cagr": 0.11595602597172161,
+            "sharpe": 1.8527547538904618,
+            "calmar": 1.8871563887132035,
+            "maxDrawdown": 0.061444841914129134,
+            "annualOneWayTurnover": 0.725371542097951
+          },
+          "O1": {
+            "netReturn": 0.28035058356373144,
+            "cagr": 0.08918424194853314,
+            "sharpe": 1.2785928689207773,
+            "calmar": 1.411274243347185,
+            "maxDrawdown": 0.06319412571224337,
+            "annualOneWayTurnover": 2.6204531427761384
+          },
+          "B0": {
+            "netReturn": 0.3549833407527818,
+            "cagr": 0.11072564576364696,
+            "sharpe": 1.1673250050911335,
+            "calmar": 1.7026956306208099,
+            "maxDrawdown": 0.06502961760891812,
+            "annualOneWayTurnover": 101.57418687339774
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.48613271909166056,
+            "annualAlpha": 0.00790071732694411
+          },
+          "ci95": {
+            "lower": -0.12497529954443856,
+            "upper": 0.13344131976387635
+          }
+        },
+        "correlation": {
+          "SPY": 0.5636207336478929,
+          "QQQ": 0.5828798544467092,
+          "SHY": 0.10866152088436207,
+          "F4": 0.47859720901781927,
+          "O1": 0.5096524762589583,
+          "B0": 0.061431471807553414
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.5572648458379479,
+              "cagr": 0.1654554364243943,
+              "sharpe": 1.0322427377061136,
+              "calmar": 0.8822284066383326,
+              "maxDrawdown": 0.18754263088722145,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 0.5027600396591276,
+              "cagr": 0.15119007160740927,
+              "sharpe": 1.0542307098737798,
+              "calmar": 0.9149086303488623,
+              "maxDrawdown": 0.16525155255094626,
+              "annualOneWayTurnover": 7.44975026912107
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.021987972167666126,
+                "ci95": {
+                  "lower": -0.2265924784152126,
+                  "upper": 0.24599608594319275
+                }
+              },
+              "calmar": 0.0326802237105297,
+              "maxDrawdownReduction": 0.022291078336275194
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.3735238358754893,
+              "cagr": 0.11595602597172161,
+              "sharpe": 1.8527547538904618,
+              "calmar": 1.8871563887132035,
+              "maxDrawdown": 0.061444841914129134,
+              "annualOneWayTurnover": 0.725371542097951
+            },
+            "mixed": {
+              "netReturn": 0.36604320683741776,
+              "cagr": 0.11385129067240785,
+              "sharpe": 1.5951766389698305,
+              "calmar": 1.6205992859222327,
+              "maxDrawdown": 0.0702525859794012,
+              "annualOneWayTurnover": 7.94056991754084
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.2575781149206313,
+                "ci95": {
+                  "lower": -0.81289699779233,
+                  "upper": 0.26841514682596757
+                }
+              },
+              "calmar": -0.2665571027909708,
+              "maxDrawdownReduction": -0.008807744065272072
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.28035058356373144,
+              "cagr": 0.08918424194853314,
+              "sharpe": 1.2785928689207773,
+              "calmar": 1.411274243347185,
+              "maxDrawdown": 0.06319412571224337,
+              "annualOneWayTurnover": 2.6204531427761384
+            },
+            "mixed": {
+              "netReturn": 0.2957157161130157,
+              "cagr": 0.09368498833328398,
+              "sharpe": 1.2227649265122391,
+              "calmar": 1.3086066066998328,
+              "maxDrawdown": 0.07159140711473833,
+              "annualOneWayTurnover": 9.357881981995565
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.05582794240853817,
+                "ci95": {
+                  "lower": -0.5133443435555914,
+                  "upper": 0.40772973572518983
+                }
+              },
+              "calmar": -0.10266763664735223,
+              "maxDrawdownReduction": -0.00839728140249496
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.3549833407527818,
+              "cagr": 0.11072564576364696,
+              "sharpe": 1.1673250050911335,
+              "calmar": 1.7026956306208099,
+              "maxDrawdown": 0.06502961760891812,
+              "annualOneWayTurnover": 101.57418687339774
+            },
+            "mixed": {
+              "netReturn": 0.35629142567493965,
+              "cagr": 0.11109619394075865,
+              "sharpe": 1.3504390334478238,
+              "calmar": 2.742337338141251,
+              "maxDrawdown": 0.04051149812811117,
+              "annualOneWayTurnover": 83.63361281784718
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.18311402835669033,
+                "ci95": {
+                  "lower": -0.30045045122910885,
+                  "upper": 0.769395565286363
+                }
+              },
+              "calmar": 1.0396417075204412,
+              "maxDrawdownReduction": 0.024518119480806955
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.3404040181382073,
+            "cagr": 0.10657974965874639,
+            "sharpe": 1.884095378299317,
+            "calmar": 2.656005229538612,
+            "maxDrawdown": 0.04012783878338255,
+            "annualOneWayTurnover": 35.22405245544327
+          },
+          "mixed": {
+            "netReturn": 0.34177559593543383,
+            "cagr": 0.10697103639385586,
+            "sharpe": 1.6165146283645315,
+            "calmar": 2.185702409628471,
+            "maxDrawdown": 0.04894126296545509,
+            "annualOneWayTurnover": 33.72756898300842
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.26758074993478553,
+              "ci95": {
+                "lower": -0.9383581173175483,
+                "upper": 0.30606273870676814
+              }
+            },
+            "calmar": -0.4703028199101409,
+            "maxDrawdownReduction": -0.008813424182072538
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "annual": [
+        {
+          "year": "2016",
+          "rotation": -0.006674896774907291,
+          "ungated": -0.006674896774907291,
+          "SPY": 0.014945795179454713,
+          "stack": 0.014160033385697268,
+          "stackWithRotation": 0.009034440533885135
+        },
+        {
+          "year": "2017",
+          "rotation": 0.014890148933751846,
+          "ungated": 0.1619596160302086,
+          "SPY": 0.21746344498600045,
+          "stack": 0.053574152462961155,
+          "stackWithRotation": 0.0438369682250046
+        },
+        {
+          "year": "2018",
+          "rotation": -0.08931509550316385,
+          "ungated": -0.06689799217541059,
+          "SPY": -0.04961669505962507,
+          "stack": 0.033614689260774266,
+          "stackWithRotation": 0.003032340467085559
+        },
+        {
+          "year": "2019",
+          "rotation": 0.17181674165076521,
+          "ungated": 0.20330203318609819,
+          "SPY": 0.3113600717006515,
+          "stack": 0.057510705508139415,
+          "stackWithRotation": 0.08531069999407959
+        },
+        {
+          "year": "2020",
+          "rotation": -0.1705296711537272,
+          "ungated": -0.09279874795217191,
+          "SPY": 0.18453336978436896,
+          "stack": 0.025789698281827755,
+          "stackWithRotation": -0.018950302939266694
+        },
+        {
+          "year": "2021",
+          "rotation": 0.10304961833836024,
+          "ungated": 0.22505833558889332,
+          "SPY": 0.28601102039638526,
+          "stack": 0.094151941925247,
+          "stackWithRotation": 0.09734370665206171
+        },
+        {
+          "year": "2022",
+          "rotation": -0.1294724954011932,
+          "ungated": -0.23143209431139988,
+          "SPY": -0.1817529219104016,
+          "stack": 0.07458614927013962,
+          "stackWithRotation": 0.022946087292981865
+        },
+        {
+          "year": "2023",
+          "rotation": 0.011717724893327786,
+          "ungated": 0.3029615662551923,
+          "SPY": 0.2617683344756656,
+          "stack": 0.07240788517353813,
+          "stackWithRotation": 0.05733985332671643
+        },
+        {
+          "year": "2024",
+          "rotation": 0.18106267701065293,
+          "ungated": 0.1025130777749752,
+          "SPY": 0.24885383395258787,
+          "stack": 0.08098202808230281,
+          "stackWithRotation": 0.10669588488149473
+        },
+        {
+          "year": "2025",
+          "rotation": 0.03687024460785482,
+          "ungated": 0.21470784155098088,
+          "SPY": 0.17718699979121655,
+          "stack": 0.12488191094360324,
+          "stackWithRotation": 0.10290607882613512
+        },
+        {
+          "year": "2026",
+          "rotation": 0.08095752720119331,
+          "ungated": 0.11295500442540973,
+          "SPY": 0.05926692284954105,
+          "stack": 0.1023266685534554,
+          "stackWithRotation": 0.09929198934044425
+        }
+      ],
+      "pathsSha256": {
+        "rotation": "9b180ad88eb44b1587e8e697bdb291c61ccc2649694e0ed9ba55c9c575a15985",
+        "ungated": "22449ae5c3b4b2914dc8817b0c0e516307c638f9d3ce7a7eabfd911b0f6465a3",
+        "SPY": "44b20acfb5c584fe944ffecabc0ee5691b8bfbf7940aef45c36f5bf3c474644e",
+        "QQQ": "d134c1cd9042d74f05a21f39fe43e962797ae3a8e7e25ec6bee637b25c760e35",
+        "SHY": "d62ff44cb0daab990dc54363bc6d9f5e8c908dc76dcd8ff885e07bd4dbee70ab",
+        "F4": "7703fbb73cf4759e9d36c5fd80bb2b65c9609dc0723bbbf9c7895c8333847354",
+        "O1": "952e0a732f03e739cd42df2b159c77378590ce2b6ee5651005be11a2c95f5b44",
+        "B0": "54a402cad268068357b2bd1755675bbc27cc3288e0890fe9be97c3e07ab40f26",
+        "stack": "26cdb2a168fca6d538262d0777680b648dc5b2628a68159e3e054426fc79b74d",
+        "withRotation": "8fec5a0cec6fca2631f7e73d1df5ee8024a3f073c6fc359f05b416843acf06aa"
+      }
+    },
+    {
+      "roundTripBps": 10,
+      "oos": {
+        "firstFill": "2016-11-28",
+        "lastMark": "2026-11-25",
+        "sessions": 2513,
+        "rotation": {
+          "netReturn": 0.02286216566611654,
+          "cagr": 0.002269341900219546,
+          "sharpe": 0.09536418385364154,
+          "calmar": 0.005885532450069175,
+          "maxDrawdown": 0.3855797108370158,
+          "annualOneWayTurnover": 23.066438828122703
+        },
+        "ungated": {
+          "netReturn": 0.8609965255715171,
+          "cagr": 0.06426479006255392,
+          "sharpe": 0.4192958461014431,
+          "calmar": 0.1733597479831636,
+          "maxDrawdown": 0.3707019121231949,
+          "annualOneWayTurnover": 28.924642088825046
+        },
+        "execution": {
+          "tradedSessions": 499,
+          "defensiveSessions": 1227,
+          "sumFeesAsPriorCloseEquityFractions": 0.23014855919223012
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 2.7717082412377563,
+            "cagr": 0.14239003109649206,
+            "sharpe": 0.83413815412845,
+            "calmar": 0.4213484710464738,
+            "maxDrawdown": 0.33793888166449937,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 4.728628230616289,
+            "cagr": 0.19128649942684195,
+            "sharpe": 0.8773695282839488,
+            "calmar": 0.5464929625961025,
+            "maxDrawdown": 0.35002554931016816,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.19426565242831595,
+            "cagr": 0.01796201048272872,
+            "sharpe": 1.1208143754816868,
+            "calmar": 0.31507829262848375,
+            "maxDrawdown": 0.05700808625336862,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 1.0644619903483723,
+            "cagr": 0.07539590668059581,
+            "sharpe": 1.278220163260697,
+            "calmar": 0.7510723766248474,
+            "maxDrawdown": 0.1003843424776295,
+            "annualOneWayTurnover": 0.7203501921973632
+          },
+          "O1": {
+            "netReturn": 0.8943936573863445,
+            "cagr": 0.06616473345891327,
+            "sharpe": 0.9188083105102909,
+            "calmar": 0.3201151986895957,
+            "maxDrawdown": 0.20669038436713172,
+            "annualOneWayTurnover": 2.6606358358462776
+          },
+          "B0": {
+            "netReturn": 0.20013661138983463,
+            "cagr": 0.01846272387492376,
+            "sharpe": 0.254169892778671,
+            "calmar": 0.10203596686119774,
+            "maxDrawdown": 0.1809432932608861,
+            "annualOneWayTurnover": 103.36346735802267
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.641310131177878,
+            "annualAlpha": -0.08671581494794599
+          },
+          "ci95": {
+            "lower": -0.15796881615305797,
+            "upper": -0.01113707357738777
+          }
+        },
+        "correlation": {
+          "SPY": 0.7124157849259494,
+          "QQQ": 0.6428506522546611,
+          "SHY": 0.04180320938238164,
+          "F4": 0.5246449796981232,
+          "O1": 0.5410968024494996,
+          "B0": -0.035371818068608916
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 2.7717082412377563,
+              "cagr": 0.14239003109649206,
+              "sharpe": 0.83413815412845,
+              "calmar": 0.4213484710464738,
+              "maxDrawdown": 0.33793888166449937,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 1.7577319359799595,
+              "cagr": 0.10707723730345164,
+              "sharpe": 0.6983689747124954,
+              "calmar": 0.31023096784032006,
+              "maxDrawdown": 0.3451532838545174,
+              "annualOneWayTurnover": 6.042294178068793
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.13576917941595468,
+                "ci95": {
+                  "lower": -0.2368053395043068,
+                  "upper": -0.02234762143819644
+                }
+              },
+              "calmar": -0.11111750320615377,
+              "maxDrawdownReduction": -0.00721440219001801
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 1.0644619903483723,
+              "cagr": 0.07539590668059581,
+              "sharpe": 1.278220163260697,
+              "calmar": 0.7510723766248474,
+              "maxDrawdown": 0.1003843424776295,
+              "annualOneWayTurnover": 0.7203501921973632
+            },
+            "mixed": {
+              "netReturn": 0.7599812361475393,
+              "cagr": 0.05832532935016044,
+              "sharpe": 0.8095533065429725,
+              "calmar": 0.37065826619709635,
+              "maxDrawdown": 0.15735607342194313,
+              "annualOneWayTurnover": 6.557071512894508
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.46866685671772457,
+                "ci95": {
+                  "lower": -0.7382801855033002,
+                  "upper": -0.16969002919440673
+                }
+              },
+              "calmar": -0.38041411042775103,
+              "maxDrawdownReduction": -0.056971730944313625
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.8943936573863445,
+              "cagr": 0.06616473345891327,
+              "sharpe": 0.9188083105102909,
+              "calmar": 0.3201151986895957,
+              "maxDrawdown": 0.20669038436713172,
+              "annualOneWayTurnover": 2.6606358358462776
+            },
+            "mixed": {
+              "netReturn": 0.648558671376742,
+              "cagr": 0.051407124580179486,
+              "sharpe": 0.642296623961241,
+              "calmar": 0.220396899973137,
+              "maxDrawdown": 0.23324794761834322,
+              "annualOneWayTurnover": 8.013877822688183
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.2765116865490499,
+                "ci95": {
+                  "lower": -0.4942586690304476,
+                  "upper": -0.04454752086410065
+                }
+              },
+              "calmar": -0.09971829871645871,
+              "maxDrawdownReduction": -0.026557563251211502
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.20013661138983463,
+              "cagr": 0.01846272387492376,
+              "sharpe": 0.254169892778671,
+              "calmar": 0.10203596686119774,
+              "maxDrawdown": 0.1809432932608861,
+              "annualOneWayTurnover": 103.36346735802267
+            },
+            "mixed": {
+              "netReturn": 0.18752460074076693,
+              "cagr": 0.01738435131685434,
+              "sharpe": 0.2663810404457196,
+              "calmar": 0.12468008439218539,
+              "maxDrawdown": 0.13943166145261243,
+              "annualOneWayTurnover": 83.60382133102637
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.01221114766704856,
+                "ci95": {
+                  "lower": -0.32757047993096455,
+                  "upper": 0.3446553878299632
+                }
+              },
+              "calmar": 0.022644117530987648,
+              "maxDrawdownReduction": 0.041511631808273664
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.6935825986514119,
+            "cagr": 0.05425185206990757,
+            "sharpe": 1.0664423969252492,
+            "calmar": 0.5783367298299145,
+            "maxDrawdown": 0.09380668609075327,
+            "annualOneWayTurnover": 35.841345260934716
+          },
+          "mixed": {
+            "netReturn": 0.5210607785079642,
+            "cagr": 0.04295457616923515,
+            "sharpe": 0.6656078031749981,
+            "calmar": 0.2805522774189643,
+            "maxDrawdown": 0.15310720898226282,
+            "annualOneWayTurnover": 32.81223450171572
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.4008345937502511,
+              "ci95": {
+                "lower": -0.7044327204331466,
+                "upper": -0.05477957014844679
+              }
+            },
+            "calmar": -0.29778445241095014,
+            "maxDrawdownReduction": -0.059300522891509555
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "validation": {
+        "firstFill": "2022-01-03",
+        "lastMark": "2023-12-29",
+        "sessions": 501,
+        "rotation": {
+          "netReturn": -0.1393611000989462,
+          "cagr": -0.07271050649218502,
+          "sharpe": -0.4159468843462677,
+          "calmar": -0.23103148223888786,
+          "maxDrawdown": 0.31472120503906886,
+          "annualOneWayTurnover": 23.20374936199959
+        },
+        "ungated": {
+          "netReturn": -0.02248414609972682,
+          "cagr": -0.011373299766833544,
+          "sharpe": 0.04679248468020578,
+          "calmar": -0.03442903787010977,
+          "maxDrawdown": 0.3303403310235251,
+          "annualOneWayTurnover": 24.293614259619737
+        },
+        "execution": {
+          "tradedSessions": 89,
+          "defensiveSessions": 282,
+          "sumFeesAsPriorCloseEquityFractions": 0.04615063000542887
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.03243825291069369,
+            "cagr": 0.0161868084696144,
+            "sharpe": 0.17973027106833578,
+            "calmar": 0.06607808046391359,
+            "maxDrawdown": 0.24496487119437893,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.04593978338601823,
+            "cagr": 0.022849516741913378,
+            "sharpe": 0.21693103301509153,
+            "calmar": 0.06582857078363441,
+            "maxDrawdown": 0.34710637751828544,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.0012223278554956973,
+            "cagr": 0.0006146369518318373,
+            "sharpe": 0.03665914879456307,
+            "calmar": 0.012364950481797449,
+            "maxDrawdown": 0.049707999456742646,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.07891986395953055,
+            "cagr": 0.038946930929744106,
+            "sharpe": 0.649122992360832,
+            "calmar": 0.6937206453829475,
+            "maxDrawdown": 0.05614209579742957,
+            "annualOneWayTurnover": 0.6095777429030481
+          },
+          "O1": {
+            "netReturn": 0.12011530401341775,
+            "cagr": 0.05871449402145679,
+            "sharpe": 0.8930983178073402,
+            "calmar": 0.9636640933608565,
+            "maxDrawdown": 0.06092838202229289,
+            "annualOneWayTurnover": 3.19995063330552
+          },
+          "B0": {
+            "netReturn": 0.11855884032783726,
+            "cagr": 0.057974261811057026,
+            "sharpe": 0.5930422465830131,
+            "calmar": 0.7976557817763439,
+            "maxDrawdown": 0.07268080183904757,
+            "annualOneWayTurnover": 111.27805964741319
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.4629349834072392,
+            "annualAlpha": -0.08046651887133476
+          },
+          "ci95": {
+            "lower": -0.2596315338787374,
+            "upper": 0.09801833060732422
+          }
+        },
+        "correlation": {
+          "SPY": 0.6131985264181273,
+          "QQQ": 0.5192032473117991,
+          "SHY": 0.25560977680356983,
+          "F4": 0.5798991963954653,
+          "O1": 0.3565430791750772,
+          "B0": -0.10009198166417155
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.03243825291069369,
+              "cagr": 0.0161868084696144,
+              "sharpe": 0.17973027106833578,
+              "calmar": 0.06607808046391359,
+              "maxDrawdown": 0.24496487119437893,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": -0.009612650886062335,
+              "cagr": -0.00484671153968641,
+              "sharpe": 0.05805914738012645,
+              "calmar": -0.019876970583672042,
+              "maxDrawdown": 0.2438355240947907,
+              "annualOneWayTurnover": 6.155097758056688
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.12167112368820933,
+                "ci95": {
+                  "lower": -0.3802439665607251,
+                  "upper": 0.14264611804115818
+                }
+              },
+              "calmar": -0.08595505104758563,
+              "maxDrawdownReduction": 0.0011293470995882293
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.07891986395953055,
+              "cagr": 0.038946930929744106,
+              "sharpe": 0.649122992360832,
+              "calmar": 0.6937206453829475,
+              "maxDrawdown": 0.05614209579742957,
+              "annualOneWayTurnover": 0.6095777429030481
+            },
+            "mixed": {
+              "netReturn": 0.022243669715064307,
+              "cagr": 0.011127264358555822,
+              "sharpe": 0.18454019874472233,
+              "calmar": 0.09350379578949113,
+              "maxDrawdown": 0.11900334381726152,
+              "annualOneWayTurnover": 6.513201173780666
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.4645827936161097,
+                "ci95": {
+                  "lower": -1.0591056486877994,
+                  "upper": 0.14077081729641847
+                }
+              },
+              "calmar": -0.6002168495934564,
+              "maxDrawdownReduction": -0.06286124801983195
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.12011530401341775,
+              "cagr": 0.05871449402145679,
+              "sharpe": 0.8930983178073402,
+              "calmar": 0.9636640933608565,
+              "maxDrawdown": 0.06092838202229289,
+              "annualOneWayTurnover": 3.19995063330552
+            },
+            "mixed": {
+              "netReturn": 0.05215184127248906,
+              "cagr": 0.025900668524899473,
+              "sharpe": 0.3875382301967193,
+              "calmar": 0.23630264757814162,
+              "maxDrawdown": 0.1096080335550812,
+              "annualOneWayTurnover": 8.493507869478295
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.5055600876106209,
+                "ci95": {
+                  "lower": -1.2462486923976692,
+                  "upper": 0.2223421084697589
+                }
+              },
+              "calmar": -0.7273614457827149,
+              "maxDrawdownReduction": -0.048679651532788304
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.11855884032783726,
+              "cagr": 0.057974261811057026,
+              "sharpe": 0.5930422465830131,
+              "calmar": 0.7976557817763439,
+              "maxDrawdown": 0.07268080183904757,
+              "annualOneWayTurnover": 111.27805964741319
+            },
+            "mixed": {
+              "netReturn": 0.05422880351205839,
+              "cagr": 0.026918803658053214,
+              "sharpe": 0.35977302786512017,
+              "calmar": 0.277738413371127,
+              "maxDrawdown": 0.09692142808522153,
+              "annualOneWayTurnover": 89.6253776120428
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.2332692187178929,
+                "ci95": {
+                  "lower": -0.8934740547133156,
+                  "upper": 0.36944647869675007
+                }
+              },
+              "calmar": -0.519917368405217,
+              "maxDrawdownReduction": -0.024240626246173957
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.108956742581519,
+            "cagr": 0.05339627378167644,
+            "sharpe": 1.0125832189422757,
+            "calmar": 1.3921516047483453,
+            "maxDrawdown": 0.03835521476220882,
+            "annualOneWayTurnover": 38.67245068852439
+          },
+          "mixed": {
+            "netReturn": 0.04464281440588613,
+            "cagr": 0.02221135413389841,
+            "sharpe": 0.38003550119668894,
+            "calmar": 0.21275209177080462,
+            "maxDrawdown": 0.10440016805017571,
+            "annualOneWayTurnover": 34.98236679632928
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.6325477177455867,
+              "ci95": {
+                "lower": -1.4074116645120132,
+                "upper": 0.15561950001721164
+              }
+            },
+            "calmar": -1.1793995129775408,
+            "maxDrawdownReduction": -0.06604495328796689
+          }
+        },
+        "gates": {
+          "positiveNet": false,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "holdout": {
+        "firstFill": "2024-01-02",
+        "lastMark": "2026-11-25",
+        "sessions": 729,
+        "rotation": {
+          "netReturn": 0.27011700787147386,
+          "cagr": 0.08616698671779943,
+          "sharpe": 0.660151132136089,
+          "calmar": 0.5162847095023602,
+          "maxDrawdown": 0.16689819615392953,
+          "annualOneWayTurnover": 28.58517954684487
+        },
+        "ungated": {
+          "netReturn": 0.4314016255211939,
+          "cagr": 0.13199232830833152,
+          "sharpe": 0.7998714951986678,
+          "calmar": 0.7686403466334135,
+          "maxDrawdown": 0.17172183178576028,
+          "annualOneWayTurnover": 27.966637097713903
+        },
+        "execution": {
+          "tradedSessions": 180,
+          "defensiveSessions": 264,
+          "sumFeesAsPriorCloseEquityFractions": 0.08269381332363049
+        },
+        "benchmarks": {
+          "SPY": {
+            "netReturn": 0.5572648458379479,
+            "cagr": 0.1654554364243943,
+            "sharpe": 1.0322427377061136,
+            "calmar": 0.8822284066383326,
+            "maxDrawdown": 0.18754263088722145,
+            "annualOneWayTurnover": 0
+          },
+          "QQQ": {
+            "netReturn": 0.5704164292615237,
+            "cagr": 0.16884847046879803,
+            "sharpe": 0.818726034508489,
+            "calmar": 0.7415692860306842,
+            "maxDrawdown": 0.22769075479457157,
+            "annualOneWayTurnover": 0
+          },
+          "SHY": {
+            "netReturn": 0.1074335322843174,
+            "cagr": 0.03590442500701929,
+            "sharpe": 2.2364039088241525,
+            "calmar": 3.676613120718692,
+            "maxDrawdown": 0.009765625000000222,
+            "annualOneWayTurnover": 0
+          },
+          "F4": {
+            "netReturn": 0.3720833647617776,
+            "cagr": 0.11555132195272533,
+            "sharpe": 1.8463422869852937,
+            "calmar": 1.8768842408272879,
+            "maxDrawdown": 0.06156550278337514,
+            "annualOneWayTurnover": 0.7253474555150538
+          },
+          "O1": {
+            "netReturn": 0.27550393908871973,
+            "cagr": 0.08775723772612265,
+            "sharpe": 1.2593011267348877,
+            "calmar": 1.3852784946178156,
+            "maxDrawdown": 0.06334988817561482,
+            "annualOneWayTurnover": 2.6199104139659104
+          },
+          "B0": {
+            "netReturn": 0.1700351184286788,
+            "cagr": 0.055783638473533514,
+            "sharpe": 0.6282072296721505,
+            "calmar": 0.6112134626339655,
+            "maxDrawdown": 0.09126703170630324,
+            "annualOneWayTurnover": 101.57418687339774
+          }
+        },
+        "marketAlpha": {
+          "fit": {
+            "beta": 0.4873117692698307,
+            "annualAlpha": -0.006526609815531293
+          },
+          "ci95": {
+            "lower": -0.1396993316117712,
+            "upper": 0.11925067758804735
+          }
+        },
+        "correlation": {
+          "SPY": 0.5642383605879395,
+          "QQQ": 0.5834279888755836,
+          "SHY": 0.10902099015349287,
+          "F4": 0.4796085694971881,
+          "O1": 0.5102672212430954,
+          "B0": 0.06358702570522362
+        },
+        "singleControlBlends": {
+          "SPY": {
+            "baseline": {
+              "netReturn": 0.5572648458379479,
+              "cagr": 0.1654554364243943,
+              "sharpe": 1.0322427377061136,
+              "calmar": 0.8822284066383326,
+              "maxDrawdown": 0.18754263088722145,
+              "annualOneWayTurnover": 0
+            },
+            "mixed": {
+              "netReturn": 0.4866505626937685,
+              "cagr": 0.14690910981423477,
+              "sharpe": 1.027879392388479,
+              "calmar": 0.8841872892831797,
+              "maxDrawdown": 0.16615157398760572,
+              "annualOneWayTurnover": 7.448908613265837
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.004363345317634604,
+                "ci95": {
+                  "lower": -0.2547544834167467,
+                  "upper": 0.2191521299321082
+                }
+              },
+              "calmar": 0.0019588826448471153,
+              "maxDrawdownReduction": 0.021391056899615735
+            }
+          },
+          "F4": {
+            "baseline": {
+              "netReturn": 0.3720833647617776,
+              "cagr": 0.11555132195272533,
+              "sharpe": 1.8463422869852937,
+              "calmar": 1.8768842408272879,
+              "maxDrawdown": 0.06156550278337514,
+              "annualOneWayTurnover": 0.7253474555150538
+            },
+            "mixed": {
+              "netReturn": 0.3504509884793372,
+              "cagr": 0.10943992873575525,
+              "sharpe": 1.536179449034073,
+              "calmar": 1.5344249577171725,
+              "maxDrawdown": 0.0713230895947975,
+              "annualOneWayTurnover": 7.9399247496434056
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.3101628379512207,
+                "ci95": {
+                  "lower": -0.8656832105616611,
+                  "upper": 0.21331187383976613
+                }
+              },
+              "calmar": -0.3424592831101154,
+              "maxDrawdownReduction": -0.009757586811422359
+            }
+          },
+          "O1": {
+            "baseline": {
+              "netReturn": 0.27550393908871973,
+              "cagr": 0.08775723772612265,
+              "sharpe": 1.2593011267348877,
+              "calmar": 1.3852784946178156,
+              "maxDrawdown": 0.06334988817561482,
+              "annualOneWayTurnover": 2.6199104139659104
+            },
+            "mixed": {
+              "netReturn": 0.2783002678033806,
+              "cagr": 0.08858099674318987,
+              "sharpe": 1.1599573403190209,
+              "calmar": 1.218648845773631,
+              "maxDrawdown": 0.07268787645464536,
+              "annualOneWayTurnover": 9.357009196652246
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": -0.09934378641586683,
+                "ci95": {
+                  "lower": -0.5572695276879109,
+                  "upper": 0.35936260339270104
+                }
+              },
+              "calmar": -0.16662964884418452,
+              "maxDrawdownReduction": -0.00933798827903054
+            }
+          },
+          "B0": {
+            "baseline": {
+              "netReturn": 0.1700351184286788,
+              "cagr": 0.055783638473533514,
+              "sharpe": 0.6282072296721505,
+              "calmar": 0.6112134626339655,
+              "maxDrawdown": 0.09126703170630324,
+              "annualOneWayTurnover": 101.57418687339774
+            },
+            "mixed": {
+              "netReturn": 0.20187815369168916,
+              "cagr": 0.06562911669730087,
+              "sharpe": 0.8325671642555681,
+              "calmar": 1.1132184686303468,
+              "maxDrawdown": 0.05895439084661247,
+              "annualOneWayTurnover": 83.63356663433866
+            },
+            "lift": {
+              "sharpe": {
+                "estimate": 0.2043599345834176,
+                "ci95": {
+                  "lower": -0.2881269743990049,
+                  "upper": 0.8126648842132272
+                }
+              },
+              "calmar": 0.5020050059963813,
+              "maxDrawdownReduction": 0.03231264085969077
+            }
+          }
+        },
+        "combined": {
+          "baseline": {
+            "netReturn": 0.2738467507646336,
+            "cagr": 0.0872684956274763,
+            "sharpe": 1.561715367589981,
+            "calmar": 2.068102399068661,
+            "maxDrawdown": 0.042197376525831776,
+            "annualOneWayTurnover": 35.224594418480144
+          },
+          "mixed": {
+            "netReturn": 0.2779097610563137,
+            "cagr": 0.08846602983995067,
+            "sharpe": 1.3521856100686829,
+            "calmar": 1.7512807694115438,
+            "maxDrawdown": 0.050515046693327514,
+            "annualOneWayTurnover": 33.72760894639057
+          },
+          "lift": {
+            "sharpe": {
+              "estimate": -0.2095297575212982,
+              "ci95": {
+                "lower": -0.8410236093744367,
+                "upper": 0.36828400857571414
+              }
+            },
+            "calmar": -0.31682162965711713,
+            "maxDrawdownReduction": -0.008317670167495739
+          }
+        },
+        "gates": {
+          "positiveNet": true,
+          "alpha": false,
+          "portfolio": false
+        }
+      },
+      "annual": [
+        {
+          "year": "2016",
+          "rotation": -0.008087909419235095,
+          "ungated": -0.008087909419235095,
+          "SPY": 0.014945795179454713,
+          "stack": 0.012426315589424197,
+          "stackWithRotation": 0.00737412533297932
+        },
+        {
+          "year": "2017",
+          "rotation": 0.0143828306254421,
+          "ungated": 0.14154322756159443,
+          "SPY": 0.21746344498600045,
+          "stack": 0.03482273365455413,
+          "stackWithRotation": 0.029723502510122568
+        },
+        {
+          "year": "2018",
+          "rotation": -0.10335187726882666,
+          "ungated": -0.07761029605920633,
+          "SPY": -0.04961669505962507,
+          "stack": 0.015254001561580743,
+          "stackWithRotation": -0.01428737752821796
+        },
+        {
+          "year": "2019",
+          "rotation": 0.16478701019080355,
+          "ungated": 0.18214428719119025,
+          "SPY": 0.3113600717006515,
+          "stack": 0.04010806595176364,
+          "stackWithRotation": 0.07024176894022571
+        },
+        {
+          "year": "2020",
+          "rotation": -0.18841030953331883,
+          "ungated": -0.10954238223377588,
+          "SPY": 0.18453336978436896,
+          "stack": 0.007707536768569945,
+          "stackWithRotation": -0.037419342005441836
+        },
+        {
+          "year": "2021",
+          "rotation": 0.0971657803958359,
+          "ungated": 0.20975245662074116,
+          "SPY": 0.28601102039638526,
+          "stack": 0.07536903329349909,
+          "stackWithRotation": 0.08167750281393404
+        },
+        {
+          "year": "2022",
+          "rotation": -0.1432102351483775,
+          "ungated": -0.24358709564195846,
+          "SPY": -0.1817529219104016,
+          "stack": 0.053701011033147505,
+          "stackWithRotation": 0.003852903732799895
+        },
+        {
+          "year": "2023",
+          "rotation": 0.004492508206022761,
+          "ungated": 0.2923045710462593,
+          "SPY": 0.2617683344756656,
+          "stack": 0.052439668340254375,
+          "stackWithRotation": 0.04063335427073822
+        },
+        {
+          "year": "2024",
+          "rotation": 0.15797875280869844,
+          "ungated": 0.08489711637902975,
+          "SPY": 0.24885383395258787,
+          "stack": 0.060626980415617426,
+          "stackWithRotation": 0.08557055273780101
+        },
+        {
+          "year": "2025",
+          "rotation": 0.031001210161087922,
+          "ungated": 0.20133736903445354,
+          "SPY": 0.17718699979121655,
+          "stack": 0.10710433424725285,
+          "stackWithRotation": 0.0882152857800349
+        },
+        {
+          "year": "2026",
+          "rotation": 0.06385873983980295,
+          "ungated": 0.09826707655590439,
+          "SPY": 0.05926692284954105,
+          "stack": 0.08484067949944407,
+          "stackWithRotation": 0.08175101487816017
+        }
+      ],
+      "pathsSha256": {
+        "rotation": "adfe38d3ca79bc701613d8ba4f0f473106ea4d4729bd8f369831b6f21dde469a",
+        "ungated": "010e23ce595458c3d9ebf230a7f31b3b2f3e7398279378812369af24c094e3fd",
+        "SPY": "44b20acfb5c584fe944ffecabc0ee5691b8bfbf7940aef45c36f5bf3c474644e",
+        "QQQ": "d134c1cd9042d74f05a21f39fe43e962797ae3a8e7e25ec6bee637b25c760e35",
+        "SHY": "d62ff44cb0daab990dc54363bc6d9f5e8c908dc76dcd8ff885e07bd4dbee70ab",
+        "F4": "15bce5a2aa842142327a2a3010996af8452a8cf50039a2316a16d493f0419408",
+        "O1": "cf9c937653f247a8656a364c6654a4fc6cca7face7a375b18bf37ed7b0026210",
+        "B0": "3b03d9c3ecaae2c6223d095065032dfbb59bdc7dba711870c23d91e7cfc8e17e",
+        "stack": "c8f22cdaac4071ed023c35ad3cae35f9fcc2846f596c5c834bb6f949495ad01e",
+        "withRotation": "e6bb9636bbefd9859d948909a9b289f4a01a257c9ce8ee79154cb9d9681659d7"
+      }
+    }
+  ]
+}

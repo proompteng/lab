@@ -1,5 +1,11 @@
 # Bayn Wave 21H: sector dispersion and relative-strength rotation
 
+**DO NOT PROMOTE.** Across 2,513 out-of-sample sessions, the registered rotation earned **+14.76% net**
+at 5 bp round trip, versus **+277.17%** for SPY and **+19.43%** for SHY. Its annualized market-adjusted
+alpha was **−7.52%** (95% interval **[−14.64%, +0.03%]**). Allocating 25% to the rotation made the
+incumbent F4+O1+B0 stack worse on Sharpe, Calmar, and maximum drawdown at both 5 and 10 bp, in the
+complete OOS path and terminal holdout. Positive nominal return alone did not pass the registered gate.
+
 ## Pre-registered protocol
 
 **Question.** Does a daily long-only sector rotation earn positive net, SPY-risk-adjusted alpha or
@@ -69,3 +75,82 @@ pass on **all four** cost/window pairs:
 
 Undefined required statistics fail the gate. A `PROMOTE` result could only warrant a new
 prospective study; neither verdict changes runtime policy, accounts, or trading authority.
+
+## Measured evidence
+
+The [registration was pushed](https://github.com/proompteng/lab/commit/cb527a6d69cafe644d5ea24e4d7eccfa7ff41573)
+after checking manifest membership and before reading price rows. The 11 calendar-year folds, including
+partial 2016 and 2026, cover the exact 10-year close-to-close interval. Validation comprises 501
+sessions (2022-01-03 to 2023-12-29); terminal holdout comprises 729 (2024-01-02 to 2026-11-25). These
+are subsets of OOS, not independent replications. [Results](results.json) retain each fold's
+calibration cutoff and threshold, annual net returns, the three reporting windows, all costs, the
+control receipts, and daily-path digests.
+
+### Standalone rotation
+
+Net returns are cumulative; maximum drawdown is a positive loss magnitude.
+
+| RT cost | OOS net | OOS Sharpe | OOS Calmar | OOS max DD | Holdout net | Holdout Sharpe | Holdout Calmar | Holdout max DD |
+| ------: | ------: | ---------: | ---------: | ---------: | ----------: | -------------: | -------------: | -------------: |
+|    0 bp | +28.75% |      0.238 |      0.068 |     38.00% |     +37.97% |          0.866 |          0.759 |         15.51% |
+|    2 bp | +22.96% |      0.210 |      0.055 |     38.11% |     +35.70% |          0.825 |          0.707 |         15.74% |
+|    5 bp | +14.76% |      0.167 |      0.036 |     38.28% |     +32.38% |          0.763 |          0.632 |         16.10% |
+|   10 bp |  +2.29% |      0.095 |      0.006 |     38.56% |     +27.01% |          0.660 |          0.516 |         16.69% |
+
+At 5 bp, the rotation returned **−11.93%** in validation, versus **+3.24%** for SPY. It traded on 499
+OOS sessions and held SHY on 1,227; annualized one-way turnover was **23.07×** even with the deadband.
+The ungated ablation returned **+114.98%** at 5 bp with a **0.494** Sharpe and **36.54%** maximum
+drawdown. The dispersion gate did not improve OOS risk-adjusted returns versus the identical ungated
+rule, even at zero cost; the ablation is not a replacement candidate.
+
+| Cost / window   | Annualized SPY-adjusted alpha | Paired stationary 95% interval |
+| --------------- | ----------------------------: | -----------------------------: |
+| 5 bp / OOS      |                        −7.52% |              [−14.64%, +0.03%] |
+| 5 bp / holdout  |                        +0.79% |             [−12.50%, +13.34%] |
+| 10 bp / OOS     |                        −8.67% |              [−15.80%, −1.11%] |
+| 10 bp / holdout |                        −0.65% |             [−13.97%, +11.93%] |
+
+### Incremental portfolio value
+
+Arrows show the equal F4+O1+B0 stack before and after allocating 25% to the rotation. The paired
+interval is for the change in Sharpe (after minus before).
+
+| Cost / window   |        Sharpe | 95% interval for Δ Sharpe |        Calmar |         Max DD |
+| --------------- | ------------: | ------------------------: | ------------: | -------------: |
+| 5 bp / OOS      | 1.419 → 0.913 |          [−0.818, −0.148] | 0.795 → 0.398 | 9.22% → 15.13% |
+| 5 bp / holdout  | 1.884 → 1.617 |          [−0.938, +0.306] | 2.656 → 2.186 |  4.01% → 4.89% |
+| 10 bp / OOS     | 1.066 → 0.666 |          [−0.704, −0.055] | 0.578 → 0.281 | 9.38% → 15.31% |
+| 10 bp / holdout | 1.562 → 1.352 |          [−0.841, +0.368] | 2.068 → 1.751 |  4.22% → 5.05% |
+
+At 5 bp, rotation's OOS correlations to SPY/F4/O1/B0 were **+0.712 / +0.525 / +0.541 / −0.037**.
+The near-zero correlation with B0 did not translate into higher OOS B0-blend Sharpe. The B0-only
+blend did lift holdout Sharpe by 0.183, but the paired interval [−0.300, +0.769] included zero. No
+single-control blend improved OOS Sharpe at 5 bp. Neither the alpha nor the portfolio route passed.
+
+## Provenance and reproduction
+
+All 15 tickers matched the base manifest. Thirteen have all 2,741 source sessions. XLC has 2,122 rows
+starting 2018-06-19; XLRE has 2,739 rows (missing 2016-01-25 and 2016-02-16). Eligibility respects
+those gaps; no missing prices were filled. The first executed decision used 2016-11-25 closes and
+selected SMH, XLI, and XLE. The dispersion was 5.110%, above the first fold's 4.816% threshold.
+
+| Base archive identity                                       | SHA-256                                                            |
+| ----------------------------------------------------------- | ------------------------------------------------------------------ |
+| `MANIFEST.json`                                             | `ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e` |
+| `alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz` | `fdda4017ee662fae548d8111a970ea90d83b3e8ee6f61abd6153be0fe83547d2` |
+| Decoded tape (450,712 rows)                                 | `e5331bb57e6f6427449d0cd3ab59291f56e508cb8c3961557bfd1374a635c9a8` |
+
+Control replays matched the [published F4, O1 and B0 split receipts](../2026-11-27-10yr-event-calendar-overnight-etf/report.md).
+Stationary intervals resample the realized daily paths and condition on the registered rule, not
+on a new search over thresholds. There is no prospective observation or execution-capacity proof.
+
+From the repository root with read access to the existing Rook-Ceph `agents-artifacts` bucket:
+
+```sh
+out=$(mktemp -d)
+bun services/bayn/tools/research-10yr-sector-dispersion.ts --output "$out/results.json"
+bunx oxfmt --config .oxfmtrc.json --write "$out/results.json"
+cmp "$out/results.json" docs/bayn/evidence/2026-11-28-10yr-sector-dispersion/results.json
+unlink "$out/results.json"
+rmdir "$out"
+```
