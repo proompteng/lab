@@ -1,0 +1,101 @@
+{
+  "acronyms": [
+    {
+      "description": "The Nix binary cache used to share reusable build outputs and dependencies. Native image CI uploads existing build paths after successful main-branch publication.",
+      "name": "Attic"
+    },
+    {
+      "description": "GitHub's merge queue, which validates queued changes against the target branch before merging them.",
+      "name": "MergeQueue"
+    },
+    {
+      "description": "Open Container Initiative. The final multi-architecture OCI image index carries source and revision annotations, plus build-run receipt annotations where required.",
+      "name": "OCI"
+    },
+    {
+      "description": "The repository's formatter for TypeScript and other supported files, configured by .oxfmtrc.json.",
+      "name": "Oxfmt"
+    },
+    {
+      "description": "The repository's linter for TypeScript and JavaScript, configured by .oxlintrc.json.",
+      "name": "Oxlint"
+    },
+    {
+      "description": "A Kargo operation that applies a Stage's configured promotion steps to selected Freight.",
+      "name": "Promotion"
+    },
+    {
+      "description": "The immutable kargo-sha-<40>-run-<github-run-id> alias for receipt-bearing builds. A new run can publish the same source revision without moving an existing tag.",
+      "name": "RunQualifiedTag"
+    },
+    {
+      "description": "A Kargo release target that consumes eligible Freight and defines how to update the application's deployment inputs.",
+      "name": "Stage"
+    },
+    {
+      "description": "A Kargo resource that watches configured artifact sources and creates Freight containing the exact eligible image digests.",
+      "name": "Warehouse"
+    }
+  ],
+  "customAnalyses": [],
+  "dataSource": "ci-release",
+  "rules": [
+    {
+      "description": "For changes limited to CI orchestration, publishing, caching, timing reports, or Kargo controls, run workflow and script validation instead of rebuilding service images or starting unrelated test matrices. Rebuild the ARC self-hosted runner image when its embedded CI tools change.",
+      "name": "CI release: ARC runner and workflow inputs",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Normal production path: runtime inputs and the embedded tool exception."
+      }
+    },
+    {
+      "description": "Publish repo-owned immutable Kargo aliases only from reviewed main builds after required checks and the final multi-architecture OCI index succeed. Use kargo-sha-<40> or the run-qualified form for receipt-bearing builds, never latest or legacy sha-* tags. Preserve the external-publisher exceptions: analysis uses latest for discovery but pins the digest, and bilig uses the publisher's bare 40-hex tag.",
+      "name": "CI release: Main-only immutable publication",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Artifact eligibility and Normal production path."
+      }
+    },
+    {
+      "description": "Withhold every Warehouse-discoverable Kargo alias until all images, terminal validation, and artifact uploads succeed. Exclude preparation tags from Warehouse discovery. Read each retained build receipt from the selected Freight image's OCI annotations, not a Freight name or an inferred conclusion.",
+      "name": "CI release: Multi-image receipt gate",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "AGENTS.md, Infrastructure contracts: multi-image receipts and preparation tags. docs/release-automation.md, Artifact eligibility: selected-image annotations."
+      }
+    },
+    {
+      "description": "Kargo alone promotes published images. Do not bypass it with SHA or digest bumps, release branches, deployment PRs, release automerge, or direct kubectl deployments. Operators must not create, retag, or manually select image aliases.",
+      "name": "CI release: No promotion bypass",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "AGENTS.md, Infrastructure contracts; docs/release-automation.md, Artifact eligibility and Normal production path."
+      }
+    },
+    {
+      "description": "Use an exact automatic promotion policy for the matching Stage to select eligible Freight, not a broad selector. The receiving Argo CD Application must authorize that Stage with kargo.akuity.io/authorized-stage.",
+      "name": "CI release: Exact automatic Stage promotion",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Normal production path and Application enrollment: exact Stage policy and authorization."
+      }
+    },
+    {
+      "description": "The Stage checks out the exact source revision, writes the full promoted digest and build/provenance metadata to the renderer's inputs, and pushes the generated kargo/<stage> commit that Argo CD reconciles. ApplicationSet must preserve that branch and deployment metadata. Retained post-deploy checks follow that branch and the Stage-written paths, not main. Verify the rendered digest and the running revision and image, then exercise service-specific behavior.",
+      "name": "CI release: Generated deployment revision",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "docs/release-automation.md, Normal production path, Application enrollment, and Evidence."
+      }
+    },
+    {
+      "description": "Keep credentials, including tokens, passwords, and connection strings, and personal data out of CI logs, job summaries, and artifacts. Retain enough sanitized evidence to identify the failing phase without exposing sensitive values.",
+      "name": "CI release: Secret-free evidence",
+      "provenance": {
+        "sourceCommit": "2a59bec11d3ffe4f9987183440992ac4daa7b67f",
+        "verificationNote": "AGENTS.md, Make the responsible change: useful error context without secrets or personal data. docs/release-automation.md, Normal production path: failing-phase evidence."
+      }
+    }
+  ],
+  "version": 1
+}
