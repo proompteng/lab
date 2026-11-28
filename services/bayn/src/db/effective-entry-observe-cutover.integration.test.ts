@@ -147,7 +147,7 @@ for (const {
   END $fixture$`)
     yield* sql`INSERT INTO authority_generations VALUES
     ('current','account','jev',${schemaVersion},${behaviorHash},${parameterHash},${protocolHash})`
-    if (migrationId === 227)
+    if (migrationId === 229)
       yield* sql`INSERT INTO position_snapshots VALUES ('account',0,clock_timestamp(),'initial-flat')`
   })
 
@@ -203,7 +203,7 @@ for (const {
   })
 
   const blockers = [
-    ...(migrationId === 227
+    ...(migrationId === 229
       ? [
           { name: 'no broker position snapshot', seed: 'DELETE FROM position_snapshots' },
           {
