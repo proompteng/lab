@@ -20,7 +20,6 @@ from app.models import (
     ExecutionOrderEvent,
     ExecutionTCAMetric,
     OrderFeedSourceWindow,
-    TradeDecision,
 )
 from app.trading.runtime_authority_verifier import (
     AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,
@@ -580,39 +579,12 @@ def _event_quantity_present(row: Mapping[str, object]) -> bool:
     )
 
 
-def _linked_order_event_fill(row: Mapping[str, object]) -> bool:
-    return (
-        _fill_event(row)
-        and _text(row.get("execution_id")) is not None
-        and _text(row.get("trade_decision_id")) is not None
-        and _text(row.get("source_window_id")) is not None
-        and _event_source_offset_present(row)
-        and _event_quantity_present(row)
-        and _decimal(row.get("avg_fill_price")) > 0
-        and _decimal(row.get("filled_notional_delta")) > 0
-    )
-
-
 def _event_source_offset_present(row: Mapping[str, object]) -> bool:
     return (
         _text(row.get("source_topic")) is not None
         and row.get("source_partition") is not None
         and row.get("source_offset") is not None
     )
-
-
-def _decision_row(row: TradeDecision, strategy_name: str | None) -> dict[str, object]:
-    return {
-        "id": str(row.id),
-        "strategy_id": str(row.strategy_id),
-        "strategy_name": strategy_name,
-        "alpaca_account_label": row.alpaca_account_label,
-        "symbol": row.symbol,
-        "status": row.status,
-        "decision_hash": row.decision_hash,
-        "created_at": row.created_at,
-        "executed_at": row.executed_at,
-    }
 
 
 def _decision_projection_row(row: Mapping[str, object]) -> dict[str, object]:
