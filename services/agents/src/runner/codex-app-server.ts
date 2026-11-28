@@ -1,21 +1,10 @@
-import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  statfs,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, statfs, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { finished } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -42,6 +31,10 @@ import {
 } from '../workspace-cache'
 
 import { uploadOutputArtifacts } from './artifact-upload'
+import { checkCodexAuth, checkCodexExecutable, checkWorkspaceDirectory, readRunnerInputFile } from './preflight'
+import { type CommandOptions, type CommandResult, type CommandRunner, runProcessCommand } from './process-command'
+import { redactCredentials, runnerErrorMessage, stringifyRunnerOutput } from './redact'
+import { createRemoteFlushDeadline, runnerSignalExitCode, waitWithSignal } from './shutdown'
 import { createRunnerTelemetry, createTelemetryPublisher } from './telemetry'
 import {
   asNumber,
@@ -60,6 +53,8 @@ type AgentRunPayload = Record<string, unknown>
 
 export const DEFAULT_CODEX_BINARY_PATH = '/usr/local/bin/codex'
 const BOOTSTRAP_RETRY_DELAY_MS = 2_000
+const GIT_COMMAND_TIMEOUT_MS = 45_000
+const TURN_INTERRUPT_TIMEOUT_MS = 250
 const MAX_RESULT_RESPONSE_CHARS = 64_000
 const TMPFS_MAGIC = 0x01021994
 const MAX_MIRROR_AGE_MS = 15 * 60 * 1000
@@ -116,22 +111,16 @@ export type RunCodexAppServerAdapterOptions = {
   uploadArtifacts?: typeof uploadOutputArtifacts
   now?: () => Date
   abortSignal?: AbortSignal
-  publishTelemetry?: (snapshot: RunnerTelemetry) => Promise<void>
+  publishTelemetry?: (snapshot: RunnerTelemetry, signal?: AbortSignal) => Promise<void>
 }
 
-export type CommandResult = {
-  exitCode: number
-  stdout: string
-  stderr: string
-}
+export type { CommandOptions, CommandResult, CommandRunner } from './process-command'
 
-export type CommandOptions = { cwd?: string; env?: Record<string, string> }
-export type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>
 export type StartupPhase = 'git_checkout' | 'bun_bootstrap' | 'app_server_ready' | 'first_turn_started'
 export type ReportStartupPhase = (phase: StartupPhase, started: number, outcome?: string) => void
 
 export class CodexRunnerInputError extends Data.TaggedError('CodexRunnerInputError')<{
-  readonly operation: 'load-payload' | 'resolve-prompt' | 'validate-adapter' | 'load-system-prompt'
+  readonly operation: 'load-payload' | 'resolve-prompt' | 'validate-adapter' | 'load-system-prompt' | 'check-codex-auth'
   readonly path?: string
   readonly cause: unknown
 }> {}
@@ -144,7 +133,7 @@ export class CodexRunnerWorkspaceError extends Data.TaggedError('CodexRunnerWork
 }> {}
 
 export class CodexRunnerClientError extends Data.TaggedError('CodexRunnerClientError')<{
-  readonly operation: 'create-client'
+  readonly operation: 'create-client' | 'check-executable' | 'stop-client'
   readonly cause: unknown
 }> {}
 
@@ -175,7 +164,7 @@ export class CodexRunnerArtifactError extends Data.TaggedError('CodexRunnerArtif
 }> {}
 
 export class CodexRunnerLogError extends Data.TaggedError('CodexRunnerLogError')<{
-  readonly operation: 'open-log'
+  readonly operation: 'open-log' | 'close-log'
   readonly path?: string
   readonly cause: unknown
 }> {}
@@ -223,44 +212,44 @@ const timestampUtc = (now: () => Date): string =>
     .toISOString()
     .replace(/\.\d+Z$/, 'Z')
 
-const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
-const describeRunnerError = (error: unknown) => {
+const formatRunnerError = (error: unknown) => {
   if (error instanceof CodexRunnerInputError) {
-    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${runnerErrorMessage(error.cause)}`
   }
   if (error instanceof CodexRunnerWorkspaceError) {
     const command = error.command ? ` ${error.command}` : ''
     const cwd = error.cwd ? ` in ${error.cwd}` : ''
-    return `${error._tag}: ${error.operation}${command}${cwd}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}${command}${cwd}: ${runnerErrorMessage(error.cause)}`
   }
   if (error instanceof CodexRunnerClientError) {
-    return `${error._tag}: ${error.operation}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}: ${runnerErrorMessage(error.cause)}`
   }
   if (error instanceof CodexRunnerTurnError) {
     const ids = [error.threadId ? `thread=${error.threadId}` : null, error.turnId ? `turn=${error.turnId}` : null]
       .filter(Boolean)
       .join(' ')
-    return `${error._tag}: ${error.operation}${ids ? ` ${ids}` : ''}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}${ids ? ` ${ids}` : ''}: ${runnerErrorMessage(error.cause)}`
   }
   if (error instanceof CodexRunnerCancellationError) {
     const ids = [error.threadId ? `thread=${error.threadId}` : null, error.turnId ? `turn=${error.turnId}` : null]
       .filter(Boolean)
       .join(' ')
     const signal = error.signal ? ` signal=${error.signal}` : ''
-    return `${error._tag}: ${error.operation}${ids ? ` ${ids}` : ''}${signal}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}${ids ? ` ${ids}` : ''}${signal}: ${runnerErrorMessage(error.cause)}`
   }
   if (error instanceof CodexRunnerStatusError) {
-    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${runnerErrorMessage(error.cause)}`
   }
   if (error instanceof CodexRunnerArtifactError) {
-    return `${error._tag}: ${error.operation}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}: ${runnerErrorMessage(error.cause)}`
   }
   if (error instanceof CodexRunnerLogError) {
-    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
+    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${runnerErrorMessage(error.cause)}`
   }
-  return toErrorMessage(error)
+  return runnerErrorMessage(error)
 }
+
+export const describeRunnerError = (error: unknown): string => redactCredentials(formatRunnerError(error))
 
 const isCodexRunnerError = (error: unknown): error is CodexRunnerError =>
   error instanceof CodexRunnerInputError ||
@@ -317,7 +306,7 @@ const cancellationErrorFor = (signal: AbortSignal, threadId?: string, turnId?: s
     threadId,
     turnId,
     signal: describeAbortReason(signal.reason),
-    cause: signal.reason ?? new Error('agent runner cancelled'),
+    cause: signal.reason instanceof Error ? signal.reason : new Error('agent runner cancelled'),
   })
 
 const throwIfCancelled = (signal: AbortSignal | undefined, threadId?: string, turnId?: string) => {
@@ -329,31 +318,15 @@ const throwIfCancelled = (signal: AbortSignal | undefined, threadId?: string, tu
 const throwIfCancelledEffect = (signal: AbortSignal | undefined, threadId?: string, turnId?: string) =>
   signal?.aborted ? Effect.fail(cancellationErrorFor(signal, threadId, turnId)) : Effect.void
 
-const createCancellationWaiter = (
-  signal: AbortSignal | undefined,
-  getThreadId: () => string | undefined = () => undefined,
-  getTurnId: () => string | undefined = () => undefined,
-): { promise: Promise<never>; cleanup: () => void } | null => {
-  if (!signal) return null
-
-  let cleanup: () => void = () => {}
-  const promise = new Promise<never>((_, reject) => {
-    const onAbort = () => reject(cancellationErrorFor(signal, getThreadId(), getTurnId()))
-    if (signal.aborted) {
-      onAbort()
-      return
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-    cleanup = () => signal.removeEventListener('abort', onAbort)
-  })
-
-  return { promise, cleanup }
-}
-
-const readJsonFile = async (path: string): Promise<AgentRunPayload> => {
+const readJsonFile = async (path: string, signal?: AbortSignal): Promise<AgentRunPayload> => {
   try {
-    const raw = await readFile(path, 'utf8')
-    const parsed = JSON.parse(raw) as unknown
+    const raw = await readRunnerInputFile(path, signal)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      throw new Error(`Expected valid run payload JSON in ${path}`)
+    }
     if (!isRecord(parsed)) {
       throw new Error(`Expected JSON object in ${path}`)
     }
@@ -363,21 +336,21 @@ const readJsonFile = async (path: string): Promise<AgentRunPayload> => {
   }
 }
 
-const loadRunPayload = async (spec: AgentRunnerSpec): Promise<AgentRunPayload> => {
+const loadRunPayload = async (spec: AgentRunnerSpec, signal?: AbortSignal): Promise<AgentRunPayload> => {
   const payloadPath = asString(spec.payloads?.eventFilePath)
-  if (!payloadPath) {
+  if (!payloadPath?.trim()) {
     throw new CodexRunnerInputError({
       operation: 'load-payload',
       path: 'payloads.eventFilePath',
       cause: new Error('agent-runner payloads.eventFilePath is required'),
     })
   }
-  return readJsonFile(payloadPath)
+  return readJsonFile(payloadPath, signal)
 }
 
-const loadRunPayloadEffect = (spec: AgentRunnerSpec) =>
+const loadRunPayloadEffect = (spec: AgentRunnerSpec, signal?: AbortSignal) =>
   Effect.tryPromise({
-    try: () => loadRunPayload(spec),
+    try: () => loadRunPayload(spec, signal),
     catch: (cause) =>
       cause instanceof CodexRunnerInputError ? cause : new CodexRunnerInputError({ operation: 'load-payload', cause }),
   })
@@ -405,35 +378,18 @@ const isDirectory = async (path: string): Promise<boolean> => {
   }
 }
 
-const runProcessCommand: CommandRunner = (command, args, options = {}) =>
-  new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: { ...process.env, ...options.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    child.stdout?.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
-    child.stderr?.on('data', (chunk) => stderr.push(Buffer.from(chunk)))
-    child.on('error', reject)
-    child.on('exit', (code) => {
-      resolve({
-        exitCode: code ?? 1,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-      })
-    })
-  })
-
 export const RunnerCommandLive = Layer.succeed(RunnerCommand, {
   run: (command, args, options) =>
     Effect.tryPromise({
-      try: () => runProcessCommand(command, args, options),
+      try: (signal) =>
+        runProcessCommand(command, args, {
+          ...options,
+          signal: options?.signal ? AbortSignal.any([signal, options.signal]) : signal,
+        }),
       catch: (cause) =>
         new CodexRunnerWorkspaceError({
           operation: 'run-command',
-          command: [command, ...args].join(' '),
+          command: [command, args[0]].filter(Boolean).join(' '),
           cwd: options?.cwd,
           cause,
         }),
@@ -463,12 +419,8 @@ const createRunnerClient = async (
   for (let attempt = 1; ; attempt += 1) {
     throwIfCancelled(abortSignal)
     const client = createClient ? createClient(clientOptions) : await createDefaultClient(clientOptions)
-    let cleanupCancellation: (() => void) | undefined
     try {
-      const ready = client.ensureReady?.()
-      const cancellation = createCancellationWaiter(abortSignal)
-      cleanupCancellation = cancellation?.cleanup
-      await (cancellation ? Promise.race([ready, cancellation.promise]) : ready)
+      if (client.ensureReady) await waitWithSignal(client.ensureReady(), abortSignal)
       throwIfCancelled(abortSignal)
       return client
     } catch (cause) {
@@ -480,8 +432,6 @@ const createRunnerClient = async (
         method: 'error',
         params: { error: { message: `${cause.message}; retrying startup once` } },
       })
-    } finally {
-      cleanupCancellation?.()
     }
     try {
       await delay(BOOTSTRAP_RETRY_DELAY_MS, undefined, { signal: abortSignal })
@@ -494,11 +444,11 @@ const createRunnerClient = async (
 
 const assertCommandSuccess = (result: CommandResult, description: string) => {
   if (result.exitCode === 0) return
-  const output = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
+  const output = redactCredentials([result.stderr, result.stdout].filter(Boolean).join('\n').trim())
   throw new CodexRunnerWorkspaceError({
     operation: 'run-command',
     command: description,
-    cause: `${description} failed with exit ${result.exitCode}${output ? `: ${output}` : ''}`,
+    cause: `exit ${result.exitCode}${output ? `: ${output}` : ''}`,
   })
 }
 
@@ -527,11 +477,27 @@ const requireSafeGitRef = (ref: string, label: string) => {
 }
 
 const readVcsWorkspaceContext = (runPayload: AgentRunPayload): VcsWorkspaceContext | null => {
+  if (runPayload.vcs != null && !isRecord(runPayload.vcs)) throw new Error('run.json vcs must be an object')
   const vcs = isRecord(runPayload.vcs) ? runPayload.vcs : {}
+  if (vcs.mode === 'none') return null
+  for (const field of ['repository', 'cloneBaseUrl', 'baseBranch', 'headBranch'] as const) {
+    if (vcs[field] != null && !nonEmptyString(vcs[field]))
+      throw new Error(`run.json vcs.${field} must be a non-empty string`)
+  }
   const parameters = isRecord(runPayload.parameters) ? runPayload.parameters : {}
   const repository =
     nonEmptyString(vcs.repository) ?? nonEmptyString(parameters.repository) ?? nonEmptyString(runPayload.repository)
-  if (!repository) return null
+  if (!repository) {
+    if (
+      vcs.repository !== undefined ||
+      vcs.mode === 'read-only' ||
+      vcs.mode === 'read-write' ||
+      vcs.writeEnabled === true
+    ) {
+      throw new Error('run.json vcs.repository is required for a VCS checkout; use owner/repo')
+    }
+    return null
+  }
   if (!isSafeRepositorySlug(repository)) {
     throw new Error(`Unsupported VCS repository "${repository}"; expected owner/repo`)
   }
@@ -556,18 +522,49 @@ const readVcsWorkspaceContext = (runPayload: AgentRunPayload): VcsWorkspaceConte
   }
 }
 
-const resolveCloneUrl = (vcs: VcsWorkspaceContext): string =>
-  `${vcs.cloneBaseUrl.replace(/\/+$/, '')}/${vcs.repository}.git`
+const resolveGitToken = (env: NodeJS.ProcessEnv = process.env) =>
+  nonEmptyString(env.GH_TOKEN) ?? nonEmptyString(env.GITHUB_TOKEN) ?? nonEmptyString(env.VCS_TOKEN)
 
-export const ensureGitAskpass = async (env: Record<string, string | undefined> = process.env) => {
-  const token = env.GH_TOKEN || env.GITHUB_TOKEN || env.VCS_TOKEN
+const resolveCloneUrl = (vcs: VcsWorkspaceContext): string => {
+  const url = URL.parse(vcs.cloneBaseUrl)
+  if (
+    !url ||
+    !/^(?:https?|ssh|file|git):\/\//i.test(vcs.cloneBaseUrl) ||
+    (url.protocol !== 'file:' && !url.hostname) ||
+    /[?#]/.test(vcs.cloneBaseUrl)
+  ) {
+    throw new Error(
+      'Invalid VCS clone URL; set run.json vcs.cloneBaseUrl or VCS_CLONE_BASE_URL to a Git base URL without a query or fragment',
+    )
+  }
+  if (
+    vcs.writeEnabled &&
+    (url.protocol === 'https:' || url.protocol === 'http:') &&
+    !url.username &&
+    !url.password &&
+    !resolveGitToken() &&
+    !nonEmptyString(process.env.GIT_ASKPASS)
+  ) {
+    throw new Error(
+      'Read-write VCS checkout requires Git credentials; configure VCS_TOKEN, GH_TOKEN, GITHUB_TOKEN, or GIT_ASKPASS',
+    )
+  }
+  if (vcs.writeEnabled && url.protocol === 'git:') {
+    throw new Error('Read-write VCS checkout requires a writable Git remote; use HTTPS or SSH instead of git://')
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/${vcs.repository}.git`
+  return url.href
+}
+
+export const ensureGitAskpass = async (env: NodeJS.ProcessEnv = process.env) => {
+  env.GIT_TERMINAL_PROMPT = '0'
+  const token = resolveGitToken(env)
   if (!token) return
 
   if (!env.GITHUB_TOKEN) env.GITHUB_TOKEN = token
   if (!env.GH_TOKEN) env.GH_TOKEN = token
   if (!env.GIT_ASKPASS_USERNAME) env.GIT_ASKPASS_USERNAME = 'x-access-token'
   env.GIT_ASKPASS_TOKEN = token
-  env.GIT_TERMINAL_PROMPT ??= '0'
 
   if (env.GIT_ASKPASS) return
   const askpassPath = '/tmp/agents-git-askpass.sh'
@@ -583,6 +580,8 @@ esac
   env.GIT_ASKPASS = askpassPath
 }
 
+const describeGitRemoteAction = (action: string) => `${action} (check the remote, branch, and VCS credentials)`
+
 const fetchBranch = async (
   runner: CommandRunner,
   cwd: string,
@@ -595,8 +594,9 @@ const fetchBranch = async (
     { cwd },
   )
   if (result.exitCode === 0) return true
-  if (!options.required) return false
-  assertCommandSuccess(result, `git fetch origin ${branch}`)
+  // A new head can legitimately be absent. Do not fall back to base on auth or transport failures.
+  if (!options.required && result.stderr.includes(`couldn't find remote ref refs/heads/${branch}`)) return false
+  assertCommandSuccess(result, describeGitRemoteAction(`git fetch origin ${branch}`))
   return false
 }
 
@@ -628,9 +628,14 @@ const findWorkspaceMirror = async (cacheRoot: string, vcs: VcsWorkspaceContext, 
   }
 }
 
-const cloneWorkspace = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: string, runner: CommandRunner) => {
+const cloneWorkspace = async (
+  cwd: string,
+  vcs: VcsWorkspaceContext,
+  cloneUrl: string,
+  cacheRoot: string,
+  runner: CommandRunner,
+) => {
   const flags = ['clone', '--filter=blob:none', '--no-checkout']
-  const cloneUrl = resolveCloneUrl(vcs)
   const mirror = await findWorkspaceMirror(cacheRoot, vcs, runner)
   if (mirror) {
     // Bound the borrowed history and detach before the refresher can recycle this slot.
@@ -653,28 +658,29 @@ const cloneWorkspace = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: 
     // The destination was empty and --no-checkout writes only .git.
     await rm(join(cwd, '.git'), { recursive: true, force: true })
   }
-  assertCommandSuccess(await runner('git', [...flags, cloneUrl, cwd]), `git clone ${vcs.repository}`)
+  assertCommandSuccess(
+    await runner('git', [...flags, cloneUrl, cwd]),
+    describeGitRemoteAction(`git clone ${vcs.repository}`),
+  )
   return 'origin'
 }
 
 const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoot: string, runner: CommandRunner) => {
-  await ensureGitAskpass()
   const cloneUrl = resolveCloneUrl(vcs)
+  await ensureGitAskpass()
   const gitDir = join(cwd, '.git')
   let source: CheckoutSource = 'existing'
 
   if (await pathExists(gitDir)) {
-    assertCommandSuccess(await runner('git', ['remote', 'set-url', 'origin', cloneUrl], { cwd }), 'git remote set-url')
+    await checkWorkspaceDirectory(cwd)
+    assertCommandSuccess(
+      await runner('git', ['remote', 'set-url', 'origin', cloneUrl], { cwd }),
+      'git remote set-url origin (the workspace must be a valid checkout with an origin remote)',
+    )
   } else {
     await mkdir(dirname(cwd), { recursive: true })
     if (await pathExists(cwd)) {
-      if (!(await isDirectory(cwd))) {
-        throw new CodexRunnerWorkspaceError({
-          operation: 'prepare-cwd',
-          cwd,
-          cause: `Codex cwd ${cwd} exists but is not a directory`,
-        })
-      }
+      await checkWorkspaceDirectory(cwd)
       const entries = await readdir(cwd)
       if (entries.length > 0) {
         throw new CodexRunnerWorkspaceError({
@@ -683,8 +689,10 @@ const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, cacheRoo
           cause: `Codex cwd ${cwd} exists but is not a git checkout`,
         })
       }
+    } else {
+      await checkWorkspaceDirectory(dirname(cwd))
     }
-    source = await cloneWorkspace(cwd, vcs, cacheRoot, runner)
+    source = await cloneWorkspace(cwd, vcs, cloneUrl, cacheRoot, runner)
   }
 
   // Fresh clones already negotiated refs with origin, even when a mirror supplied objects.
@@ -723,14 +731,10 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
     return 'skipped'
   }
 
-  const install = (deadline: string, flags: string[], env?: CommandOptions['env']) =>
+  const install = (timeoutMs: number, flags: string[], env?: CommandOptions['env']) =>
     runner(
-      'timeout',
+      'bun',
       [
-        '-k',
-        '5s',
-        deadline,
-        'bun',
         'install',
         '--frozen-lockfile',
         '--production',
@@ -740,7 +744,7 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
         'memories',
         ...flags,
       ],
-      { cwd, env },
+      { cwd, env, timeoutMs },
     ).then(
       (result) => result.exitCode === 0,
       () => false,
@@ -757,7 +761,7 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
         for (const entry of entries) {
           await symlink(join(bunCache, entry), join(cacheView, entry))
         }
-        if (await install('20s', ['--offline', '--backend=copyfile'], { BUN_INSTALL_CACHE_DIR: cacheView }))
+        if (await install(20_000, ['--offline', '--backend=copyfile'], { BUN_INSTALL_CACHE_DIR: cacheView }))
           return 'shared'
       } finally {
         await rm(cacheView, { recursive: true, force: true })
@@ -766,7 +770,7 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
   } catch {
     // A missing or unusable node cache must not prevent a normal install in the Job.
   }
-  if (await install('30s', ['--prefer-offline'])) return 'local'
+  if (await install(30_000, ['--prefer-offline'])) return 'local'
   console.warn('[agents] first-turn Bun dependencies unavailable; continuing without bootstrap install')
   return 'failed'
 }
@@ -779,9 +783,13 @@ export const prepareRunnerWorkspace = async (
   reportStartupPhase: ReportStartupPhase,
 ): Promise<void> => {
   const cwd = nonEmptyString(adapter.cwd)
-  if (!cwd) return
-
+  // Parameters can name a repository for a no-VCS provider; only an explicit VCS request needs a checkout.
+  if (!cwd && runPayload.vcs == null) return
   const vcs = readVcsWorkspaceContext(runPayload)
+  if (!cwd) {
+    if (vcs) throw new Error('adapter.codex.cwd is required when run.json requests a VCS checkout')
+    return
+  }
   if (vcs) {
     const checkoutStarted = performance.now()
     let outcome = 'failed'
@@ -797,7 +805,8 @@ export const prepareRunnerWorkspace = async (
     return
   }
 
-  await mkdir(cwd, { recursive: true })
+  if (!(await pathExists(cwd))) await mkdir(cwd, { recursive: true })
+  await checkWorkspaceDirectory(cwd)
 }
 
 const prepareCodexCwdEffect = (
@@ -925,6 +934,7 @@ export const readRunnerSystemPrompt = async (
   adapter: Pick<CodexAppServerAdapterConfig, 'baseInstructions' | 'systemPromptPath' | 'systemPromptExpectedHash'>,
   spec: AgentRunnerSpec,
   runPayload: AgentRunPayload,
+  signal?: AbortSignal,
 ): Promise<string | null> => {
   const rendered = renderOptionalTemplate(adapter.baseInstructions, spec, runPayload)
   if (rendered) {
@@ -935,7 +945,7 @@ export const readRunnerSystemPrompt = async (
   const systemPromptPath = resolveSystemPromptPath(adapter)
   if (systemPromptPath) {
     try {
-      const contents = await readFile(systemPromptPath, 'utf8')
+      const contents = await readRunnerInputFile(systemPromptPath, signal)
       assertSystemPromptHash(contents, adapter, systemPromptPath)
       const prompt = nonBlankStringPreserve(contents)
       if (prompt) return prompt
@@ -966,9 +976,10 @@ const readSystemPromptInstructionsEffect = (
   adapter: CodexAppServerAdapterConfig,
   spec: AgentRunnerSpec,
   runPayload: AgentRunPayload,
+  signal?: AbortSignal,
 ) =>
   Effect.tryPromise({
-    try: () => readRunnerSystemPrompt(adapter, spec, runPayload),
+    try: () => readRunnerSystemPrompt(adapter, spec, runPayload, signal),
     catch: (cause) =>
       cause instanceof CodexRunnerInputError
         ? cause
@@ -976,6 +987,24 @@ const readSystemPromptInstructionsEffect = (
   })
 
 const validateCodexAdapter = (adapter: CodexAppServerAdapterConfig) => {
+  for (const field of ['cwd', 'binaryPath'] as const) {
+    if (adapter[field] !== undefined && !nonEmptyString(adapter[field])) {
+      throw new Error(`adapter.codex.${field} must be a non-empty string`)
+    }
+  }
+  for (const field of ['prompt', 'baseInstructions', 'developerInstructions'] as const) {
+    if (adapter[field] !== undefined && typeof adapter[field] !== 'string') {
+      throw new Error(`adapter.codex.${field} must be a string`)
+    }
+  }
+  if (
+    adapter.bootstrapTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(adapter.bootstrapTimeoutMs) ||
+      adapter.bootstrapTimeoutMs <= 0 ||
+      adapter.bootstrapTimeoutMs > 2_147_483_647)
+  ) {
+    throw new Error('adapter.codex.bootstrapTimeoutMs must be a positive timer duration in milliseconds')
+  }
   if (adapter.approval && adapter.approval !== 'never') {
     throw new CodexRunnerInputError({
       operation: 'validate-adapter',
@@ -1033,7 +1062,7 @@ const writeStatus = async (statusPath: string | undefined, status: CodexAppServe
   if (!statusPath) return
   try {
     await ensureFileDirectory(statusPath)
-    const encoded = encodeRunnerStatus(status)
+    const encoded = encodeRunnerStatus(JSON.parse(stringifyRunnerOutput(status)))
     if (encoded.logLine) {
       await new Promise<void>((resolve, reject) => {
         process.stdout.write(encoded.logLine, (error) => (error ? reject(error) : resolve()))
@@ -1048,7 +1077,9 @@ const writeStatus = async (statusPath: string | undefined, status: CodexAppServe
 const openLog = async (logPath: string | undefined) => {
   if (!logPath) return null
   await ensureFileDirectory(logPath)
-  return createWriteStream(logPath, { flags: 'a' })
+  const stream = createWriteStream(logPath, { flags: 'a' })
+  await once(stream, 'open')
+  return { stream, closed: finished(stream, { cleanup: true }).catch((error: unknown) => error) }
 }
 
 const interruptAppServerTurn = async (
@@ -1059,7 +1090,7 @@ const interruptAppServerTurn = async (
 ) => {
   if (!client?.interruptTurn || !threadId || !turnId) return
   try {
-    await client.interruptTurn(turnId, threadId)
+    await waitWithSignal(client.interruptTurn(turnId, threadId), AbortSignal.timeout(TURN_INTERRUPT_TIMEOUT_MS))
   } catch (cause) {
     throw new CodexRunnerCancellationError({
       operation: 'cancel-turn',
@@ -1084,9 +1115,10 @@ const startTurnStreamEffect = (
   client: CodexAppServerRunnerClient,
   prompt: string,
   turnOptions: CodexAppServerTurnOptions,
+  signal?: AbortSignal,
 ) =>
   Effect.tryPromise({
-    try: () => client.runTurnStream(prompt, turnOptions),
+    try: () => waitWithSignal(client.runTurnStream(prompt, turnOptions), signal),
     catch: (cause) => new CodexRunnerTurnError({ operation: 'start-turn', cause }),
   })
 
@@ -1106,31 +1138,19 @@ const consumeTurnStreamEffect = ({
       const iterator = stream[Symbol.asyncIterator]()
       let responseText = ''
       let responseTruncated = false
-      const cancellationWaiter = createCancellationWaiter(
-        signal,
-        () => threadId,
-        () => turnId,
-      )
-      try {
-        while (true) {
-          throwIfCancelled(signal, threadId, turnId)
-          const nextDelta = iterator.next().catch((cause) => {
-            throw new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause })
-          })
-          const { value, done } = cancellationWaiter
-            ? await Promise.race([nextDelta, cancellationWaiter.promise])
-            : await nextDelta
-          if (done) {
-            return { turn: value ?? null, responseText, responseTruncated }
-          }
-          if (value.type === 'message') {
-            const remaining = MAX_RESULT_RESPONSE_CHARS - responseText.length
-            responseText += value.delta.slice(0, remaining)
-            responseTruncated ||= value.delta.length > remaining
-          }
+      while (true) {
+        throwIfCancelled(signal, threadId, turnId)
+        const { value, done } = await waitWithSignal(iterator.next(), signal)
+        if (done) {
+          // Do not emit a line whose credential terminator might be beyond the capture limit.
+          if (responseTruncated) responseText = responseText.slice(0, responseText.lastIndexOf('\n') + 1)
+          return { turn: value ?? null, responseText: redactCredentials(responseText), responseTruncated }
         }
-      } finally {
-        cancellationWaiter?.cleanup()
+        if (value.type === 'message') {
+          const remaining = MAX_RESULT_RESPONSE_CHARS - responseText.length
+          responseText += value.delta.slice(0, remaining)
+          responseTruncated ||= value.delta.length > remaining
+        }
       }
     },
     catch: (cause) =>
@@ -1153,11 +1173,14 @@ const waitForThreadIdleEffect = (
   Effect.tryPromise({
     try: () => {
       if (!client.waitForThreadIdle) return Promise.resolve(null)
-      return client.waitForThreadIdle(threadId, {
-        quietMs: parseNonNegativeInteger(process.env.CODEX_APP_SERVER_THREAD_IDLE_QUIET_MS, 1000),
-        timeoutMs: parseNonNegativeInteger(process.env.CODEX_APP_SERVER_THREAD_IDLE_TIMEOUT_MS, 0),
+      return waitWithSignal(
+        client.waitForThreadIdle(threadId, {
+          quietMs: parseNonNegativeInteger(process.env.CODEX_APP_SERVER_THREAD_IDLE_QUIET_MS, 1000),
+          timeoutMs: parseNonNegativeInteger(process.env.CODEX_APP_SERVER_THREAD_IDLE_TIMEOUT_MS, 0),
+          signal,
+        }),
         signal,
-      })
+      )
     },
     catch: (cause) => new CodexRunnerTurnError({ operation: 'stream-turn', threadId, cause }),
   })
@@ -1192,17 +1215,19 @@ export const runCodexAppServerAdapterEffect = ({
   options,
   state,
   reportStartupPhase,
+  logger,
 }: {
   spec: AgentRunnerSpec
   adapter: CodexAppServerAdapterConfig
   options: RunCodexAppServerAdapterOptions
   state: CodexAppServerAdapterState
   reportStartupPhase: ReportStartupPhase
+  logger: CodexAppServerOptions['logger']
 }) =>
   Effect.gen(function* () {
     yield* throwIfCancelledEffect(options.abortSignal)
     yield* validateCodexAdapterEffect(adapter)
-    const runPayload = yield* loadRunPayloadEffect(spec)
+    const runPayload = yield* loadRunPayloadEffect(spec, options.abortSignal)
     state.outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, {
       ...runPayload,
       ...buildTemplateContext(spec),
@@ -1211,14 +1236,15 @@ export const runCodexAppServerAdapterEffect = ({
     yield* throwIfCancelledEffect(options.abortSignal)
 
     const prompt = yield* resolvePromptEffect(spec, adapter, runPayload)
-    const baseInstructions = yield* readSystemPromptInstructionsEffect(adapter, spec, runPayload)
+    const baseInstructions = yield* readSystemPromptInstructionsEffect(adapter, spec, runPayload, options.abortSignal)
     const developerInstructions = renderOptionalTemplate(adapter.developerInstructions, spec, runPayload)
     const goal = mergeGoals(normalizeGoal(runPayload.goal), spec.goal, adapter.goal)
+    const binaryPath = resolveCodexBinaryPath(adapter)
 
     const clientOptions: CodexAppServerOptions = {
-      binaryPath: resolveCodexBinaryPath(adapter),
+      binaryPath,
       cliConfigOverrides: adapter.cliConfigOverrides,
-      cwd: adapter.cwd,
+      cwd: nonEmptyString(adapter.cwd) ?? undefined,
       sandbox: adapter.sandbox,
       approval: adapter.approval,
       defaultModel: adapter.model,
@@ -1228,23 +1254,50 @@ export const runCodexAppServerAdapterEffect = ({
       persistExtendedHistory: adapter.persistExtendedHistory,
       bootstrapTimeoutMs: adapter.bootstrapTimeoutMs,
       onNotification: (notification) => state.telemetry?.observe(notification),
+      logger,
     }
 
+    if (!options.createClient) {
+      yield* Effect.tryPromise({
+        try: () => checkCodexAuth(binaryPath, options.abortSignal),
+        catch: (cause) => new CodexRunnerInputError({ operation: 'check-codex-auth', cause }),
+      })
+    }
+    const commandRunner = options.runCommand ?? runDefaultCommand
+    const runWorkspaceCommand: CommandRunner = async (command, args, commandOptions) => {
+      throwIfCancelled(options.abortSignal)
+      return commandRunner(command, args, {
+        ...commandOptions,
+        signal: options.abortSignal,
+        ...(command === 'git'
+          ? {
+              timeoutMs: GIT_COMMAND_TIMEOUT_MS,
+              env: { ...commandOptions?.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
+            }
+          : {}),
+      })
+    }
     yield* prepareCodexCwdEffect(
       adapter,
       runPayload,
-      options.runCommand ?? runDefaultCommand,
+      runWorkspaceCommand,
       options.sharedCachePath ?? SHARED_WORKSPACE_CACHE_MOUNT_PATH,
       reportStartupPhase,
     )
     yield* throwIfCancelledEffect(options.abortSignal)
+    if (!options.createClient) {
+      yield* Effect.tryPromise({
+        try: () => checkCodexExecutable(binaryPath, clientOptions.cwd),
+        catch: (cause) => new CodexRunnerClientError({ operation: 'check-executable', cause }),
+      })
+    }
     const appServerStarted = performance.now()
     state.client = yield* createRunnerClientEffect(clientOptions, options)
     reportStartupPhase('app_server_ready', appServerStarted)
 
     const turnOptions: CodexAppServerTurnOptions = {
       model: adapter.model,
-      cwd: adapter.cwd,
+      cwd: clientOptions.cwd,
       threadId: adapter.threadId,
       effort: adapter.effort,
       baseInstructions,
@@ -1253,7 +1306,7 @@ export const runCodexAppServerAdapterEffect = ({
     }
     yield* throwIfCancelledEffect(options.abortSignal)
     const turnStarted = performance.now()
-    const response = yield* startTurnStreamEffect(state.client, prompt, turnOptions)
+    const response = yield* startTurnStreamEffect(state.client, prompt, turnOptions, options.abortSignal)
     reportStartupPhase('first_turn_started', turnStarted)
     state.threadId = response.threadId
     state.turnId = response.turnId
@@ -1285,7 +1338,7 @@ export const runCodexAppServerAdapterEffect = ({
           )
         }
         const items = yield* Effect.tryPromise({
-          try: () => readItems(threadId, turnId),
+          try: () => waitWithSignal(readItems(threadId, turnId), options.abortSignal),
           catch: (cause) => new CodexRunnerTurnError({ operation: 'read-turn-items', threadId, turnId, cause }),
         })
         finalTurn = { ...finalTurn, items, itemsView: 'full' }
@@ -1295,7 +1348,7 @@ export const runCodexAppServerAdapterEffect = ({
         item.type === 'agentMessage' && item.phase !== 'commentary' ? [item.text] : [],
       )
       if (messages.length > 0 || idleResult.lastTurn.id !== response.turnId) {
-        const text = messages.join('\n')
+        const text = redactCredentials(messages.join('\n'))
         state.responseText = text.slice(0, MAX_RESULT_RESPONSE_CHARS)
         state.responseTruncated = text.length > MAX_RESULT_RESPONSE_CHARS
       }
@@ -1306,6 +1359,8 @@ export const runCodexAppServerAdapterEffect = ({
       yield* Effect.fail(terminalError)
     }
 
+    yield* throwIfCancelledEffect(options.abortSignal, state.threadId, state.turnId)
+
     if (spec.artifacts?.resultPath) {
       const resultPath = spec.artifacts.resultPath
       yield* Effect.tryPromise({
@@ -1313,7 +1368,7 @@ export const runCodexAppServerAdapterEffect = ({
           await ensureFileDirectory(resultPath)
           await writeFile(
             resultPath,
-            `${JSON.stringify(
+            `${stringifyRunnerOutput(
               {
                 schemaVersion: 'agents.proompteng.ai/result/v1',
                 threadId: state.threadId,
@@ -1321,7 +1376,6 @@ export const runCodexAppServerAdapterEffect = ({
                 responseText: state.responseText,
                 responseTruncated: state.responseTruncated,
               },
-              null,
               2,
             )}\n`,
             { mode: 0o600 },
@@ -1348,6 +1402,11 @@ export const runCodexAppServerAdapter = async (
   let exitCode = 1
   let errorMessage: string | undefined
   let caughtError: unknown
+  const recordError = (error: unknown) => {
+    caughtError ??= error
+    const message = describeRunnerError(error)
+    errorMessage = errorMessage ? `${errorMessage}; ${message}` : message
+  }
   const state: CodexAppServerAdapterState = {
     finalTurn: null,
     responseText: '',
@@ -1357,6 +1416,7 @@ export const runCodexAppServerAdapter = async (
     logStream: null,
     telemetry: null,
   }
+  const remoteFlush = createRemoteFlushDeadline(options.abortSignal)
 
   try {
     state.logStream = await openLog(logPath).catch((cause: unknown) => {
@@ -1364,13 +1424,18 @@ export const runCodexAppServerAdapter = async (
     })
     const publishTelemetry = options.publishTelemetry ?? createTelemetryPublisher()
     const write = (line: string) => {
-      state.logStream?.write(line)
+      state.logStream?.stream.write(line)
       process.stdout.write(line)
+    }
+    const logger: NonNullable<CodexAppServerOptions['logger']> = (level, message, meta) => {
+      write(
+        `${stringifyRunnerOutput({ ts: now().toISOString(), level, message, component: 'codex-app-server-client', ...meta })}\n`,
+      )
     }
     const reportStartupPhase: ReportStartupPhase = (phase, started, outcome = 'ok') => {
       const finished = performance.now()
       write(
-        `${JSON.stringify({
+        `${stringifyRunnerOutput({
           ts: now().toISOString(),
           component: 'agent-runner',
           event: {
@@ -1388,86 +1453,112 @@ export const runCodexAppServerAdapter = async (
       effort: adapter.effort,
       now,
       podName: process.env.AGENT_RUN_POD_NAME,
-      publish: async (snapshot) => {
+      signal: options.abortSignal,
+      publish: async (snapshot, signal) => {
         const workspaceTmpfsUsedBytes = await readRunnerWorkspaceTmpfsBytes()
+        signal?.throwIfAborted()
         if (workspaceTmpfsUsedBytes !== undefined) {
           write(
-            `${JSON.stringify({
+            `${stringifyRunnerOutput({
               ts: snapshot.heartbeatAt,
               component: 'agent-runner',
               event: { type: 'workspace_usage', workspaceTmpfsUsedBytes },
             })}\n`,
           )
         }
-        await publishTelemetry?.(snapshot)
+        await publishTelemetry?.(snapshot, signal)
       },
       write,
     })
-    await state.telemetry.start()
+    void state.telemetry.start()
     exitCode = await runCodexEffectPromise(
-      runCodexAppServerAdapterEffect({ spec, adapter, options, state, reportStartupPhase }),
+      runCodexAppServerAdapterEffect({ spec, adapter, options, state, reportStartupPhase, logger }),
     )
   } catch (error) {
-    let runnerError = error
-    if (error instanceof CodexRunnerCancellationError) {
-      if (options.abortSignal?.aborted) {
-        try {
-          await interruptAppServerTurn(state.client, error, state.threadId, state.turnId)
-        } catch (interruptError) {
-          runnerError = interruptError
-        }
+    let runnerError = options.abortSignal?.aborted
+      ? cancellationErrorFor(options.abortSignal, state.threadId, state.turnId)
+      : error
+    if (options.abortSignal?.aborted && runnerError instanceof CodexRunnerCancellationError) {
+      try {
+        await interruptAppServerTurn(state.client, runnerError, state.threadId, state.turnId)
+      } catch (interruptError) {
+        runnerError = interruptError
       }
-      exitCode = 130
-    } else {
-      exitCode = 1
     }
-    caughtError = runnerError
-    errorMessage = describeRunnerError(runnerError)
+    recordError(runnerError)
     state.telemetry?.observe({ method: 'error', params: { error: { message: errorMessage } } })
   } finally {
-    const telemetry = await state.telemetry?.finish()
-    await new Promise<void>((resolve) => {
-      if (!state.logStream) {
-        resolve()
-        return
+    const signal = remoteFlush.signal
+    const stopClient = async () => {
+      try {
+        if (state.client?.stopAndWait) await waitWithSignal(state.client.stopAndWait(), signal)
+        else state.client?.stop?.()
+      } catch (cause) {
+        return new CodexRunnerClientError({ operation: 'stop-client', cause })
       }
-      state.logStream.end(resolve)
-    })
-    state.client?.stop?.()
-    const resultKey = state.outputArtifacts.find((artifact) => artifact.name === 'runner-result')?.key
-    if (resultKey && logPath) {
-      state.outputArtifacts = state.outputArtifacts.map((artifact) =>
-        artifact.name === 'runner-log' ? { ...artifact, key: `${resultKey}${RUNNER_LOG_SUFFIX}` } : artifact,
-      )
     }
-    try {
-      const logs = state.outputArtifacts.filter((artifact) => artifact.name === 'runner-log')
-      const upload = options.uploadArtifacts ?? uploadOutputArtifacts
-      const retainedLogs = await upload(logs)
-      state.outputArtifacts = state.outputArtifacts.map(
-        (artifact) => retainedLogs.find((retained) => retained.name === artifact.name) ?? artifact,
-      )
-      if (exitCode === 0) {
-        const other = await upload(state.outputArtifacts.filter((artifact) => artifact.name !== 'runner-log'))
-        state.outputArtifacts = state.outputArtifacts.map(
-          (artifact) => other.find((retained) => retained.name === artifact.name) ?? artifact,
+    const finishArtifacts = async () => {
+      const log = state.logStream
+      state.logStream = null
+      if (log) {
+        log.stream.end()
+        try {
+          const error = await waitWithSignal(log.closed, signal)
+          if (error) throw error
+        } catch (cause) {
+          return new CodexRunnerLogError({ operation: 'close-log', path: logPath, cause })
+        }
+      }
+      const resultKey = state.outputArtifacts.find((artifact) => artifact.name === 'runner-result')?.key
+      if (resultKey && logPath) {
+        state.outputArtifacts = state.outputArtifacts.map((artifact) =>
+          artifact.name === 'runner-log' ? { ...artifact, key: `${resultKey}${RUNNER_LOG_SUFFIX}` } : artifact,
         )
       }
-    } catch (cause) {
-      const uploadError = new CodexRunnerArtifactError({ operation: 'upload-output-artifacts', cause })
-      if (!caughtError) caughtError = uploadError
-      errorMessage = errorMessage
-        ? `${errorMessage}; ${describeRunnerError(uploadError)}`
-        : describeRunnerError(uploadError)
-      exitCode = 1
+      const upload = options.uploadArtifacts ?? uploadOutputArtifacts
+      const uploadMatching = async (isLog: boolean, uploadSignal: AbortSignal) => {
+        const artifacts = state.outputArtifacts.filter((artifact) => (artifact.name === 'runner-log') === isLog)
+        if (artifacts.length === 0) return
+        uploadSignal.throwIfAborted()
+        const uploaded = await waitWithSignal(upload(artifacts, { signal: uploadSignal }), uploadSignal)
+        state.outputArtifacts = state.outputArtifacts.map(
+          (artifact) => uploaded.find((retained) => retained.name === artifact.name) ?? artifact,
+        )
+      }
+      try {
+        await uploadMatching(true, signal)
+        if (exitCode === 0 && !options.abortSignal?.aborted) {
+          await uploadMatching(false, options.abortSignal ?? signal)
+        }
+      } catch (cause) {
+        return new CodexRunnerArtifactError({ operation: 'upload-output-artifacts', cause })
+      }
     }
+    // The terminal heartbeat is queued synchronously before closing the log for upload.
+    const [telemetry, stopError, artifactError] = await Promise.all([
+      state.telemetry?.finish(signal),
+      stopClient(),
+      finishArtifacts(),
+    ]).finally(remoteFlush.dispose)
+
+    if (options.abortSignal?.aborted && !(caughtError instanceof CodexRunnerCancellationError)) {
+      const cancellation = cancellationErrorFor(options.abortSignal, state.threadId, state.turnId)
+      caughtError = cancellation
+      const message = describeRunnerError(cancellation)
+      errorMessage = errorMessage ? `${message}; ${errorMessage}` : message
+    }
+    const cancelled = caughtError instanceof CodexRunnerCancellationError
+    if (stopError) recordError(stopError)
+    if (artifactError) recordError(artifactError)
+    if (cancelled) exitCode = runnerSignalExitCode(describeAbortReason(options.abortSignal?.reason))
+    else if (caughtError) exitCode = 1
 
     const runnerStatus: CodexAppServerRunnerStatus = {
       provider: spec.provider,
       adapter: 'codex-app-server',
       ...(telemetry ? { telemetry } : {}),
       exitCode,
-      status: exitCode === 0 ? 'succeeded' : exitCode === 130 ? 'cancelled' : 'failed',
+      status: cancelled ? 'cancelled' : exitCode === 0 ? 'succeeded' : 'failed',
       startedAt,
       finishedAt: timestampUtc(now),
       ...(state.threadId ? { threadId: state.threadId } : {}),
@@ -1479,7 +1570,7 @@ export const runCodexAppServerAdapter = async (
       ...(adapter.model ? { model: adapter.model } : {}),
       ...(adapter.effort ? { effort: adapter.effort } : {}),
       ...(adapter.cwd !== undefined ? { cwd: adapter.cwd } : {}),
-      ...(state.responseText
+      ...(state.responseText || state.responseTruncated
         ? {
             result: {
               text: state.responseText.slice(0, AGENT_RUNNER_RESULT_PREVIEW_CHARS),

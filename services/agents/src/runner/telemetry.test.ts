@@ -106,6 +106,54 @@ describe('runner telemetry', () => {
     expect(publish).toHaveBeenCalledTimes(2)
   })
 
+  it('redacts before publishing snapshots or emitting complete and split notifications', async () => {
+    const lines: string[] = []
+    const publish = vi.fn(async () => {})
+    const telemetry = createRunnerTelemetry({ publish, write: (line) => lines.push(line) })
+    telemetry.observe({
+      method: 'item/started',
+      params: {
+        item: {
+          type: 'commandExecution',
+          id: 'git',
+          command: `git clone https://opaque-user:${'x'.repeat(256)}@github.com/org/repo`,
+        },
+      },
+    })
+    await telemetry.flush()
+    telemetry.observe({
+      method: 'item/commandExecution/outputDelta',
+      params: { itemId: 'git', delta: 'Fetching https://secret-fragment' },
+    })
+    telemetry.observe({
+      method: 'item/commandExecution/outputDelta',
+      params: { itemId: 'git', delta: '@github.com/org/repo\nAuthorization: Bear' },
+    })
+    telemetry.observe({
+      method: 'item/commandExecution/outputDelta',
+      params: { itemId: 'git', delta: 'er opaque-bearer' },
+    })
+    telemetry.observe({
+      method: 'item/completed',
+      params: { item: { type: 'commandExecution', id: 'git', aggregatedOutput: 'ghp_completeButAlreadyStreamed' } },
+    })
+    telemetry.observe({ method: 'error', params: { error: { message: 'auth failure ghs_fixtureToken' } } })
+    await telemetry.finish()
+
+    const log = lines.join('')
+    expect(log).toContain('Fetching https://[REDACTED]@github.com/org/repo')
+    expect(log).toContain('Authorization: Bearer [REDACTED]')
+    expect(log).toContain('auth failure [REDACTED]')
+    expect(log).not.toMatch(/opaque-user|secret-fragment|opaque-bearer|ghp_complete|ghs_fixture/)
+    expect(publish).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        activeTools: [expect.objectContaining({ title: 'git clone https://[REDACTED]@github.com/org/repo' })],
+      }),
+      undefined,
+    )
+  })
+
   it('logs 30-second heartbeats without queueing overlapping PUTs and awaits one final PUT', async () => {
     vi.useFakeTimers()
     const periodic = Promise.withResolvers<void>()
@@ -138,7 +186,10 @@ describe('runner telemetry', () => {
     expect(publish).toHaveBeenCalledTimes(2)
     periodic.resolve()
     await finalStarted.promise
-    expect(publish).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'finished', publishErrors: 0 }))
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'finished', publishErrors: 0 }),
+      undefined,
+    )
 
     let returned = false
     void finished.then(() => {

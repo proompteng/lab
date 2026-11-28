@@ -26,6 +26,7 @@ import {
   CodexRunnerTurnError,
   CodexRunnerWorkspaceError,
   DEFAULT_CODEX_BINARY_PATH,
+  describeRunnerError,
   readRunnerWorkspaceTmpfsBytes,
   resolveCodexBinaryPath,
   runCodexAppServerAdapter,
@@ -70,9 +71,15 @@ const NORMALIZED_PROMPT = 'run the normalized Codex adapter contract'
 const runnerEnvKeys = [
   'AGENT_RUN_UID', // Unit tests must not write telemetry to the enclosing AgentRun's object.
   'AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT',
+  'CODEX_AUTH',
   'CODEX_SYSTEM_PROMPT_PATH',
   'CODEX_SYSTEM_PROMPT_EXPECTED_HASH',
   'CODEX_SYSTEM_PROMPT_REQUIRED',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GIT_ASKPASS',
+  'GIT_TERMINAL_PROMPT',
+  'VCS_TOKEN',
 ]
 const originalRunnerEnv = Object.fromEntries(runnerEnvKeys.map((key) => [key, process.env[key]]))
 
@@ -87,6 +94,137 @@ describe('codex app-server runner adapter', () => {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
     }
+  })
+
+  it.each([
+    { name: 'VCS without a workspace', vcs: { repository: 'example/repo' }, message: 'adapter.codex.cwd is required' },
+    {
+      name: 'invalid remote',
+      vcs: { repository: 'example/repo', cloneBaseUrl: 'https://url-secret@example.test?query' },
+      cwd: 'checkout',
+      message: 'Invalid VCS clone URL',
+    },
+    {
+      name: 'missing Git auth',
+      vcs: { repository: 'example/repo', mode: 'read-write' },
+      cwd: 'checkout',
+      message: 'Read-write VCS checkout requires Git credentials',
+    },
+    { name: 'workspace is a file', cwd: 'run.json', message: 'is not a directory' },
+  ])('fails $name before starting a client or running Git', async ({ vcs, cwd, message }) => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-preflight-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    const createClient = vi.fn()
+    const runCommand = vi.fn()
+    await writeFile(runPath, JSON.stringify({ vcs }))
+    await expect(
+      runCodexAppServerAdapter(
+        { provider: 'codex', payloads: { eventFilePath: runPath }, artifacts: { statusPath } },
+        { prompt: NORMALIZED_PROMPT, cwd: cwd ? join(dir, cwd) : undefined },
+        { createClient, runCommand },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerWorkspaceError)
+    expect(createClient).not.toHaveBeenCalled()
+    expect(runCommand).not.toHaveBeenCalled()
+    const status = await readFile(statusPath, 'utf8')
+    expect(JSON.parse(status)).toMatchObject({ status: 'failed', error: expect.stringContaining(message) })
+    expect(status).not.toContain('url-secret')
+  })
+
+  it('fails with an actionable error for a checkout with no origin', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-preflight-origin-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    expect(spawnSync('git', ['init', dir]).status).toBe(0)
+    await writeFile(runPath, JSON.stringify({ vcs: { repository: 'example/repo' } }))
+    const createClient = vi.fn()
+    await expect(
+      runCodexAppServerAdapter(
+        { provider: 'codex', payloads: { eventFilePath: runPath }, artifacts: { statusPath } },
+        { cwd: dir, prompt: NORMALIZED_PROMPT },
+        { createClient },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerWorkspaceError)
+    expect(createClient).not.toHaveBeenCalled()
+    expect(JSON.parse(await readFile(statusPath, 'utf8'))).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('the workspace must be a valid checkout with an origin remote'),
+    })
+  })
+
+  it('does not fall back to base on head fetch auth failures and redacts Git diagnostics', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-preflight-remote-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    const logPath = join(dir, 'runner.log')
+    await mkdir(join(dir, '.git'))
+    await writeFile(runPath, JSON.stringify({ vcs: { repository: 'example/repo', headBranch: 'feature' } }))
+    const controller = new AbortController()
+    const createClient = vi.fn()
+    const runCommand = vi.fn<NonNullable<RunCodexAppServerAdapterOptions['runCommand']>>(async (_, args) => {
+      const denied = args[0] === 'fetch' && args.at(-1)?.includes('feature')
+      return {
+        exitCode: denied ? 128 : 0,
+        stdout: '',
+        stderr: denied
+          ? '403 https://secret-user:secret-pass@example.test/repo\nAuthorization: Bearer sample-secret'
+          : '',
+      }
+    })
+    const failure = await runCodexAppServerAdapter(
+      { provider: 'codex', payloads: { eventFilePath: runPath }, artifacts: { statusPath, logPath } },
+      { cwd: dir, prompt: NORMALIZED_PROMPT },
+      { createClient, runCommand, abortSignal: controller.signal },
+    ).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(CodexRunnerWorkspaceError)
+    expect(createClient).not.toHaveBeenCalled()
+    expect(runCommand.mock.calls.map(([, args]) => args[0])).toEqual(['remote', 'fetch', 'fetch'])
+    expect(runCommand).toHaveBeenLastCalledWith(
+      'git',
+      expect.any(Array),
+      expect.objectContaining({
+        signal: controller.signal,
+        timeoutMs: 45_000,
+        env: expect.objectContaining({ GIT_TERMINAL_PROMPT: '0' }),
+      }),
+    )
+    for (const output of [
+      describeRunnerError(failure),
+      await readFile(logPath, 'utf8'),
+      await readFile(statusPath, 'utf8'),
+    ]) {
+      expect(output).toContain('check the remote, branch, and VCS credentials')
+      expect(output).toContain('https://[REDACTED]@example.test/repo')
+      expect(output).not.toMatch(/secret-user|secret-pass|sample-secret/)
+    }
+  })
+
+  it('checks executable and mounted Codex auth before app-server spawn', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-preflight-codex-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    await writeFile(runPath, '{}')
+    const spec = { provider: 'codex', payloads: { eventFilePath: runPath } }
+    await expect(
+      runCodexAppServerAdapter(spec, { binaryPath: join(dir, 'missing'), prompt: NORMALIZED_PROMPT }),
+    ).rejects.toMatchObject({
+      operation: 'check-executable',
+      cause: expect.objectContaining({ message: expect.stringContaining('AGENTS_CODEX_BINARY') }),
+    })
+    const authPath = join(dir, 'auth.json')
+    await writeFile(authPath, 'invalid auth JSON with unprefixed-secret')
+    process.env.CODEX_AUTH = authPath
+    const failure = await runCodexAppServerAdapter(spec, {
+      binaryPath: process.execPath,
+      prompt: NORMALIZED_PROMPT,
+    }).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(CodexRunnerInputError)
+    expect(describeRunnerError(failure)).toContain(`mount a readable Codex auth.json at ${authPath}`)
+    expect(describeRunnerError(failure)).not.toContain('unprefixed-secret')
   })
 
   it('retains a completed structured log and telemetry when workspace preparation fails', async () => {
@@ -1013,6 +1151,7 @@ describe('codex app-server runner adapter', () => {
       const cwd = join(dir, 'lab')
       const cacheRoot = join(dir, 'shared-cache')
       const mirror = join(cacheRoot, 'git/proompteng/lab.git')
+      process.env.GIT_ASKPASS = process.execPath
       const slot = `${mirror}.0`
       if (mirrorState !== 'missing') {
         // A ready stamp does not override a stale snapshot, invalid Git repo, or escaped symlink.
@@ -1120,8 +1259,10 @@ describe('codex app-server runner adapter', () => {
     { name: 'cold with a new head', warm: false, head: 'codex/new', fetches: 0 },
     { name: 'cold with only a symbolic origin/HEAD', warm: false, head: 'HEAD', readOnly: true, fetches: 0 },
     { name: 'reused checkout with an updated head', warm: false, head: 'codex/existing', reused: true, fetches: 2 },
+    { name: 'reused checkout with a new head', warm: false, head: 'codex/new', reused: true, fetches: 2 },
   ])('uses authoritative Git refs and an independent checkout when $name', async (testCase) => {
     const { warm, head, reused, readOnly, fetches } = testCase
+    if (!readOnly) process.env.GIT_ASKPASS = process.execPath
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-git-'))
     onTestFinished(() => rm(dir, { recursive: true, force: true }))
     const upstream = join(dir, 'upstream')
@@ -1219,7 +1360,7 @@ describe('codex app-server runner adapter', () => {
         JSON.stringify({ vcs: { repository: 'proompteng/lab', cloneBaseUrl: 'https://github.com' } }),
       )
 
-      const installs: { args: string[]; cacheDir?: string }[] = []
+      const installs: { args: string[]; cacheDir?: string; timeoutMs?: number }[] = []
       let cachedPackageTarget: string | undefined
       let linkedTmpDir = false
       let installsBeforeClient = -1
@@ -1235,14 +1376,14 @@ describe('codex app-server runner adapter', () => {
               await writeFile(join(cwd, 'services/memories/package.json'), '{"name":"memories"}')
               if (cacheState === 'already installed') await mkdir(join(cwd, 'node_modules'))
             }
-            if (command === 'timeout') {
+            if (command === 'bun') {
               expect(options?.cwd).toBe(cwd)
               const cacheDir = options?.env?.BUN_INSTALL_CACHE_DIR
               if (cacheDir) {
                 cachedPackageTarget = await readlink(join(cacheDir, 'cached-package'))
                 linkedTmpDir = existsSync(join(cacheDir, '.tmp'))
               }
-              installs.push({ args, cacheDir })
+              installs.push({ args, cacheDir, timeoutMs: options?.timeoutMs })
               const exitCode =
                 cacheState === 'timeout' ? 124 : cacheState === 'miss' && args.includes('--offline') ? 1 : 0
               return { exitCode, stdout: '', stderr: '' }
@@ -1259,7 +1400,6 @@ describe('codex app-server runner adapter', () => {
       )
 
       const install = [
-        'bun',
         'install',
         '--frozen-lockfile',
         '--production',
@@ -1269,10 +1409,11 @@ describe('codex app-server runner adapter', () => {
         'memories',
       ]
       const offline = {
-        args: ['-k', '5s', '20s', ...install, '--offline', '--backend=copyfile'],
+        args: [...install, '--offline', '--backend=copyfile'],
+        timeoutMs: 20_000,
         cacheDir: expect.stringContaining('agents-bun-cache-'),
       }
-      const local = { args: ['-k', '5s', '30s', ...install, '--prefer-offline'] }
+      const local = { args: [...install, '--prefer-offline'], timeoutMs: 30_000 }
       expect(installs).toEqual(
         cacheState === 'already installed'
           ? []
@@ -1609,7 +1750,7 @@ describe('codex app-server runner adapter', () => {
     expect(stop).toHaveBeenCalledTimes(1)
     const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
     expect(status).toMatchObject({
-      exitCode: 130,
+      exitCode: 143,
       status: 'cancelled',
       threadId: 'thread-cancel',
       turnId: 'turn-cancel',

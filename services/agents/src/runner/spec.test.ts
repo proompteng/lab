@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_RUNNER_SCHEMA_VERSION,
   buildTemplateContext,
+  normalizeRunnerSpec,
   renderOutputArtifacts,
   renderTemplate,
   resolveAdapter,
@@ -10,6 +11,12 @@ import {
 } from './spec'
 
 describe('agent-runner spec', () => {
+  it('rejects malformed runner specs', () => {
+    for (const spec of [null, [], { provider: 5 }, { provider: 'codex', adapter: { type: 'typo' } }]) {
+      expect(() => normalizeRunnerSpec(spec)).toThrow('agent-runner spec')
+    }
+  })
+
   it('defaults Codex providers to the app-server adapter', () => {
     const adapter = resolveAdapter({ provider: 'codex-runner' })
 
@@ -68,6 +75,12 @@ describe('agent-runner spec', () => {
         location: 'global',
       },
     })
+  })
+
+  it('rejects a malformed agy-cli adapter config', () => {
+    expect(() => normalizeRunnerSpec({ provider: 'google', adapter: { type: 'agy-cli', agy: [] } })).toThrow(
+      'agent-runner spec adapter config must be an object',
+    )
   })
 
   it('rejects providerSpec-only specs instead of silently falling back to exec', () => {
