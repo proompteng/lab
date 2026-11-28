@@ -796,6 +796,11 @@ describe('enabled app inventory', () => {
     }
   })
 
+  it('keeps Restate enabled without deploying its retired Greeter example', () => {
+    expect(entry('restate').path).toBe('argocd/applications/restate')
+    expect(inventory.entries.some((candidate) => candidate.name === 'restate-example')).toBe(false)
+  })
+
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {
     for (const name of ['analysis', 'bilig', 'buzz', 'hermes', 'tigresse']) {
       expect(entry(name).class).toBe('vendor-manifest')

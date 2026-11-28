@@ -89,6 +89,10 @@
       "pattern": "^changes(?: \\(.*\\))?$"
     },
     {
+      "id": "fast-checks",
+      "pattern": "^fast-checks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "formal-verification",
       "pattern": "^formal-verification(?: \\(.*\\))?(?: /.*)?$"
     },
@@ -399,6 +403,10 @@
     {
       "id": "agents-full",
       "pattern": "^Agents full CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "jangar",
+      "pattern": "^Jangar CI(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "bayn",

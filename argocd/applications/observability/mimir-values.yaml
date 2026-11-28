@@ -105,6 +105,11 @@ distributor:
 
 ingester:
   replicas: 3
+  # Reserve working memory for the TSDB head and replay without capping either.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
   statefulStrategy:
     type: RollingUpdate
   zoneAwareReplication:

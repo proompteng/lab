@@ -14,13 +14,13 @@ spec:
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   suspend: false
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
       backoffLimit: 3
       activeDeadlineSeconds: 3600
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 1800
       template:
         metadata:
           labels:
@@ -41,7 +41,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: publish
-              image: registry.ide-newton.ts.net/lab/signal-publisher@sha256:f1c1a4c05ca7c521c9a60ae4a7e6190c27d17874baf28f2a72045d712bef33f8
+              image: registry.ide-newton.ts.net/lab/signal-publisher@sha256:3049556bae33c30705ceca0f1640a0c7ec53d0c76decfbc4da408e33ba65e15e
               imagePullPolicy: IfNotPresent
               args:
                 - daily
@@ -72,11 +72,11 @@ spec:
                       name: bayn-universe-v2
                       key: HISTORY_FEED
                 - name: SIGNAL_CODE_REVISION
-                  value: fab5bb47691e8775b69809bcc1327735269f1223
+                  value: a28e73858a541eefbb8d25694afc030fb88224b5
                 - name: SIGNAL_IMAGE_REPOSITORY
                   value: registry.ide-newton.ts.net/lab/signal-publisher
                 - name: SIGNAL_IMAGE_DIGEST
-                  value: sha256:f1c1a4c05ca7c521c9a60ae4a7e6190c27d17874baf28f2a72045d712bef33f8
+                  value: sha256:3049556bae33c30705ceca0f1640a0c7ec53d0c76decfbc4da408e33ba65e15e
                 - name: SIGNAL_CLICKHOUSE_URL
                   value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
                 - name: SIGNAL_CLICKHOUSE_USERNAME

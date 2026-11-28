@@ -7,6 +7,10 @@ metadata:
     app.kubernetes.io/name: bayn-universe
     app.kubernetes.io/part-of: bayn
   annotations:
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "bayn"
+    reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+    reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "bayn"
     bayn.proompteng.ai/contract: cross-asset-taa-v1
 data:
   UNIVERSE_ID: cross-asset-taa-v1

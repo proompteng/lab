@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: torghut-ws-sip
-  namespace: torghut
+  namespace: bayn
   labels:
     app: torghut-ws-sip
   annotations:
@@ -20,8 +20,8 @@ spec:
     metadata:
       labels:
         app: torghut-ws-sip
+        app.kubernetes.io/name: torghut-ws-sip
     spec:
-      serviceAccountName: torghut-runtime
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -42,13 +42,13 @@ spec:
             - name: ALPACA_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: torghut-alpaca
-                  key: APCA_API_KEY_ID
+                  name: bayn-alpaca-auth
+                  key: key-id
             - name: ALPACA_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: torghut-alpaca
-                  key: APCA_API_SECRET_KEY
+                  name: bayn-alpaca-auth
+                  key: secret-key
             - name: KAFKA_SASL_USER
               value: torghut-ws
             - name: KAFKA_SASL_PASSWORD

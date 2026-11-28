@@ -214,6 +214,74 @@ describe('agents controller job-runtime module', () => {
     },
   )
 
+  it.each([
+    { name: 'cache enabled', hostPath: '/var/lib/agents-workspace-cache', disk: true },
+    { name: 'cache disabled', disk: true },
+    { name: 'low disk request', storageRequest: '4Gi', disk: false },
+    { name: 'low disk limit', storageLimit: '15.5Gi', disk: false },
+    { name: 'no disk budget', noBudget: true, disk: false },
+    { name: 'another repository', repository: 'org/other', disk: false },
+  ])('keeps Lab checkout and Bun cache off tmpfs when disk is budgeted ($name)', async (testCase) => {
+    const standardImage = 'registry.example/agents-codex-runner:standard'
+    setEnv('AGENTS_AGENT_RUNNER_IMAGE', standardImage)
+    setEnv('AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH', testCase.hostPath)
+    setEnv(
+      'AGENTS_AGENT_RUNNER_RESOURCES',
+      testCase.noBudget
+        ? undefined
+        : JSON.stringify({
+            requests: { 'ephemeral-storage': '8Gi' },
+            limits: { memory: '32Gi', 'ephemeral-storage': '16Gi' },
+          }),
+    )
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => resource),
+    }
+    await submitJobRun(
+      kube as never,
+      {
+        metadata: { name: 'lab-run', namespace: 'agents' },
+        spec: {
+          workload: {
+            resources: {
+              requests: { 'ephemeral-storage': testCase.storageRequest },
+              limits: { 'ephemeral-storage': testCase.storageLimit },
+            },
+          },
+        },
+      },
+      { metadata: { name: 'codex-agent' } },
+      { metadata: { name: 'codex' }, spec: { adapter: { type: 'codex-app-server' } } },
+      { summary: 'Run summary' },
+      null,
+      'agents',
+      standardImage,
+      'job',
+      {
+        vcs: {
+          ok: true,
+          skip: false,
+          mode: 'read-only',
+          requiredSecrets: [],
+          context: { repository: testCase.repository ?? 'proompteng/lab', cloneBaseUrl: 'https://github.com' },
+        },
+      },
+    )
+
+    const podSpec = readJobPodSpec(kube.apply.mock.calls.find(([resource]) => resource.kind === 'Job')?.[0])
+    const volumes = podSpec.volumes as { name: string; emptyDir?: { medium?: string; sizeLimit?: string } }[]
+    const [container] = podSpec.containers as { volumeMounts: { name: string; mountPath: string }[] }[]
+    const scratchAt = (path: string) => {
+      const mount = container.volumeMounts.find((entry) => entry.mountPath === path)
+      return volumes.find((volume) => volume.name === mount?.name)?.emptyDir
+    }
+    const medium = testCase.disk ? {} : { medium: 'Memory' }
+    expect(scratchAt('/workspace')).toEqual({ ...medium, sizeLimit: '16Gi' })
+    expect(scratchAt('/opt/bun/install/cache')).toEqual({ ...medium, sizeLimit: '8Gi' })
+    expect(scratchAt('/tmp')).toEqual({ medium: 'Memory', sizeLimit: '6Gi' })
+  })
+
   it('builds run spec with rendered event payload and optional vcs/system prompt', () => {
     const runSpec = buildRunSpec(
       {

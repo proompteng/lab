@@ -102,31 +102,6 @@ export const getTerminalSessionRecord = async (id: string): Promise<TerminalSess
   return row ? mapRow(row) : null
 }
 
-export const createTerminalSessionRecord = async (
-  input: TerminalSessionRecordInput,
-): Promise<TerminalSessionRecord | null> => {
-  const db = await resolveDb()
-  if (!db) return null
-  const row = await db
-    .insertInto(`${SCHEMA}.${TABLE}`)
-    .values({
-      id: input.id,
-      status: input.status,
-      worktree_name: input.worktreeName ?? null,
-      worktree_path: input.worktreePath ?? null,
-      tmux_socket: input.tmuxSocket ?? null,
-      error_message: input.errorMessage ?? null,
-      ready_at: input.readyAt ?? null,
-      closed_at: input.closedAt ?? null,
-      metadata: normalizeMetadata(input.metadata),
-      created_at: sql`now()`,
-      updated_at: sql`now()`,
-    })
-    .returningAll()
-    .executeTakeFirst()
-  return row ? mapRow(row) : null
-}
-
 export const upsertTerminalSessionRecord = async (
   input: TerminalSessionRecordInput,
 ): Promise<TerminalSessionRecord | null> => {

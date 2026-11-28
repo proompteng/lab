@@ -13,7 +13,6 @@ import { makeApp } from './cli/app'
 import { makeAgentctlContextLayer } from './cli/context'
 import { exitCodeFor, formatError, isAgentctlError } from './cli/errors'
 import { parseGlobalFlags } from './cli/global-flags'
-import { renderGlobalFlags } from './cli/help'
 import { loadConfig, resolveConfig } from './config'
 import { EXIT_UNKNOWN, EXIT_VALIDATION, getVersion } from './runtime'
 import { TransportLive } from './transport'
@@ -111,7 +110,6 @@ const main = async () => {
           return
         }
         yield* CliOutput.defaultPresenter.present(event)
-        if (event._tag === 'Help') console.log(renderGlobalFlags())
       }),
   })
   const runtimeLayer = Layer.mergeAll(appLayer, platformLayer, outputLayer)
