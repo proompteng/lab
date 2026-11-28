@@ -30,7 +30,7 @@ const Calendar = Schema.Array(Schema.Struct({ date: IsoDateSchema, open: WallTim
 const Clock = Schema.Struct({ timestamp: Instant, is_open: Schema.Boolean, next_open: Instant })
 export const AccountId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/))
 const Decimal = Schema.String.check(Schema.isPattern(/^-?(?:0|[1-9]\d{0,9})(?:\.\d{1,18})?$/))
-const Account = Schema.Struct({
+export const Account = Schema.Struct({
   id: AccountId,
   status: Schema.Literal('ACTIVE'),
   currency: Schema.Literal('USD'),
@@ -41,7 +41,7 @@ const Account = Schema.Struct({
   trading_blocked: Schema.Boolean,
   trade_suspended_by_user: Schema.Boolean,
 })
-const Positions = Schema.Array(
+export const Positions = Schema.Array(
   Schema.Struct({
     symbol: SymbolSchema,
     side: Schema.Literals(['long', 'short']),
@@ -56,7 +56,7 @@ const OrderIdentity = Schema.Struct({
   client_order_id: StrictNonEmptyStringSchema,
   status: StrictNonEmptyStringSchema,
 })
-const Orders = Schema.Array(OrderIdentity)
+export const Orders = Schema.Array(OrderIdentity)
 export enum Side {
   Buy = 'buy',
   Sell = 'sell',
@@ -80,7 +80,7 @@ export type OrderRequest = {
   readonly extended_hours: false
   readonly client_order_id: string
 }
-const Bar = Schema.Struct({
+export const Bar = Schema.Struct({
   t: UtcSourceTimestampSchema,
   o: PositiveFiniteSchema,
   h: PositiveFiniteSchema,

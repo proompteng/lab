@@ -15,6 +15,7 @@ import { BarAdjustment, Side, type Bar, type OrderRequest, type Position } from 
 import { Mode, TimeInForce } from './macro-canary-runner/contract'
 import { coexistenceWeights } from './macro-etf-core-runner/allocation'
 import { parseOptions, RunnerProfile } from './macro-etf-core-runner/contract'
+import { buildScorecard } from './multi-horizon-scorecard-core'
 import { runRebalance } from './run-macro-etf-core-rebalance'
 
 const accountId = '11111111-1234-4234-8123-000000000001'
@@ -487,6 +488,10 @@ test('shadow is GET-only, reserves both foreign longs and shorts, and produces s
     expect((await stat(output)).mode & 0o777).toBe(0o600)
     const receiptBytes = await readFile(output, 'utf8')
     expect(JSON.parse(receiptBytes)).toEqual(a)
+    const scored = Result.getOrThrow(
+      buildScorecard({ intraday: [], macroCore: [JSON.parse(receiptBytes)], macroCanary: [] }),
+    )
+    expect(scored.sessions[0]?.macroCore?.planSha256).toBe(a.planSha256)
     expect(receiptBytes).not.toContain(testKey)
     expect(receiptBytes).not.toContain(testSecret)
     failure(await broker.run(output), 'EEXIST')

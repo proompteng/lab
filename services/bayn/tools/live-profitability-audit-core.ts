@@ -679,6 +679,8 @@ const auditSession = (session: Session) => {
     cohort: 'B0 (QQQ+SMH 1.4x)',
     unmatchedFilledEntries: unmatchedB0Entries,
     ...presentBps(stats),
+    // Daily summaries cannot recover a pooled median or preserve the unrounded gate boundary.
+    roundTripBps: roundTrips,
     unmeasuredRoundTrips: b0.length - stats.samples,
     promotionBps,
     promotion: compareBudget(promotionBps),
