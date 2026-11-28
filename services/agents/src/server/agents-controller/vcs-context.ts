@@ -6,7 +6,8 @@ import { resolveAgentsControllerAuthSecretConfig, resolveAgentsControllerBehavio
 import { parseEnvStringList, parseJsonEnv, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
 import { matchesAnyPattern } from './policy'
-import { appendBranchSuffix, hasBranchConflict, resolveParam, setMetadataIfMissing } from './run-utils'
+import { appendBranchSuffix, resolveParam, setMetadataIfMissing } from './run-utils'
+import type { AgentRunIndex } from './queue-state'
 import { renderTemplate } from './template-hash'
 import { normalizeVcsMode, resolveVcsAuthMethod, type VcsMode, validateVcsAuthConfig } from './vcs-auth'
 
@@ -205,7 +206,7 @@ export const resolveVcsContext = async ({
   implementation,
   parameters,
   allowedSecrets,
-  existingRuns,
+  runs,
 }: {
   kube: KubeClient
   namespace: string
@@ -214,7 +215,7 @@ export const resolveVcsContext = async ({
   implementation: Record<string, unknown>
   parameters: Record<string, string>
   allowedSecrets: string[]
-  existingRuns?: Record<string, unknown>[]
+  runs?: AgentRunIndex
 }): Promise<VcsResolution> => {
   if (!isVcsProvidersEnabled()) {
     return {
@@ -424,8 +425,7 @@ export const resolveVcsContext = async ({
     headBranch = defaultHeadBranchForRun(runName)
   }
   if (headBranch && conflictSuffixTemplate) {
-    const conflictRuns = existingRuns ?? []
-    if (hasBranchConflict(conflictRuns, runName, repository, headBranch)) {
+    if (runs?.hasBranchConflict(namespace, runName, repository, headBranch)) {
       const conflictSuffix = renderTemplate(conflictSuffixTemplate, {
         ...templateContext,
         branch: headBranch,

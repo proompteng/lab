@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: google-triage-runner
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentrun-triage
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/status
+      - events
+      - services
+      - endpoints
+      - nodes
+      - namespaces
+      - persistentvolumeclaims
+      - persistentvolumes
+      - limitranges
+      - resourcequotas
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [applications, applicationsets]
+    verbs: [get, list, watch]
+  - apiGroups: [kargo.akuity.io]
+    resources: [warehouses, stages, freights, promotions]
+    verbs: [get, list, watch]
+  - apiGroups: [agents.proompteng.ai]
+    resources: [agentruns, agents, agentproviders, implementationspecs, implementationsources, memories, versioncontrolproviders]
+    verbs: [get, list, watch]
+  - apiGroups: [restate.dev]
+    resources: [restatedeployments]
+    verbs: [get, list, watch]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, backups, scheduledbackups]
+    verbs: [get, list, watch]
+  - apiGroups: [ceph.rook.io]
+    resources: [cephclusters, cephblockpools, cephfilesystems, cephobjectstores]
+    verbs: [get, list, watch]
+  - apiGroups: [clickhouse.altinity.com]
+    resources: [clickhouseinstallations]
+    verbs: [get, list, watch]
+  - apiGroups: [flink.apache.org]
+    resources: [flinkdeployments]
+    verbs: [get, list, watch]
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets]
+    verbs: [get, list, watch]
+  - apiGroups: [bitnami.com]
+    resources: [sealedsecrets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentrun-triage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentrun-triage
+subjects:
+  - kind: ServiceAccount
+    name: codex-auto-ontology-runner
+    namespace: agents
+  - kind: ServiceAccount
+    name: google-triage-runner
+    namespace: agents

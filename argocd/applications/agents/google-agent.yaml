@@ -12,6 +12,7 @@ spec:
   vcsRef:
     name: github
   security:
+    allowedServiceAccounts: [google-triage-runner]
     allowedSecrets:
       - github-token
       - google-adc-auth

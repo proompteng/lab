@@ -15,7 +15,10 @@ const trafficNeutralSafetyNamespaces = [
   'torghut',
 ]
 const agentsSafetySelector = {
-  matchExpressions: [{ key: 'app.kubernetes.io/name', operator: 'NotIn', values: ['auto-ontology-sync'] }],
+  matchExpressions: [
+    { key: 'app.kubernetes.io/name', operator: 'NotIn', values: ['auto-ontology-sync', 'agents-observability-query'] },
+    { key: 'agents.proompteng.ai/provider', operator: 'NotIn', values: ['codex', 'google'] },
+  ],
 }
 const retiredSafetyNamespace = 'bayn'
 const safetyNamespaces = [...trafficNeutralSafetyNamespaces, retiredSafetyNamespace]

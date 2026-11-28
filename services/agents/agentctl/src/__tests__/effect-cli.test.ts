@@ -957,4 +957,217 @@ describe('AgentRun prompt and verification boundary', () => {
     expect(yaml.stdout).not.toContain('Recent Events')
     expect(await client.requests()).toHaveLength(count + 2)
   })
+
+  it('dispatches agentctl run google with google-agent defaults, secret deduplication, omitted serviceAccount, and --verify', async () => {
+    const googlePodSpec = {
+      nodeName: 'node-arm',
+      containers: [
+        {
+          name: 'agent-runner',
+          volumeMounts: [{ name: 'spec', mountPath: '/workspace/run.json', subPath: 'run.json' }],
+        },
+      ],
+      volumes: [{ name: 'spec', configMap: { name: 'verification-spec-step-1-attempt-1' } }],
+    }
+    const googleData = {
+      ...data,
+      'get agents.agents.proompteng.ai/google-agent': { spec: { providerRef: { name: 'google' } } },
+      'get agentproviders.agents.proompteng.ai/google': {
+        spec: { binary: '/usr/local/bin/agent-runner', adapter: { type: 'agy-cli' } },
+      },
+      [`get ${agentRuns}/verification`]: {
+        ...verificationRun,
+        spec: { ...verificationRun.spec, agentRef: { name: 'google-agent' } },
+      },
+      'get pods': {
+        items: [
+          {
+            ...data['get pods'].items[0],
+            spec: googlePodSpec,
+          },
+        ],
+      },
+    }
+    const client = await fixture('google-run', googleData)
+    const file = resolve(directory, 'google-task.md')
+    await writeFile(file, `${promptText}\n`)
+
+    const result = await client.run([
+      'run',
+      'google',
+      '--prompt-file',
+      file,
+      '--repo',
+      'proompteng/lab',
+      '--base',
+      'main',
+      '--head',
+      'codex/google-dispatch',
+      '--secret',
+      'agents-artifacts',
+      '--secret',
+      'google-adc-auth',
+      '--param',
+      'custom=value',
+      '--idempotency-key',
+      'google-key-1',
+      '--ttl',
+      '3600',
+      '--cpu',
+      '2',
+      '--memory',
+      '4Gi',
+      '--verify',
+      '-o',
+      'json',
+    ])
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.stderr).toContain(
+      'Verified AgentRun verification: verification-spec-step-1-attempt-1 run.json.prompt.',
+    )
+    const body = JSON.parse(result.stdout)
+    expect(body.spec).toEqual({
+      agentRef: { name: 'google-agent' },
+      implementation: { inline: { text: `${promptText}\n` } },
+      parameters: { custom: 'value', repository: 'proompteng/lab', base: 'main', head: 'codex/google-dispatch' },
+      runtime: { type: 'workflow' },
+      workflow: { steps: [{ name: 'implement' }] },
+      ttlSecondsAfterFinished: 3600,
+      idempotencyKey: 'google-key-1',
+      secrets: ['google-adc-auth', 'github-token', 'agents-artifacts'],
+      workload: { resources: { requests: { cpu: '2', memory: '4Gi' } } },
+    })
+    expect(body.spec.runtime.config).toBeUndefined()
+
+    const readOnly = await client.run([
+      'run',
+      'google',
+      '--inline-prompt',
+      promptText,
+      '--repo',
+      'proompteng/lab',
+      '--vcs-mode',
+      'read-only',
+      '-o',
+      'json',
+    ])
+    expect(readOnly.exitCode, readOnly.stderr).toBe(0)
+    expect(JSON.parse(readOnly.stdout).spec.secrets).toEqual(['google-adc-auth'])
+    expect(JSON.parse(readOnly.stdout).spec.vcsPolicy).toEqual({ mode: 'read-only' })
+  })
+
+  it('summarizes google-agent runs with agy-cli logs/status.json and filters run list by --agent', async () => {
+    const googleRun = {
+      ...fixtureRun('google-run', 'Succeeded', '2026-07-04T00:00:00Z'),
+      spec: {
+        agentRef: { name: 'google-agent' },
+        runtime: { type: 'workflow' },
+        parameters: { base: 'main', head: 'google/parity' },
+      },
+      status: {
+        phase: 'Succeeded',
+        startedAt: '2026-07-04T00:00:00Z',
+        finishedAt: '2026-07-04T00:00:08.500Z',
+        vcs: { baseBranch: 'main', headBranch: 'google/parity' },
+      },
+    }
+    const googleJob = fixtureJob('google-run', 'job', { conditions: [{ type: 'Complete', status: 'True' }] })
+    const agyStatus = {
+      provider: 'google',
+      adapter: 'agy-cli',
+      exitCode: 0,
+      status: 'succeeded',
+      startedAt: '2026-07-04T00:00:00Z',
+      finishedAt: '2026-07-04T00:00:08.500Z',
+      model: 'gemini-4-neon',
+      effort: 'high',
+      result: { text: 'Shipped PR https://github.com/proompteng/lab/pull/777.', truncated: false },
+      telemetry: {
+        version: 1,
+        state: 'finished',
+        model: 'gemini-4-neon',
+        effort: 'high',
+        usage: { inputTokens: 900, cachedInputTokens: 300, outputTokens: 110, reasoningOutputTokens: 20 },
+      },
+    }
+    const googlePod = {
+      metadata: {
+        name: 'google-run-pod',
+        uid: 'google-run-pod-uid',
+        labels: {
+          'batch.kubernetes.io/job-name': googleJob.metadata.name,
+          [runLabel]: 'google-run',
+          [runUid]: 'google-run-uid',
+        },
+      },
+      spec: {
+        nodeName: 'node-amd',
+        containers: [{ name: 'agent-runner' }],
+      },
+      status: {
+        phase: 'Succeeded',
+        containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: JSON.stringify(agyStatus) } } }],
+      },
+    }
+    const client = await fixture('dual-fleet', {
+      ...baseFixture,
+      [`get ${agentRuns}`]: { items: [stale, queued, running, googleRun] },
+      [`get ${agentRuns}/google-run`]: googleRun,
+      'get jobs.batch': { items: [done, active, googleJob] },
+      'get pods': { items: [livePod, googlePod] },
+      'logs pod/google-run-pod': [
+        JSON.stringify({
+          event: 'init',
+          conversation_id: 'conv-777',
+          init: { model: 'gemini-4-neon', effort: 'high' },
+        }),
+        JSON.stringify({
+          event: 'result',
+          result: {
+            conversation_id: 'conv-777',
+            status: 'SUCCESS',
+            response: 'Shipped PR https://github.com/proompteng/lab/pull/777.',
+            duration_seconds: 8.5,
+            usage: {
+              input_tokens: 900,
+              cache_read_tokens: 300,
+              output_tokens: 110,
+              thinking_tokens: 20,
+              total_tokens: 1010,
+            },
+          },
+        }),
+      ].join('\n'),
+    })
+
+    const listed = await client.run(['run', 'list', '--agent', 'google-agent', '-o', 'json'])
+    expect(listed.exitCode, listed.stderr).toBe(0)
+    expect(JSON.parse(listed.stdout)).toEqual({ items: [googleRun] })
+
+    const summaryJson = await client.run(['run', 'summary', 'google-run', '--json'])
+    expect(summaryJson.exitCode, summaryJson.stderr).toBe(0)
+    expect(JSON.parse(summaryJson.stdout)).toMatchObject({
+      name: 'google-run',
+      agent: 'google-agent',
+      phase: 'Succeeded',
+      node: 'node-amd',
+      durationMs: 8500,
+      model: 'gemini-4-neon',
+      effort: 'high',
+      usage: { input: 900, cached: 300, output: 110, reasoning: 20 },
+      base: 'main',
+      head: 'google/parity',
+      prUrls: ['https://github.com/proompteng/lab/pull/777'],
+      logStatus: 'available',
+      assistantMessage: 'Shipped PR https://github.com/proompteng/lab/pull/777.',
+      assistantMessageComplete: true,
+    })
+
+    const summaryText = await client.run(['run', 'summary', 'google-run'])
+    expect(summaryText.exitCode, summaryText.stderr).toBe(0)
+    expect(summaryText.stdout).toContain('Agent:    google-agent')
+    expect(summaryText.stdout).toContain('Model:    gemini-4-neon (effort: high)')
+    expect(summaryText.stdout).toContain('Duration: 8.5s')
+    expect(summaryText.stdout).toContain('PRs:      https://github.com/proompteng/lab/pull/777')
+  })
 })

@@ -124,6 +124,53 @@ prometheus.scrape "agents" {
 	forward_to   = [prometheus.relabel.agents_metrics.receiver]
 }
 
+prometheus.exporter.blackbox "agents_health" {
+	config = `
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      follow_redirects: false
+`
+
+	target {
+		name    = "agents-health/agents-auto-ontology-mcp-gateway"
+		address = "http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/healthz"
+		module  = "http_2xx"
+		labels  = {namespace = "agents", service = "agents-auto-ontology-mcp-gateway"}
+	}
+
+	target {
+		name    = "agents-health/agents-shell"
+		address = "http://agents-shell.agents.svc.cluster.local:80/healthz"
+		module  = "http_2xx"
+		labels  = {namespace = "agents", service = "agents-shell"}
+	}
+
+	target {
+		name    = "agents-health/auto-ontology-frontend"
+		address = "http://frontend.auto-ontology.svc.cluster.local:3000/api/health"
+		module  = "http_2xx"
+		labels  = {namespace = "auto-ontology", service = "frontend"}
+	}
+
+	target {
+		name    = "agents-health/auto-ontology-backend"
+		address = "http://auto-ontology.auto-ontology.svc.cluster.local:3001/api/health"
+		module  = "http_2xx"
+		labels  = {namespace = "auto-ontology", service = "auto-ontology"}
+	}
+}
+
+prometheus.scrape "agents_health" {
+	targets         = prometheus.exporter.blackbox.agents_health.targets
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
 prometheus.scrape "ci_observability" {
 	job_name = "ci-observability"
 	targets  = [{
@@ -763,14 +810,17 @@ discovery.relabel "torghut_market_data" {
 		source_labels = ["__meta_kubernetes_pod_label_app", "__meta_kubernetes_pod_container_port_name"]
 		regex         = "torghut-ws(-sip)?;metrics"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_namespace"]
 		target_label  = "namespace"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_pod_name"]
 		target_label  = "pod"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_pod_label_app"]
 		target_label  = "service"

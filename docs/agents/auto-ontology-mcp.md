@@ -70,14 +70,15 @@ gateway API key with them. Bayn execution policy and identities are unchanged.
 4. Add `spec.workload` and replace the empty `threadConfig.mcp_servers` in
    [the standard Codex AgentProvider](../../argocd/applications/agents/codex-agentprovider.yaml) as
    shown below. Merge these fields into the existing manifest; keep the existing model, `effort: max`,
-   and remaining settings. The AgentRun controller adds the token projection and disables default
-   API token automount. If a run overrides the workload service account, it must use the configured
-   account to access this MCP server.
+   and remaining settings. Keep the separate Kubernetes API token opt-in for [read-only triage](runbooks.md#agentrun-triage-access).
+   The AgentRun controller projects the MCP token with its own audience. The MCP server accepts only the configured
+   service account.
 
    ```yaml
    spec:
      workload:
        serviceAccountName: codex-auto-ontology-runner
+       automountServiceAccountToken: true
        serviceAccountToken:
          audience: agents.proompteng.ai/auto-ontology-mcp
          expirationSeconds: 600
@@ -103,8 +104,7 @@ the projected token with the expected audience but not the Auto Ontology token. 
 the tools, call `check_readiness` and `search_terms`, and use `check_answerable` then `ask_question`
 for one known fixture when the catalog is ready. Confirm the expected answer and no saved
 conversation. The HTTP gateway must reject anonymous requests and requests with a different token
-audience. Do not remove the namespace's existing traffic-neutral runner policy as part of this
-activation; a separate egress migration must first cover the other runner dependencies.
+audience. Preserve the MCP gateway egress rules when updating the separate AgentRun triage policy.
 
 To roll back, first revert the Codex provider changes so new runs do not start the bridge. Then
 disable the Helm gateway. Rotate a compromised API token at the issuer and recreate the SealedSecret;

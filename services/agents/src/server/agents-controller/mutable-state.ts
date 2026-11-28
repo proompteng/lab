@@ -1,6 +1,7 @@
 import type { createTemporalClient } from '@proompteng/temporal-bun-sdk'
 
 import { type AgentsControllerLifecycleActor, createAgentsControllerLifecycleActor } from './lifecycle-machine'
+import type { ControllerRateState } from './rate-limits'
 
 export type CrdCheckState = {
   ok: boolean
@@ -8,8 +9,6 @@ export type CrdCheckState = {
   forbidden: string[]
   checkedAt: string
 }
-
-export type RateBucket = { count: number; resetAt: number }
 
 export type AgentRunIngestionRuntimeState = {
   lastWatchEventAtMs: number | null
@@ -46,6 +45,11 @@ export type AgentsPrimitivesStoreRef = {
   pruneAgentRunIdempotencyKeys: (retentionDays: number) => Promise<unknown>
 }
 
+type NamespaceQueue = {
+  pending: Map<string | symbol, Promise<void>>
+  tail: Promise<void>
+}
+
 export type AgentsControllerMutableState<TControllerState> = {
   lifecycleActor: AgentsControllerLifecycleActor
   started: boolean
@@ -55,16 +59,12 @@ export type AgentsControllerMutableState<TControllerState> = {
   temporalClientPromise: ReturnType<typeof createTemporalClient> | null
   watchHandles: Array<{ stop: () => void }>
   controllerSnapshot: TControllerState | null
-  namespaceQueues: Map<string, Promise<void>>
+  namespaceQueues: Map<string, NamespaceQueue>
   githubAppTokenCache: Map<string, { token: string; expiresAt: number; refreshAfter: number }>
   primitivesStoreRef: AgentsPrimitivesStoreRef | null
   lastIdempotencyPruneAtMs: number
   crdCheckState: CrdCheckState | null
-  controllerRateState: {
-    cluster: RateBucket
-    perNamespace: Map<string, RateBucket>
-    perRepo: Map<string, RateBucket>
-  }
+  controllerRateState: ControllerRateState
   agentRunIngestionState: Map<string, AgentRunIngestionRuntimeState>
 }
 
@@ -80,15 +80,15 @@ export const createMutableState = <TControllerState>(input: {
   temporalClientPromise: null,
   watchHandles: [],
   controllerSnapshot: null,
-  namespaceQueues: new Map<string, Promise<void>>(),
+  namespaceQueues: new Map<string, NamespaceQueue>(),
   githubAppTokenCache: new Map<string, { token: string; expiresAt: number; refreshAfter: number }>(),
   primitivesStoreRef: null,
   lastIdempotencyPruneAtMs: 0,
   crdCheckState: input.crdCheckState,
   controllerRateState: {
     cluster: { count: 0, resetAt: 0 },
-    perNamespace: new Map<string, RateBucket>(),
-    perRepo: new Map<string, RateBucket>(),
+    perNamespace: new Map(),
+    perRepo: new Map(),
   },
   agentRunIngestionState: new Map<string, AgentRunIngestionRuntimeState>(),
 })

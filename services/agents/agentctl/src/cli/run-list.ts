@@ -26,6 +26,9 @@ export const selectorOption = Flag.optional(
 )
 
 export const runFilters = {
+  agent: Flag.optional(
+    Flag.String('agent').pipe(Flag.withDescription('Filter by Agent name (e.g. codex-agent, google-agent).')),
+  ),
   phase: Flag.optional(Flag.String('phase').pipe(Flag.withDescription('Filter by AgentRun CR phase.'))),
   runtime: Flag.optional(Flag.String('runtime').pipe(Flag.withDescription('Filter by AgentRun runtime type.'))),
   sortBy: Flag.optional(
@@ -48,8 +51,14 @@ export const runFilters = {
 
 type RunFilters = { [K in keyof typeof runFilters]: (typeof runFilters)[K] extends Flag.Flag<infer A> ? A : never }
 
-export const hasRunFilters = ({ phase, runtime, sortBy, active, stale, limit }: RunFilters) =>
-  active || stale || Option.isSome(phase) || Option.isSome(runtime) || Option.isSome(sortBy) || Option.isSome(limit)
+export const hasRunFilters = ({ agent, phase, runtime, sortBy, active, stale, limit }: RunFilters) =>
+  active ||
+  stale ||
+  Option.isSome(agent) ||
+  Option.isSome(phase) ||
+  Option.isSome(runtime) ||
+  Option.isSome(sortBy) ||
+  Option.isSome(limit)
 
 export const renderRunRows = (rows: RunObservation[], output: string) =>
   renderTable(rows, [
@@ -82,6 +91,7 @@ export const listRuns = (filters: RunFilters, selector?: string) =>
     } = yield* AgentctlContext
     const transport = yield* TransportService
     const { active, stale } = filters
+    const agent = Option.getOrUndefined(filters.agent)
     const phase = Option.getOrUndefined(filters.phase)
     const runtime = Option.getOrUndefined(filters.runtime)
     const sortBy = Option.getOrUndefined(filters.sortBy) ?? 'age'
@@ -119,6 +129,7 @@ export const listRuns = (filters: RunFilters, selector?: string) =>
         const rows = observeRuns(list.items, jobs, pods, namespace)
           .filter(
             (row) =>
+              (!agent || row.agent === agent) &&
               (!phase || row.phase === phase) &&
               (!runtime || row.run.spec?.runtime?.type === runtime) &&
               (!active || (transport.mode === 'kube' ? row.active : !isTerminalPhase(row.phase))) &&

@@ -29,6 +29,9 @@ resources:
   - google-agentprovider.yaml
   - google-agent.yaml
   - codex-agentprovider.yaml
+  - agentrun-triage-rbac.yaml
+  - agentrun-triage-networkpolicy.yaml
+  - observability-query.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
   - codex-orchestrations.yaml
@@ -59,6 +62,7 @@ resources:
   - auto-ontology-networkpolicy.yaml
   - auto-ontology-db-networkpolicy.yaml
   - auto-ontology-sync-cronjob.yaml
+  - health-probe-networkpolicy.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
@@ -145,6 +149,9 @@ helmCharts:
     includeCRDs: true
 
 configMapGenerator:
+  - name: agents-observability-query
+    files:
+      - nginx.conf=observability-query.nginx.conf
   - name: agents-workspace-cache-refresh
     files:
       - refresh.sh=workspace-cache-refresh.sh

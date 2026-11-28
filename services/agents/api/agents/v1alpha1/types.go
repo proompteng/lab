@@ -338,6 +338,9 @@ type AgentProviderWorkloadSpec struct {
 	Resources *WorkloadResources `json:"resources,omitempty"`
 	// ServiceAccountName is the provider-owned default service account for AgentRun Jobs.
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// AutomountServiceAccountToken controls the Kubernetes API token when the Job uses
+	// ServiceAccountName. Without an override, projecting a separate token disables automount.
+	AutomountServiceAccountToken *bool `json:"automountServiceAccountToken,omitempty"`
 	// ServiceAccountToken projects a short-lived, audience-bound token into runner Jobs.
 	ServiceAccountToken *AgentProviderServiceAccountTokenSpec `json:"serviceAccountToken,omitempty"`
 }

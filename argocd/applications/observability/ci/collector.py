@@ -32,7 +32,6 @@ NIX_CACHE_FIELDS = {
     "attic_download_failures": "Attic download failures",
     "nixos_download_failures": "cache.nixos.org download failures",
 }
-BUCKETS = (1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, 14400)
 RUN_FIELDS = (
     "id",
     "run_attempt",
@@ -77,6 +76,7 @@ LOKI_FLUSH_BUDGET_SECONDS = 15
 JOB_RETENTION_SECONDS = 90 * 86400
 CI_AUDIT_BUDGET_SECONDS = 5
 CI_AUDIT_ROW_LIMIT = 100
+COLLECTION_DELAY_METRIC = "ci_job_collection_delay_seconds"
 METRICS = {
     "ci_observability_phase_active": (
         "gauge",
@@ -94,9 +94,9 @@ METRICS = {
         "counter",
         "Finished phases by outcome since process start.",
     ),
-    "ci_job_collection_delay_seconds": (
-        "histogram",
-        "Delay from job completion to collection after initial installation.",
+    COLLECTION_DELAY_METRIC: (
+        "summary",
+        "Cumulative delay from job completion to collection after initial installation.",
     ),
     "ci_job_duration_samples": (
         "gauge",
@@ -528,26 +528,23 @@ class Store:
             "SELECT priority, record FROM pending_jobs ORDER BY priority, job_id LIMIT 1"
         ).fetchone()
 
-    def observe(self, record_key, key, metric, attrs, value):
+    def observe_collection_delay(self, record):
         inserted = self.db.execute(
-            "INSERT OR IGNORE INTO observations VALUES (?, ?)", (str(record_key), key)
+            "INSERT OR IGNORE INTO observations VALUES (?, 'collection_delay')",
+            (str(record["job_id"]),),
         ).rowcount
         if not inserted:
             return
-        encoded = json.dumps(attrs, sort_keys=True)
-        row = self.db.execute(
-            "SELECT * FROM aggregates WHERE metric=? AND labels=?", (metric, encoded)
-        ).fetchone()
-        counts = json.loads(row["buckets"]) if row else [0] * len(BUCKETS)
-        counts = [n + int(value <= bound) for n, bound in zip(counts, BUCKETS)]
+        # Preserve the retained schema and leave existing bucket data untouched.
         self.db.execute(
-            "INSERT OR REPLACE INTO aggregates VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO aggregates (metric, labels, count, total, buckets)
+               VALUES (?, ?, 1, ?, '[]')
+               ON CONFLICT (metric, labels) DO UPDATE SET
+                   count = aggregates.count + 1, total = aggregates.total + excluded.total""",
             (
-                metric,
-                encoded,
-                (row["count"] if row else 0) + 1,
-                (row["total"] if row else 0) + value,
-                json.dumps(counts),
+                COLLECTION_DELAY_METRIC,
+                json.dumps(labels(record), sort_keys=True),
+                record["collection_delay_seconds"],
             ),
         )
 
@@ -602,13 +599,7 @@ class Store:
             if not inserted:
                 return False
             if live:
-                self.observe(
-                    record["job_id"],
-                    "collection_delay",
-                    "ci_job_collection_delay_seconds",
-                    labels(record),
-                    record["collection_delay_seconds"],
-                )
+                self.observe_collection_delay(record)
             stream = {"service": "ci-observability", "kind": "job", **labels(record)}
             self.db.execute(
                 "INSERT INTO outbox(stamp, labels, line) VALUES (?, ?, ?)",
@@ -682,21 +673,17 @@ class Store:
             f"# HELP {name} {help_text}\n# TYPE {name} {kind}\n"
             for name, (kind, help_text) in METRICS.items()
         ]
-        for row in self.db.execute("SELECT * FROM aggregates ORDER BY metric, labels"):
-            if row["metric"] not in METRICS:
-                continue
+        for row in self.db.execute(
+            "SELECT labels, count, total FROM aggregates WHERE metric=? ORDER BY labels",
+            (COLLECTION_DELAY_METRIC,),
+        ):
             attrs = json.loads(row["labels"])
-            for bound, value in zip(BUCKETS, json.loads(row["buckets"])):
-                output.append(
-                    exposition(row["metric"] + "_bucket", value, attrs | {"le": bound})
-                )
             output.append(
-                exposition(
-                    row["metric"] + "_bucket", row["count"], attrs | {"le": "+Inf"}
-                )
+                exposition(COLLECTION_DELAY_METRIC + "_count", row["count"], attrs)
             )
-            output.append(exposition(row["metric"] + "_count", row["count"], attrs))
-            output.append(exposition(row["metric"] + "_sum", row["total"], attrs))
+            output.append(
+                exposition(COLLECTION_DELAY_METRIC + "_sum", row["total"], attrs)
+            )
         grouped = collections.defaultdict(list)
         counts = collections.Counter()
         cache_counts = collections.Counter()
@@ -753,10 +740,30 @@ class Store:
                     grouped[json.dumps(attrs, sort_keys=True)].append(value)
         for encoded, values in grouped.items():
             attrs = json.loads(encoded)
+            # Grafana's cache_state variable reads labels from all sample cohorts.
             output.append(exposition("ci_job_duration_samples", len(values), attrs))
-            output.append(exposition("ci_job_phase_total_seconds", sum(values), attrs))
+            phase_name = attrs["phase"]
+            recent = attrs["window"] == "1h"
+            success = attrs["outcome"] == "success"
+            whole_job = phase_name in {"execution", "queue"}
+            buildkit_timing = phase_name in {
+                "buildkit_cache_import",
+                "buildkit_cache_export",
+                "buildkit_image_export",
+            }
+            if recent and not whole_job and not phase_name.startswith("buildkit_"):
+                output.append(
+                    exposition("ci_job_phase_total_seconds", sum(values), attrs)
+                )
+            if recent and (buildkit_timing or (success and whole_job)):
+                quantiles = (0.5, 0.95)
+            elif success and phase_name == "execution":
+                # The comparison panel and duration alert use only the baseline median.
+                quantiles = (0.5,)
+            else:
+                continue
             values.sort()
-            for quantile in (0.5, 0.95):
+            for quantile in quantiles:
                 index = (len(values) - 1) * quantile
                 lower, upper = math.floor(index), math.ceil(index)
                 value = values[lower] + (values[upper] - values[lower]) * (
@@ -1751,7 +1758,20 @@ def main():
         os.environ["LOKI_PUSH_URL"],
     )
     collector.refresh()
+    server = http.server.ThreadingHTTPServer(
+        ("0.0.0.0", 9101), metrics_handler(collector)
+    )
 
+    def serve_metrics():
+        # Keep the collection alarm on the main thread, even during a scrape.
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+        server.serve_forever()
+
+    threading.Thread(target=serve_metrics, daemon=True).start()
+    collector.run()
+
+
+def metrics_handler(collector):
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/metrics":
@@ -1771,15 +1791,7 @@ def main():
         def log_message(self, *_args):
             return
 
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", 9101), Handler)
-
-    def serve_metrics():
-        # Keep the collection alarm on the main thread, even during a scrape.
-        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
-        server.serve_forever()
-
-    threading.Thread(target=serve_metrics, daemon=True).start()
-    collector.run()
+    return Handler
 
 
 if __name__ == "__main__":

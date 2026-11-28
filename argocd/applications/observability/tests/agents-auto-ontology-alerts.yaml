@@ -2,6 +2,70 @@ rule_files:
   - rules.yaml
 evaluation_interval: 1m
 tests:
+  - name: each Service health probe fires after five minutes and clears on recovery or missing telemetry
+    interval: 1m
+    input_series:
+      - series: probe_success{job="integrations/blackbox/agents-health/agents-auto-ontology-mcp-gateway",namespace="agents",service="agents-auto-ontology-mcp-gateway"}
+        values: '0x5 1x2'
+      - series: probe_success{job="integrations/blackbox/agents-health/agents-shell",namespace="agents",service="agents-shell"}
+        values: '0x5 stale'
+      - series: probe_success{job="integrations/blackbox/agents-health/auto-ontology-frontend",namespace="auto-ontology",service="frontend"}
+        values: '0x5 1x2'
+      - series: probe_success{job="integrations/blackbox/agents-health/auto-ontology-backend",namespace="auto-ontology",service="auto-ontology"}
+        values: '0x5 1x2'
+      - series: probe_success{job="integrations/blackbox/attic-cache",namespace="attic",service="attic"}
+        values: '0x8'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AgentsServiceHealthProbeFailed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AgentsServiceHealthProbeFailed
+        exp_alerts:
+          - exp_labels:
+              namespace: agents
+              service: agents-auto-ontology-mcp-gateway
+              severity: warning
+              team: platform
+              notify: email
+            exp_annotations:
+              summary: Health probe failed for agents/agents-auto-ontology-mcp-gateway
+              description: The in-cluster HTTP health probe has failed for five minutes. Check the Service's EndpointSlices, pod readiness and network policy.
+              runbook_url: argocd/applications/observability/README.md#agents-and-auto-ontology-http-probes
+          - exp_labels:
+              namespace: agents
+              service: agents-shell
+              severity: warning
+              team: platform
+              notify: email
+            exp_annotations:
+              summary: Health probe failed for agents/agents-shell
+              description: The in-cluster HTTP health probe has failed for five minutes. Check the Service's EndpointSlices, pod readiness and network policy.
+              runbook_url: argocd/applications/observability/README.md#agents-and-auto-ontology-http-probes
+          - exp_labels:
+              namespace: auto-ontology
+              service: auto-ontology
+              severity: warning
+              team: platform
+              notify: email
+            exp_annotations:
+              summary: Health probe failed for auto-ontology/auto-ontology
+              description: The in-cluster HTTP health probe has failed for five minutes. Check the Service's EndpointSlices, pod readiness and network policy.
+              runbook_url: argocd/applications/observability/README.md#agents-and-auto-ontology-http-probes
+          - exp_labels:
+              namespace: auto-ontology
+              service: frontend
+              severity: warning
+              team: platform
+              notify: email
+            exp_annotations:
+              summary: Health probe failed for auto-ontology/frontend
+              description: The in-cluster HTTP health probe has failed for five minutes. Check the Service's EndpointSlices, pod readiness and network policy.
+              runbook_url: argocd/applications/observability/README.md#agents-and-auto-ontology-http-probes
+      - eval_time: 6m
+        alertname: AgentsServiceHealthProbeFailed
+        exp_alerts: []
+
   - name: gateway has zero available replicas for five consecutive minutes
     interval: 1m
     input_series:

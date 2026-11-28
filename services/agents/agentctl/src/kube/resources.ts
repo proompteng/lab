@@ -76,7 +76,8 @@ export const pod = struct({
             state: opt(
               struct({
                 waiting: opt(Schema.Unknown),
-                terminated: opt(struct({ message: opt(string) })),
+                running: opt(struct({ startedAt: opt(string) })),
+                terminated: opt(struct({ message: opt(string), startedAt: opt(string), finishedAt: opt(string) })),
               }),
             ),
           }),

@@ -35,6 +35,7 @@ for (const {
   protocolHash,
   rejectionMessage,
   requiresFreshPositionSnapshot = false,
+  freshnessSeconds = 60,
 } of [
   {
     schemaVersion: 'bayn.jev.protocol.v38',
@@ -107,6 +108,7 @@ for (const {
     parameterHash: retainedV2.strategy.parameterHash,
     protocolHash: retainedV2.protocolHash,
     requiresFreshPositionSnapshot: true,
+    freshnessSeconds: 120,
     rejectionMessage:
       'intraday-alpha v2 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
@@ -210,7 +212,7 @@ for (const {
           { name: 'no broker position snapshot', seed: 'DELETE FROM position_snapshots' },
           {
             name: 'stale broker position snapshot',
-            seed: "UPDATE position_snapshots SET observed_at=clock_timestamp()-interval '61 seconds'",
+            seed: `UPDATE position_snapshots SET observed_at=clock_timestamp()-interval '${freshnessSeconds + 1} seconds'`,
           },
         ]
       : []),
@@ -254,7 +256,7 @@ for (const {
     { name: 'null reconciliation time', seed: 'UPDATE reconciliations SET reconciled_at=NULL' },
     {
       name: 'stale reconciliation',
-      seed: "UPDATE reconciliations SET reconciled_at=clock_timestamp()-interval '61 seconds'",
+      seed: `UPDATE reconciliations SET reconciled_at=clock_timestamp()-interval '${freshnessSeconds + 1} seconds'`,
     },
     {
       name: 'future reconciliation',

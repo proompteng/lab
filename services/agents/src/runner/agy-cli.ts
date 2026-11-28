@@ -20,6 +20,8 @@ import {
   type CommandRunner,
   type ReportStartupPhase,
 } from './codex-app-server'
+import { RUNNER_PROCESS_TERM_GRACE_MS } from './process-command'
+import { createRemoteFlushDeadline, waitWithSignal } from './shutdown'
 import {
   asNumber,
   asString,
@@ -37,7 +39,6 @@ export const DEFAULT_AGY_CREDENTIALS_ENV_VAR = 'GOOGLE_APPLICATION_CREDENTIALS_J
 
 const MAX_RESULT_RESPONSE_CHARS = 64_000
 const MAX_STDERR_CHARS = 8_192
-const SIGKILL_GRACE_MS = 5_000
 
 type AgentRunPayload = Record<string, unknown>
 
@@ -70,7 +71,7 @@ export type RunAgyCliAdapterOptions = {
   uploadArtifacts?: typeof uploadOutputArtifacts
   now?: () => Date
   abortSignal?: AbortSignal
-  publishTelemetry?: (snapshot: RunnerTelemetry) => Promise<void>
+  publishTelemetry?: (snapshot: RunnerTelemetry, signal?: AbortSignal) => Promise<void>
   env?: NodeJS.ProcessEnv
   sigkillGraceMs?: number
 }
@@ -284,6 +285,7 @@ export const runAgyCliAdapter = async (
   let logStream: ReturnType<typeof createWriteStream> | null = null
   let telemetry: ReturnType<typeof createRunnerTelemetry> | null = null
   let stagedCreds: StagedCredentials | null = null
+  const remoteFlush = createRemoteFlushDeadline(options.abortSignal)
 
   try {
     if (logPath) {
@@ -317,8 +319,10 @@ export const runAgyCliAdapter = async (
       effort: adapter.effort,
       now,
       podName: baseEnv.AGENT_RUN_POD_NAME,
-      publish: async (snapshot) => {
+      signal: options.abortSignal,
+      publish: async (snapshot, signal) => {
         const workspaceTmpfsUsedBytes = await readRunnerWorkspaceTmpfsBytes()
+        signal?.throwIfAborted()
         if (workspaceTmpfsUsedBytes !== undefined) {
           write(
             `${JSON.stringify({
@@ -328,11 +332,11 @@ export const runAgyCliAdapter = async (
             })}\n`,
           )
         }
-        await publishTelemetry?.(snapshot)
+        await publishTelemetry?.(snapshot, signal)
       },
       write,
     })
-    await telemetry.start()
+    void telemetry.start()
 
     if (options.abortSignal?.aborted) {
       exitCode = 130
@@ -347,13 +351,14 @@ export const runAgyCliAdapter = async (
     })
 
     const rawPrompt = resolvePrompt(adapter, runPayload)
-    const systemPrompt = await readRunnerSystemPrompt(adapter, spec, runPayload)
+    const systemPrompt = await readRunnerSystemPrompt(adapter, spec, runPayload, options.abortSignal)
     const effectivePrompt = composeAgyPrompt(rawPrompt, systemPrompt)
 
+    const runCommand = options.runCommand ?? runDefaultCommand
     await prepareRunnerWorkspace(
       { cwd: adapter.cwd },
       runPayload,
-      options.runCommand ?? runDefaultCommand,
+      (command, args, commandOptions) => runCommand(command, args, { ...commandOptions, signal: options.abortSignal }),
       options.sharedCachePath ?? SHARED_WORKSPACE_CACHE_MOUNT_PATH,
       reportStartupPhase,
     )
@@ -401,7 +406,7 @@ export const runAgyCliAdapter = async (
     let stdoutBuffer = ''
     let stderrBuffer = ''
     const startedSteps = new Set<string>()
-    const sigkillGraceMs = options.sigkillGraceMs ?? SIGKILL_GRACE_MS
+    const sigkillGraceMs = options.sigkillGraceMs ?? RUNNER_PROCESS_TERM_GRACE_MS
 
     const appendResponse = (chunk: string) => {
       if (!chunk) return
@@ -702,41 +707,47 @@ export const runAgyCliAdapter = async (
     telemetry?.observe({ method: 'error', params: { error: { message: errorMessage } } })
   } finally {
     await stagedCreds?.cleanup().catch(() => undefined)
-    const finalTelemetry = await telemetry?.finish()
-    await new Promise<void>((resolve) => {
-      if (!logStream) {
-        resolve()
-        return
+    const signal = remoteFlush.signal
+    const finishArtifacts = async () => {
+      const log = logStream
+      logStream = null
+      if (log) {
+        await waitWithSignal(new Promise<void>((resolve) => log.end(resolve)), signal)
       }
-      logStream.end(resolve)
-    })
 
-    const resultKey = outputArtifacts.find((artifact) => artifact.name === 'runner-result')?.key
-    if (resultKey && logPath) {
-      outputArtifacts = outputArtifacts.map((artifact) =>
-        artifact.name === 'runner-log' ? { ...artifact, key: `${resultKey}${RUNNER_LOG_SUFFIX}` } : artifact,
-      )
-    }
-
-    try {
-      const upload = options.uploadArtifacts ?? uploadOutputArtifacts
-      const logs = outputArtifacts.filter((artifact) => artifact.name === 'runner-log')
-      const retainedLogs = await upload(logs)
-      outputArtifacts = outputArtifacts.map(
-        (artifact) => retainedLogs.find((retained) => retained.name === artifact.name) ?? artifact,
-      )
-      if (exitCode === 0) {
-        const other = await upload(outputArtifacts.filter((artifact) => artifact.name !== 'runner-log'))
-        outputArtifacts = outputArtifacts.map(
-          (artifact) => other.find((retained) => retained.name === artifact.name) ?? artifact,
+      const resultKey = outputArtifacts.find((artifact) => artifact.name === 'runner-result')?.key
+      if (resultKey && logPath) {
+        outputArtifacts = outputArtifacts.map((artifact) =>
+          artifact.name === 'runner-log' ? { ...artifact, key: `${resultKey}${RUNNER_LOG_SUFFIX}` } : artifact,
         )
       }
-    } catch (uploadError) {
-      if (!caughtError) caughtError = uploadError
-      const detail = toErrorMessage(uploadError)
-      errorMessage = errorMessage ? `${errorMessage}; ${detail}` : detail
-      exitCode = 1
+
+      const upload = options.uploadArtifacts ?? uploadOutputArtifacts
+      const uploadMatching = async (isLog: boolean, uploadSignal: AbortSignal) => {
+        const artifacts = outputArtifacts.filter((artifact) => (artifact.name === 'runner-log') === isLog)
+        if (artifacts.length === 0) return
+        uploadSignal.throwIfAborted()
+        const uploaded = await waitWithSignal(upload(artifacts, { signal: uploadSignal }), uploadSignal)
+        outputArtifacts = outputArtifacts.map(
+          (artifact) => uploaded.find((retained) => retained.name === artifact.name) ?? artifact,
+        )
+      }
+      await uploadMatching(true, signal)
+      if (exitCode === 0 && !options.abortSignal?.aborted) {
+        await uploadMatching(false, options.abortSignal ?? signal)
+      }
     }
+    // Queue the terminal heartbeat in the log before closing it, then flush both in parallel.
+    const [finalTelemetry] = await Promise.all([
+      telemetry?.finish(signal),
+      finishArtifacts().catch((artifactError: unknown) => {
+        caughtError ??= artifactError
+        const detail = toErrorMessage(artifactError)
+        errorMessage = errorMessage ? `${errorMessage}; ${detail}` : detail
+        if (exitCode !== 130) exitCode = 1
+      }),
+    ]).finally(remoteFlush.dispose)
+    if (options.abortSignal?.aborted) exitCode = 130
 
     const runnerStatus: AgyCliRunnerStatus = {
       provider: spec.provider,
