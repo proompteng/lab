@@ -2,7 +2,7 @@ import { Cause, Clock, Effect, Exit, Fiber, Ref, Result } from 'effect'
 
 import { OrderCollection, SortDirection, type BrokerReadShape } from '../broker/alpaca/model'
 import { verifyBrokerAccountPermissions, type BrokerAccountPreflightFailure } from '../broker/alpaca/preflight'
-import { BrokerReadError } from '../broker/alpaca/failures'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import type { ObservedBrokerState } from '../broker/alpaca/observed-snapshot'
 import type { RuntimeConfig } from '../config/model'
 import { operationalError } from '../errors'
@@ -36,7 +36,11 @@ const observe = <A, E, R>(
     if (Cause.hasInterrupts(exit.cause)) return Effect.interrupt
     const failure = Cause.findError(exit.cause)
     const observationFailure =
-      Result.isSuccess(failure) && !Cause.hasDies(exit.cause) && failure.success instanceof BrokerReadError
+      exit.cause.reasons.length === 1 &&
+      Result.isSuccess(failure) &&
+      failure.success instanceof BrokerReadError &&
+      (failure.success.observationFailure !== 'CASH_FEES_PENDING' ||
+        failure.success.kind === BrokerReadErrorKind.ObservationPending)
         ? failure.success.observationFailure
         : undefined
     return Effect.succeed({

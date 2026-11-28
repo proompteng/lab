@@ -3948,6 +3948,16 @@ data:
                     condition="failed"
                   } == 0
                 )
+                unless on(job, namespace, service, instance)
+                (
+                  (bayn_cycle_reason{job="bayn",namespace="bayn",service="bayn",reason="cash_fees_pending"} == 1)
+                  and on(job, namespace, service, instance)
+                  (
+                    (time() - bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} < 90)
+                    and
+                    (time() - bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} >= -5)
+                  )
+                )
               )
             for: 1m
             keep_firing_for: 5m

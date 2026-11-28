@@ -2,10 +2,24 @@ import { ValkeyCache } from '../../valkey-cache'
 import { observedBrokerState } from './observed-snapshot'
 import { describe, expect, test } from 'bun:test'
 import type { PgClient } from '@effect/sql-pg'
-import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit, Redacted } from 'effect'
+import {
+  Cause,
+  Option,
+  Clock,
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Fiber,
+  Logger,
+  Ref,
+  Result,
+  Exit,
+  Redacted,
+} from 'effect'
 import {
   BrokerObservations,
   decodeObservedBrokerSnapshot,
+  requireSettledCashFees,
   validateObservedBrokerSnapshot,
   type ObservedBrokerSnapshot,
 } from './observed-snapshot'
@@ -189,8 +203,10 @@ describe('durable broker observations', () => {
   test('status identifies pending cash fees and clears the reason only after the canonical cut settles', async () => {
     const source = fixture()
     let snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 2 }
-    let failure: BrokerReadError | undefined
-    const observed = Effect.suspend(() => (failure === undefined ? Effect.succeed(snapshot) : Effect.fail(failure)))
+    let failure: Cause.Cause<BrokerReadError> | undefined
+    const observed = Effect.suspend(() =>
+      failure === undefined ? Effect.succeed(snapshot) : Effect.failCause(failure),
+    )
     await run(
       Effect.gen(function* () {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
@@ -222,12 +238,21 @@ describe('durable broker observations', () => {
           operational: { ready: true },
           broker: { readAvailable: true, reasonCode: null, error: null },
         })
-        failure = new BrokerReadError({
-          operation: 'preflight',
-          kind: BrokerReadErrorKind.Timeout,
-          retryable: true,
-          message: 'Broker observation is awaiting authoritative cash fee records',
+        const timeout = Cause.fail(
+          new BrokerReadError({
+            operation: 'preflight',
+            kind: BrokerReadErrorKind.Timeout,
+            retryable: true,
+            message: 'Broker observation is awaiting authoritative cash fee records',
+          }),
+        )
+        failure = timeout
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
         })
+        const feeWait = yield* Effect.flip(requireSettledCashFees({ pendingCashFeeCount: 1 }))
+        failure = Cause.combine(Cause.fail(feeWait), timeout)
         expect(yield* facts()).toMatchObject({
           operational: { ready: false },
           broker: { readAvailable: false, reasonCode: 'BROKER_READ_UNAVAILABLE' },
