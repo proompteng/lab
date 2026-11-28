@@ -19,6 +19,8 @@ const Calendar = Session.fields.calendar
 const Entry = Session.fields.entries.value
 const Id = StrictNonEmptyStringSchema
 const nullableId = Schema.NullOr(Id)
+// Runtime decision verification owns both versions; only use a verified intraday alpha target.
+const auditableTargetVersions = new Set<string>(['bayn.intraday-alpha-target.v2', 'bayn.intraday-alpha-target.v3'])
 const read = <S extends Schema.Constraint>(schema: S) =>
   Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(schema), strictParseOptions))
 
@@ -81,7 +83,9 @@ const projectDecisions = (rows: readonly (typeof DecisionRow.Type)[], account: s
       continue
     }
     if (
-      target?.schemaVersion !== 'bayn.intraday-alpha-target.v2' ||
+      target === undefined ||
+      !('phase' in target) ||
+      !auditableTargetVersions.has(target.schemaVersion) ||
       target.sessionDate !== date ||
       !document.dispatchable ||
       target.phase === IntradayAlphaPhase.OutsideWindow

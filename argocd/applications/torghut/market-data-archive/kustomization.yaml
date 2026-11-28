@@ -7,3 +7,4 @@ resources:
   - metrics-service.yaml
   - taskmanager-metrics-service.yaml
   - pdb.yaml
+  - sip-shadow-configmap.yaml

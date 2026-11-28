@@ -34,10 +34,7 @@ Required task classes:
 - Infra/docs plus code: touch `argocd/applications/agents` and docs while preserving manifest rendering and PR-template
   compliance.
 
-The ready-to-apply batch template is `docs/agents/anypi-prompt-eval-agentruns.yaml`. Apply it as one file so the five runs
-start concurrently. The template must pin the current multi-arch Anypi image, but it should not force a single
-architecture while cluster capacity is changing. Default controller scheduling now allows any compatible ready node,
-including control-plane-tainted nodes when the workload tolerates them.
+The June 2026 batch ran five evaluations concurrently. The dedicated evaluation agent and batch manifest have since been retired.
 
 ## Scoring
 
@@ -151,12 +148,3 @@ the Agents GitOps app reconciles and a final default-provider Torghut AgentRun r
 Guardrail added after `20260616g`: validation-repair progress snapshots now include a hash of actual unstaged, staged,
 and untracked content. A repair that reformats the same dirty path no longer fails just because the path-level status
 line is unchanged.
-
-## Commands
-
-```bash
-kubectl -n agents get agentprovider anypi-eval
-kubectl -n agents get agent anypi-eval-agent
-kubectl -n agents get agentrun -l app.kubernetes.io/part-of=anypi-prompt-eval
-kubectl apply -f docs/agents/anypi-prompt-eval-agentruns.yaml
-```

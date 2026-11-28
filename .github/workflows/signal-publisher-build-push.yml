@@ -121,6 +121,7 @@ jobs:
     with:
       image_name: signal-publisher
       package_attr: signal-publisher-image
+      tmpfs: true
       tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
       publish_kargo_tag: true
       pr_number: ''
