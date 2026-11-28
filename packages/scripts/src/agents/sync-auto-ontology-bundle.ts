@@ -110,7 +110,7 @@ const uniqueId = (matches: { id: string }[], error: string) => {
 }
 
 const applyBundle = async (
-  { bundle, database, referenced }: Awaited<ReturnType<typeof prepareBundle>>,
+  { bundle, database, ruleTag, referenced }: Awaited<ReturnType<typeof prepareBundle>>,
   request: Request,
 ) => {
   const list = async <T>(resource: string, row: z.ZodType<T>, path = resource) =>
@@ -126,7 +126,7 @@ const applyBundle = async (
   const rules = bundle.rules.length ? await list('rules', RuleRow) : []
   const ruleTagId = bundle.rules.length
     ? uniqueId(
-        (await list('tags', NamedRow)).filter(({ name }) => name === `${bundle.dataSource} canonical rule`),
+        (await list('tags', NamedRow)).filter(({ name }) => name === ruleTag),
         'Expected one preconfigured canonical rule tag',
       )
     : undefined

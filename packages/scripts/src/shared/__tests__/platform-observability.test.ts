@@ -5,10 +5,61 @@ import { resolve } from 'node:path'
 import YAML, { isMap, isSeq } from 'yaml'
 
 const root = resolve(import.meta.dir, '../../../../..')
+const readValues = (name: string) =>
+  YAML.parse(readFileSync(resolve(root, `argocd/applications/observability/${name}-values.yaml`), 'utf8'))
+
+test('Loki bounds push decoding and reserves a 2 MiB envelope for intact log records', () => {
+  const values = readValues('loki-v3')
+  expect(values.loki.distributor).toMatchObject({
+    max_recv_msg_size: 8 * 1024 ** 2,
+    max_decompressed_size: 16 * 1024 ** 2,
+  })
+  expect(values.loki.limits_config).toMatchObject({
+    max_line_size: 2 * 1024 ** 2,
+    max_line_size_truncate: false,
+    allow_structured_metadata: false,
+  })
+  for (const component of ['distributor', 'querier', 'queryFrontend']) {
+    expect(values[component]).toMatchObject({ replicas: 2, podDisruptionBudget: { maxUnavailable: 1 } })
+  }
+})
+
+test('Mimir reserves ingester memory without imposing a hard cgroup cap or raising tenant limits', () => {
+  const values = readValues('mimir')
+  expect(values.ingester).toMatchObject({
+    replicas: 3,
+    resources: { requests: { cpu: '500m', memory: '2Gi' } },
+    persistentVolume: { enabled: true, size: '20Gi', storageClass: 'rook-ceph-block' },
+  })
+  expect(values.ingester.resources.limits).toBeUndefined()
+  expect(values.runtimeConfig.overrides.anonymous).toMatchObject({
+    ingestion_rate: 20000,
+    ingestion_burst_size: 400000,
+    max_global_series_per_user: 300000,
+  })
+})
+
+test.each([
+  ['blockBuilder', '8Gi'],
+  ['liveStore', '4Gi'],
+] as const)(
+  'Tempo gives %s memory headroom and reserves disk for local Kafka-derived working data',
+  (component, disk) => {
+    const values = readValues('tempo-v3')
+    expect(values[component]).toMatchObject({
+      replicas: 3,
+      resources: {
+        requests: { cpu: '200m', memory: '1Gi', 'ephemeral-storage': disk },
+        limits: { cpu: 1, memory: '2Gi' },
+      },
+    })
+  },
+)
 
 test.each([
   ['agents-fleet-alerts.yaml', ['agents-fleet.rules']],
   ['bayn-backup-alerts.yaml', ['bayn-database-backup.rules']],
+  ['flannel-cbr0-ipam-alerts.yaml', ['flannel-cbr0-ipam.rules']],
   ['platform-alerts.yaml', ['ofz-relay-platform.rules', 'tengri-production.rules']],
   ['restate-alerts.yaml', ['restate-control-plane.rules']],
   ['torghut-registry-alerts.yaml', ['torghut-ws.rules', 'registry.rules']],
