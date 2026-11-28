@@ -44,6 +44,17 @@
       },
       "additionalProperties": false
     },
+    "telemetry": {
+      "type": "object",
+      "properties": {
+        "otlpEndpoint": {
+          "type": "string",
+          "pattern": "^(|https?://[^\\s]+)$",
+          "description": "Optional OTLP/HTTP protobuf base URL. Leave empty to disable AgentRun lifecycle trace export."
+        }
+      },
+      "additionalProperties": false
+    },
     "cors": {
       "type": "object",
       "properties": {

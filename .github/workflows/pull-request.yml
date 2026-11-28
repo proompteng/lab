@@ -22,6 +22,7 @@ jobs:
       delegated: ${{ steps.impact.outputs.delegated }}
       changed_files: ${{ steps.impact.outputs.changed_files }}
       changed_manifests: ${{ steps.active_files.outputs.changed_manifests || '[]' }}
+      pr_affected: ${{ steps.pr_inputs.outputs.affected }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -30,6 +31,7 @@ jobs:
           filter: blob:none
 
       - name: Set up Bun
+        if: github.event_name == 'merge_group'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -48,6 +50,128 @@ jobs:
           git diff --merge-base --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_manifests}"
           printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
           printf 'changed_manifests=%s\n' "${changed_manifests}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve PR service inputs
+        id: pr_inputs
+        if: github.event_name == 'pull_request'
+        uses: ./.github/actions/affected-inputs
+        with:
+          workspaces: |
+            jangar: ['services/jangar', 'packages/cx-tools']
+            bumba: ['', 'services/bumba', 'packages/temporal-bun-sdk']
+            froussard: ['', 'apps/froussard']
+            oirat: ['', 'services/oirat']
+            signal-publisher: ['', 'services/signal-publisher', 'packages/scripts']
+            ofz: ['', 'apps/landing', 'packages/backend', 'packages/design']
+          filters: |
+            jangar:
+              - 'services/jangar/**'
+              - 'services/bumba/src/**'
+              - 'services/bumba/tsconfig.json'
+              - 'packages/agent-contracts/**'
+              - 'packages/codex/src/**'
+              - 'packages/codex/scripts/**'
+              - 'packages/codex/tsconfig.json'
+              - 'packages/cx-tools/src/**'
+              - 'packages/cx-tools/tsconfig.json'
+              - 'packages/design/**'
+              - 'packages/discord/**'
+              - 'packages/otel/src/**'
+              - 'packages/otel/tsconfig.json'
+              - 'packages/temporal-bun-sdk/src/**'
+              - 'packages/temporal-bun-sdk/tsconfig.json'
+              - '!packages/**/*.test.*'
+              - '!packages/**/*.spec.*'
+              - '!packages/**/__tests__/**'
+              - '!packages/**/__snapshots__/**'
+              - 'packages/scripts/src/jangar/**'
+              - 'argocd/applications/jangar/**'
+              - 'argocd/bootstrap/jangar/**'
+              - 'nix/images/jangar.nix'
+              - 'patches/effect@4.1.4.patch'
+              - 'tsconfig.base.json'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - '.github/workflows/jangar-ci.yml'
+              - '.github/workflows/common-monorepo.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+            bumba:
+              - 'services/bumba/**'
+              - 'packages/temporal-bun-sdk/**'
+              - 'nix/images/bumba.nix'
+              - '.github/workflows/bumba-ci.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - 'patches/**'
+              - 'argocd/applications/bumba/**'
+            froussard:
+              - 'apps/froussard/**'
+              - 'packages/agent-contracts/**'
+              - 'nix/images/froussard.nix'
+              - '.github/workflows/froussard-ci.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - 'patches/**'
+              - 'argocd/applications/froussard/**'
+            oirat:
+              - 'services/oirat/**'
+              - 'packages/discord/**'
+              - 'nix/images/oirat.nix'
+              - '.github/workflows/oirat-ci.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - 'patches/**'
+              - 'argocd/applications/oirat/**'
+            signal-publisher:
+              - 'services/signal-publisher/**'
+              - 'packages/scripts/src/signal/**'
+              - 'argocd/applications/torghut/clickhouse/**'
+              - 'nix/images/signal-publisher.nix'
+              - 'flake.nix'
+              - '.github/workflows/signal-publisher-*.yml'
+            ofz:
+              - 'services/ofz/**'
+              - 'argocd/applications/ofz/**'
+              - 'proto/proompteng/authz/**'
+              - 'services/relay/**'
+              - 'packages/platform-client/**'
+              - 'proto/proompteng/relay/**'
+              - 'apps/landing/src/lib/platform/**'
+              - 'apps/landing/src/app/api/platform/**'
+              - 'services/tengri/**'
+              - 'services/nanoagent/**'
+              - 'apps/landing/src/app/api/tengri/**'
+              - 'apps/landing/src/app/api/auth/**'
+              - 'apps/landing/src/lib/tengri/**'
+              - 'apps/landing/src/components/tengri/**'
+              - 'apps/landing/src/components/platform/**'
+              - 'argocd/applications/keycloak/tengri/**'
+              - 'argocd/applications/proompteng/ingressroute.yaml'
+              - 'apps/landing/package.json'
+              - '.github/scripts/install-tengri-chromium.mjs'
+              - '.github/workflows/ofz.yaml'
+              - 'nix/images/ofz.nix'
+              - 'nix/images/ofz-fixture-tools.nix'
+              - 'nix/images/agentrun-tools.nix'
+              - 'nix/tengri-schema-hash.py'
+              - 'nix/packages.nix'
+              - 'flake.nix'
+              - 'flake.lock'
 
       - name: Resolve impact targets
         id: impact
@@ -77,12 +201,14 @@ jobs:
         env:
           TARGETS: ${{ steps.impact.outputs.targets }}
           DELEGATED: ${{ steps.impact.outputs.delegated }}
+          PR_AFFECTED: ${{ steps.pr_inputs.outputs.affected }}
         run: |
           {
             echo '### CI validation plan'
             echo
             echo "- Router validations: \`${TARGETS}\`"
             echo "- Delegated service workflows: \`${DELEGATED}\`"
+            echo "- PR service inputs: \`${PR_AFFECTED:-not evaluated}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   landing:
@@ -348,6 +474,9 @@ jobs:
                 nix flake check --no-build
               fi
               ;;
+            jangar-inventory)
+              bun run --cwd services/jangar docs:inventory:check
+              ;;
             argo-lint)
               nix run .#lint-argo-workflows
               ;;
@@ -369,6 +498,9 @@ jobs:
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${changed_manifests[@]}"
               else
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
+              fi
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/auto-ontology/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bun test argocd/applications/auto-ontology/oauth-discovery.test.ts
               fi
               if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
@@ -460,6 +592,42 @@ jobs:
     with:
       changed_files_json: ${{ needs.plan.outputs.changed_files }}
 
+  jangar:
+    name: Jangar CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').jangar == true
+    uses: ./.github/workflows/jangar-ci.yml
+
+  bumba:
+    name: Bumba CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').bumba == true
+    uses: ./.github/workflows/bumba-ci.yml
+
+  froussard:
+    name: Froussard CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').froussard == true
+    uses: ./.github/workflows/froussard-ci.yml
+
+  oirat:
+    name: Oirat CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').oirat == true
+    uses: ./.github/workflows/oirat-ci.yml
+
+  signal-publisher:
+    name: Signal publisher CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').signal-publisher == true
+    uses: ./.github/workflows/signal-publisher-ci.yml
+
+  ofz-pr:
+    name: Ofz PR authorization
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && fromJSON(needs.plan.outputs.pr_affected || '{}').ofz == true
+    uses: ./.github/workflows/ofz.yaml
+
   bayn:
     name: Bayn CI
     if: github.event_name == 'merge_group'
@@ -523,6 +691,12 @@ jobs:
       - landing
       - agents
       - agents-full
+      - jangar
+      - bumba
+      - froussard
+      - oirat
+      - signal-publisher
+      - ofz-pr
       - bayn
       - ofz
       - relay
@@ -590,3 +764,26 @@ jobs:
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
+
+      - name: Enforce selected PR service results
+        if: github.event_name == 'pull_request'
+        env:
+          AFFECTED: ${{ needs.plan.outputs.pr_affected }}
+          RESULTS: |-
+            jangar=${{ needs.jangar.result }}
+            bumba=${{ needs.bumba.result }}
+            froussard=${{ needs.froussard.result }}
+            oirat=${{ needs.oirat.result }}
+            signal-publisher=${{ needs.signal-publisher.result }}
+            ofz=${{ needs.ofz-pr.result }}
+        run: |
+          set -euo pipefail
+          while IFS='=' read -r target result; do
+            affected="$(jq -er --arg target "${target}" '.[$target] | if type == "boolean" then tostring else error("Missing PR impact decision: \($target)") end' <<< "${AFFECTED}")"
+            expected=skipped
+            if [[ "${affected}" == true ]]; then expected=success; fi
+            if [[ "${result}" != "${expected}" ]]; then
+              echo "PR service validation failed: ${target}=${result}, expected=${expected}" >&2
+              exit 1
+            fi
+          done <<< "${RESULTS}"

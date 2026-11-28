@@ -1,6 +1,6 @@
 import { resolveFeatureFlagsClientConfig } from './integrations-config'
 
-export type BooleanFlagRequest = {
+type BooleanFlagRequest = {
   key: string
   defaultValue: boolean
 }
@@ -39,7 +39,7 @@ const resolveFlagKey = (request: BooleanFeatureToggleRequest) => {
   return fromEnv || request.key
 }
 
-export const getBooleanFeatureFlag = async (request: BooleanFlagRequest): Promise<boolean> => {
+const getBooleanFeatureFlag = async (request: BooleanFlagRequest): Promise<boolean> => {
   const key = request.key.trim()
   if (!key) return request.defaultValue
 

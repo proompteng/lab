@@ -1,12 +1,14 @@
 import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
+
+import { AGENT_RUNNER_SCHEMA_VERSION } from './spec'
 
 const image = () => readFileSync(new URL('../../../../nix/images/agents.nix', import.meta.url), 'utf8')
 const tools = () => readFileSync(new URL('../../../../nix/images/agentrun-tools.nix', import.meta.url), 'utf8')
@@ -44,7 +46,7 @@ describe('Agents Codex runner image layout', () => {
     expect(tools()).toContain(`version = "${version}"`)
   })
 
-  it('bundles the runner without runtime-resolving Effect or source TS modules', async () => {
+  it('bundles a runnable CLI without runtime-resolving Effect or source TS modules', async () => {
     const outDir = await mkdtemp(join(tmpdir(), 'agents-runner-bundle-'))
     const outfile = join(outDir, 'agent-runner.js')
 
@@ -66,6 +68,24 @@ describe('Agents Codex runner image layout', () => {
       expect(bundle).not.toMatch(/require\(["']effect["']\)/)
       expect(bundle).not.toMatch(/import\(["']effect["']\)/)
       expect(bundle).not.toMatch(/from ["']\.\.\/\.\.\/src\/runner\/codex-app-server["']/)
+
+      const specPath = join(outDir, 'spec.json')
+      const options = { cwd: outDir, env: { PATH: process.env.PATH } }
+      await writeFile(
+        specPath,
+        JSON.stringify({
+          schemaVersion: AGENT_RUNNER_SCHEMA_VERSION,
+          provider: 'exec-smoke',
+          adapter: { type: 'exec', exec: { binary: process.execPath, argsTemplate: ['-e', 'process.exit(7)'] } },
+        }),
+      )
+      await expect(execFileAsync('bun', [outfile, specPath], options)).rejects.toMatchObject({ code: 7 })
+
+      await writeFile(specPath, '{')
+      await expect(execFileAsync('bun', [outfile, specPath], options)).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('Failed to parse agent-runner spec'),
+      })
     } finally {
       await rm(outDir, { recursive: true, force: true })
     }

@@ -132,6 +132,13 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: bayn-daily-scorecard
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
               cnpg.io/cluster: bayn-db
       ports:
         - port: 5432
@@ -194,6 +201,15 @@ spec:
   ingress:
     - from:
         - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [torghut-ws, torghut-ws-sip]
+      ports:
+        - port: 3130
+          protocol: TCP
+    - from:
+        - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn
         - podSelector:
@@ -205,6 +221,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-broker-feed
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-macro-daily-sleeves
       ports:
         - port: 3128
           protocol: TCP

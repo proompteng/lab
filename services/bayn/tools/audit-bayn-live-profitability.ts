@@ -4,6 +4,7 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Config, ConfigProvider, Console, Data, Effect, FileSystem, Option, Redacted, Result, Schema } from 'effect'
 
+import { BrokerEnvironment } from '../src/broker/identity'
 import { IsoDateSchema, StrictNonEmptyStringSchema, strictParseOptions } from '../src/schemas'
 import {
   analyzeProfitability,
@@ -12,7 +13,7 @@ import {
   renderAuditJson,
   renderAuditMarkdown,
 } from './live-profitability-audit-core'
-import { readLiveProfitability } from './live-profitability-audit-postgres'
+import { readProfitability } from './live-profitability-audit-postgres'
 
 const usage =
   'Usage: bun services/bayn/tools/audit-bayn-live-profitability.ts (--session YYYY-MM-DD | --from YYYY-MM-DD --to YYYY-MM-DD) [--format markdown|json] [--fixture path] [--market-evidence path]'
@@ -112,7 +113,7 @@ const loadDatabase = (dates: readonly string[]) =>
   Effect.gen(function* () {
     const account = yield* Config.schema(StrictNonEmptyStringSchema, 'BAYN_AUDIT_ACCOUNT_ID')
     const sql = yield* PgClient.PgClient
-    return yield* readLiveProfitability(sql, account, dates)
+    return yield* readProfitability(sql, account, dates, BrokerEnvironment.Live)
   }).pipe(
     // @effect-diagnostics-next-line strictEffectProvide:off -- the CLI owns the short-lived read-only pool
     Effect.provide(auditPostgres),

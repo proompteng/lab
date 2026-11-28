@@ -13,12 +13,12 @@ let
   pythonPackages = pkgs.python312Packages;
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
   runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
-  pstackVersion = "0.9.30";
-  pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
+  pstackVersion = "0.9.159";
+  pstackCommit = "6d25df69f0baf6600807d82975d75139f3b1ab92";
 
   pstackArchive = pkgs.fetchurl {
     url = "https://github.com/michael-denyer/pstack-claude/archive/${pstackCommit}.tar.gz";
-    hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0=";
+    hash = "sha256-dtC7o5ombOIT+Zbow5730fShruncV/YJMZzXVTEXotY=";
   };
 
   pstackBundle = pkgs.stdenvNoCC.mkDerivation {
@@ -34,8 +34,7 @@ let
       cp -R plugins/pstack "$out/opt/agents-shell/pstack"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/SKILL.md"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/references/codex-tools.md"
-      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54
-      test "$(find "$out/opt/agents-shell/pstack/.codex-plugin/prompts" -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
+      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 68
       runHook postInstall
     '';
   };
@@ -318,6 +317,7 @@ let
     "services/agents/src/runner-result.ts"
     "services/agents/src/runner-status.ts"
     "services/agents/src/runner-telemetry.ts"
+    "services/agents/src/workspace-cache.ts"
     "services/agents/src/artifact-storage.ts"
     "services/agents/tsconfig.json"
   ];

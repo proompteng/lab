@@ -55,6 +55,24 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
+  it.each(['scripts/agents/validate-agents.sh', 'scripts/download_crd_schema.py'])(
+    'runs chart and CRD checks without Kind for verifier-only changes to %s',
+    (path) => {
+      expect(classifyAgentsImageMode([path])).toMatchObject({
+        tier: 'static',
+        runUnit: false,
+        runStatic: true,
+        runIntegration: false,
+        imageTargets: [],
+      })
+      expect(classifyAgentsImageMode([path, 'scripts/agents/values-ci.yaml'])).toMatchObject({
+        tier: 'published-smoke',
+        runStatic: true,
+        runIntegration: true,
+      })
+    },
+  )
+
   it('builds only the runner image for runner implementation changes', () => {
     const result = classifyAgentsImageMode(['services/agents/scripts/codex/agent-runner.ts'])
 
@@ -140,14 +158,14 @@ describe('classifyAgentsImageMode', () => {
   it('merges mixed image impact in stable component order', () => {
     const result = classifyAgentsImageMode([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
 
     expect(result.imageTargets).toEqual(['control-plane', 'controller', 'runner'])
     expect(result.matchedPaths).toEqual([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
   })
 

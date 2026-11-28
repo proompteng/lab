@@ -8,6 +8,7 @@ import { TestClock } from 'effect/testing'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { EquityCutFeed, SipDelayClass, sipTopics } from '../market-data/sip/provenance'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { jevObservationForSnapshot } from './native.test-support'
 import { jevEntryPriceAllowances, jevMaximumEntryAskMicros } from './entry-economics'
@@ -72,7 +73,7 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     },
     query,
   )
-  return { fixture, decision, pricing: snapshot }
+  return { fixture, decision, pricing: snapshot, query }
 }
 
 const cryptoEntryFixture = () => {
@@ -210,6 +211,54 @@ describe('Jev entry execution quote eligibility', () => {
     const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
     expect(compiled.priceMicros['AAPL']).toBe('100020000')
     expect(compiled.maximumBuyQuantityAtoms['AAPL']).toBe(decision.exitPolicy.plans['AAPL']?.maximumQuantityAtoms)
+  })
+
+  test('an in-flight IEX decision cannot use a SIP pricing cut, even for the same universe', () => {
+    const { fixture, decision, pricing, query } = pricingFixture(100, 100.02)
+    const sipQuery = {
+      ...query,
+      feed: EquityCutFeed.Sip,
+      delayClass: SipDelayClass.RealTimeConsolidated,
+      sourceTopics: sipTopics,
+    }
+    const sipPricing = streamingFixtureFromRaw(
+      {
+        bars: [],
+        quotes: pricing.quotes.map((quote) => ({
+          ...quote,
+          feed: sipQuery.feed,
+          delayClass: sipQuery.delayClass,
+          sourceTopic: sipTopics.quotes,
+        })),
+        trades: [],
+      },
+      sipQuery,
+    ).snapshot
+    expect(sipPricing.latestQuotes['AAPL']?.feed).toBe(EquityCutFeed.Sip)
+    expect(Result.isSuccess(compileJevEntry(decision, fixture.snapshot, pricing))).toBe(true)
+    expect(compileJevEntry(decision, fixture.snapshot, sipPricing)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'JevContractError', message: 'Entry pricing must use the same market source as its signal' },
+    })
+  })
+
+  test.each([
+    ['2026-09-04T14:30:01.000000000Z', true],
+    ['2026-09-04T14:30:00.999999999Z', false],
+    ['2026-09-04T14:30:11.000000001Z', false],
+  ] as const)('bounds post-close execution quotes at the pricing cut (%s)', (eventAt, fresh) => {
+    const { fixture, decision, pricing, query } = pricingFixture(100, 100.02)
+    const repriced = streamingFixtureFromRaw(
+      { ...pricing, quotes: pricing.quotes.map((quote) => ({ ...quote, eventAt, ingestedAt: eventAt })) },
+      { ...query, observedAt: '2026-09-04T14:30:11.000Z', maximumQuoteAgeMs: 10_000 },
+    ).snapshot
+    const compiled = compileJevEntry(decision, fixture.snapshot, repriced)
+    if (fresh) expect(Result.getOrThrow(compiled).entryQuotes['AAPL']?.eventAt).toBe(eventAt)
+    else
+      expect(compiled).toMatchObject({
+        _tag: 'Failure',
+        failure: { readiness: DecisionReadinessReason.SnapshotStale },
+      })
   })
 
   test.each([

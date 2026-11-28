@@ -223,7 +223,7 @@ const delta = (fill: Fill) => sign(fill.side) * BigInt(fill.quantityAtoms)
 const working = (order: Order) =>
   [OrderStatus.New, OrderStatus.Pending, OrderStatus.PartiallyFilled].includes(order.status)
 
-const summarizeBps = (values: readonly number[]) => {
+export const summarizeBps = (values: readonly number[]) => {
   const sorted = values.toSorted((a, b) => a - b)
   const lower = sorted[Math.floor((sorted.length - 1) / 2)]
   const upper = sorted[Math.floor(sorted.length / 2)]

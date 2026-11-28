@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto'
 
+import { quantityToScalar } from '@kubernetes/client-node/dist/util.js'
+
 import { asRecord, asString, readNested } from '../primitives'
 import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
+import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../../workspace-cache'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
@@ -16,6 +19,7 @@ import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_CODEX_HOME = '/root/.codex'
+const GIB_BYTES = 1024 ** 3
 
 const normalizeRunnerJobTtlSeconds = (value: number, source: string) => {
   if (!Number.isFinite(value)) return null
@@ -142,6 +146,13 @@ const normalizeResourceQuantityMap = (value: unknown) => {
       })
       .filter((entry): entry is [string, string] => entry !== null),
   )
+}
+
+const resourceQuantityBytes = (quantity: string | undefined) => {
+  if (!quantity) return 0
+  // The client only accepts integer magnitudes with a suffix (e.g. 1Gi, not 1.5Gi).
+  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-zA-Z]+)$/.exec(quantity)
+  return match ? Number(match[1]) * Number(quantityToScalar(`1${match[2]}`)) : Number(quantityToScalar(quantity))
 }
 
 const buildJobResources = (
@@ -771,6 +782,11 @@ export const submitJobRun = async (
   const serviceAccountToken = resolveProviderServiceAccountToken(provider)
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
   const usesStandardRunner = workloadImage === runnerDefaultsConfig.defaultRunnerImage
+  const usesStandardLabRunner =
+    usesStandardRunner &&
+    agentRunnerSpec?.adapter?.type === 'codex-app-server' &&
+    vcsContext?.repository === LAB_REPOSITORY &&
+    isGitHubCloneBaseUrl(asString(vcsContext.cloneBaseUrl))
   const nodeSelector =
     asRecord(runtimeConfig.nodeSelector) ??
     runnerDefaultsConfig.nodeSelector ??
@@ -851,6 +867,21 @@ export const submitJobRun = async (
   )
   if (existingJobRef) return existingJobRef
 
+  const resources = buildJobResources(workload, provider, runtimeConfig)
+  const memoryLimit = resources.limits?.memory
+  const memoryLimitBytes = usesStandardRunner ? resourceQuantityBytes(memoryLimit) : 0
+  const tmpfs = (sizeGiB: number) => ({
+    medium: 'Memory',
+    sizeLimit:
+      memoryLimit && memoryLimitBytes > 0 && memoryLimitBytes < sizeGiB * GIB_BYTES ? memoryLimit : `${sizeGiB}Gi`,
+  })
+  // Only shift the large checkout and package data to disk when the Job has the
+  // production Lab disk budget. An absent cache or a different node does not change it.
+  const useDiskScratch =
+    usesStandardLabRunner &&
+    resourceQuantityBytes(resources.requests?.['ephemeral-storage']) >= 8 * GIB_BYTES &&
+    resourceQuantityBytes(resources.limits?.['ephemeral-storage']) >= 16 * GIB_BYTES
+
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
   const configVolumeMounts = [] as Record<string, unknown>[]
@@ -858,10 +889,10 @@ export const submitJobRun = async (
 
   if (usesStandardRunner) {
     const declaredMounts = [...volumeMounts, ...(vcsRuntime?.volumeMounts ?? [])]
-    for (const [suffix, mountPath] of [
-      ['scratch-workspace', '/workspace'],
-      ['scratch-tmp', '/tmp'],
-      ['scratch-bun-cache', '/opt/bun/install/cache'],
+    for (const [suffix, mountPath, sizeGiB] of [
+      ['scratch-workspace', '/workspace', 16],
+      ['scratch-tmp', '/tmp', 6],
+      ['scratch-bun-cache', '/opt/bun/install/cache', 8],
     ] as const) {
       const name = makeName(runName, suffix)
       if (
@@ -873,7 +904,8 @@ export const submitJobRun = async (
       ) {
         continue
       }
-      volumes.push({ name, spec: { emptyDir: { medium: 'Memory' } } })
+      const emptyDir = useDiskScratch && mountPath !== '/tmp' ? { sizeLimit: `${sizeGiB}Gi` } : tmpfs(sizeGiB)
+      volumes.push({ name, spec: { emptyDir } })
       volumeMounts.push({ name, mountPath })
     }
   }
@@ -945,7 +977,7 @@ export const submitJobRun = async (
     )
     volumes.push({
       name: codexHomeVolumeName,
-      spec: { emptyDir: usesStandardRunner ? { medium: 'Memory' } : {} },
+      spec: { emptyDir: usesStandardRunner ? tmpfs(1) : {} },
     })
     configVolumeMounts.push({
       name: codexHomeVolumeName,
@@ -1020,6 +1052,20 @@ export const submitJobRun = async (
     })
   }
 
+  const sharedCacheHostPath = runnerDefaultsConfig.sharedCacheHostPath
+  if (sharedCacheHostPath && usesStandardLabRunner) {
+    const name = makeName(runName, 'shared-workspace-cache')
+    if (
+      !volumes.some((volume) => volume.name === name) &&
+      !hasVolumeMountAtPath(volumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH) &&
+      !hasVolumeMountAtPath(configVolumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH)
+    ) {
+      // On nodes without the refresher, kubelet can mount an empty cache instead of blocking the Job.
+      volumes.push({ name, spec: { hostPath: { path: sharedCacheHostPath, type: 'DirectoryOrCreate' } } })
+      volumeMounts.push({ name, mountPath: SHARED_WORKSPACE_CACHE_MOUNT_PATH, readOnly: true })
+    }
+  }
+
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount,
     ...(serviceAccountToken ? { automountServiceAccountToken: false } : {}),
@@ -1054,7 +1100,7 @@ export const submitJobRun = async (
             : []),
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
-        resources: buildJobResources(workload, provider, runtimeConfig),
+        resources,
         volumeMounts: [...volumeMounts, ...configVolumeMounts],
         terminationMessagePath: '/workspace/.agent/status.json',
         terminationMessagePolicy: 'File',

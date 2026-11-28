@@ -1,27 +1,9 @@
-import { stat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
-
 import wsAdapter from 'crossws/adapters/bun'
 import { createApp, defineEventHandler, getRouterParams, toWebHandler } from 'h3'
 
-export type AgentsServerRouteHandler = (args: {
-  request: Request
-  params: Record<string, string>
-}) => Response | Promise<Response>
+import type { AgentsServerRouteHandler, AgentsServerRouteLoader } from './server-route'
 
-export type AgentsServerRouteModule = {
-  Route?: {
-    path?: string
-    options?: {
-      server?: {
-        handlers?: Partial<Record<string, AgentsServerRouteHandler>>
-      }
-    }
-  }
-}
-
-export type AgentsServerRouteDefinition = {
-  file: string
+type AgentsServerRouteDefinition = {
   routePath: string
   handlers: Partial<Record<string, AgentsServerRouteHandler>>
 }
@@ -35,19 +17,15 @@ export type AgentsHttpRuntime = {
   websocket: Bun.WebSocketHandler<unknown>
 }
 
-export type AgentsHttpRuntimeMetrics = {
+type AgentsHttpRuntimeMetrics = {
   enabled: () => boolean
   path: () => string
   render: () => Promise<{ ok: true; body: string } | { ok: false; message: string }>
 }
 
-export type AgentsHttpRuntimeOptions = {
-  routeModules: Record<string, () => Promise<unknown>>
-  routeSources?: Record<string, string>
+type AgentsHttpRuntimeOptions = {
+  routeModules: AgentsServerRouteLoader[]
   enableWebSocket?: boolean
-  serveClient?: boolean
-  clientOutputDirCandidates?: () => string[]
-  clientMissingMessage?: string
   metrics?: AgentsHttpRuntimeMetrics
 }
 
@@ -58,9 +36,7 @@ type WebSocketRequest = Request & {
   context?: Record<string, unknown> & { __agentsResolvedWebSocketHooks?: ResolvedWebSocketHooks }
 }
 
-const serverRoutePattern = /createFileRoute\(\s*(['"`])([^'"`]+)\1\s*\)/
 const serverMethods = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'] as const
-const defaultClientOutputDirCandidates = () => [resolve(process.cwd(), '.output/public')]
 const defaultCorsAllowedMethods = 'DELETE, GET, OPTIONS, PATCH, POST, PUT'
 const defaultCorsAllowedHeaders = 'accept, authorization, content-type, idempotency-key'
 const corsMaxAgeSeconds = '86400'
@@ -98,19 +74,6 @@ const getRegistrationPaths = (routePath: string) => {
   return Array.from(new Set([h3RoutePath, `${h3RoutePath}/`]))
 }
 
-const hasRegularFile = async (path: string) => {
-  try {
-    return (await stat(path)).isFile()
-  } catch {
-    return false
-  }
-}
-
-const isPathInsideDirectory = (rootDir: string, targetPath: string) => {
-  const relativePath = relative(rootDir, targetPath)
-  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
-}
-
 const getFirstPathSegment = (pathname: string) => pathname.split('/').find(Boolean) ?? null
 
 const getServerRouteRoots = (definitions: AgentsServerRouteDefinition[]) =>
@@ -119,11 +82,6 @@ const getServerRouteRoots = (definitions: AgentsServerRouteDefinition[]) =>
       .map(({ routePath }) => getFirstPathSegment(normalizeRoutePath(routePath)))
       .filter((segment): segment is string => segment !== null),
   )
-
-const shouldServeClientPath = (pathname: string, serverRouteRoots: ReadonlySet<string>) => {
-  const firstSegment = getFirstPathSegment(pathname)
-  return firstSegment === null || !serverRouteRoots.has(firstSegment)
-}
 
 const isCorsManagedPath = (pathname: string) => pathname === '/v1' || pathname.startsWith('/v1/')
 
@@ -183,88 +141,18 @@ const storeResolvedWebSocketHooks = (request: Request, hooks: ResolvedWebSocketH
   }
 }
 
-const resolveClientIndexPath = async (getClientOutputDirCandidates: () => string[]) => {
-  for (const clientDir of getClientOutputDirCandidates()) {
-    const indexPath = resolve(clientDir, 'index.html')
-    if (await hasRegularFile(indexPath)) return indexPath
-  }
-
-  return null
-}
-
-const resolveStaticFile = async (pathname: string, getClientOutputDirCandidates: () => string[]) => {
-  let decodedPath: string
-  try {
-    decodedPath = decodeURIComponent(pathname)
-  } catch {
-    return null
-  }
-
-  for (const clientDir of getClientOutputDirCandidates()) {
-    if (decodedPath === '/') {
-      const indexPath = resolve(clientDir, 'index.html')
-      if (await hasRegularFile(indexPath)) return indexPath
-      continue
-    }
-
-    const target = resolve(clientDir, `.${decodedPath}`)
-    if (!isPathInsideDirectory(clientDir, target)) continue
-    if (await hasRegularFile(target)) return target
-  }
-
-  return null
-}
-
-const serveClientResponse = async (
-  request: Request,
-  getClientOutputDirCandidates: () => string[],
-  clientMissingMessage: string,
-) => {
-  const { pathname } = new URL(request.url)
-  const staticFile = await resolveStaticFile(pathname, getClientOutputDirCandidates)
-  if (staticFile) {
-    const file = Bun.file(staticFile)
-    return new Response(file, {
-      headers: file.type ? { 'content-type': file.type } : undefined,
-    })
-  }
-
-  const indexPath = await resolveClientIndexPath(getClientOutputDirCandidates)
-  if (!indexPath) {
-    return new Response(clientMissingMessage, { status: 503 })
-  }
-
-  return new Response(Bun.file(indexPath), {
-    headers: { 'content-type': 'text/html; charset=utf-8' },
-  })
-}
-
-const loadServerRoutes = async (
-  routeModules: AgentsHttpRuntimeOptions['routeModules'],
-  routeSources: AgentsHttpRuntimeOptions['routeSources'] = {},
-): Promise<AgentsServerRouteDefinition[]> => {
+const loadServerRoutes = async (routeModules: AgentsServerRouteLoader[]): Promise<AgentsServerRouteDefinition[]> => {
   const definitions: AgentsServerRouteDefinition[] = []
 
-  for (const file of Object.keys(routeModules)) {
-    if (file.includes('.test.') || file.includes('.spec.')) continue
-
-    const load = routeModules[file]
-    if (!load) continue
-
-    const module = (await load()) as AgentsServerRouteModule
-    const source = routeSources[file]
-    const match = source ? serverRoutePattern.exec(source) : null
-    const routePath = module.Route?.path ?? match?.[2]
+  for (const load of routeModules) {
+    const { Route } = await load()
+    const routePath = Route.path
     if (!routePath) continue
 
-    const handlers = module.Route?.options?.server?.handlers
+    const handlers = Route.options.server?.handlers
     if (!handlers || Object.keys(handlers).length === 0) continue
 
-    definitions.push({
-      file,
-      routePath,
-      handlers,
-    })
+    definitions.push({ routePath, handlers })
   }
 
   return definitions
@@ -311,9 +199,6 @@ const registerServerRoutes = (app: ReturnType<typeof createApp>, definitions: Ag
 
 export const createAgentsHttpRuntime = async (options: AgentsHttpRuntimeOptions): Promise<AgentsHttpRuntime> => {
   const app = createApp()
-  const getClientOutputDirCandidates = options.clientOutputDirCandidates ?? defaultClientOutputDirCandidates
-  const clientMissingMessage =
-    options.clientMissingMessage ?? 'Client build output missing. Run the owning service build before serving client.'
 
   if (options.metrics) {
     app.use(
@@ -340,22 +225,9 @@ export const createAgentsHttpRuntime = async (options: AgentsHttpRuntimeOptions)
     )
   }
 
-  const serverRouteDefinitions = await loadServerRoutes(options.routeModules, options.routeSources)
+  const serverRouteDefinitions = await loadServerRoutes(options.routeModules)
   const serverRouteRoots = getServerRouteRoots(serverRouteDefinitions)
   registerServerRoutes(app, serverRouteDefinitions)
-
-  if (options.serveClient === true) {
-    const serveClient = defineEventHandler((event) => {
-      const request = getEventRequest(event)
-      const { pathname } = new URL(request.url)
-      if (!shouldServeClientPath(pathname, serverRouteRoots)) {
-        return new Response('Not Found', { status: 404 })
-      }
-      return serveClientResponse(request, getClientOutputDirCandidates, clientMissingMessage)
-    })
-    app.get('/**', serveClient)
-    app.head('/**', serveClient)
-  }
 
   const rawHandleRequest = toWebHandler(app)
   const corsAllowedOrigins = resolveCorsAllowedOrigins()
@@ -405,14 +277,4 @@ export const createAgentsHttpRuntime = async (options: AgentsHttpRuntimeOptions)
     },
     websocket: (adapter?.websocket ?? {}) as Bun.WebSocketHandler<unknown>,
   }
-}
-
-export const __private = {
-  getRegistrationPaths,
-  getServerRouteRoots,
-  isPathInsideDirectory,
-  loadServerRoutes,
-  normalizeRoutePath,
-  shouldServeClientPath,
-  toH3RoutePath,
 }

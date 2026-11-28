@@ -1,4 +1,4 @@
-import { Effect, Redacted, Result, Schema } from 'effect'
+import { Config, Effect, Option, Redacted, Result, Schema } from 'effect'
 import { FetchHttpClient, Headers, HttpClient, HttpClientRequest } from 'effect/http'
 
 import {
@@ -10,7 +10,7 @@ import {
   UtcSourceTimestampSchema,
 } from '../../src/schemas'
 import { redactedHeaders } from '../../src/broker/alpaca/model'
-import { failure, TimeInForce } from './contract'
+import { failure, Mode, TimeInForce } from './contract'
 
 export const paperOrigin = 'https://paper-api.alpaca.markets'
 const dataOrigin = 'https://data.alpaca.markets'
@@ -230,3 +230,28 @@ export const makeAlpaca = Effect.fn('macro-canary.alpaca')(function* (
 })
 
 export type Alpaca = Effect.Success<ReturnType<typeof makeAlpaca>>
+
+export const makeRunnerAlpaca = Effect.fn('macro-rebalance.credentials')(function* (
+  sleeve: 'CORE' | 'CANARY',
+  mode: Mode,
+  requireIsolated: boolean = false,
+) {
+  const scopedPrefix = `BAYN_MACRO_${sleeve}_ALPACA`
+  const binding = yield* Config.option(Config.Redacted(`${scopedPrefix}_ACCOUNT_ID`))
+  const expectedAccountId = Option.isSome(binding) ? Redacted.value(binding.value) : undefined
+  if (expectedAccountId === undefined && requireIsolated)
+    return yield* failure('config', 'Empty exclusions require a verified isolated shadow account')
+  if (expectedAccountId !== undefined && !Schema.is(AccountId)(expectedAccountId))
+    return yield* failure('config', 'Isolated Alpaca account ID must be a UUID')
+  if (expectedAccountId !== undefined && mode !== Mode.Shadow)
+    return yield* failure('config', 'The isolated credentials can only run in shadow mode')
+
+  const prefix = expectedAccountId === undefined ? 'BAYN_ALPACA' : scopedPrefix
+  const origin =
+    expectedAccountId === undefined
+      ? yield* Config.String('BAYN_ALPACA_BASE_URL').pipe(Config.withDefault(paperOrigin))
+      : paperOrigin
+  const key = yield* Config.Redacted(`${prefix}_KEY_ID`)
+  const secret = yield* Config.Redacted(`${prefix}_SECRET_KEY`)
+  return { alpaca: yield* makeAlpaca(origin, key, secret), expectedAccountId }
+})

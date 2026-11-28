@@ -51,6 +51,7 @@ data class ForwarderConfig(
   val alpacaFeed: String,
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
+  val marketDataProxyUrl: String? = null,
   val alpacaTradeStreamUrl: String?,
   val alpacaMarketDataChannels: List<String>,
   val alpacaMarketDataSymbolOverrides: Map<String, List<String>> = emptyMap(),
@@ -428,6 +429,7 @@ data class ForwarderConfig(
         require(jangarSymbolsUrl == null && !enableBarsBackfill) { "native crypto ingestion requires static pairs and websocket events" }
       }
       return ForwarderConfig(
+        marketDataProxyUrl = mergedEnv["ALPACA_MARKET_DATA_PROXY_URL"],
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
         alpacaSecretKey = mergedEnv.getValue("ALPACA_SECRET_KEY"),
         alpacaMarketType = alpacaMarketType,

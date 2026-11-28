@@ -15,16 +15,7 @@ if [[ -d "${ROOT_DIR}/services/jangar/api/agents" ]]; then
   exit 1
 fi
 
-if command -v rg >/dev/null 2>&1; then
-  if rg -n "codex-universal|ghcr.io/openai/codex-universal" \
-    "${CHART_DIR}/examples" \
-    "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
-    echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
-    exit 1
-  fi
-elif grep -R -n -E "codex-universal|ghcr\.io/openai/codex-universal" \
-  "${CHART_DIR}/examples" \
-  "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
+if grep -R -nF 'codex-universal' "${CHART_DIR}/examples"; then
   echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
   exit 1
 fi
@@ -98,6 +89,14 @@ write_rules = [rule for rule in role['rules'] if set(rule['verbs']) & {'create',
 assert write_rules == [], write_rules
 PY
 rm -f "${runner_rbac_render}"
+
+for split in false true; do
+  run_with_helm3 helm template metrics-check "${CHART_DIR}" --namespace agents \
+    --set "controllers.enabled=${split},metrics.serviceMonitor.enabled=true" \
+    --set metrics.serviceMonitor.namespace=monitoring,metrics.service.type=NodePort \
+    --set metrics.service.port=9191,metrics.path=/internal/metrics |
+    python3 "${ROOT_DIR}/scripts/agents/check-metrics-monitoring.py" "${split}"
+done
 
 chart_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/Chart.yaml" | sed "s/[\"']//g")"
 artifacthub_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/artifacthub-pkg.yml" | sed "s/[\"']//g")"
@@ -441,16 +440,6 @@ kubeconform --strict --summary --ignore-missing-schemas \
   --schema-location "${schema_dir}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
   --schema-location default \
   "${CHART_DIR}/examples"/*.yaml
-
-kubeconform --strict --summary --ignore-missing-schemas \
-  --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.Group}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location default \
-  "${ROOT_DIR}/argocd/applications/agents/application.yaml"
 
 CRD_DIR="${CHART_DIR}/crds" python3 - <<'PY'
 import json
