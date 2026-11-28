@@ -12,7 +12,10 @@ on:
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/otel/**'
+      - 'packages/scripts/src/agents/ontology-bundle-sql.ts'
       - 'packages/scripts/src/agents/update-values.ts'
+      - 'packages/scripts/src/agents/sync-auto-ontology-bundle.ts'
+      - 'packages/scripts/src/agents/sync-auto-ontology-bundle-core.ts'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - '!services/agents/agentctl/**'
@@ -20,9 +23,11 @@ on:
       - 'charts/agents/crds/**'
       - 'nix/images/agents.nix'
       - 'patches/effect@4.1.4.patch'
+      - 'nix/images/antigravity-cli.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'nix/images/agentrun-tools.nix'
       - 'argocd/applications/agents/**'
+      - 'docs/agents/ontology/**'
       - 'charts/agents/**'
       - '!**/__tests__/**'
       - '!**/__snapshots__/**'
@@ -91,6 +96,18 @@ jobs:
       tmpfs: ${{ github.event_name != 'workflow_dispatch' || inputs.tmpfs }}
       publish_kargo_tag: false
       pr_number: ${{ github.event.pull_request.number || '' }}
+    secrets: inherit
+
+  smoke-runner-image:
+    # CI-only fixture, published independently of the four-image Kargo receipt.
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: agents-smoke-runner
+      package_attr: agents-smoke-runner-image
+      tag: sha-${{ github.sha }}
+      tmpfs: ${{ github.event_name != 'workflow_dispatch' || inputs.tmpfs }}
+      publish_kargo_tag: false
     secrets: inherit
 
   write-values:

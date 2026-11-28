@@ -23,12 +23,18 @@ jobs:
       pr_checks: >-
         ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
             (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).contracts)) }}
+      postgres: >-
+        ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
+            (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).postgres)) }}
+      archive: >-
+        ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
+            (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).archive)) }}
       formal: >-
         ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
-            (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).formal)) }}
+            fromJSON(steps.filter.outputs.affected).formal) }}
       gepa: >-
         ${{ github.event_name != 'pull_request' || (steps.filter.outputs.only_paths != 'true' &&
-            (fromJSON(steps.filter.outputs.affected).full || fromJSON(steps.filter.outputs.affected).gepa)) }}
+            fromJSON(steps.filter.outputs.affected).gepa) }}
     steps:
       - uses: actions/checkout@v5
         if: github.event_name == 'pull_request'
@@ -53,7 +59,7 @@ jobs:
             - '!services/bayn/tools/compile-frozen-control.ts'
             - '!services/bayn/tools/frozen-control-*.ts'
             - '!services/bayn/tools/*jev-compiler-dependencies*.ts'
-            - '!services/bayn/tools/jev-instruction-variant.ts'
+            - '!services/bayn/tools/*jev-instruction*.ts'
             - '!services/bayn/tools/verify-image-metadata.ts'
             - '!services/bayn/tools/macro-*-runner/**'
             - '!services/bayn/tools/run-macro-*.ts'
@@ -64,6 +70,8 @@ jobs:
           workspaces: |
             full: ['', 'services/bayn']
             contracts: ['', 'packages/scripts']
+            postgres: ['']
+            archive: ['']
             formal: ['', 'services/bayn']
             gepa: ['']
           filters: |
@@ -77,12 +85,12 @@ jobs:
               - 'services/bayn/migrations/**'
               - 'services/bayn/tools/**'
               - 'docs/bayn/**'
-              - 'argocd/applications/bayn/**'
-              - '.github/workflows/**'
+              - '.github/workflows/bayn-*.yml'
+              - '.github/workflows/common-monorepo.yml'
+              - '.github/actions/affected-inputs/**'
               - 'services/dorvud/**'
               - '!services/dorvud/**/*.md'
               - '!services/dorvud/**/*.mdx'
-              - 'argocd/applications/torghut/clickhouse/**'
               - 'nix/images/bayn.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/bayn-frozen-control.nix'
@@ -98,7 +106,7 @@ jobs:
               - 'flake.lock'
               - 'bun.lock'
               - 'package.json'
-              - '*/package.json'
+              - 'services/bayn/package.json'
               - '.npmrc'
               - 'bunfig.toml'
               - 'patches/**'
@@ -111,13 +119,48 @@ jobs:
               - 'services/bayn/gepa/**'
               - 'packages/scripts/src/bayn/**'
               - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
+              - 'argocd/applications/bayn/**'
+              - 'argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml'
               - 'argocd/applicationsets/product.yaml'
+            postgres:
+              # The PostgreSQL monitoring integration executes the deployed ConfigMap's queries.
+              - 'argocd/applications/bayn/postgres-monitoring.yaml'
+            archive:
+              # Only the ClickHouse DDL loaded by Bayn and Dorvud's archive fixtures.
+              - 'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql'
+              - 'argocd/applications/torghut/clickhouse/schema/intraday-bars.sql'
             formal:
               - 'services/bayn/formal/**'
+              # Conformance exercises shared production code and the migrated database.
+              - 'services/bayn/src/**'
+              - '!services/bayn/src/health/**'
+              - '!services/bayn/src/http.ts'
+              - '!services/bayn/src/**/*.test.ts'
+              - 'services/bayn/src/db/entry-inference-postgres.integration.test.ts'
+              - 'services/bayn/src/db/risk-clock-rejection.integration.test.ts'
+              - 'services/bayn/src/db/candidate-observation-window.integration.test.ts'
+              - 'services/bayn/src/system-assessment/postgres.integration.test.ts'
+              - 'services/bayn/migrations/**'
               - '!services/bayn/**/*.md'
               - '!services/bayn/**/*.mdx'
+              - 'services/bayn/tsconfig*.json'
+              - 'tsconfig.base.json'
+              - '.npmrc'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - 'docs/bayn/jev-migration-acceptance-v2.json'
+              - '.github/workflows/bayn-ci.yml'
+              - '.github/workflows/bayn-formal.yml'
             gepa:
               - 'services/bayn/gepa/**'
+              - 'services/bayn/src/strategy.ts'
+              - 'services/bayn/src/strategy/**'
+              - 'services/bayn/src/jev/**'
+              - 'services/bayn/tools/*jev-instruction*.ts'
+              - 'services/bayn/tools/*jev-compiler-dependencies*.ts'
+              - '!services/bayn/**/*.md'
+              - '!services/bayn/**/*.mdx'
+              - '.github/workflows/bayn-ci.yml'
 
   fast-checks:
     needs: changes
@@ -155,7 +198,7 @@ jobs:
       bun-version: 1.4.2
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn --filter @proompteng/scripts
-      lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
+      lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml
       oxlint-command: bun run --cwd services/bayn lint:oxlint
       oxlint-type-command: bun run --cwd services/bayn lint:oxlint:type
       test-command: bun run --cwd services/bayn tsc && bun test packages/scripts/src/bayn packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts && bash packages/scripts/src/bayn/verify-egress-proxy-restart.sh
@@ -271,7 +314,7 @@ jobs:
 
   postgres-integration:
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.postgres == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -323,7 +366,7 @@ jobs:
 
   archive-integration:
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.archive == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -574,6 +617,8 @@ jobs:
           FAST_RESULT: ${{ needs.fast-checks.result }}
           PR_CHECKS_RELEVANT: ${{ needs.changes.outputs.pr_checks }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
+          POSTGRES_RELEVANT: ${{ needs.changes.outputs.postgres }}
+          ARCHIVE_RELEVANT: ${{ needs.changes.outputs.archive }}
           FORMAL_RELEVANT: ${{ needs.changes.outputs.formal }}
           FORMAL_RESULT: ${{ needs.formal-verification.result }}
           GEPA_RELEVANT: ${{ needs.changes.outputs.gepa }}
@@ -591,15 +636,15 @@ jobs:
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
             exit 1
           fi
-          if [[ "${EXACT_REVISION}" == 'true' && "${FULL_RELEVANT}" != 'true' ]]; then
-            echo 'Exact-revision validation requires the full Bayn tier.' >&2
+          if [[ "${EXACT_REVISION}" == 'true' && "${FULL_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'true/true/true' ]]; then
+            echo 'Exact-revision validation requires the full Bayn tier, formal verification and GEPA.' >&2
             exit 1
           fi
-          if [[ "${FULL_RELEVANT}" == 'true' && "${FAST_RELEVANT}/${PR_CHECKS_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'false/true/true/true' ]]; then
+          if [[ "${FULL_RELEVANT}" == 'true' && "${FAST_RELEVANT}/${PR_CHECKS_RELEVANT}/${POSTGRES_RELEVANT}/${ARCHIVE_RELEVANT}" != 'false/true/true/true' ]]; then
             echo 'The full Bayn tier must select every full-tier check and no fast checks.' >&2
             exit 1
           fi
-          if [[ "${FAST_RELEVANT}" == 'true' && "${FULL_RELEVANT}/${PR_CHECKS_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'false/false/false/false' ]]; then
+          if [[ "${FAST_RELEVANT}" == 'true' && "${FULL_RELEVANT}/${PR_CHECKS_RELEVANT}/${POSTGRES_RELEVANT}/${ARCHIVE_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'false/false/false/false/false/false' ]]; then
             echo 'The fast Bayn tier must not select full-tier checks.' >&2
             exit 1
           fi
@@ -617,13 +662,13 @@ jobs:
           }
           require_check "${FAST_RELEVANT}" FAST_RESULT
           require_check "${PR_CHECKS_RELEVANT}" PR_CHECKS_RESULT
+          require_check "${POSTGRES_RELEVANT}" POSTGRES_RESULT
+          require_check "${ARCHIVE_RELEVANT}" ARCHIVE_RESULT
           require_check "${FORMAL_RELEVANT}" FORMAL_RESULT
           require_check "${GEPA_RELEVANT}" GEPA_RESULT
           for result_name in \
             UNIT_RESULT \
-            ARCHIVE_RESULT \
             LEDGER_RESULT \
-            POSTGRES_RESULT \
             MARKET_DATA_REPLAY_RESULT \
             STREAMING_INTEGRATION_RESULT \
             REPLAY_EXECUTION_RESULT; do

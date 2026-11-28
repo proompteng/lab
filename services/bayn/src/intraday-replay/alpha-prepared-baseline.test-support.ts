@@ -13,10 +13,12 @@ import { PreparedReplayAlphaObservationSchema } from './alpha-report'
 /** Synthetic, unqualified preparation and witness; never an operational source acquisition. */
 export const preparedReplayAlphaBaselineFixture = (availableAt = '2026-09-04T12:01:04.000Z') => {
   const record = preparedAlphaBaselineFixture()
+  const { policy } = record.payload
+  if (policy.schemaVersion !== 'bayn.intraday-alpha-policy.v2') throw new Error('Expected retained v2 fixture')
   const binding = Result.getOrThrow(
     makeResearchStrategyBinding({
       engine: ResearchStrategyEngine.IntradayAlpha,
-      parameters: record.payload.policy,
+      parameters: policy,
     }),
   )
   const sources = Result.getOrThrow(

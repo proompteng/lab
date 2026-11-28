@@ -1,3 +1,4 @@
+import { isIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
@@ -252,7 +253,7 @@ export const bindRecoveryFirstCycleDriver = (
           observedContext = Context.add(observedContext, CandidateObservationStore, {
             ...store,
             record: (observation, policy) =>
-              observation.payload.schemaVersion === 'bayn.intraday-alpha-observation.v2'
+              isIntradayAlphaObservation(observation.payload)
                 ? observeAlpha(store.record(observation, policy), () => observation.contentHash)
                 : observe(store.record(observation, policy), () =>
                     observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,

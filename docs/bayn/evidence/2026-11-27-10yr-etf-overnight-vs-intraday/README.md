@@ -38,7 +38,7 @@ The scorer verified the published commit, rederived the freeze **byte for byte**
 intraday object, then verified that extending the tape did not alter any development ledger. No winner
 selection or parameter retuning. This is retrospective: prior waves already studied these dates.
 
-[Results](results.json) include **570** book/window/cost cells (19 books × five windows × six tiers including
+[Results][archived-results] include **570** book/window/cost cells (19 books × five windows × six tiers including
 gross), **870** ETF/window/cost decomposition cells, SHA-256 ledger digests, both archived price input receipts,
 calendar-year returns, paired tests vs SHY and B0, DSR, Ex-Top-10 results, daytime beta, and execution
 diagnostics. The split counts are **1,511 Train / 501 Validation / 729 Holdout**, with **251** sessions in 2022.
@@ -54,7 +54,7 @@ at 5 bp in Full. This report's Sharpe divides dollar P&L by each actual prior NA
 denominator; the 2 bp B0 Sharpe is **1.07** rather than the original fixed-reference **1.11**. The 2 bp Full
 B0 dollar drawdown is still **$8,702.36**.
 
-To reproduce from the repo root at the reviewed Wave 9A revision, configure read-only S3 access. If the
+To reproduce from the repo root in the [archived checkout][study-revision], configure read-only S3 access. If the
 original publication objects are missing locally after a squash or in a shallow checkout, fetch them by
 their recorded commits first:
 
@@ -205,3 +205,6 @@ Gross clock effect minus incremental execution drag equals the net overnight-onl
 | Holdout / shy              |             23.90% |    28.08% |   -4.18% |    66.19% |  -42.29% |
 | 2022 / cash                |             17.63% |     5.38% |   12.25% |    12.69% |    4.94% |
 | 2022 / shy                 |             14.74% |     7.64% |    7.10% |    18.02% |   -3.27% |
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-10yr-etf-overnight-vs-intraday/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

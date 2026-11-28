@@ -512,15 +512,20 @@ const expected = {
       'packages/codex',
       'packages/cx-tools',
       'packages/otel',
+      'packages/scripts/src/agents/ontology-bundle-sql.ts',
       'packages/scripts/src/agents/update-values.ts',
+      'packages/scripts/src/agents/sync-auto-ontology-bundle.ts',
+      'packages/scripts/src/agents/sync-auto-ontology-bundle-core.ts',
       'packages/temporal-bun-sdk',
       'services/agents',
       'charts/agents/crds',
       'nix/images/agents.nix',
       'patches/effect@4.1.4.patch',
+      'nix/images/antigravity-cli.nix',
       'nix/images/openai-codex-cli.nix',
       'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',
+      'docs/agents/ontology',
       'charts/agents',
     ],
     excludePaths: [
@@ -1062,7 +1067,7 @@ describe('Kargo direct-push GitOps contract', () => {
   it('retains post-deploy verification for the core Torghut application', () => {
     expect(torghutVerifierWorkflow).toContain('for app in torghut; do')
     expect(torghutVerifierWorkflow).toContain('torghut-ta \\')
-    expect(torghutVerifierWorkflow).toContain('torghut-ws; do')
+    expect(torghutVerifierWorkflow).toContain('kubectl rollout status deployment/torghut-ws -n bayn --timeout=10m')
     expect(torghutVerifierWorkflow).not.toContain('torghut-options')
     expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
   })

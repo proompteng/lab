@@ -371,6 +371,7 @@ export interface IntentStoreService {
     brokerOrderId: string,
     observedAt: string,
     exitTarget: JevExitTarget | undefined,
+    reanchor?: boolean,
   ) => Effect.Effect<ProtectionCancelAdmission, IntentStoreError | WriterFenceError>
   readonly recordProtectionCancelAccepted: (
     command: NativeProtectionCancelCommand,

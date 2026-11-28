@@ -1,11 +1,66 @@
-# Bayn cleanup and deprecation audit — Wave 13F
+# Bayn cleanup and deprecation audit
+
+## Wave 19Z: Unreferenced code removed
+
+Audited against `aa0a2d91f1f20dca27e59634655311676f26d102`. This cleanup does not change the strategy selector,
+activation, wire schemas, or historical evidence.
+
+Paths below are relative to `services/bayn/`. The only references to these three benchmark entry points outside
+their own files were rows in the [dated system inventory](evidence/2026-11-08-system-inventory.json). Those rows
+record the files at an earlier revision; they are not commands or source locks. The benchmarks were not exported,
+invoked by build or CI, used by tests, or bound by a research receipt by path or digest. Their original revisions
+remain the reproduction boundary for the performance comparisons.
+
+| Deleted tool                                 | Original comparison                                                           |
+| -------------------------------------------- | ----------------------------------------------------------------------------- |
+| `tools/benchmark-equity-clock-projection.ts` | Quote-heavy session-clock comparison against a separately bundled projection. |
+| `tools/benchmark-normalization.ts`           | Synthetic broker snapshot normalization before and after binding indexing.    |
+| `tools/benchmark-staged-inference-cost.ts`   | Staged inference cost handoffs against a separately bundled baseline.         |
+
+A TypeScript export inventory and repository-wide symbol searches found no caller for the following declarations,
+including in tests, fixtures, and tools. Only the listed declarations and imports used solely by them were removed.
+
+| File                                         | Removed declarations                                           |
+| -------------------------------------------- | -------------------------------------------------------------- |
+| `src/intraday-replay/alpha-baseline.ts`      | `makeReplayAlphaTrailingBaseline`                              |
+| `src/observe-composition/execution-cycle.ts` | `readUnfinishedMutationCycle`                                  |
+| `src/execution/runtime-program.ts`           | `ProtectionCancelOutcome`                                      |
+| `src/jev/account-protection.ts`              | `AccountProtectionInputs`                                      |
+| `src/jev/chart-checkpoint.ts`                | `ChartDispatchClaim`, `ChartTerminalReceipt`                   |
+| `src/jev/decisions.ts`                       | `DecisionsInference`                                           |
+| `src/jev/experiment-economics.ts`            | `JevEconomicRegistration`                                      |
+| `src/jev/staged-checkpoint.ts`               | `StagedSkipReceipt`                                            |
+| `src/market-data/sip/provenance.ts`          | `SipBar`, `SipTrade`                                           |
+| `src/system-assessment/source-cut.ts`        | `StrategyBoundSystemSourceCut`, `PreparedAlphaSystemSourceCut` |
+| `tools/pure-etf-dual-horizon-data.ts`        | `CanarySession`                                                |
+| `tools/weekly-attribution-receipts.ts`       | `PortfolioOutcome`                                             |
+
+### Remaining deprecation items
+
+- Recovery uses `readUnfinishedMutationCycles`, including its `readOldestUnfinished` fallback. Retained replay
+  still uses the alpha baseline source selection and its existing fail-closed checks.
+- Alpaca's deprecated `order_type` field is still accepted alongside the canonical `type`. The broker normalizer
+  and its tests require the two to agree when both are present; retire the alias only after the provider contract
+  no longer needs it.
+- All six files under `scripts/` still have callers. The Nix image consumes `copy-runtime-dependencies.mjs`, the
+  package runs `retained-jev-node.test.ts`, and the integration drivers and result verifiers are exercised by
+  CI. Documented benchmarks and frozen replay inputs (including dynamically loaded sources) remain.
+- Standalone ETF retirement is still conditional on withdrawing the separate activation or rollout contract.
+  The momentum and alpha contracts remain needed for migration replay and retained evidence. See the Wave 13F
+  dispositions below; this wave does not retire a strategy or a historical policy version.
+
+## Wave 13F: Strategy and evidence audit
 
 Audited against `1894542123c9254e1703c8ee3b082f2c91415f49` and the proposed
 [Pure-ETF v3 cutover #16395](https://github.com/proompteng/lab/pull/16395) at
 `6fd8e2bae78ea5e8cff3c6e93b232321a42c7a52`. This is a source audit, not a rollout or
 confirmation that any account is flat.
 
-## Frozen evidence and tools
+### Frozen evidence and tools
+
+This inventory describes the Wave 13F checkout. For subsequently pruned rejected studies, use the historical
+checkout linked in each study report to resolve archived source paths and full results. Active evidence and
+its source locks remain in place.
 
 The 40 committed `freeze.json` and `results.json` under [evidence](evidence/) were checked before editing tools.
 They and the crypto correction identify 73 protected tool paths, including aggregate source locks. No protected
@@ -39,20 +94,20 @@ Use explicit imports from `tools/research-lib/` for new or unpinned work:
   circular stationary resampling. Keep paired Sharpe difference distinct from the Sharpe of daily excess returns.
   Do not change frozen seeds, summation order, bootstrap family, or the benchmark's paired dates.
 
-The only tool deletions are `benchmark-report-transport.ts` (single-fixture worker transport experiment) and
+Wave 13F deleted only `benchmark-report-transport.ts` (single-fixture worker transport experiment) and
 `benchmark-report-volume.ts` (synthetic comparison requiring a separately bundled baseline). Neither had an
 import, invocation, document reference, or evidence reference by name or content digest in the audited tree.
 Tests discovered by Bun are callers in their own right. The frozen-control scenario and its test-support module
 are both used by `tools/test-frozen-control.ts`; neither is orphaned. The documented financial/streaming benchmarks
 and research inputs also remain.
 
-## Strategy callers and cutover disposition
+### Strategy callers and cutover disposition
 
 Paths below are relative to `services/bayn/`; file lists under a directory prefix name its direct importers.
 The active strategy selector is `src/strategy.ts`. #16395 switches the selector within **intraday-alpha**, not
 to either standalone ETF directory. No strategy directory is unconditionally safe to delete at that merge.
 
-### `etf-noise-area/`
+#### `etf-noise-area/`
 
 - **External code callers:** none. Internally, `signals.ts` imports `policy.ts`; `exit-plan.ts` imports both.
 - **Tests:** `policy.test.ts`, `signals.test.ts`, and `exit-plan.test.ts` exercise its independent policy and
@@ -63,7 +118,7 @@ to either standalone ETF directory. No strategy directory is unconditionally saf
   the retained v2 identity assertion before removing the three source files and colocated tests. Do not delete
   it just because the v3 entry universe overlaps.
 
-### `intraday-momentum/`
+#### `intraday-momentum/`
 
 - **Code callers:** `migrations/0056_intraday_strategy_cutover.ts` uses the decision behavior hash and protocol.
   `src/intraday-replay/{control-portfolio,execution-core,signal-study}.ts` and
@@ -91,7 +146,7 @@ to either standalone ETF directory. No strategy directory is unconditionally saf
 - **After #16395:** retain. Removing even the old decision entry point breaks migration replay or retained evidence;
   v3 does not replace its protocol, target schema or signal math.
 
-### `repeated-momentum/`
+#### `repeated-momentum/`
 
 - **Code callers:** `src/strategy.ts`, `src/shadow-decision-contract.ts`, `src/cycle/runner/pass-observation.ts`,
   `src/db/candidate-observation-postgres.ts`, `src/jev/retained-jev-control-targets.ts`,
@@ -107,7 +162,7 @@ to either standalone ETF directory. No strategy directory is unconditionally saf
 - **After #16395:** retain. A later removal must retire the historical control/replay and target contracts explicitly,
   not infer that they are unused from the absence of an active momentum selector.
 
-### `intraday-alpha/`
+#### `intraday-alpha/`
 
 - **Code callers:** `src/{application-plan,shadow-decision-contract,strategy}.ts`;
   `src/cycle/runner/pass-observation.ts`; `src/db/{alpha-baseline-preparation-postgres,candidate-observation-postgres}.ts`;
@@ -149,7 +204,7 @@ to either standalone ETF directory. No strategy directory is unconditionally saf
   The [ORB/ZAB freeze](evidence/2026-11-27-orb-zab-research/freeze.json) also binds alpha source bytes for historical
   reproduction. Do not prune old phase logic based solely on v3 entry admission.
 
-### `macro-etf-core/`
+#### `macro-etf-core/`
 
 - **Code callers:** `tools/macro-etf-core-runner/{allocation,contract,market,planner}.ts`;
   `tools/{multi-horizon-scorecard-core,multi-horizon-scorecard-receipts}.ts`;
@@ -160,7 +215,7 @@ to either standalone ETF directory. No strategy directory is unconditionally saf
 - **After #16395:** retain. The separate F2/F4 runner and [dual-horizon replay](evidence/2026-11-27-macro-etf-core-dual-horizon/README.md)
   call this module; the intraday cutover does not replace overnight policy, compiler or planner.
 
-### `macro-canary-etf/`
+#### `macro-canary-etf/`
 
 - **External code callers:** none. Internally, `signals.ts` imports `policy.ts`; `rebalance-planner.ts` imports both.
   `tools/run-macro-canary-etf-rebalance.ts` and `tools/multi-horizon-scorecard-{core,receipts}.ts` instead call
@@ -172,7 +227,7 @@ to either standalone ETF directory. No strategy directory is unconditionally saf
   its tested allocation as a separate integration candidate. Only retire the source and its local fixtures alongside
   an explicit decision to retire that candidate, updating the runbook; do not remove the operator runner with it.
 
-### `execution-model/` (shared, not a strategy)
+#### `execution-model/` (shared, not a strategy)
 
 - **Code callers:** `src/execution/mandate.ts`, `src/risk.ts`, `src/shadow-decision-contract.ts`, `src/target-planner/facts.ts`;
   `src/intraday-replay/{broker-checkpoint,broker-fees,broker,capital-ablation,control-portfolio,control-study,equity-edge-screen,execution-core,ledger,matched-entry-study,residual-shock,signal-study}.ts`;

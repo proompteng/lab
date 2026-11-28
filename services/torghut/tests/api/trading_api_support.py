@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-
-import json
 import inspect
+import json
 import os
 import time
 from collections.abc import Iterator
@@ -14,36 +13,25 @@ from tempfile import TemporaryDirectory
 from threading import Event
 from types import SimpleNamespace
 from typing import Any
-from urllib.parse import urlsplit
 from unittest import TestCase
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
-from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app import bootstrap as app_bootstrap
-from app.api import health_checks as health_checks_api
 from app.api import health_cache_state
+from app.api import health_checks as health_checks_api
 from app.api import status_helpers as status_helpers_api
-from app.api.runtime_ledger_status import daily_runtime_ledger_portfolio_summary
 from app.api.readiness_helpers import readiness_surface as readiness_surface_helpers
+from app.api.runtime_ledger_status import daily_runtime_ledger_portfolio_summary
+from app.config import settings
 from app.db import get_session
 from app.main import app
-from app.trading.forecast_runtime import forecast_registry
-from app.trading.scheduler import TradingScheduler
-from app.trading.feature_quality import FeatureQualityReport
-from app.trading.completion import (
-    DOC29_SIMULATION_FULL_DAY_GATE,
-    TRACE_STATUS_SATISFIED,
-    build_completion_trace,
-    persist_completion_trace,
-)
-from app.trading.execution import OrderExecutor
-from app.config import settings
-from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.models import (
     AutoresearchCandidateSpec,
     AutoresearchEpoch,
@@ -61,6 +49,17 @@ from app.models import (
     TradeDecision,
     VNextEmpiricalJobRun,
 )
+from app.trading.completion import (
+    DOC29_SIMULATION_FULL_DAY_GATE,
+    TRACE_STATUS_SATISFIED,
+    build_completion_trace,
+    persist_completion_trace,
+)
+from app.trading.execution import OrderExecutor
+from app.trading.feature_quality import FeatureQualityReport
+from app.trading.forecast_runtime import forecast_registry
+from app.trading.hypotheses import JangarDependencyQuorumStatus
+from app.trading.scheduler import TradingScheduler
 
 _ALPACA_HEALTH_STATE = health_cache_state.ALPACA_HEALTH_STATE
 _OPTIONS_CATALOG_FRESHNESS_CACHE = health_cache_state.OPTIONS_CATALOG_FRESHNESS_CACHE
@@ -102,53 +101,6 @@ def _truthful_empirical_payload(
             "model_refs": ["models/candidate@sha256:def"],
         },
     }
-
-
-def _install_pipeline_universe_resolver(
-    scheduler: TradingScheduler,
-    resolver: object,
-) -> None:
-    setattr(scheduler, "_pipeline", SimpleNamespace(universe_resolver=resolver))
-
-
-def _freshness_carry_ledger_for_test(dimension_id: str) -> dict[str, object]:
-    output_receipt_by_dimension = {
-        "empirical": "torghut.empirical-proof-refresh-receipt.v1",
-        "tca": "torghut.execution-tca-refresh-receipt.v1",
-    }
-    value_gate_by_dimension = {
-        "empirical": "post_cost_daily_net_pnl",
-        "tca": "fill_tca_or_slippage_quality",
-    }
-    return {
-        "schema_version": "torghut.freshness-carry-ledger.v1",
-        "ledger_id": "freshness-carry-ledger:test",
-        "dimensions": [
-            {
-                "dimension_id": dimension_id,
-                "state": "stale",
-                "proof_authority": "app_health",
-                "stale_reason_codes": [f"{dimension_id}_stale"],
-            }
-        ],
-        "repair_proof_slos": [
-            {
-                "repair_id": f"freshness-repair-slo:{dimension_id}",
-                "target_dimension_id": dimension_id,
-                "target_value_gate": value_gate_by_dimension[dimension_id],
-                "required_output_receipts": [output_receipt_by_dimension[dimension_id]],
-                "dispatchable": True,
-                "hold_reason_codes": [],
-            }
-        ],
-    }
-
-
-def _mark_static_universe_loaded(scheduler: TradingScheduler) -> None:
-    scheduler.state.universe_source_status = "ok"
-    scheduler.state.universe_source_reason = "static_symbols_loaded"
-    scheduler.state.universe_symbols_count = 2
-    scheduler.state.universe_cache_age_seconds = 0
 
 
 def _json_paths_containing(value: object, needle: str, path: str = "") -> list[str]:
@@ -698,12 +650,9 @@ __all__: tuple[str, ...] = (
     "_daily_runtime_ledger_portfolio_summary",
     "_decimal_or_none",
     "_forecast_service_status",
-    "_freshness_carry_ledger_for_test",
-    "_install_pipeline_universe_resolver",
     "_json_paths_containing",
     "_json_truthy_paths_for_keys",
     "_load_options_catalog_freshness_summary",
-    "_mark_static_universe_loaded",
     "_readiness_dependency_cache_key",
     "_readiness_dependency_checks",
     "_route_claim_symbols",

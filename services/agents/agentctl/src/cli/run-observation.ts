@@ -2,6 +2,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as Effect from 'effect/Effect'
 import { posix } from 'node:path'
 
+import { applyVcsMetadataToParameters } from '../../../src/server/agents-controller/run-utils'
 import type { KubeBackend } from '../kube/backend'
 import type { PodSpec } from '../kube/resources'
 import {
@@ -13,11 +14,14 @@ import {
   readRunWorkloads,
   type RunObservation,
   runtimeType,
+  STEP_INDEX,
   timestamp,
 } from '../kube/runs'
-import { outputResource, parseJson, readNestedValue } from '../runtime'
-import { asAgentctlError } from './errors'
+import { outputResource, parseJson, readNestedValue, RESOURCE_SPECS } from '../runtime'
+import { asAgentctlError, validationError } from './errors'
+import { buildEventContext } from './run-input'
 import { renderRunRows } from './run-list'
+import { redactRunText } from './run-redaction'
 
 export const DEFAULT_RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000
 export const DEFAULT_RUN_INTERVAL_MS = 2000
@@ -85,13 +89,7 @@ const readPrompt = async (
 
 // Only render the bounded preview, never the run payload, environment, or projected credential.
 const preview = (value: string, max = 240) => {
-  const text = value
-    .replace(/\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis(?:s)?):\/\/\S+/gi, '[redacted URL]')
-    .replace(/\bhttps?:\/\/[^\s/]+:[^\s/]+@\S+/gi, '[redacted URL]')
-    .replace(/\b(?:bearer\s+|(?:password|(?:api[-_ ]?key)|token|secret)\s*[:=]\s*)\S+/gi, '[redacted credential]')
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const text = redactRunText(value).replace(/\s+/g, ' ').trim()
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
@@ -256,11 +254,54 @@ export const waitForRunCompletion = (
     catch: (error) => asAgentctlError(error, 'GrpcError'),
   })
 
-export type Verification = {
-  prompt: string
-  serviceAccountName: string
-  audience: string
-  mountPath: string
+export const readVerificationIdentity = (backend: KubeBackend, namespace: string, agentName: string) =>
+  Effect.gen(function* () {
+    const agent = yield* kubeCall((signal) =>
+      backend.getCustomObject(RESOURCE_SPECS.agent, namespace, agentName, signal),
+    )
+    const providerName = readNestedValue(agent, ['spec', 'providerRef', 'name'])
+    if (typeof providerName !== 'string' || !providerName) {
+      return yield* Effect.fail(validationError('--verify requires an Agent with an AgentProvider reference.'))
+    }
+    const provider = yield* kubeCall((signal) =>
+      backend.getCustomObject(RESOURCE_SPECS.provider, namespace, providerName, signal),
+    )
+    const serviceAccountName = readNestedValue(provider, ['spec', 'workload', 'serviceAccountName'])
+    const audience = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'audience'])
+    const mountPath = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'mountPath'])
+    if (
+      typeof serviceAccountName !== 'string' ||
+      !serviceAccountName ||
+      typeof audience !== 'string' ||
+      !audience ||
+      typeof mountPath !== 'string' ||
+      !mountPath
+    ) {
+      return yield* Effect.fail(
+        validationError('--verify requires an AgentProvider with a service account and MCP token projection.'),
+      )
+    }
+    return { serviceAccountName, audience, mountPath }
+  })
+
+export type Verification = { serviceAccountName: string; audience: string; mountPath: string } & (
+  | { prompt: string }
+  | { stepPrompts: readonly string[] }
+  | { jobTask: { implementation: Record<string, unknown>; parameters: Record<string, string> } }
+)
+
+const expectedPrompt = (expected: Verification, observation: RunObservation) => {
+  if ('prompt' in expected) return expected.prompt
+  if ('jobTask' in expected) {
+    const { implementation, parameters } = expected.jobTask
+    const status = observation.run.status
+    // A skipped VCS resolution may report branches without applying them to the prompt.
+    const vcsSkipped = status?.conditions?.some(({ type, status }) => type === 'VcsSkipped' && status === 'True')
+    const resolved = applyVcsMetadataToParameters(parameters, vcsSkipped ? null : (status?.vcs ?? null))
+    return buildEventContext(implementation, resolved).payload.prompt
+  }
+  const index = Number(observation.pod?.metadata.labels?.[STEP_INDEX] ?? observation.job?.metadata.labels?.[STEP_INDEX])
+  return expected.stepPrompts.length === 1 ? expected.stepPrompts[0] : expected.stepPrompts[index - 1]
 }
 
 export const verifyRun = (
@@ -275,7 +316,8 @@ export const verifyRun = (
     while (true) {
       const observation = yield* kubeCall((signal) => readRunObservation(backend, namespace, name, signal))
       const spec = observation.pod?.spec
-      if (spec) {
+      // The Job and Pod can appear before the controller publishes the resolved VCS status.
+      if (spec && (!('jobTask' in expected) || observation.phase !== 'Pending')) {
         const account = spec.serviceAccountName
         if (account !== expected.serviceAccountName) {
           return yield* Effect.fail(
@@ -290,15 +332,13 @@ export const verifyRun = (
         }
         const payload = yield* kubeCall((signal) => readPrompt(backend, namespace, observation, signal, true))
         if (payload) {
-          if (payload.prompt.trim() !== expected.prompt.trim()) {
+          const prompt = expectedPrompt(expected, observation)
+          if (typeof prompt !== 'string' || payload.prompt.trim() !== prompt.trim()) {
             return yield* Effect.fail(
               kubeError(`AgentRun ${name}: ${payload.name} run.json.prompt does not match the task text.`),
             )
           }
-          console.error(
-            `Verified AgentRun ${name}: ${payload.name} run.json.prompt, inherited SA ${account}, and projected MCP token mount.`,
-          )
-          return
+          return { configMap: payload.name, account, node: observation.node }
         }
       }
       if (isTerminalPhase(observation.phase)) {

@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from decimal import Decimal
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
+from app.models import Execution, TradeDecision
+from app.trading.reconcile import Reconciler
 from app.trading.tigerbeetle_client import TigerBeetleClientTimeoutError
 from app.trading.tigerbeetle_journal import TigerBeetleLedgerJournal
-
-from tests.order_idempotency.support import (
-    Decimal,
-    Execution,
-    FakeAlpacaClient,
-    Reconciler,
-    Strategy,
-    TradeDecision,
-    _TestOrderIdempotencyBase,
-    patch,
-    settings,
-)
+from tests.order_idempotency.support import FakeAlpacaClient, _TestOrderIdempotencyBase
+from tests.trading_fixtures import make_strategy
 
 
 class TestReconcilerTigerBeetleClientLifecycle(_TestOrderIdempotencyBase):
@@ -34,13 +28,9 @@ class TestReconcilerTigerBeetleClientLifecycle(_TestOrderIdempotencyBase):
         super().tearDown()
 
     def _seed_open_execution(self, session: Session) -> None:
-        strategy = Strategy(
+        strategy = make_strategy(
             name="demo",
             description="demo",
-            enabled=True,
-            base_timeframe="1Min",
-            universe_type="static",
-            universe_symbols=["AAPL"],
         )
         session.add(strategy)
         session.flush()

@@ -320,12 +320,12 @@ one missing held bar (skipped without a fabricated mark), zero missing entries, 
 | B0, 2 bp RT          | $33,107.45 | $29,982.77 | $40,443.36 | $103,533.58 |
 | B0, 5 bp RT          | $14,806.00 | $23,345.90 | $31,628.26 |  $69,780.16 |
 
-[Results](results.json) holds every unrounded trial and cost, the coverage and comparator audit, the
+[Results][archived-results] holds every unrounded trial and cost, the coverage and comparator audit, the
 bootstrap and DSR settings, all fold metrics (including CAGR, max drawdown, Calmar, turnover and
 SPY beta), and the exact decision. Its
 `freezeSha256` identifies the committed development receipt; the receipts do not depend on Git ancestry.
 
-For an independent reproduction from a checkout with the committed receipt and the existing read-only
+For an independent reproduction from the [archived checkout][study-revision] with the committed receipt and the existing read-only
 artifact credentials, set `TIP_SOURCE` to a private directory containing the two authenticated TIP
 objects. Use the pinned Bun toolchain and write to new paths so the committed evidence is never overwritten:
 
@@ -347,3 +347,6 @@ bun "$runner" --score --output "$work/results.json" \
 bunx oxfmt --write --config .oxfmtrc.json "$work/results.json"
 cmp "$evidence/results.json" "$work/results.json"
 ```
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-10yr-orthogonal-pillar3/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

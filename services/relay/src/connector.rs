@@ -44,7 +44,7 @@ impl From<Status> for Failure {
         }
     }
 }
-pub fn allows_operation(
+pub(crate) fn allows_operation(
     access: Option<&[PlatformConnectionScope]>,
     action: &str,
     resource: &PlatformResource,

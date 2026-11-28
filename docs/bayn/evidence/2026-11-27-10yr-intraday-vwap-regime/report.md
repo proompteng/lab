@@ -150,7 +150,7 @@ correlation < 0.30 and higher Sharpe and lower drawdown for its 50/50 blend vs B
 
 ## Reproduce
 
-Run from the repository root with the pinned Bun toolchain and the existing read-only artifact credentials.
+Run from the repository root in the [archived checkout][study-revision], with the pinned Bun toolchain and the existing read-only artifact credentials.
 The command writes a new file only. Raw prices are not part of the committed evidence.
 
 ```sh
@@ -161,3 +161,5 @@ cmp "$scratch/results.json" docs/bayn/evidence/2026-11-27-10yr-intraday-vwap-reg
 rm -- "$scratch/results.json"
 rmdir -- "$scratch"
 ```
+
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

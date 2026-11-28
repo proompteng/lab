@@ -5,28 +5,19 @@ import { join } from 'node:path'
 
 import { test } from 'bun:test'
 import YAML from 'yaml'
+import { mimirRuleGroup, observabilityDirectory } from './mimir-rules'
+
+const rules = YAML.stringify({ groups: [mimirRuleGroup('torghut-storage-alerts.rules')] })
 
 test.each(['ceph-read-latency-alerts.yaml', 'ceph-health-alerts.yaml', 'persistent-volume-alerts.yaml'])(
   'Storage alerts preserve incident identity and capacity semantics: %s',
   (fixture) => {
-    const root = new URL('../../../../../', import.meta.url)
-    const manifest = YAML.parseDocument(
-      readFileSync(new URL('argocd/applications/observability/graf-mimir-rules.yaml', root), 'utf8'),
-    )
-    const contents = manifest.getIn(['data', 'graf-rules.yaml'])
-    if (typeof contents !== 'string') throw new Error('Mimir rules are missing')
-    const groups = YAML.parseDocument(contents).get('groups')
-    if (!YAML.isSeq(groups)) throw new Error('Mimir rule groups are missing')
-    const storage = groups.items.find(
-      (group) => YAML.isMap(group) && group.get('name') === 'torghut-storage-alerts.rules',
-    )
-    if (!YAML.isMap(storage)) throw new Error('Storage alert group is missing')
     const directory = mkdtempSync(join(tmpdir(), 'ceph-read-latency-promql-'))
     try {
-      writeFileSync(join(directory, 'rules.yaml'), YAML.stringify({ groups: [storage.toJSON()] }))
+      writeFileSync(join(directory, 'rules.yaml'), rules)
       writeFileSync(
         join(directory, 'tests.yaml'),
-        readFileSync(new URL(`argocd/applications/observability/tests/${fixture}`, root), 'utf8'),
+        readFileSync(new URL(`tests/${fixture}`, observabilityDirectory), 'utf8'),
       )
       const result = spawnSync(process.env.PROMTOOL ?? 'promtool', ['test', 'rules', 'tests.yaml'], {
         cwd: directory,

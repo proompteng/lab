@@ -17,6 +17,7 @@ resources:
   - ingressroute-openwebui-k8s-private.yaml
   - postgres-upgrade-final-backup.yaml
   - postgres-cluster.yaml
+  - auto-ontology-db-networkpolicy.yaml
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
   - redis-upgrade-backup.yaml

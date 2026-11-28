@@ -41,7 +41,6 @@ The cleanup program moved the highest-risk application boundaries behind explici
   - `services/jangar/src/server/github-review-config.ts`
   - `services/jangar/src/server/metrics-config.ts`
 - Memory embeddings
-  - `services/jangar/src/server/memory-provider.ts`
   - `services/jangar/src/server/memory-provider-health.ts`
 - Terminal infrastructure
   - `services/jangar/src/server/terminals.ts`

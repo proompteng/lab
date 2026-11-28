@@ -65,6 +65,26 @@ describe('Agents workspace cache', () => {
       '/var/lib/agents-workspace-cache',
     )
     expect(values.controllers.env.vars.AGENTS_DB_POOL_MAX).toBe('24')
+    const productApplicationSet = YAML.parse(readFileSync(join(app, '../../applicationsets/product.yaml'), 'utf8')) as {
+      spec: {
+        generators: Array<{
+          matrix: {
+            generators: Array<{
+              list?: {
+                elements?: Array<{
+                  name?: string
+                  managedNamespaceMetadata?: { labels?: Record<string, string> }
+                }>
+              }
+            }>
+          }
+        }>
+      }
+    }
+    const agentsApp = productApplicationSet.spec.generators[0]?.matrix.generators[1]?.list?.elements?.find(
+      (element) => element.name === 'agents',
+    )
+    expect(agentsApp?.managedNamespaceMetadata?.labels?.['pod-security.kubernetes.io/enforce']).toBe('privileged')
   })
 
   it('publishes fetched and pruned refs, and keeps the previous snapshots on refresh failures', () => {

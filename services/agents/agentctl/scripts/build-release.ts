@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { compileBinary, resolveCodesign } from './build-binaries'
 import { renderHomebrewFormula } from './homebrew/render-homebrew'
 import { parseTargetsArgs, resolveTargets, TARGETS, type TargetInfo } from './targets'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '..')
-const entry = resolve(root, 'src', 'index.ts')
 const distDir = resolve(root, 'dist')
 const releaseDir = resolve(distDir, 'release')
 
@@ -29,39 +29,14 @@ const normalizeVersion = (value: string) => {
   return value
 }
 
-const buildArchive = async (version: string, target: TargetInfo) => {
+const buildArchive = async (version: string, target: TargetInfo, codesign: string | null) => {
   const archiveName = `agentctl-${version}-${target.label}.tar.gz`
   const archivePath = resolve(releaseDir, archiveName)
   const tempDir = await mkdtemp(resolve(tmpdir(), 'agentctl-release-'))
   const stagedBinary = resolve(tempDir, 'agentctl')
 
   try {
-    const proc = Bun.spawn(
-      [
-        'bun',
-        'build',
-        entry,
-        '--compile',
-        '--compile-autoload-package-json',
-        '--format=cjs',
-        '--target',
-        target.bunTarget,
-        '--outfile',
-        stagedBinary,
-      ],
-      {
-        cwd: root,
-        stderr: 'inherit',
-        stdout: 'inherit',
-      },
-    )
-
-    const buildExit = await proc.exited
-    if (buildExit !== 0) {
-      throw new Error(`bun build failed for ${target.bunTarget} with exit code ${buildExit}`)
-    }
-
-    await chmod(stagedBinary, 0o755)
+    await compileBinary(target, stagedBinary, codesign)
 
     const tarProc = Bun.spawn(['tar', '-C', tempDir, '-czf', archivePath, 'agentctl'], {
       cwd: root,
@@ -115,9 +90,10 @@ const main = async () => {
   }
 
   const checksums = new Map<string, string>()
+  const codesign = resolveCodesign()
 
   for (const target of targets) {
-    const sha256 = await buildArchive(resolvedVersion, target)
+    const sha256 = await buildArchive(resolvedVersion, target, codesign)
     checksums.set(target.label, sha256)
   }
 

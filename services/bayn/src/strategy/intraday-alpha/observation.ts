@@ -16,7 +16,7 @@ import {
 } from '../../jev/portfolio'
 import { JevProtocolSchema, type JevProtocol } from '../../jev/protocol'
 import { IntradayBenchmarkEvidencePolicy, IntradayCandidateEvidencePolicy } from '../../market-data/intraday/model'
-import { intradayAgeNanos } from '../../market-data/intraday/time'
+import { intradayAgeNanos, millisecondsAsNanos } from '../../market-data/intraday/time'
 import {
   IntradayAlphaTrailingBaselineSchema,
   type IntradayAlphaTrailingBaseline,
@@ -29,11 +29,16 @@ import {
   type VerifiedStrategyMarketSnapshot,
 } from '../../market-data/streaming/snapshot'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../../schemas'
-import { intradayAlphaBenchmarkSymbol, intradayAlphaCandidateSymbols, intradayAlphaEquityMarketProfile } from './policy'
+import {
+  intradayAlphaBenchmarkSymbol,
+  intradayAlphaCandidateSymbols,
+  intradayAlphaNoiseAreaSymbols,
+  intradayAlphaEquityMarketProfile,
+} from './policy'
 import { resolveAlphaRegularSession } from './signals'
 
 export const IntradayAlphaObservationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-alpha-observation.v2'),
+  schemaVersion: Schema.Literals(['bayn.intraday-alpha-observation.v2', 'bayn.intraday-alpha-observation.v3']),
   cycleId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
   observedAt: UtcInstantSchema,
@@ -45,6 +50,11 @@ export const IntradayAlphaObservationSchema = Schema.Struct({
   rows: JevObservationSchema.fields.rows,
 })
 export type IntradayAlphaObservation = typeof IntradayAlphaObservationSchema.Type
+export const isIntradayAlphaObservation = (payload: {
+  readonly schemaVersion: string
+}): payload is IntradayAlphaObservation =>
+  payload.schemaVersion === 'bayn.intraday-alpha-observation.v2' ||
+  payload.schemaVersion === 'bayn.intraday-alpha-observation.v3'
 
 const fail = (message: string, cause?: unknown) =>
   Result.fail(new JevContractError({ message, ...(cause === undefined ? {} : { cause }) }))
@@ -74,7 +84,57 @@ const verifyAlphaObservation = (observation: IntradayAlphaObservation, snapshot:
     const regularSession = yield* resolveAlphaRegularSession(manifest.calendar, manifest.sessionDate)
     const observed = Date.parse(observation.observedAt)
     const end = jevSignalWindowEndMs(observed, protocol)
-    const expectedCandidates = [...intradayAlphaCandidateSymbols]
+    const pureEtf = observation.schemaVersion === 'bayn.intraday-alpha-observation.v3'
+    const publications = manifest.streaming.barPublications ?? []
+    if (
+      pureEtf &&
+      (publications.some(({ row }) => intradayAgeNanos(row.ingested_at, row.event_at) < millisecondsAsNanos(60_000)) ||
+        snapshot.bars.some(
+          (bar) =>
+            intradayAgeNanos(bar.ingestedAt, bar.eventAt) < millisecondsAsNanos(60_000) ||
+            intradayAgeNanos(manifest.rangeEndAt, bar.eventAt) < millisecondsAsNanos(60_000),
+        ))
+    )
+      return yield* fail('Pure ETF observation contains premature completed-bar evidence')
+    const ordered = (
+      rows: readonly unknown[],
+      records: readonly {
+        readonly sourceTopic: string
+        readonly sourcePartition: number
+        readonly sourceOffset: string
+      }[],
+    ) =>
+      rows.length === records.length &&
+      rows.every((row, index) => {
+        const record = records[index]
+        return (
+          record !== undefined &&
+          typeof row === 'object' &&
+          row !== null &&
+          'source_topic' in row &&
+          'source_offset' in row &&
+          'source_partition' in row &&
+          record.sourceTopic === row.source_topic &&
+          record.sourcePartition === Number(row.source_partition) &&
+          record.sourceOffset === row.source_offset
+        )
+      })
+    if (
+      pureEtf &&
+      (!ordered(observation.rows.bars, snapshot.bars) ||
+        !ordered(observation.rows.quotes, snapshot.quotes) ||
+        !ordered(observation.rows.trades, snapshot.trades))
+    )
+      return yield* fail('Pure ETF observation rows must match the canonical market cut order')
+    const expectedCandidates = pureEtf ? intradayAlphaNoiseAreaSymbols : intradayAlphaCandidateSymbols
+    if (
+      pureEtf &&
+      (trailingBaseline.lookbackSessions !== 14 ||
+        Object.keys(trailingBaseline.symbols).some(
+          (symbol) => !expectedCandidates.some((candidate) => symbol === candidate),
+        ))
+    )
+      return yield* fail('Pure ETF baseline must bind the 14-session QQQ/SMH evidence')
     const expectedSymbols = [...new Set([...expectedCandidates, intradayAlphaBenchmarkSymbol])].sort()
     if (
       manifest.universeId !== market.universeId ||
@@ -92,7 +152,7 @@ const verifyAlphaObservation = (observation: IntradayAlphaObservation, snapshot:
       manifest.sourceTopics.quotes !== market.sourceTopics.quotes ||
       manifest.sourceTopics.trades !== market.sourceTopics.trades
     )
-      return yield* fail('Intraday alpha snapshot manifest violates its bound 20-symbol SPY-benchmarked contract')
+      return yield* fail('Intraday alpha snapshot manifest violates its bound SPY-benchmarked contract')
     if (Date.parse(manifest.rangeEndAt) !== end || manifest.rangeStartAt !== regularSession.openAt)
       return yield* fail('Intraday alpha snapshot must span from regular session open to the latest completed minute')
     if (observed - end - protocol.decisionDelaySeconds * 1000 > protocol.maximumDecisionLagMs)
@@ -147,6 +207,7 @@ export const reproduceIntradayAlphaObservation = (input: unknown) =>
   )
 
 export const makeOwnedIntradayAlphaObservation = (input: {
+  readonly schemaVersion?: IntradayAlphaObservation['schemaVersion']
   readonly cycleId: string
   readonly authorityGenerationHash: string
   readonly protocol: JevProtocol
@@ -174,7 +235,7 @@ export const makeOwnedIntradayAlphaObservation = (input: {
       ),
     )
     const payload: IntradayAlphaObservation = freezeEvidence({
-      schemaVersion: 'bayn.intraday-alpha-observation.v2',
+      schemaVersion: input.schemaVersion ?? 'bayn.intraday-alpha-observation.v2',
       cycleId: input.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
       observedAt: input.snapshot.manifest.observedAt,

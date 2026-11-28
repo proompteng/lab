@@ -12,36 +12,8 @@ from scripts.local_intraday_tsmom_replay import PendingOrder, PositionState
 from .trading import (
     equity_symbols,
     positive_prices,
-    positive_quantities,
-    strategy_ids,
     utc_datetimes,
 )
-
-
-@st.composite
-def replay_decisions(
-    draw: Any,
-    *,
-    action: str | None = None,
-    order_type: str | None = None,
-) -> StrategyDecision:
-    resolved_action = action or draw(st.sampled_from(("buy", "sell")))
-    resolved_order_type = order_type or draw(st.sampled_from(("market", "limit")))
-    qty = draw(positive_quantities())
-    limit_price = draw(positive_prices()) if resolved_order_type == "limit" else None
-    return StrategyDecision(
-        strategy_id=draw(strategy_ids()),
-        symbol=draw(equity_symbols()),
-        event_ts=draw(utc_datetimes()),
-        timeframe="1Sec",
-        action=resolved_action,
-        qty=qty,
-        order_type=resolved_order_type,
-        time_in_force="day",
-        limit_price=limit_price,
-        rationale="hypothesis",
-        params={},
-    )
 
 
 @st.composite

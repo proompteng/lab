@@ -1,94 +1,28 @@
 from __future__ import annotations
 
-
-import json
-import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
-import tempfile
-from types import SimpleNamespace
-from unittest import TestCase
-from unittest.mock import Mock, patch
-from typing import Any, Callable, Literal, Mapping, Sequence, cast
-from uuid import uuid4
+from typing import Callable
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.models import (
-    Base,
-    Execution,
-    LLMDecisionReview,
-    PositionSnapshot,
-    RejectedSignalOutcomeEvent,
-    Strategy,
-    StrategyHypothesis,
-    StrategyHypothesisMetricWindow,
-    StrategyPromotionDecision,
-    StrategyRuntimeLedgerBucket,
-    TradeDecision,
-    VNextDatasetSnapshot,
-)
-from app import config
 from app.trading.decisions import (
     DecisionEngine,
-    is_entry_action_for_strategies,
-    is_exit_action_for_strategies,
-    strategy_uses_position_isolation,
 )
-from app.trading.execution_adapters import OrderSubmission, SimulationExecutionAdapter
-from app.trading.execution import OrderExecutor
-from app.trading.firewall import OrderFirewall
+from app.trading.execution_adapters import OrderSubmission
+from app.trading.ingest import SignalBatch
 from app.trading.llm.review_engine import LLMReviewOutcome
-from app.trading.llm.dspy_programs.runtime import (
-    DSPyReviewRuntime,
-    DSPyRuntimeUnsupportedStateError,
-)
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
+    LLMReviewRequest,
+    LLMReviewResponse,
     MarketContextBundle,
     PortfolioSnapshot,
     RecentDecisionSummary,
-    LLMReviewRequest,
-    LLMReviewResponse,
 )
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import MarketSnapshot, PriceFetcher
-from app.trading.ingest import SignalBatch
-from app.trading.quote_quality import QuoteQualityStatus
-from app.trading.reconcile import Reconciler
-from app.trading.risk import RiskEngine
-from app.trading.scheduler.pipeline import TradingPipeline
-from app.trading.scheduler.pipeline_helpers import (
-    _apply_projected_position_decision,
-    _build_dspy_lineage,
-    _committee_trace_has_veto,
-    _project_open_orders_onto_positions,
-)
-from app.trading.scheduler.state import TradingState
-from app.trading.submission_council import build_hypothesis_runtime_summary
-from app.trading.tca import AdaptiveExecutionPolicyDecision
-from app.trading.universe import UniverseResolver
-
-
-def _target_price_snapshots(
-    *symbols: str, price: str = "100"
-) -> dict[str, dict[str, str]]:
-    return {
-        symbol: {
-            "symbol": symbol,
-            "price": price,
-            "bid": price,
-            "ask": price,
-            "spread": "0",
-            "source": "test_executable_quote",
-            "quote_source": "test_executable_quote",
-        }
-        for symbol in symbols
-    }
 
 
 def _with_default_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
@@ -385,7 +319,7 @@ class FakeAlpacaClient:
         time_in_force: str | None = None,
         limit_price: float | None = None,
         stop_price: float | None = None,
-        extra_params: dict[str, Any] | None = None,
+        extra_params: dict[str, object] | None = None,
         firewall_token: object | None = None,
     ) -> dict[str, str]:
         if isinstance(request, OrderSubmission):
@@ -475,7 +409,7 @@ class RejectingAlpacaClient(FakeAlpacaClient):
         time_in_force: str | None = None,
         limit_price: float | None = None,
         stop_price: float | None = None,
-        extra_params: dict[str, Any] | None = None,
+        extra_params: dict[str, object] | None = None,
         firewall_token: object | None = None,
     ) -> dict[str, str]:
         self.submit_calls += 1
@@ -627,7 +561,7 @@ class FakeLLMReviewEngine:
         self,
         decision: StrategyDecision,
         account: dict[str, str],
-        positions: list[dict[str, Any]],
+        positions: list[dict[str, object]],
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
         market_context: MarketContextBundle | None = None,
@@ -677,7 +611,7 @@ class FakeLLMReviewEngine:
         self,
         decision: StrategyDecision,
         account: dict[str, str],
-        positions: list[dict[str, Any]],
+        positions: list[dict[str, object]],
         request: LLMReviewRequest | None = None,
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
@@ -746,7 +680,7 @@ class FakeLLMReviewEngine:
 
 
 class CountingLLMReviewEngine(FakeLLMReviewEngine):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
         self.review_calls = 0
         super().__init__(*args, **kwargs)
 
@@ -754,7 +688,7 @@ class CountingLLMReviewEngine(FakeLLMReviewEngine):
         self,
         decision: StrategyDecision,
         account: dict[str, str],
-        positions: list[dict[str, Any]],
+        positions: list[dict[str, object]],
         request: LLMReviewRequest | None = None,
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
@@ -842,114 +776,3 @@ class FakeCircuitBreaker:
 
     def record_success(self) -> None:
         return None
-
-
-def _set_llm_guardrails(config, *, adjustment_approved: bool = False) -> None:
-    config.settings.llm_allowed_models_raw = config.settings.llm_model
-    config.settings.llm_evaluation_report = "eval-2026-02-08"
-    config.settings.llm_effective_challenge_id = "mrm-review-2026-02-08"
-    config.settings.llm_shadow_completed_at = "2026-02-08T00:00:00Z"
-    config.settings.llm_model_version_lock = config.settings.llm_model
-    config.settings.llm_adjustment_approved = adjustment_approved
-
-
-__all__: tuple[str, ...] = (
-    "AdaptiveExecutionPolicyDecision",
-    "Any",
-    "Base",
-    "Callable",
-    "CountingAlpacaClient",
-    "CountingLLMReviewEngine",
-    "CursorAdvancingFakeIngestor",
-    "CursorErrorWarmupIngestor",
-    "DSPyReviewRuntime",
-    "DSPyRuntimeUnsupportedStateError",
-    "Decimal",
-    "DecisionEngine",
-    "Execution",
-    "FakeAlpacaClient",
-    "FakeCircuitBreaker",
-    "FakeIngestor",
-    "FakeLLMReviewEngine",
-    "FakePriceFetcher",
-    "FetchErrorWarmupIngestor",
-    "LLMDecisionContext",
-    "LLMDecisionReview",
-    "LLMPolicyContext",
-    "LLMReviewOutcome",
-    "LLMReviewRequest",
-    "LLMReviewResponse",
-    "Literal",
-    "Mapping",
-    "MarketContextBundle",
-    "MarketSnapshot",
-    "Mock",
-    "NoSignalReasonIngestor",
-    "OpenOrderAlpacaClient",
-    "OrderExecutor",
-    "OrderFirewall",
-    "Path",
-    "PortfolioSnapshot",
-    "PositionSnapshot",
-    "PositionedAlpacaClient",
-    "PriceFetcher",
-    "QuoteQualityStatus",
-    "RaisingObserveDecisionEngine",
-    "RecentDecisionSummary",
-    "Reconciler",
-    "RecordingDecisionEngine",
-    "RejectedSignalOutcomeEvent",
-    "RejectingAlpacaClient",
-    "RiskEngine",
-    "SQLAlchemyError",
-    "SellInventoryConflictAlpacaClient",
-    "SellInventoryConflictRetryClient",
-    "Sequence",
-    "Session",
-    "SignalBatch",
-    "SignalEnvelope",
-    "SimpleNamespace",
-    "SimulationExecutionAdapter",
-    "Strategy",
-    "StrategyDecision",
-    "StrategyHypothesis",
-    "StrategyHypothesisMetricWindow",
-    "StrategyPromotionDecision",
-    "StrategyRuntimeLedgerBucket",
-    "TestCase",
-    "TimelinePriceFetcher",
-    "TradeDecision",
-    "TradingPipeline",
-    "TradingState",
-    "TransactionAwareWarmupIngestor",
-    "UniverseResolver",
-    "VNextDatasetSnapshot",
-    "WarmupIngestor",
-    "_apply_projected_position_decision",
-    "_build_dspy_lineage",
-    "_committee_trace_has_veto",
-    "_default_probabilities",
-    "is_entry_action_for_strategies",
-    "is_exit_action_for_strategies",
-    "_market_context_bundle",
-    "_project_open_orders_onto_positions",
-    "_set_llm_guardrails",
-    "strategy_uses_position_isolation",
-    "_target_price_snapshots",
-    "_with_default_executable_quote",
-    "build_hypothesis_runtime_summary",
-    "cast",
-    "config",
-    "create_engine",
-    "date",
-    "datetime",
-    "json",
-    "os",
-    "patch",
-    "select",
-    "sessionmaker",
-    "tempfile",
-    "timedelta",
-    "timezone",
-    "uuid4",
-)

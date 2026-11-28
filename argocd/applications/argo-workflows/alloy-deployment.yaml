@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/component: logging
 spec:
   replicas: 1
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: argo-workflows-alloy

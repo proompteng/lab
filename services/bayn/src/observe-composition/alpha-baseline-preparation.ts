@@ -1,3 +1,4 @@
+import type { BrokerReadShape } from '../broker/alpaca/model'
 import { Context, Effect, Result, Schema } from 'effect'
 
 import { ExecutionBuildSchema, type ExecutionBuild } from '../build'
@@ -24,6 +25,7 @@ import {
 } from '../schemas'
 import {
   decodeIntradayAlphaPolicy,
+  isPureEtfPolicy,
   IntradayAlphaPolicySchema,
   intradayAlphaEquityMarketProfile,
   type IntradayAlphaPolicy,
@@ -62,6 +64,7 @@ export class NativeAlphaBaselinePreparation extends Context.Service<
   {
     readonly prepare: (
       request: NativeAlphaBaselinePreparationRequest,
+      marketCalendar?: BrokerReadShape['marketCalendar'],
     ) => Effect.Effect<RecordedAlphaBaselinePreparation, OperationalError | TrailingBaselinePendingCoverage>
   }
 >()('@proompteng/bayn/observe-composition/NativeAlphaBaselinePreparation') {}
@@ -97,6 +100,7 @@ export const alphaBaselinePreparationIdentity = (
       symbols: [...policy.candidateSymbols].sort(),
       noiseAreaSymbols: [...policy.noiseAreaSymbols].sort(),
       ...policy.trailingBaseline,
+      ...(isPureEtfPolicy(policy) ? { checkpointMinutesFromOpen: policy.noiseArea.checkpointMinutesFromOpen } : {}),
       sourceContract: {
         provider: 'alpaca',
         feed: intradayAlphaEquityMarketProfile.feed,
