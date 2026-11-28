@@ -1019,8 +1019,13 @@ const resyncAgentRunsForNamespace = async (
           oldestUntouchedAgeSeconds === null ? ageSeconds : Math.max(oldestUntouchedAgeSeconds, ageSeconds)
       }
     }
+    const finalizers = readNested(run, ['metadata', 'finalizers'])
+    const hasRuntimeFinalizer = Array.isArray(finalizers) && finalizers.includes('agents.proompteng.ai/runtime-cleanup')
     if (reasons.length > 0) {
       candidateRuns.push({ name, reasons })
+    } else if (readNested(run, ['metadata', 'deletionTimestamp']) && hasRuntimeFinalizer) {
+      // Relists may observe deletionTimestamp before its covered MODIFIED watch event arrives.
+      retryRuns.push(name)
     } else if (isQueuedRun(run) && !readNested(run, ['status', 'runtimeRef'])) {
       // Rate windows and free slots do not emit watch events for a blocked run.
       retryRuns.push(name)

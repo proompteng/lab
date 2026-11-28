@@ -179,6 +179,55 @@ describe('agents controller startup resync', () => {
     }
   })
 
+  it('reconciles deleting AgentRuns observed by periodic relist even when the MODIFIED watch event is covered', async () => {
+    const namespace = 'agents'
+    const deletingRun = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        namespace,
+        name: 'deleting-run',
+        resourceVersion: '205',
+        generation: 1,
+        deletionTimestamp: '2026-01-20T00:01:00Z',
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'agent' },
+        runtime: { type: 'job' },
+      },
+      status: {
+        phase: 'Running',
+        observedGeneration: 1,
+        runtimeRef: { type: 'job', name: 'job-deleting', namespace },
+      },
+    }
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ metadata: { resourceVersion: '200' }, items: [] })
+      .mockResolvedValueOnce({ metadata: { resourceVersion: '205' }, items: [deletingRun] })
+    const kube = buildKube({ list })
+    const state = createControllerState()
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, namespace, state, defaultConcurrency, handles)
+      await awaitNamespaceIdle(namespace)
+      const watch = getWatch(RESOURCE_MAP.AgentRun)
+
+      await __test.resyncAgentRunsForNamespace(kube as never, namespace, state, defaultConcurrency, 'periodic')
+      // Watch delivers the MODIFIED event already covered by listVersion=205.
+      void watch.onEvent({ type: 'MODIFIED', object: deletingRun })
+      await awaitNamespaceIdle(namespace)
+
+      expect(kube.delete).toHaveBeenCalledWith('job', 'job-deleting', namespace, expect.anything())
+      expect(kube.patch).toHaveBeenCalledExactlyOnceWith(RESOURCE_MAP.AgentRun, 'deleting-run', namespace, {
+        metadata: { finalizers: [] },
+      })
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
   it('records a terminal idempotency receipt even if the run is removed before its task starts', async () => {
     vi.stubEnv('AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED', 'true')
     const markAgentRunIdempotencyKeyTerminal = vi.fn(async () => null)
