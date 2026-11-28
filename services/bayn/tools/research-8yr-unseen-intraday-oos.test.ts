@@ -4,7 +4,6 @@ import { rejects } from 'node:assert/strict'
 import {
   admitUniverse,
   compareUniverse,
-  gunzipArchive,
   loadTapes,
   readArchiveMetadata,
   replacementBlindSource,
@@ -152,21 +151,6 @@ describe('Wave 4E metadata admission', () => {
     expect(() => admitUniverse('blind', [...universe, 'SPY'])).toThrow('duplicates=[SPY]')
   })
 
-  test('reads only a bound gzip member but authenticates every byte of the object', async () => {
-    const payload = 'example tape\n'
-    const member = Bun.gzipSync(new TextEncoder().encode(payload))
-    const bytes = new Uint8Array(member.length + 8)
-    bytes.set(member)
-    bytes.fill(0xff, member.length)
-    const receipt = { key: 'fixture', bytes: bytes.length, sha256: Bun.CryptoHasher.hash('sha256', bytes, 'hex') }
-    const read = (boundary?: number) =>
-      new Response(gunzipArchive(new Blob([bytes]).stream(), receipt, boundary)).text()
-    expect(await read(member.length)).toBe(payload)
-    await rejects(read())
-    bytes[bytes.length - 1] = 0xfe
-    await rejects(read(member.length), /Byte receipt mismatch: fixture/)
-  })
-
   test('rejects the mismatch without even requesting the calendar or any bar object', async () => {
     const objects: string[] = []
     const symbols = universe.map((symbol) => (symbol === 'INTC' ? 'ADBE' : symbol))
@@ -185,16 +169,16 @@ describe('Wave 4E metadata admission', () => {
       },
     }
     await rejects(
-      loadTapes(
-        (key) => {
+      loadTapes({
+        readJson: (key) => {
           objects.push(key)
           return Promise.resolve(metadata)
         },
-        (key) => {
+        readGzip: ({ key }) => {
           objects.push(key)
           return Promise.reject(new Error('Attempted to open a bar object'))
         },
-      ),
+      }),
       /missing=\[INTC\]; unexpected=\[ADBE\]/,
     )
     expect(objects).toEqual([blind.manifest])
@@ -286,14 +270,8 @@ describe('Frozen replay on synthetic fixtures', () => {
     }
   })
 
-  test('stationary resampling has geometric blocks that preserve every draw length and is deterministic', () => {
+  test('stationary resampling preserves the registered Wave 4E upper-tail calculation', () => {
     const plan = stationaryPlan(12, 24)
-    for (let draw = 0; draw < plan.draws; draw++) {
-      const blocks = plan.blocks.slice(plan.offsets[draw], plan.offsets[draw + 1])
-      expect(blocks.reduce((total, block) => total + (block & 0xffff), 0)).toBe(12)
-    }
-    expect(new Set(plan.blocks.map((block) => block & 0xffff)).size).toBeGreaterThan(1)
-    expect(stationaryPlan(12, 24)).toEqual(plan)
     expect(
       stationaryP(
         Array.from({ length: 12 }, (_, i) => 10 + i),

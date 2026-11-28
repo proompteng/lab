@@ -1,11 +1,10 @@
 import { join } from 'node:path'
 
-import { Schema } from 'effect'
-
 import { etfs as canaryEtfs, splits } from './etf-canary-macro-protocol'
 import { etfs as premiaEtfs } from './multi-asset-risk-premia-protocol'
 import type { Bar } from './multi-asset-risk-premia-signals'
-import { normalizeResearchCalendar, type Session } from './research-orb-zab-data'
+import { normalizeResearchCalendar, requireCalendarCoverage } from './research-lib/calendar'
+import { archiveBucket, countArchiveLines, decodeArchiveJson, readGzipLines } from './research-lib/s3-archive'
 
 export const etfs = [...new Set<string>([...canaryEtfs, ...premiaEtfs])]
 export const intradayEtfs = ['IWM', 'QQQ', 'SMH', 'SPY'] as const
@@ -68,98 +67,25 @@ const calendars = {
     sha256: 'b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71',
   },
 } as const
-export const receipts = { bucket: 'agents-artifacts', datasets, calendars }
+export const receipts = { bucket: archiveBucket, datasets, calendars }
 type Dataset = (typeof datasets)[keyof typeof datasets]
 
-export const sha256 = (bytes: Uint8Array | string) => new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
-const json = async (path: string, digest: string): Promise<unknown> => {
-  const bytes = await Bun.file(path).bytes()
-  if (sha256(bytes) !== digest) throw new Error(`SHA-256 mismatch: ${path}`)
-  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
-}
+export const tapeReceipt = (receipt: Dataset) => ({
+  key: `${receipt.prefix}/${receipt.name}`,
+  bytes: receipt.bytes,
+  sha256: receipt.sha256,
+  ...('memberBytes' in receipt ? { memberBytes: receipt.memberBytes } : {}),
+  ...('rawSha256' in receipt ? { raw: { bytes: receipt.rawBytes, sha256: receipt.rawSha256 } } : {}),
+})
+const json = async (path: string, digest: string): Promise<unknown> =>
+  decodeArchiveJson(await Bun.file(path).bytes(), path, digest)
 
-export const gunzipBound = (
-  input: ReadableStream<Uint8Array<ArrayBuffer>>,
-  receipt: { name: string; bytes: number; sha256: string; memberBytes?: number },
-) => {
-  const hash = new Bun.CryptoHasher('sha256')
-  const member = receipt.memberBytes ?? receipt.bytes
-  if (!Number.isSafeInteger(member) || member <= 0 || member > receipt.bytes)
-    throw new Error('Invalid gzip member size')
-  let bytes = 0
-  return input
-    .pipeThrough(
-      new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
-        transform(chunk, out) {
-          hash.update(chunk)
-          // Wave 5A pins a single complete gzip member plus 1,693 authenticated non-tape bytes.
-          if (bytes < member) out.enqueue(chunk.subarray(0, member - bytes))
-          bytes += chunk.length
-        },
-        flush() {
-          if (bytes !== receipt.bytes || hash.digest('hex') !== receipt.sha256)
-            throw new Error(`Compressed byte receipt mismatch: ${receipt.name}`)
-        },
-      }),
-    )
-    .pipeThrough(new DecompressionStream('gzip'))
-}
-
-const verifiedLines = async (
+const verifiedLines = (
   path: string,
   receipt: Dataset,
   signal: AbortSignal,
   onLine: (line: string, index: number) => void,
-) => {
-  const reader = gunzipBound(Bun.file(path).stream(), receipt).getReader()
-  const cancel = () => {
-    void reader.cancel().catch(() => undefined)
-  }
-  signal.addEventListener('abort', cancel, { once: true })
-  const decoder = new TextDecoder('utf-8', { fatal: true })
-  const hash = new Bun.CryptoHasher('sha256')
-  let rows = 0
-  let rest = ''
-  let bytes = 0
-  try {
-    signal.throwIfAborted()
-    for (;;) {
-      const { done, value } = await reader.read()
-      signal.throwIfAborted()
-      if (done) break
-      if ('rawSha256' in receipt) hash.update(value)
-      bytes += value.length
-      const lines = (rest + decoder.decode(value, { stream: true })).split('\n')
-      rest = lines.pop() ?? ''
-      for (const line of lines) onLine(line, rows++)
-    }
-    rest += decoder.decode()
-    if (rest.length > 0) onLine(rest, rows++)
-    if ('rawSha256' in receipt && (bytes !== receipt.rawBytes || hash.digest('hex') !== receipt.rawSha256))
-      throw new Error(`Decoded byte receipt mismatch: ${receipt.name}`)
-    return rows
-  } finally {
-    signal.removeEventListener('abort', cancel)
-    await reader.cancel().catch(() => undefined)
-    reader.releaseLock()
-  }
-}
-
-const decodeBlindCalendar = Schema.decodeUnknownSync(
-  Schema.Array(Schema.Struct({ date: Schema.String, open: Schema.String, close: Schema.String })),
-)
-const dayMs = 86_400_000
-export const elapsedDays = (prior: string, next: string) => (Date.parse(next) - Date.parse(prior)) / dayMs
-const checkCalendar = (calendar: readonly Session[], first: string, last: string, count: number) => {
-  if (
-    calendar.length !== count ||
-    calendar[0]?.date !== first ||
-    calendar.at(-1)?.date !== last ||
-    calendar.some((session, i) => i > 0 && session.date <= calendar[i - 1].date)
-  )
-    throw new Error(`Expected ${count} ordered sessions from ${first} to ${last}`)
-  return calendar
-}
+) => readGzipLines(Bun.file(path).stream(), tapeReceipt(receipt), signal, countArchiveLines(onLine))
 
 const bar = (fields: readonly string[], label: string): Bar => {
   const [open, high, low, close, volume] = fields.slice(2, 7).map(Number)
@@ -182,16 +108,16 @@ export const loadData = async (directory: string, signal: AbortSignal) => {
     await json(join(directory, `${id}.json`), dataset.manifestSha256)
   const first = '2016-01-04'
   const seam = '2023-12-29'
-  const blind = checkCalendar(
+  const blind = requireCalendarCoverage(
     normalizeResearchCalendar({
       query: { start: first, end: seam },
-      response: decodeBlindCalendar(await json(join(directory, 'calendar.json'), calendars.blind.sha256)),
+      response: await json(join(directory, 'calendar.json'), calendars.blind.sha256),
     }),
     first,
     seam,
     2_012,
   )
-  const recent = checkCalendar(
+  const recent = requireCalendarCoverage(
     normalizeResearchCalendar(await json(join(directory, 'recent-calendar.json'), calendars.recent.sha256)).filter(
       ({ date }) => date <= splits.holdout[1],
     ),

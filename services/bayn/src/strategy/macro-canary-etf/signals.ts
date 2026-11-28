@@ -306,6 +306,9 @@ const project = (policy: MacroCanaryEtfPolicy, weights: Float64Array) => {
   return { targetWeights: asWeights(w), idleShyWeight, unsweptCashWeight: Math.max(0, 1 - gross(w)) }
 }
 
+export const macroCanaryEtfReviewOffset = (policy: MacroCanaryEtfPolicy, completedSessions: number) =>
+  (completedSessions - Math.max(...policy.features.horizons) - 1) % policy.ensemble.reviewCadence
+
 export const compileMacroCanaryEtfSignal = (
   receipt: MacroCanaryEtfPolicyReceipt,
   market: MacroCanaryEtfMarket,
@@ -399,7 +402,7 @@ export const compileMacroCanaryEtfSignal = (
   return Result.succeed({
     signalSession,
     nextOpenSession: market.nextOpenSession,
-    review: (last - warmup) % policy.ensemble.reviewCadence === 0,
+    review: macroCanaryEtfReviewOffset(policy, t) === 0,
     policyHash,
     targetWeights,
     attribution: {

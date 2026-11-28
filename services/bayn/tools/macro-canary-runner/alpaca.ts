@@ -1,4 +1,4 @@
-import { Effect, Redacted, Result, Schema } from 'effect'
+import { Config, Effect, Option, Redacted, Result, Schema } from 'effect'
 import { FetchHttpClient, Headers, HttpClient, HttpClientRequest } from 'effect/http'
 
 import {
@@ -10,7 +10,7 @@ import {
   UtcSourceTimestampSchema,
 } from '../../src/schemas'
 import { redactedHeaders } from '../../src/broker/alpaca/model'
-import { failure, TimeInForce } from './contract'
+import { failure, Mode, TimeInForce } from './contract'
 
 export const paperOrigin = 'https://paper-api.alpaca.markets'
 const dataOrigin = 'https://data.alpaca.markets'
@@ -141,15 +141,17 @@ export const makeAlpaca = Effect.fn('macro-canary.alpaca')(function* (
       )
       const response = yield* http
         .execute(req)
-        .pipe(Effect.mapError((cause) => failure(operation, 'Alpaca HTTP transport failed', cause._tag)))
+        .pipe(Effect.mapError((cause) => failure(operation, 'Alpaca HTTP transport failed', cause.reason._tag)))
       if (response.status !== 200)
-        return yield* failure(operation, `Alpaca returned HTTP ${response.status}; no automatic retry`)
+        return yield* failure(operation, `Alpaca returned HTTP ${response.status}; no automatic retry`, {
+          status: response.status,
+        })
       const json = yield* response.json.pipe(
-        Effect.mapError((cause) => failure(operation, 'Alpaca response was not valid JSON', cause._tag)),
+        Effect.mapError((cause) => failure(operation, 'Alpaca response was not valid JSON', cause.reason._tag)),
       )
       // Do not attach provider-controlled response contents to errors printed by the CLI.
       return yield* Schema.decodeUnknownEffect(schema)(json).pipe(
-        Effect.mapError(() => failure(operation, 'Unexpected Alpaca response shape')),
+        Effect.mapError((cause) => failure(operation, 'Unexpected Alpaca response shape', { kind: cause.issue._tag })),
       )
     }).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: 'error' }),
@@ -228,3 +230,28 @@ export const makeAlpaca = Effect.fn('macro-canary.alpaca')(function* (
 })
 
 export type Alpaca = Effect.Success<ReturnType<typeof makeAlpaca>>
+
+export const makeRunnerAlpaca = Effect.fn('macro-rebalance.credentials')(function* (
+  sleeve: 'CORE' | 'CANARY',
+  mode: Mode,
+  requireIsolated: boolean = false,
+) {
+  const scopedPrefix = `BAYN_MACRO_${sleeve}_ALPACA`
+  const binding = yield* Config.option(Config.Redacted(`${scopedPrefix}_ACCOUNT_ID`))
+  const expectedAccountId = Option.isSome(binding) ? Redacted.value(binding.value) : undefined
+  if (expectedAccountId === undefined && requireIsolated)
+    return yield* failure('config', 'Empty exclusions require a verified isolated shadow account')
+  if (expectedAccountId !== undefined && !Schema.is(AccountId)(expectedAccountId))
+    return yield* failure('config', 'Isolated Alpaca account ID must be a UUID')
+  if (expectedAccountId !== undefined && mode !== Mode.Shadow)
+    return yield* failure('config', 'The isolated credentials can only run in shadow mode')
+
+  const prefix = expectedAccountId === undefined ? 'BAYN_ALPACA' : scopedPrefix
+  const origin =
+    expectedAccountId === undefined
+      ? yield* Config.String('BAYN_ALPACA_BASE_URL').pipe(Config.withDefault(paperOrigin))
+      : paperOrigin
+  const key = yield* Config.Redacted(`${prefix}_KEY_ID`)
+  const secret = yield* Config.Redacted(`${prefix}_SECRET_KEY`)
+  return { alpaca: yield* makeAlpaca(origin, key, secret), expectedAccountId }
+})

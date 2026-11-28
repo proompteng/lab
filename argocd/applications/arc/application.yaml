@@ -66,7 +66,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -196,7 +196,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -303,7 +303,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -433,7 +433,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -546,7 +546,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   command: [ "/bin/bash", "-lc" ]
                   args: &tmpfs-init-args
                     - |
@@ -673,19 +673,19 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
+                  resources: &tmpfs-standard-resources
                     requests:
                       cpu: "4"
-                      memory: "8Gi"
+                      memory: "16Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"
-                      memory: "18Gi"
-                      ephemeral-storage: "100Gi"
+                      memory: "24Gi"
+                      ephemeral-storage: "20Gi"
                   env: &tmpfs-env
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -755,7 +755,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   command: [ "/bin/bash", "-lc" ]
                   args: *tmpfs-init-args
                   securityContext:
@@ -773,19 +773,11 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
-                    requests:
-                      cpu: "4"
-                      memory: "8Gi"
-                      ephemeral-storage: "10Gi"
-                    limits:
-                      cpu: "20"
-                      memory: "18Gi"
-                      ephemeral-storage: "100Gi"
+                  resources: *tmpfs-standard-resources
                   env: *tmpfs-env
                   volumeMounts: *tmpfs-mounts
               volumes:
@@ -830,7 +822,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   command: [ "/bin/bash", "-lc" ]
                   args: *tmpfs-init-args
                   securityContext:
@@ -848,19 +840,19 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
+                  resources: &tmpfs-large-resources
                     requests:
                       cpu: "4"
-                      memory: "8Gi"
+                      memory: "24Gi"
                       ephemeral-storage: "10Gi"
                     limits:
                       cpu: "20"
-                      memory: "28Gi"
-                      ephemeral-storage: "100Gi"
+                      memory: "32Gi"
+                      ephemeral-storage: "20Gi"
                   env: *tmpfs-env
                   volumeMounts: *tmpfs-mounts
               volumes:
@@ -899,7 +891,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   command: [ "/bin/bash", "-lc" ]
                   args: *tmpfs-init-args
                   securityContext:
@@ -917,19 +909,11 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:15838903d7d976ddf87da5c09af6d45d8239be231a281f266a1f80f899ced973
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:2ec4dc2103a6943a62866e6475852331d9a90772e79c0eedfd50525dda90aeab
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
-                  resources:
-                    requests:
-                      cpu: "4"
-                      memory: "8Gi"
-                      ephemeral-storage: "10Gi"
-                    limits:
-                      cpu: "20"
-                      memory: "28Gi"
-                      ephemeral-storage: "100Gi"
+                  resources: *tmpfs-large-resources
                   env: *tmpfs-env
                   volumeMounts: *tmpfs-mounts
               volumes:

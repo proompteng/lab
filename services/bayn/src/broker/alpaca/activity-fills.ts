@@ -82,14 +82,3 @@ export const decodeTradeActivityEffect = (
       execution: { ...fill, executionId: event.ref_id },
     }
   })
-
-export const decodeFillExecution = (
-  row: unknown,
-  accountId: string,
-): Result.Result<FillExecution, ReturnType<typeof replayFailure>> =>
-  Result.gen(function* () {
-    const effect = yield* decodeTradeActivityEffect(row, accountId)
-    if (effect._tag !== 'Fill' || effect.previousRefId !== undefined)
-      return yield* Result.fail(replayFailure('Alpaca trade activity cannot represent an ordinary execution'))
-    return effect.execution
-  })

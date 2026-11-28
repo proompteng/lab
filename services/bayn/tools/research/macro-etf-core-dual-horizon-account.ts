@@ -1,6 +1,6 @@
+import { elapsedDays } from '../research-lib/calendar'
 import { wholeShareCost, rebalanceDue, withShyCarry } from '../../src/strategy/macro-etf-core/planner'
 import { asset, universe } from '../../src/strategy/macro-etf-core/policy'
-import { elapsedDays } from '../pure-etf-dual-horizon-data'
 import { type NoiseOrder, noiseRosters } from '../pure-etf-dual-horizon-noise'
 import type { DailyFrame } from './macro-etf-core-dual-horizon-data'
 import { o1Band } from './macro-etf-core-wave5d'

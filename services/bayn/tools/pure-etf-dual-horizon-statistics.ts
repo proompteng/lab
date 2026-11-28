@@ -1,33 +1,22 @@
 import { initialEquity, type LedgerRow, type Mode } from './pure-etf-dual-horizon-account'
-import { elapsedDays } from './pure-etf-dual-horizon-data'
+import { elapsedDays } from './research-lib/calendar'
+import {
+  calmar,
+  exTopExcess,
+  maxDrawdown,
+  sharpe,
+  sortino,
+  type StationaryPlan,
+  sum,
+  wealth,
+} from './research-lib/statistics'
 
-const sum = (x: readonly number[]) => x.reduce((a, b) => a + b, 0)
 const mean = (x: readonly number[]) => sum(x) / x.length
-const annual = Math.sqrt(252)
 const covarianceSum = (a: readonly number[], b: readonly number[]) => {
   const am = mean(a)
   const bm = mean(b)
   return a.reduce((total, x, i) => total + (x - am) * (b[i] - bm), 0)
 }
-const sharpe = (net: readonly number[]) => {
-  const sd = Math.sqrt(covarianceSum(net, net) / (net.length - 1))
-  return sd > 0 ? (mean(net) * annual) / sd : null
-}
-const wealth = (returns: readonly number[], mode: Mode) =>
-  mode === 'fixed' ? 1 + sum(returns) : returns.reduce((x, r) => x * (1 + r), 1)
-
-export const pathDrawdown = (returns: readonly number[], mode: Mode) => {
-  let equity = 1
-  let peak = 1
-  let drawdown = 0
-  for (const r of returns) {
-    equity = mode === 'fixed' ? equity + r : equity * (1 + r)
-    peak = Math.max(peak, equity)
-    drawdown = Math.max(drawdown, 1 - equity / peak)
-  }
-  return drawdown
-}
-
 export const summarize = (
   dates: readonly string[],
   net: readonly number[],
@@ -36,29 +25,13 @@ export const summarize = (
   mode: Mode,
 ) => {
   const years = (elapsedDays(dates[0], dates[dates.length - 1]) + 1) / 365.2425
-  const nav = wealth(net, mode)
-  const shyNav = wealth(shy, mode)
+  const compound = mode === 'compound'
+  const nav = wealth(net, compound)
+  const shyNav = wealth(shy, compound)
   const cagr = nav > 0 ? nav ** (1 / years) - 1 : null
-  const maxDrawdown = pathDrawdown(net, mode)
-  const downside = Math.sqrt(mean(net.map((r) => Math.min(0, r) ** 2)))
+  const drawdown = maxDrawdown(net, compound)
   const marketVariance = covarianceSum(spy, spy)
-  const best = net
-    .map((r, i) => ({ i, r }))
-    .filter(({ r }) => r > 0)
-    .sort((a, b) => b.r - a.r || a.i - b.i)
-  const exTop = (count: number) => {
-    const exclude = new Set(best.slice(0, count).map(({ i }) => i))
-    return (
-      wealth(
-        net.filter((_, i) => !exclude.has(i)),
-        mode,
-      ) -
-      wealth(
-        shy.filter((_, i) => !exclude.has(i)),
-        mode,
-      )
-    )
-  }
+  const [exTop5, exTop10] = exTopExcess(net, shy, compound, [5, 10])
   return {
     sessions: net.length,
     finalEquity: nav * initialEquity,
@@ -68,16 +41,16 @@ export const summarize = (
     excessOverShyUsd: (nav - shyNav) * initialEquity,
     irOverShy: sharpe(net.map((r, i) => r - shy[i])),
     sharpe: sharpe(net),
-    sortino: downside > 0 ? (mean(net) * annual) / downside : null,
-    maxDrawdown,
-    calmar: maxDrawdown > 0 && cagr !== null ? cagr / maxDrawdown : null,
-    exTop5ExcessOverShy: exTop(5),
-    exTop10ExcessOverShy: exTop(10),
+    sortino: sortino(net),
+    maxDrawdown: drawdown,
+    calmar: calmar(cagr, drawdown),
+    exTop5ExcessOverShy: exTop5,
+    exTop10ExcessOverShy: exTop10,
     spyBeta: marketVariance > 0 ? covarianceSum(net, spy) / marketVariance : null,
     downSpyNet:
       wealth(
         net.filter((_, i) => spy[i] < 0),
-        mode,
+        compound,
       ) - 1,
   }
 }
@@ -126,29 +99,9 @@ export const spyDrawdownIndices = (spy: readonly number[]) => {
 
 // Politis–Romano circular stationary bootstrap, fixed xorshift32 seed and geometric mean block length 10.
 export const bootstrapProtocol = { draws: 10_000, meanBlock: 10, seed: 0x7ca4da11 } as const
-export const stationaryBlocks = (n: number, draws: number = bootstrapProtocol.draws) => {
-  let seed: number = bootstrapProtocol.seed
-  const random = () => {
-    seed ^= seed << 13
-    seed ^= seed >>> 17
-    seed ^= seed << 5
-    return ((seed >>> 0) + 0.5) / 2 ** 32
-  }
-  const geometric = Math.log1p(-1 / bootstrapProtocol.meanBlock)
-  const blocks: number[] = []
-  for (let k = 0; k < draws; k++) {
-    for (let left = n; left > 0; ) {
-      const start = Math.floor(random() * n)
-      const length = Math.min(left, 1 + Math.floor(Math.log(random()) / geometric))
-      blocks.push(start, start + length)
-      left -= length
-    }
-  }
-  return Int32Array.from(blocks)
-}
-
-export const bootstrapRisk = (net: readonly number[], shy: readonly number[], mode: Mode, blocks: Int32Array) => {
+export const bootstrapRisk = (net: readonly number[], shy: readonly number[], mode: Mode, plan: StationaryPlan) => {
   const size = net.length
+  if (plan.sessions !== size || shy.length !== size) throw new Error('Stationary bootstrap length mismatch')
   const excess = net.map((x, i) => x - shy[i])
   const observed = sum(excess)
   const center = observed / size
@@ -158,28 +111,25 @@ export const bootstrapRisk = (net: readonly number[], shy: readonly number[], mo
   const compound = mode === 'compound'
   const drawdowns: number[] = []
   let tails = 0
-  let sampled = 0
-  let length = 0
-  let nav = 1
-  let peak = 1
-  let maxDd = 0
-  for (let i = 0; i < blocks.length; i += 2) {
-    const start = blocks[i]
-    const end = blocks[i + 1]
-    sampled += prefix[end] - prefix[start]
-    length += end - start
-    // Uncentered returns for loss distribution; centered paired excess for the null.
-    for (let j = start; j < end; j++) {
-      nav = compound ? nav * (1 + returns[j]) : nav + returns[j]
-      if (nav > peak) peak = nav
-      const dd = 1 - nav / peak
-      if (dd > maxDd) maxDd = dd
+  for (let draw = 0; draw < plan.draws; draw++) {
+    let sampled = 0
+    let nav = 1
+    let peak = 1
+    let maxDd = 0
+    for (let i = plan.offsets[draw]; i < plan.offsets[draw + 1]; i += 2) {
+      const start = plan.blocks[i]
+      const end = plan.blocks[i + 1]
+      sampled += prefix[end] - prefix[start]
+      // Uncentered returns for loss distribution; centered paired excess for the null.
+      for (let j = start; j < end; j++) {
+        nav = compound ? nav * (1 + returns[j]) : nav + returns[j]
+        if (nav > peak) peak = nav
+        const dd = 1 - nav / peak
+        if (dd > maxDd) maxDd = dd
+      }
     }
-    if (length !== size) continue
     if (sampled >= observed) tails++
     drawdowns.push(maxDd)
-    sampled = length = maxDd = 0
-    nav = peak = 1
   }
   drawdowns.sort((a, b) => a - b)
   const cut = Math.ceil(drawdowns.length * 0.95)

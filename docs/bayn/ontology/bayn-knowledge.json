@@ -1,0 +1,243 @@
+{
+  "schemaVersion": "bayn.ontology.knowledge.v1",
+  "acronyms": [
+    {
+      "name": "B0",
+      "description": "Wave 6A/9B QQQ+SMH Noise Area research baseline: 30-minute checks from 10:00 ET to 15:00 ET (no later than regular close minus 30 minutes), 1.4 times the mean absolute open-to-checkpoint move of the prior 14 eligible sessions, opposite-band next-bar exit, and inverse-volatility parity sizing. The fixed research book uses a $100,000 reference, $180,000 gross ceiling, and close-minus-15/10/5-minute liquidation attempts. Its 11.20 bp modeled break-even is not the 2.5 bp live slippage gate.",
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16387",
+        "https://github.com/proompteng/lab/pull/16393",
+        "https://github.com/proompteng/lab/pull/16392"
+      ]
+    },
+    {
+      "name": "F4",
+      "description": "Frozen Wave 5C macro ETF ensemble: blend desired allocations 50% F1 inverse-vol (RV20, 10% reference vol), 25% F2 (HYG/LQD primary, EMA100, 10-session weight smoothing), and 25% F3 (both RV compression ratios, 50% cut). Review every 42 sessions; the Wave 5C standalone representative stayed below 0.91 times one-way turnover per year in each split. Research comparator, not capital authority.",
+      "sources": ["https://github.com/proompteng/lab/pull/16379", "https://github.com/proompteng/lab/pull/16391"]
+    },
+    {
+      "name": "F2",
+      "description": "Frozen Wave 5C credit and defensive ETF selector: HYG/IEF primary and HYG/LQD secondary, weighted credit votes 2:1 above the 100-session EMA; 10-session EMA target smoothing and 42-session review. Remaining weight selects an eligible positively trending haven or stays idle. At 10 bp round trip the SHY-idle Holdout beat SHY by 61.34 percentage points and traded 2.20 times one-way per year. Research comparator.",
+      "sources": ["https://github.com/proompteng/lab/pull/16379"]
+    },
+    {
+      "name": "O1",
+      "description": "Frozen Wave 5D research canary: panel A EEM/HYG/IEF/TLT breadth, top 3 offense and top 2 defense, with inverse-vol offense weights; combine with long-only 8%-target TSMOM and 63-session macro EMA by equal ex-ante risk contribution. The registered ensemble reviews every 21 sessions with a 5-percentage-point drift band after 252 returns. The later shadow runner uses a separate 10-point band. No live grant.",
+      "sources": ["https://github.com/proompteng/lab/pull/16376", "https://github.com/proompteng/lab/pull/16388"]
+    },
+    {
+      "name": "OCO",
+      "description": "One-Cancels-the-Other: one linked protective stop-limit and one profit-taking limit. A filled leg cancels its sibling; any partial or uncertain outcome still needs exact broker reconciliation. The v2.1 stop-limit collar is max(50 bp, 0.25 times ATR14 in bp), capped at 150 bp. A trigger is not proof of fill.",
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16378",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/docs/bayn/intraday-v2-1-execution-upgrade.md"
+      ]
+    },
+    {
+      "name": "SIP",
+      "description": "Securities Information Processor: consolidated U.S. equity trades/quotes across venues, distinct from IEX-only coverage. The reviewed shadow contract has 73 symbols; compare completed regular 1-minute bars at matching symbol/minute and report signed drift as 10,000 times (IEX close minus SIP close) divided by SIP close in bp. Not a live feed cutover or a slippage estimate.",
+      "sources": ["https://github.com/proompteng/lab/pull/16390", "https://github.com/proompteng/lab/pull/16399"]
+    },
+    {
+      "name": "IEX",
+      "description": "Investors Exchange: the single-venue Alpaca feed Bayn uses for existing equity inputs, not a consolidated NBBO feed. Keep its 1-minute bars and venue bid/ask tagged iex; a missing IEX bar or quote cannot be reconstructed from SIP. A full 390-minute RTH session is a calendar bound, not a guarantee of 390 observed venue prints.",
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16399",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/README.md"
+      ]
+    },
+    {
+      "name": "PDT",
+      "description": "Pattern Day Trader: the legacy U.S. margin designation generally meant at least 4 day trades in 5 business days and more than 6% of trades in that period, with a $25,000 equity minimum. Bayn Wave 6C modeled zero day-trading buying power below $25,000; it did not observe broker buying power. FINRA replaced the legacy designation with intraday margin effective 2026-06-04, with firm transition permitted through 2027-10-20. This is not a current eligibility check.",
+      "sources": ["https://github.com/proompteng/lab/pull/16381"]
+    },
+    {
+      "name": "DSR",
+      "description": "Deflated Sharpe Ratio: skew/kurtosis-adjusted probability that observed Sharpe exceeds a multiple-trial selection hurdle. Wave 5C uses daily SHY-excess returns and a cumulative search hurdle; its Holdout gate is DSR at least 0.95 and stationary-bootstrap p below 0.05 at all 2, 5, 10 and 20 bp cost tiers. DSR alone does not correct serial dependence or turn reused tape into independent evidence.",
+      "sources": ["https://github.com/proompteng/lab/pull/16379"]
+    },
+    {
+      "name": "RTH",
+      "description": "Regular Trading Hours from the provider calendar. Typical U.S. equity RTH is 09:30–16:00 America/New_York (390 min); 2026-11-27 was 09:30–13:00 ET (210 min, close 18:00Z). Use the actual regularCloseAt, not 16:00 ET or the extended-session close.",
+      "sources": ["https://github.com/proompteng/lab/pull/16371", "https://github.com/proompteng/lab/pull/16412"]
+    },
+    {
+      "name": "ATR14",
+      "description": "Bayn trailing Average True Range ratio: arithmetic mean across up to 14 prior completed daily sessions of max(high minus low, absolute high minus prior close, absolute low minus prior close) divided by prior close. At the first sample without a predecessor use (high minus low) divided by open. The retained ratio rounds to 6 decimals; multiply by 10,000 for basis points. No current-day bar enters the trailing baseline.",
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16378",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/src/market-data/intraday/trailing-baseline.ts"
+      ]
+    },
+    {
+      "name": "VWAP",
+      "description": "Volume-Weighted Average Price. In the Wave 9B RTH confirmation, sum completed 5-minute bar VWAP times bar volume since the open and divide by the same cumulative volume. A long must be strictly above, a short strictly below; equality or a missing prefix bar fails. Do not mix venue/consolidated volumes.",
+      "sources": ["https://github.com/proompteng/lab/pull/16393"]
+    },
+    {
+      "name": "MOO",
+      "description": "Market-on-Open: order eligible only for the opening auction (Alpaca market with OPG time-in-force; normal submission cutoff 09:28 ET). A daily Open in the overnight replay is a price proxy, not a broker auction fill. An opening print cannot both size the order and fill it.",
+      "sources": ["https://github.com/proompteng/lab/pull/16358", "https://github.com/proompteng/lab/pull/16394"]
+    },
+    {
+      "name": "MOC",
+      "description": "Market-on-Close: order eligible only for the closing auction (Alpaca market with CLS time-in-force; normal submission cutoff 15:50 ET). A 15:58 ET submission is too late. The completed daily close is not available to size an order for that same auction; verify the provider cutoff for early closes.",
+      "sources": ["https://github.com/proompteng/lab/pull/16358", "https://github.com/proompteng/lab/pull/16394"]
+    },
+    {
+      "name": "CNPG",
+      "description": "CloudNativePG manages bayn-db PostgreSQL. The reviewed cluster specifies 2 instances and requires 1 synchronous standby. bayn-db-ro selects replicas only; do not substitute the primary-only bayn-db-rw service for an evidence read.",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/argocd/applications/bayn/postgres-cluster.yaml",
+        "https://github.com/proompteng/lab/pull/16392"
+      ]
+    },
+    {
+      "name": "Bayn",
+      "description": "Account-keyed quantitative evaluation and trading service with one mutation owner per account. PostgreSQL retains execution evidence and TigerBeetle retains exact accounting. Paper and live authority are separate; a ready pod, replay, or PASS grants zero broker or capital authority.",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/README.md",
+        "https://github.com/proompteng/lab/pull/16406"
+      ]
+    },
+    {
+      "name": "Dorvud",
+      "description": "Source collector, not an execution owner. For Bayn broker notifications it verifies the account, signs one WebSocket update at a time and waits for durable Restate acknowledgement before reading the next. For market data, keep IEX and consolidated SIP in explicitly distinct archive lanes.",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/argocd/applications/bayn/README.md",
+        "https://github.com/proompteng/lab/pull/16389"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "key": "nanosecond-source-time",
+      "description": "Preserve source timestamps as UTC RFC3339 text with exactly 9 fractional digits. Order fills by the retained source timestamp and deterministic identities, not a millisecond Date or microsecond SQL cast.",
+      "searchTerm": "source_timestamp",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/migrations/0009_fill_source_timestamp.ts",
+        "https://github.com/proompteng/lab/pull/16392"
+      ]
+    },
+    {
+      "key": "account-partition",
+      "description": "Filter by one verified account_id before aggregating. Bind joins on account_id and the durable identity where both relations carry it; never join by a bare provider order ID or mix PAPER and LIVE evidence.",
+      "searchTerm": "account_id",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/migrations/0052_position_snapshot_observability_index.ts",
+        "https://github.com/proompteng/lab/pull/16392"
+      ]
+    },
+    {
+      "key": "provider-regular-close",
+      "description": "Use the provider regularCloseAt for close deadlines and post-close proof. On a half day use the actual earlier close (13:00 ET on 2026-11-27), never a fixed 16:00 or extended close. Late recovery does not erase a close breach.",
+      "searchTerm": "autonomous_cycles",
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16371",
+        "https://github.com/proompteng/lab/pull/16412",
+        "https://github.com/proompteng/lab/pull/16392"
+      ]
+    },
+    {
+      "key": "feed-separation",
+      "description": "Keep IEX and SIP labeled and separate. Compare only like-for-like completed regular-session minutes. Missing or stale IEX input remains an exclusion; no SIP substitution or live cutover from a shadow read.",
+      "searchTerm": "intraday_candidate_observations",
+      "sources": ["https://github.com/proompteng/lab/pull/16390", "https://github.com/proompteng/lab/pull/16399"]
+    },
+    {
+      "key": "standby-only",
+      "description": "Auto Ontology may read only bayn-db-ro on TCP 5432 with an approved SELECT-only audit identity. Require pg_is_in_recovery() = true. Never fall back to bayn-db-rw, reuse the execution secret, or write Bayn data.",
+      "searchTerm": "position_snapshots",
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16392",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/argocd/applications/bayn/postgres-cluster.yaml"
+      ]
+    },
+    {
+      "key": "no-execution-dependency",
+      "description": "Auto Ontology is a research catalog only. Bayn execution, readiness, order mutations, protection, reconciliation, and capital authorization must not depend on it or consume its generated SQL.",
+      "searchTerm": "execution_controller_observations",
+      "sources": [
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/README.md"
+      ]
+    },
+    {
+      "key": "b0-live-slippage",
+      "description": "For eligible uniquely attributed flat-to-flat QQQ/SMH B0 legs, sum signed adverse entry and exit basis points against their own precommitted references. Both unrounded mean and median must be strictly below 2.5 bp; missing benchmarks cannot pass.",
+      "searchTerm": "intraday_alpha_baseline_preparations",
+      "sources": ["https://github.com/proompteng/lab/pull/16392", "https://github.com/proompteng/lab/pull/16406"]
+    }
+  ],
+  "analyses": [
+    {
+      "name": "Bayn: Closing fill exit attribution",
+      "description": "Historical account-scoped attribution for fills with one original entry-side match and one canonical accounting transaction. Counts by New York execution date and exit role; episode counts overlap across roles. Ambiguous or missing broker/app role evidence stays explicit. Gross P&L is in USD micros; this is not slippage or proof of exit cause.",
+      "sql": "WITH closing AS (\n  SELECT t.account_id, t.intent_id, i.cycle_id, t.symbol, t.occurred_at, t.realized_pnl_micros,\n    f.broker_order_id, i.protection, d.decision_hash AS entry_hash,\n    d.document #> '{strategyDecision,exitPolicy,plans}' -> t.symbol -> 'levels' AS entry_levels\n  FROM public.accounting_transactions t\n  JOIN public.fills f ON f.event_id = t.broker_event_id AND f.account_id = t.account_id\n  JOIN public.intents i ON i.intent_id = t.intent_id AND i.account_id = t.account_id\n  JOIN public.autonomous_cycles c ON c.cycle_id = i.cycle_id AND c.account_id = t.account_id\n  JOIN public.autonomous_cycle_shadow_decisions d ON d.cycle_id = c.cycle_id AND d.decision_hash = c.decision_hash\n  CROSS JOIN LATERAL (\n    SELECT min(leg->>'side') AS entry_side\n    FROM jsonb_array_elements(d.document #> '{targetPlan,intentTargets}') leg\n    WHERE leg->>'symbol' = t.symbol\n    HAVING count(*) = 1\n  ) entry\n  WHERE t.account_id = $1::text AND t.occurred_at >= $2::timestamptz AND t.occurred_at < $3::timestamptz\n    AND t.side <> entry.entry_side\n), roles AS (\n  SELECT o.account_id, o.broker_order_id, min(o.order_type) AS order_type,\n    bool_or(o.parent_broker_order_id IS NOT NULL) AS native_child,\n    count(DISTINCT (o.order_type, o.parent_broker_order_id)) AS role_variants\n  FROM public.orders o\n  WHERE o.account_id = $1::text AND EXISTS (\n    SELECT 1 FROM closing c WHERE c.account_id = o.account_id AND c.broker_order_id = o.broker_order_id\n  )\n  GROUP BY o.account_id, o.broker_order_id\n), documents AS (\n  SELECT cycle_id, document->'document' AS doc FROM public.autonomous_cycle_paper_closures\n  WHERE cycle_id IN (SELECT cycle_id FROM closing)\n  UNION ALL\n  SELECT cycle_id, document->'document' AS doc FROM public.autonomous_cycle_paper_close_replans\n  WHERE cycle_id IN (SELECT cycle_id FROM closing)\n), application AS (\n  SELECT cycle_id, ids.value AS intent_id, string_agg(DISTINCT doc #>> '{strategyDecision,reason}', ',') AS reason,\n    bool_or(doc #>> '{strategyDecision,evidence,portfolio,profitExitRequested}' = 'true') AS profit_requested\n  FROM documents CROSS JOIN LATERAL jsonb_array_elements_text(doc->'orderedIntentIds') AS ids\n  GROUP BY cycle_id, ids.value\n), classified AS (\n  SELECT (c.occurred_at AT TIME ZONE 'America/New_York')::date AS execution_date,\n    c.cycle_id, c.realized_pnl_micros,\n    CASE\n      WHEN r.role_variants > 1 THEN 'AMBIGUOUS_NATIVE_ROLE'\n      WHEN r.order_type = 'LIMIT' AND (r.native_child OR (\n        c.protection->>'_tag' IN ('Oco','EquityShortOco')\n        AND c.protection->>'entryDecisionHash' = c.entry_hash\n        AND c.protection->>'stopPriceMicros' = c.entry_levels->>'stopPriceMicros'\n        AND c.protection->>'stopLimitPriceMicros' = c.entry_levels->>'stopLimitPriceMicros'\n        AND c.protection->>'profitLimitPriceMicros' = c.entry_levels->>'profitLimitPriceMicros'\n      )) THEN 'NATIVE_TARGET'\n      WHEN r.order_type = 'STOP_LIMIT' AND r.native_child THEN 'NATIVE_STOP'\n      WHEN a.reason IS NOT NULL THEN 'APPLICATION:' || a.reason ||\n        CASE WHEN a.profit_requested THEN ':PROFIT_REQUESTED' ELSE '' END\n      ELSE 'UNMATCHED'\n    END AS exit_role\n  FROM closing c\n  LEFT JOIN roles r USING (account_id, broker_order_id)\n  LEFT JOIN application a USING (cycle_id, intent_id)\n)\nSELECT execution_date, exit_role, count(*) AS closing_fills, count(DISTINCT cycle_id) AS episodes_touched,\n  sum(realized_pnl_micros) AS attributed_gross_pnl_micros\nFROM classified GROUP BY execution_date, exit_role ORDER BY execution_date, exit_role",
+      "referencedTables": [
+        "public.accounting_transactions",
+        "public.autonomous_cycle_paper_close_replans",
+        "public.autonomous_cycle_paper_closures",
+        "public.autonomous_cycle_shadow_decisions",
+        "public.autonomous_cycles",
+        "public.fills",
+        "public.intents",
+        "public.orders"
+      ],
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16342",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/docs/bayn/evidence/2026-11-26-performance/exit-attribution.sql"
+      ]
+    },
+    {
+      "name": "Bayn: Cash fee settlement by economic date",
+      "description": "Non-crypto cash fee observations first seen before the upper bound. Select the half-open range of New York dates from the bounds; the upper timestamp also decides posted versus not yet posted. Amounts are signed USD micros from retained fee rows, not a reconstruction of all fees or immutable historical corrections.",
+      "sql": "SELECT fee_date, count(*) AS observed_fees,\n  count(*) FILTER (WHERE posted_at < $3::timestamptz) AS posted_fees,\n  count(*) FILTER (WHERE posted_at IS NULL OR posted_at >= $3::timestamptz) AS not_posted_at_cut,\n  sum(net_amount_micros) FILTER (WHERE posted_at < $3::timestamptz) AS signed_posted_micros\nFROM public.broker_fee_accounting_evidence\nWHERE account_id = $1::text\n  AND fee_date >= ($2::timestamptz AT TIME ZONE 'America/New_York')::date\n  AND fee_date < ($3::timestamptz AT TIME ZONE 'America/New_York')::date\n  AND first_observed_at < $3::timestamptz\n  AND NOT (data ? 'coinDebit') AND data->>'cryptoCashFee' IS DISTINCT FROM 'true'\nGROUP BY fee_date ORDER BY fee_date",
+      "referencedTables": ["public.broker_fee_accounting_evidence"],
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16111",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/docs/bayn/sql/fee-settlement-2026-11-21.sql",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/tools/live-profitability-audit-postgres.ts"
+      ]
+    },
+    {
+      "name": "Bayn: Equity fill accounting receipt coverage",
+      "description": "For each New York execution date, report eligible equity fills and exact retained accounting receipt coverage. Missing or mismatched bindings are unverified rather than zero P&L; sums cover verified fills only and are in USD micros. No independent ledger transfer audit or live verdict.",
+      "sql": "WITH matched AS (\n  SELECT (e.occurred_at AT TIME ZONE 'America/New_York')::date AS execution_date,\n    f.fee_micros, t.realized_pnl_micros,\n    (r.receipt_id IS NOT NULL AND t.account_id = f.account_id AND t.symbol = f.symbol AND t.side = f.side\n      AND t.quantity_atoms = f.quantity_atoms AND t.price_atoms = f.price_atoms AND t.fee_micros = f.fee_micros\n      AND t.occurred_at = e.occurred_at AND r.intent_id IS NOT DISTINCT FROM t.intent_id\n      AND (f.intent_id IS NULL OR f.intent_id = t.intent_id)) IS TRUE AS verified\n  FROM public.fills f JOIN public.broker_events e USING (event_id, account_id)\n  LEFT JOIN public.accounting_transactions t ON t.broker_event_id = f.event_id AND t.account_id = f.account_id\n  LEFT JOIN public.accounting_receipts r ON r.broker_event_id = f.event_id\n  WHERE f.account_id = $1::text AND e.occurred_at >= $2::timestamptz AND e.occurred_at < $3::timestamptz\n    AND f.symbol NOT LIKE '%/%'\n)\nSELECT execution_date, count(*) AS fills, count(*) FILTER (WHERE verified) AS verified_fills,\n  count(*) FILTER (WHERE NOT verified) AS unverified_fills,\n  sum(realized_pnl_micros) FILTER (WHERE verified) AS verified_realized_micros,\n  sum(fee_micros) FILTER (WHERE verified) AS verified_direct_fee_micros\nFROM matched GROUP BY execution_date ORDER BY execution_date",
+      "referencedTables": [
+        "public.accounting_receipts",
+        "public.accounting_transactions",
+        "public.broker_events",
+        "public.fills"
+      ],
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16392",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/tools/live-profitability-audit-postgres.ts"
+      ]
+    },
+    {
+      "name": "Bayn: Daily observed positions",
+      "description": "Most recently observed snapshot within each New York date for one account. The left join preserves a selected zero-position snapshot as a row with no symbol. An absent date is missing evidence; a latest observation is not necessarily a post-close, exact reconciliation. Quantity is in execution atoms; unrealized P&L is in USD micros.",
+      "sql": "WITH latest AS (\n  SELECT DISTINCT ON (s.account_id, (s.observed_at AT TIME ZONE 'America/New_York')::date)\n    (s.observed_at AT TIME ZONE 'America/New_York')::date AS observation_date,\n    s.account_id, s.snapshot_id, s.observed_at, s.position_count\n  FROM public.position_snapshots s\n  WHERE s.account_id = $1::text AND s.observed_at >= $2::timestamptz AND s.observed_at < $3::timestamptz\n  ORDER BY s.account_id, observation_date, s.observed_at DESC,\n    CASE WHEN s.ingestion_order_trusted THEN s.ingestion_sequence END DESC NULLS LAST, s.snapshot_id DESC\n)\nSELECT l.observation_date, l.observed_at, l.position_count, p.symbol, p.quantity_atoms, p.unrealized_pnl_micros\nFROM latest l LEFT JOIN public.positions p USING (snapshot_id, account_id)\nORDER BY l.observation_date, p.symbol",
+      "referencedTables": ["public.position_snapshots", "public.positions"],
+      "sources": [
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/migrations/0052_position_snapshot_observability_index.ts",
+        "https://github.com/proompteng/lab/pull/16392",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/tools/live-profitability-audit-postgres.ts"
+      ]
+    },
+    {
+      "name": "Bayn: Daily live controller observations",
+      "description": "Count unique completed passes retained in the requested window for controller keys bound to the verified live account. Report the three audited close/cut failure indicators separately, by New York completion date. Missing keys or observations are not evidence of healthy execution.",
+      "sql": "WITH live_keys AS (\n  SELECT broker_identity_hash AS controller_key FROM public.live_capital_grants\n  WHERE account_id = $1::text AND broker_environment = 'live' AND schema_version = 'bayn.live-capital-grant.v1'\n  UNION\n  SELECT broker_identity_hash FROM public.authority_generations\n  WHERE account_id = $1::text AND broker_environment = 'live' AND broker_identity_hash IS NOT NULL\n), passes AS (\n  SELECT DISTINCT ON (o.controller_key, o.status->>'last_receipt_hash')\n    (o.status->>'completed_at')::timestamptz AS completed, o.status->'last_pass' AS pass\n  FROM public.execution_controller_observations o JOIN live_keys k USING (controller_key)\n  WHERE o.recorded_at >= $2::timestamptz AND o.recorded_at < $3::timestamptz\n    AND o.status->>'last_receipt_hash' IS NOT NULL AND o.status->>'completed_at' IS NOT NULL\n    AND jsonb_typeof(o.status->'last_pass') = 'object'\n  ORDER BY o.controller_key, o.status->>'last_receipt_hash', o.observation_id DESC\n)\nSELECT (completed AT TIME ZONE 'America/New_York')::date AS completion_date, count(*) AS completed_passes,\n  count(*) FILTER (WHERE pass->>'brokerObservationFailure' = 'NO_ADMISSIBLE_CUT') AS no_admissible_cut,\n  count(*) FILTER (WHERE pass->>'waitReason' = 'CLOSE_MARKET_DATA_UNAVAILABLE') AS close_market_data_unavailable,\n  count(*) FILTER (WHERE pass->>'waitReason' = 'CLOSE_WINDOW_EXPIRED') AS close_window_expired\nFROM passes\nWHERE completed >= $2::timestamptz AND completed < $3::timestamptz\nGROUP BY completion_date ORDER BY completion_date",
+      "referencedTables": [
+        "public.authority_generations",
+        "public.execution_controller_observations",
+        "public.live_capital_grants"
+      ],
+      "sources": [
+        "https://github.com/proompteng/lab/pull/16392",
+        "https://github.com/proompteng/lab/blob/1894542123c9254e1703c8ee3b082f2c91415f49/services/bayn/tools/live-profitability-audit-postgres.ts"
+      ]
+    }
+  ]
+}

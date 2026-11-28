@@ -4,6 +4,12 @@ metadata:
   name: codex
 spec:
   binary: /usr/local/bin/agent-runner
+  workload:
+    serviceAccountName: codex-auto-ontology-runner
+    serviceAccountToken:
+      audience: agents.proompteng.ai/auto-ontology-mcp
+      expirationSeconds: 600
+      mountPath: /var/run/secrets/agents-auto-ontology-mcp
   adapter:
     type: codex-app-server
     codex:
@@ -12,8 +18,17 @@ spec:
       sandbox: danger-full-access
       approval: never
       cwd: /workspace/lab
+      bootstrapTimeoutMs: 60000
       threadConfig:
-        mcp_servers: {}
+        mcp_servers:
+          auto_ontology:
+            command: /usr/local/bin/auto-ontology-mcp-bridge
+            required: false
+            startup_timeout_sec: 15
+            tool_timeout_sec: 100
+            env_vars: [AGENTS_MCP_IDENTITY_TOKEN_PATH]
+            env:
+              AUTO_ONTOLOGY_MCP_GATEWAY_URL: http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp
         web_search: live
   argsTemplate: []
   envTemplate:
@@ -30,13 +45,13 @@ spec:
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
         web_search = "live"
+        mcp_servers = {}
         suppress_unstable_features_warning = true
 
         [features]
         enable_request_compression = true
         unified_exec = true
         shell_snapshot = true
-        multi_agent = true
         goals = true
 
         [shell_environment_policy]

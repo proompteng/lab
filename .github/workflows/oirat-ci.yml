@@ -86,6 +86,7 @@ jobs:
     with:
       image_name: oirat
       package_attr: oirat-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
