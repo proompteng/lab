@@ -1579,12 +1579,12 @@ data:
             expr: |
               (
                 max by (job, namespace, service) (
-                  up{job="torghut",namespace="torghut",service="torghut-ws"}
+                  up{job="torghut",namespace="bayn",service="torghut-ws"}
                 ) == 0
-                or absent(up{job="torghut",namespace="torghut",service="torghut-ws"})
+                or absent(up{job="torghut",namespace="bayn",service="torghut-ws"})
               )
               and on()
-              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
+              (max(kube_deployment_spec_replicas{namespace="bayn",deployment="torghut-ws"}) > 0)
             for: 5m
             labels:
               severity: critical
@@ -1599,15 +1599,15 @@ data:
             expr: |
               max by (job, namespace, service) (
                 (
-                  torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws"}
+                  torghut_ws_readyz_status{job="torghut",namespace="bayn",service="torghut-ws"}
                   or on (job, namespace, service, instance)
-                  0 * up{job="torghut",namespace="torghut",service="torghut-ws"}
+                  0 * up{job="torghut",namespace="bayn",service="torghut-ws"}
                 )
                 and on (job, namespace, service, instance)
-                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)
+                (up{job="torghut",namespace="bayn",service="torghut-ws"} == 1)
               ) == 0
               and on()
-              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
+              (max(kube_deployment_spec_replicas{namespace="bayn",deployment="torghut-ws"}) > 0)
             for: 2m
             labels:
               severity: critical
@@ -1616,13 +1616,13 @@ data:
             annotations:
               summary: Torghut WS forwarder not ready
               description: |
-                No reachable torghut-ws target reports healthy readiness for 2 minutes while the deployment is enabled. Inspect /readyz Alpaca, Kafka, trade-update and market-data-channel gates. Missing readiness telemetry also fails this check; it runs overnight for crypto feeds.
+                No reachable torghut-ws target reports healthy readiness for 2 minutes while the deployment is enabled. Inspect /readyz Alpaca, Kafka and market-data-channel gates. Missing readiness telemetry also fails this check; it runs overnight for crypto feeds.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSContainerRestarts
             expr: |
               sum by (namespace) (
                 increase(kube_pod_container_status_restarts_total{
-                  namespace="torghut",pod=~"torghut-ws-.*",container="torghut-ws"
+                  namespace="bayn",pod=~"torghut-ws-.*",container="torghut-ws"
                 }[10m])
               ) > 0
             for: 1m
@@ -1639,7 +1639,7 @@ data:
             expr: |
               max_over_time(
                 torghut_ws_desired_symbols_fetch_degraded{
-                  namespace="torghut",
+                  namespace="bayn",
                   service="torghut-ws"
                 }[15m]
               ) >= 1
@@ -1663,7 +1663,7 @@ data:
             expr: |
               rate(
                 torghut_ws_kafka_send_errors_total{
-                  namespace="torghut",
+                  namespace="bayn",
                   service="torghut-ws"
                 }[5m]
               ) > 0
@@ -1679,7 +1679,7 @@ data:
                 sum(
                   rate(
                     torghut_ws_kafka_send_latency_seconds_count{
-                      namespace="torghut",
+                      namespace="bayn",
                       service="torghut-ws"
                     }[5m]
                   )
@@ -1693,14 +1693,14 @@ data:
                 * (hour(vector(time())) < 21)
               )
               and on()
-              (max(torghut_ws_readyz_status{namespace="torghut",service="torghut-ws"}
+              (max(torghut_ws_readyz_status{namespace="bayn",service="torghut-ws"}
                 and on (job, namespace, service, instance)
-                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)) == 1)
+                (up{job="torghut",namespace="bayn",service="torghut-ws"} == 1)) == 1)
             for: 8m
             labels:
               severity: critical
               team: trading
-              namespace: torghut
+              namespace: bayn
               service: torghut-ws
               notify: email
             annotations:
@@ -4306,8 +4306,9 @@ data:
             expr: |
               kube_deployment_status_replicas_available{
                 namespace="torghut",
-                deployment=~"torghut-ws|torghut-ws-options|torghut-ta|torghut-options-ta|torghut-options-catalog|torghut-options-enricher"
+                deployment=~"torghut-ws-options|torghut-ta|torghut-options-ta|torghut-options-catalog|torghut-options-enricher"
               } < 1
+              or kube_deployment_status_replicas_available{namespace="bayn",deployment="torghut-ws"} < 1
             for: 10m
             labels:
               severity: critical

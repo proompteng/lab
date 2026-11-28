@@ -201,6 +201,15 @@ spec:
   ingress:
     - from:
         - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [torghut-ws, torghut-ws-sip]
+      ports:
+        - port: 3130
+          protocol: TCP
+    - from:
+        - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn
         - podSelector:
