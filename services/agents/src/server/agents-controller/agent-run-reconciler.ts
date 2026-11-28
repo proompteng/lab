@@ -9,7 +9,15 @@ import { buildRunSpecContext, renderProviderOutputArtifacts, verifyJobConfigMaps
 import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
-import { normalizeLabelMap, validateAuthSecretPolicy, validateImagePolicy, validateLabelPolicy } from './policy'
+import {
+  extractProviderSecretEnvNames,
+  normalizeLabelMap,
+  providerUsesControllerAuthSecret,
+  validateAuthSecretPolicy,
+  validateImagePolicy,
+  validateLabelPolicy,
+  validateProviderSecretEnvPolicy,
+} from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import {
   buildQueueCounts,
@@ -217,11 +225,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const finishedAt = asString(status.finishedAt)
     const agentName = asString(readNested(spec, ['agentRef', 'name']))
     const finalizer = 'agents.proompteng.ai/runtime-cleanup'
-    let finalizers = Array.isArray(metadata.finalizers)
+    const finalizers = Array.isArray(metadata.finalizers)
       ? metadata.finalizers.filter((item): item is string => typeof item === 'string')
       : []
-    let hasFinalizer = finalizers.includes(finalizer)
+    const hasFinalizer = finalizers.includes(finalizer)
     const deleting = Boolean(metadata.deletionTimestamp)
+    const runtimeType = asString(readNested(spec, ['runtime', 'type']))
+    const runtimeRef = parseRuntimeRef(status.runtimeRef)
+    const isWorkflowRun = runtimeType === 'workflow' || runtimeRef?.type === 'workflow'
 
     let conditions = buildConditions(agentRun)
     const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
@@ -282,11 +293,11 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             phase,
             conditions,
           })
+          if (isWorkflowRun) return
         }
       }
     }
 
-    const runtimeType = asString(readNested(spec, ['runtime', 'type']))
     const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
     const workload = asRecord(readNested(spec, ['workload'])) ?? {}
     let workloadImage: string | null = null
@@ -375,15 +386,16 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     if (!hasFinalizer) {
       try {
+        const resourceVersion = isWorkflowRun ? asString(metadata.resourceVersion) : null
         await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
-          metadata: { finalizers: [...finalizers, finalizer] },
+          metadata: { finalizers: [...finalizers, finalizer], ...(resourceVersion ? { resourceVersion } : {}) },
         })
       } catch (error) {
         if (isKubeNotFoundError(error)) return
         throw error
       }
-      finalizers = [...finalizers, finalizer]
-      hasFinalizer = true
+      // Workflow status writes use the observed resourceVersion. Reconcile the updated object from the watch.
+      if (isWorkflowRun) return
     }
 
     if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
@@ -420,7 +432,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       phase,
     })
 
-    const runtimeRef = parseRuntimeRef(status.runtimeRef)
     const shouldSubmit =
       !runtimeRef && phase !== 'Running' && phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
 
@@ -838,7 +849,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const allowedSecrets = parseStringList(security.allowedSecrets)
       const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
       const runSecrets = parseStringList(spec.secrets)
-      const authSecret = resolveAuthSecretConfig()
+      const authSecret = providerUsesControllerAuthSecret(resolvedProvider) ? resolveAuthSecretConfig() : null
 
       if (allowedSecrets.length > 0) {
         const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
@@ -954,8 +965,10 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
       const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+      const providerSecretNames = extractProviderSecretEnvNames(resolvedProvider)
       const blockedSecrets = collectBlockedSecrets([
         ...runSecrets,
+        ...providerSecretNames,
         ...(memorySecretName ? [memorySecretName] : []),
         ...(authSecret ? [authSecret.name] : []),
       ])
@@ -986,6 +999,23 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           message: authSecretPolicy.message,
         })
         logInvalidSpec(authSecretPolicy.reason, authSecretPolicy.message)
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          conditions: updated,
+          phase: 'Failed',
+          contract: contractStatus,
+        })
+        return
+      }
+      const providerSecretEnvPolicy = validateProviderSecretEnvPolicy(allowedSecrets, providerSecretNames)
+      if (!providerSecretEnvPolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: providerSecretEnvPolicy.reason,
+          message: providerSecretEnvPolicy.message,
+        })
+        logInvalidSpec(providerSecretEnvPolicy.reason, providerSecretEnvPolicy.message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           conditions: updated,
@@ -1199,7 +1229,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     if (phase !== 'Running') return
 
-    if (runtimeType === 'workflow' || runtimeRef?.type === 'workflow') {
+    if (isWorkflowRun) {
       await reconcileWorkflowRun(kube, agentRun, namespace, memories)
       return
     }

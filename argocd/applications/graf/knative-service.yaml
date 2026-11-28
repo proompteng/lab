@@ -76,8 +76,6 @@ spec:
               value: http://agents.agents.svc.cluster.local
             - name: AGENTS_NAMESPACE
               value: agents
-            - name: AGENTS_GRAF_AGENT_NAME
-              value: graf-codex-agent
             - name: AGENTS_SERVICE_ACCOUNT_NAME
               value: agents-sa
             - name: AGENTS_SECRET_BINDING_REF

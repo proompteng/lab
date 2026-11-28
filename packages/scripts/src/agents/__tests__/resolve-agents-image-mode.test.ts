@@ -41,8 +41,12 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
-  it('runs the published smoke tier when its workflow changes', () => {
-    expect(classifyAgentsImageMode(['.github/workflows/agents-ci.yml'])).toEqual({
+  it.each([
+    '.github/workflows/agents-ci.yml',
+    'packages/scripts/src/agents/resolve-published-agents-images.ts',
+    'packages/scripts/src/agents/resolve-smoke-runner-image.ts',
+  ])('runs the published smoke tier when %s changes', (path) => {
+    expect(classifyAgentsImageMode([path])).toEqual({
       tier: 'published-smoke',
       mode: 'reuse-published-image',
       needsLocalAgentsImage: false,
@@ -55,6 +59,24 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
+  it.each(['scripts/agents/validate-agents.sh', 'scripts/download_crd_schema.py'])(
+    'runs chart and CRD checks without Kind for verifier-only changes to %s',
+    (path) => {
+      expect(classifyAgentsImageMode([path])).toMatchObject({
+        tier: 'static',
+        runUnit: false,
+        runStatic: true,
+        runIntegration: false,
+        imageTargets: [],
+      })
+      expect(classifyAgentsImageMode([path, 'scripts/agents/values-ci.yaml'])).toMatchObject({
+        tier: 'published-smoke',
+        runStatic: true,
+        runIntegration: true,
+      })
+    },
+  )
+
   it('builds only the runner image for runner implementation changes', () => {
     const result = classifyAgentsImageMode(['services/agents/scripts/codex/agent-runner.ts'])
 
@@ -63,8 +85,25 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
   })
 
+  it.each([
+    'docs/agents/ontology/agents-knowledge.json',
+    'packages/scripts/src/agents/ontology-bundle-sql.ts',
+    'packages/scripts/src/agents/sync-auto-ontology-bundle.ts',
+    'packages/scripts/src/agents/sync-auto-ontology-bundle-core.ts',
+  ])('checks the packaged catalog sync in the controller image when %s changes', (path) => {
+    expect(classifyAgentsImageMode([path])).toMatchObject({
+      tier: 'local-smoke',
+      imageTargets: ['controller'],
+      matchedPaths: [path],
+    })
+  })
+
   it('rebuilds the runner when its toolchain or acceptance command changes', () => {
-    for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
+    for (const path of [
+      'nix/images/agentrun-tools.nix',
+      'nix/images/antigravity-cli.nix',
+      'services/agents/scripts/runner-acceptance.sh',
+    ]) {
       expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])
     }
   })
@@ -140,14 +179,14 @@ describe('classifyAgentsImageMode', () => {
   it('merges mixed image impact in stable component order', () => {
     const result = classifyAgentsImageMode([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
 
     expect(result.imageTargets).toEqual(['control-plane', 'controller', 'runner'])
     expect(result.matchedPaths).toEqual([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
   })
 

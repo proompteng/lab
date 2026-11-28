@@ -2,8 +2,9 @@ import { writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { compilerDependencyBytes } from './jev-compiler-dependencies'
 import { Result } from 'effect'
-import { nativeReplayPolicyManifest } from '../src/intraday-replay/native-policy'
-import { loadActiveStrategyProtocol } from '../src/strategy'
+import { nativeReplayStrategyManifest } from '../src/intraday-replay/native-policy'
+import { loadActiveStrategyProtocol, loadSharedJevProtocol } from '../src/strategy'
+import { makeResearchStrategyBinding, ResearchStrategyEngine } from '../src/system-assessment/strategy-binding'
 
 const [outputFlag, output, sourceFlag, sourceRevision, ...args] = process.argv.slice(2)
 if (
@@ -58,12 +59,17 @@ if (!compiler.success || compiler.outputs.length !== 1) throw Error(JSON.stringi
 await writeFile(
   join(dirname(output), 'jev-compiler-dependencies.json'),
   JSON.stringify({
-    schemaVersion: 'bayn.jev-compiler-dependencies.v4',
+    schemaVersion: 'bayn.jev-compiler-dependencies.v5',
     sourceRevision,
     bunVersion: '1.4.2',
     files: dependencies.files(),
     controlFiles: controlDependencies.files(),
     compilerFiles: compilerDependencies.files(),
-    nativeReplayPolicies: Result.getOrThrow(Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest)),
+    applicationStrategyBinding: Result.getOrThrow(
+      Result.flatMap(loadActiveStrategyProtocol(), (parameters) =>
+        makeResearchStrategyBinding({ engine: ResearchStrategyEngine.PureEtf, parameters }),
+      ),
+    ),
+    compiledReplayStrategies: Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayStrategyManifest)),
   }),
 )

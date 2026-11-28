@@ -14,18 +14,27 @@ import { reproduceJevCandidateObservation } from '../jev/observation'
 import { verifyJevPortfolioSources } from './jev-position-postgres'
 import { jevBehaviorHash } from '../jev/protocol'
 import {
+  alphaObservationVersion,
+  decodeIntradayAlphaPolicy,
+  intradayAlphaStrategyIdentity,
+  type IntradayAlphaPolicy,
+} from '../strategy/intraday-alpha/policy'
+import { IntradayAlphaPhase } from '../strategy/intraday-alpha/policy'
+import { isIntradayAlphaObservation, reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
+import {
   decodeRepeatedMomentumPolicy,
   repeatedMomentumStrategyIdentity,
   type RepeatedMomentumPolicy,
 } from '../strategy/repeated-momentum/policy'
 
 type ReproducedJevObservation = Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>
+type ReproducedIntradayAlphaObservation = Result.Result.Success<ReturnType<typeof reproduceIntradayAlphaObservation>>
 
 const recordCandidateObservation = (
   sql: PgClient.PgClient,
   { contentHash, payload }: CandidateObservation,
-  reproduced: ReproducedJevObservation | undefined,
-  policy: JevBatchPlanVersion | RepeatedMomentumPolicy,
+  reproduced: ReproducedJevObservation | ReproducedIntradayAlphaObservation | undefined,
+  policy: JevBatchPlanVersion | RepeatedMomentumPolicy | IntradayAlphaPolicy,
 ) =>
   Effect.gen(function* () {
     if (reproduced !== undefined) {
@@ -33,7 +42,9 @@ const recordCandidateObservation = (
         policy === JevBatchPlanVersion.Ablation
           ? yield* Effect.fromResult(entryAblationStrategyIdentity(makeEntryAblationPolicy(reproduced.protocol)))
           : typeof policy !== 'string'
-            ? yield* Effect.fromResult(repeatedMomentumStrategyIdentity(policy))
+            ? policy.schemaVersion !== 'bayn.repeated-momentum-policy.v1'
+              ? yield* Effect.fromResult(intradayAlphaStrategyIdentity(policy))
+              : yield* Effect.fromResult(repeatedMomentumStrategyIdentity(policy))
             : null
       const parameterHash =
         control?.strategy.parameterHash ?? (yield* Effect.fromResult(canonicalHashV1Result(reproduced.protocol)))
@@ -117,19 +128,28 @@ export const recordReproducedJevObservation = (
 
 export const latestJevObservationWindowQuery = (
   sql: PgClient.PgClient,
-  { cycleId, purpose }: Parameters<CandidateObservationStore['Service']['latestJevWindowEnd']>[0],
-) =>
-  purpose !== JevPurpose.Entry
+  { cycleId, purpose, schemaVersion }: Parameters<CandidateObservationStore['Service']['latestJevWindowEnd']>[0],
+) => {
+  const schema =
+    schemaVersion === 'bayn.intraday-alpha-observation.v3'
+      ? sql`'bayn.intraday-alpha-observation.v3'`
+      : schemaVersion === 'bayn.intraday-alpha-observation.v2'
+        ? sql`'bayn.intraday-alpha-observation.v2'`
+        : schemaVersion === 'bayn.intraday-alpha-observation.v1'
+          ? sql`'bayn.intraday-alpha-observation.v1'`
+          : sql`'bayn.jev-observation.v1'`
+  return purpose !== JevPurpose.Entry
     ? sql`
         SELECT max(payload #>> '{manifest,rangeEndAt}') AS at FROM intraday_candidate_observations
-        WHERE cycle_id = ${cycleId} AND payload ->> 'schemaVersion' = 'bayn.jev-observation.v1'
+        WHERE cycle_id = ${cycleId}
+          AND payload ->> 'schemaVersion' = ${schema}
           AND payload #>> '{portfolio,purpose}' = ${purpose}
       `
     : sql`
         SELECT max(latest.at) AS at FROM (
           SELECT observation.payload #>> '{manifest,rangeEndAt}' AS at
           FROM intraday_candidate_observations AS observation
-          WHERE observation.payload ->> 'schemaVersion' = 'bayn.jev-observation.v1'
+          WHERE observation.payload ->> 'schemaVersion' = ${schema}
             AND observation.payload #>> '{portfolio,purpose}' = ${purpose}
             AND observation.payload #>> '{manifest,rangeEndAt}' IS NOT NULL
             AND observation.cycle_id = ANY(ARRAY(
@@ -157,6 +177,7 @@ export const latestJevObservationWindowQuery = (
           ORDER BY observation.payload #>> '{manifest,rangeEndAt}' DESC LIMIT 1
         ) AS latest
       `
+}
 
 export const makeCandidateObservationStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -179,17 +200,118 @@ export const makeCandidateObservationStore = Effect.gen(function* () {
           }),
         ),
       ),
-    record: (observation: CandidateObservation, momentumPolicy?: RepeatedMomentumPolicy) =>
+    readIntradayAlphaSessionState: ({ accountId, sessionDate, strategyProtocolHash }) =>
       Effect.gen(function* () {
-        if (
-          observation.payload.schemaVersion === 'bayn.jev-observation.v1' &&
-          Option.isSome(yield* Effect.serviceOption(sql.transactionService))
+        const rows = yield* Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              phase: Schema.NullOr(Schema.String),
+              selectedSymbols: Schema.Array(Schema.String),
+            }),
+          ),
+          strictParseOptions,
+        )(
+          yield* sql`
+            SELECT
+              d.document #>> '{strategyDecision,phase}' AS phase,
+              COALESCE(d.document #> '{strategyDecision,selectedSymbols}', '[]'::jsonb) AS "selectedSymbols"
+            FROM autonomous_cycle_shadow_decisions AS d
+            JOIN autonomous_cycles AS c ON c.cycle_id = d.cycle_id
+            WHERE c.account_id = ${accountId}
+              AND c.execution_session_date = ${sessionDate}
+              AND c.strategy_protocol_hash = ${strategyProtocolHash}
+              AND d.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.intraday-alpha-target.v1', 'bayn.intraday-alpha-target.v2', 'bayn.intraday-alpha-target.v3')
+              AND jsonb_array_length(COALESCE(d.document -> 'orderedIntentIds', '[]'::jsonb)) > 0
+          `,
         )
+        const morningOrbTakenSymbols = [
+          ...new Set(
+            rows.filter((row) => row.phase === IntradayAlphaPhase.MorningOrb).flatMap((row) => row.selectedSymbols),
+          ),
+        ].sort()
+        const middayReversionCompleted = rows.some((row) => row.phase === IntradayAlphaPhase.MiddayReversion)
+        const noiseAreaTakenSymbols = [
+          ...new Set(
+            rows.filter((row) => row.phase === IntradayAlphaPhase.NoiseAreaTrend).flatMap((row) => row.selectedSymbols),
+          ),
+        ].sort()
+        return { morningOrbTakenSymbols, middayReversionCompleted, noiseAreaTakenSymbols }
+      }).pipe(
+        Effect.mapError((cause) =>
+          operationalError({
+            component: 'database',
+            operation: 'candidate-observation',
+            message: 'Could not read prior intraday alpha session state',
+            cause,
+          }),
+        ),
+      ),
+    record: (observation: CandidateObservation, policy?: RepeatedMomentumPolicy | IntradayAlphaPolicy) =>
+      Effect.gen(function* () {
+        const isNativeObservation =
+          observation.payload.schemaVersion === 'bayn.jev-observation.v1' ||
+          isIntradayAlphaObservation(observation.payload)
+        if (isNativeObservation && Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
           return yield* operationalError({
             component: 'database',
             operation: 'candidate-observation',
             message: 'Jev observations must commit before inference',
           })
+        if (isIntradayAlphaObservation(observation.payload)) {
+          const reproduced = yield* Effect.fromResult(reproduceIntradayAlphaObservation(observation.payload)).pipe(
+            Effect.mapError((cause) =>
+              operationalError({
+                component: 'database',
+                operation: 'candidate-observation',
+                message: 'Intraday alpha observation could not be reproduced before persistence',
+                cause,
+              }),
+            ),
+          )
+          if (reproduced.contentHash !== observation.contentHash)
+            return yield* operationalError({
+              component: 'database',
+              operation: 'candidate-observation',
+              message: 'Intraday alpha observation does not reproduce its content hash',
+            })
+          if (
+            policy === undefined ||
+            policy.schemaVersion === 'bayn.repeated-momentum-policy.v1' ||
+            alphaObservationVersion(policy) !== reproduced.schemaVersion
+          )
+            return yield* operationalError({
+              component: 'database',
+              operation: 'candidate-observation',
+              message: 'Intraday alpha observation requires its matching policy',
+            })
+          const verified = yield* Effect.fromResult(decodeIntradayAlphaPolicy(policy))
+          const supplied = yield* Effect.fromResult(canonicalHashV1Result(verified.sharedProtocol))
+          const original = yield* Effect.fromResult(canonicalHashV1Result(reproduced.protocol))
+          if (supplied !== original)
+            return yield* operationalError({
+              component: 'database',
+              operation: 'candidate-observation',
+              message: 'Intraday alpha policy differs from its source protocol',
+            })
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT cycle_id FROM autonomous_cycles WHERE cycle_id = ${reproduced.cycleId} FOR UPDATE`
+              const prior = yield* sql`SELECT content_hash FROM intraday_candidate_observations
+              WHERE cycle_id = ${reproduced.cycleId}
+                AND payload->>'schemaVersion' = ${reproduced.schemaVersion}
+                AND payload #>> '{portfolio,purpose}' = ${reproduced.portfolio.purpose}
+                AND payload #>> '{manifest,rangeEndAt}' >= ${reproduced.snapshot.manifest.rangeEndAt}
+                AND content_hash <> ${reproduced.contentHash}`
+              if (prior.length !== 0)
+                return yield* operationalError({
+                  component: 'database',
+                  operation: 'candidate-observation',
+                  message: 'Intraday alpha observation window already has a committed source',
+                })
+              yield* recordCandidateObservation(sql, observation, reproduced, verified)
+            }),
+          )
+        }
         if (observation.payload.schemaVersion !== 'bayn.jev-observation.v1')
           return yield* recordCandidateObservation(sql, observation, undefined, JevBatchPlanVersion.V8)
         const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(observation.payload)).pipe(
@@ -208,8 +330,8 @@ export const makeCandidateObservationStore = Effect.gen(function* () {
             operation: 'candidate-observation',
             message: 'Jev observation does not reproduce its content hash',
           })
-        if (momentumPolicy !== undefined) {
-          const verified = yield* Effect.fromResult(decodeRepeatedMomentumPolicy(momentumPolicy))
+        if (policy !== undefined && policy.schemaVersion === 'bayn.repeated-momentum-policy.v1') {
+          const verified = yield* Effect.fromResult(decodeRepeatedMomentumPolicy(policy))
           const supplied = yield* Effect.fromResult(canonicalHashV1Result(verified.sharedProtocol))
           const original = yield* Effect.fromResult(canonicalHashV1Result(reproduced.protocol))
           if (supplied !== original)

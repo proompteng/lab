@@ -2,7 +2,8 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { MutationEventType } from '../execution/mutations/model'
-import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
+import type { RecordedSystemSourceCut } from './recorded-source-cut'
+import type { SystemSourceCut as CurrentSystemSourceCut } from './source-cut'
 import type { ScheduledEvaluation } from './policy'
 import { SystemAssessmentError } from './economics'
 import { ObligationClass, ObligationOutcome, type ObligationCompletionSchema } from './reliability'
@@ -18,6 +19,8 @@ import {
 } from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { JevResearchPolicy } from '../jev/acceptance'
+
+type SystemSourceCut = RecordedSystemSourceCut | CurrentSystemSourceCut
 
 export const registeredDecisionWork = (
   document: SystemSourceCut['decisions'][number]['document'],

@@ -12,6 +12,11 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { GitSourceRevisionSchema, ImageDigestSchema, ImageRepositorySchema, Sha256Schema } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import type { SystemRegistration } from './policy'
+import {
+  ResearchStrategyEngine,
+  researchStrategyEngineMatchesRole,
+  validateResearchStrategyBinding,
+} from './strategy-binding'
 
 import { ReplayImagePlatform } from './replay-image-platform'
 import {
@@ -115,6 +120,44 @@ export const bindReplayImagePolicy = (
   policy: Policy,
 ) =>
   Result.gen(function* () {
+    if (dependencies.schemaVersion === 'bayn.jev-compiler-dependencies.v5') {
+      const root = yield* validateResearchStrategyBinding(dependencies.applicationStrategyBinding)
+      const entries = yield* Result.all(dependencies.compiledReplayStrategies.map(validateResearchStrategyBinding))
+      const explicit =
+        'strategyBinding' in policy ? yield* validateResearchStrategyBinding(policy.strategyBinding) : null
+      const engine =
+        explicit?.engine ??
+        (policy.policy === JevResearchPolicy.Ablation
+          ? ResearchStrategyEngine.EntryAblation
+          : policy.policy === JevResearchPolicy.Momentum
+            ? ResearchStrategyEngine.RepeatedMomentum
+            : ResearchStrategyEngine.Jev)
+      const selected = entries.find((entry) => entry.engine === engine)
+      const compiledRoot = entries.find((entry) => entry.engine === root.engine)
+      const expectedEngineCount = entries.some((entry) => entry.engine === ResearchStrategyEngine.PureEtf) ? 5 : 4
+      if (
+        entries.length !== expectedEngineCount ||
+        new Set(entries.map((entry) => entry.engine)).size !== entries.length ||
+        entries.some((entry) => entry.engine === ResearchStrategyEngine.FrozenDeployed) ||
+        selected === undefined ||
+        compiledRoot === undefined ||
+        !researchStrategyEngineMatchesRole(policy.policy, engine) ||
+        (yield* canonicalHashV1Result(root)) !== (yield* canonicalHashV1Result(compiledRoot)) ||
+        (explicit !== null && (yield* canonicalHashV1Result(explicit)) !== (yield* canonicalHashV1Result(selected))) ||
+        labels['proompteng.ai/bayn.strategy-behavior-hash'] !== root.strategy.behaviorHash ||
+        labels['proompteng.ai/bayn.strategy-parameter-hash'] !== root.strategy.parameterHash ||
+        labels['proompteng.ai/bayn.strategy-protocol-hash'] !== root.protocolHash ||
+        selected.strategy.behaviorHash !== policy.strategyHash ||
+        selected.strategy.parameterHash !== policy.parametersHash ||
+        selected.protocolHash !== policy.protocolHash
+      )
+        return yield* Result.fail(
+          failure('Compiled replay engine manifest differs from the image root or registered complete policy'),
+        )
+      return
+    }
+    if ('strategyBinding' in policy)
+      return yield* Result.fail(failure('Explicit research engines require the versioned compiled engine manifest'))
     const entries = dependencies.nativeReplayPolicies
     const root = entries.find((entry) => entry.policy === JevResearchPolicy.Candidate)
     const compiledPolicy = policy.policy === JevResearchPolicy.Incumbent ? JevResearchPolicy.Candidate : policy.policy

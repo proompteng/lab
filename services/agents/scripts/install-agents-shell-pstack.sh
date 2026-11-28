@@ -11,12 +11,7 @@ if [[ ! -f "${skills_source}/poteto-mode/SKILL.md" ]]; then
   echo "agents-shell pstack bundle is missing poteto-mode" >&2
   exit 1
 fi
-if [[ ! -d "${prompts_source}" ]]; then
-  echo "agents-shell pstack bundle is missing Codex prompts" >&2
-  exit 1
-fi
-
-mkdir -p "${skills_target}" "${prompts_target}"
+mkdir -p "${skills_target}"
 
 remove_stale_managed_links() {
   local source_dir="$1"
@@ -43,6 +38,7 @@ remove_stale_managed_links() {
 }
 
 remove_stale_managed_links "${skills_source}" "${skills_target}" skill
+# Prune links from older bundles even when the new bundle ships no prompts.
 remove_stale_managed_links "${prompts_source}" "${prompts_target}" prompt
 
 install_link() {
@@ -70,7 +66,10 @@ for skill in "${skills_source}"/*; do
   install_link "${skill}" "${skills_target}/$(basename "${skill}")"
 done
 
-for prompt in "${prompts_source}"/*.md; do
-  [[ -f "${prompt}" ]] || continue
-  install_link "${prompt}" "${prompts_target}/$(basename "${prompt}")"
-done
+if [[ -d "${prompts_source}" ]]; then
+  mkdir -p "${prompts_target}"
+  for prompt in "${prompts_source}"/*.md; do
+    [[ -f "${prompt}" ]] || continue
+    install_link "${prompt}" "${prompts_target}/$(basename "${prompt}")"
+  done
+fi

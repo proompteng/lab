@@ -11,14 +11,15 @@ let
   kubectl = exact.kubectl or pkgs.kubectl;
   yq = exact.yq or pkgs.yq;
   pythonPackages = pkgs.python312Packages;
+  antigravityCli = import ./antigravity-cli.nix { inherit pkgs; };
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
   runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
-  pstackVersion = "0.9.30";
-  pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
+  pstackVersion = "0.9.159";
+  pstackCommit = "6d25df69f0baf6600807d82975d75139f3b1ab92";
 
   pstackArchive = pkgs.fetchurl {
     url = "https://github.com/michael-denyer/pstack-claude/archive/${pstackCommit}.tar.gz";
-    hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0=";
+    hash = "sha256-dtC7o5ombOIT+Zbow5730fShruncV/YJMZzXVTEXotY=";
   };
 
   pstackBundle = pkgs.stdenvNoCC.mkDerivation {
@@ -34,8 +35,7 @@ let
       cp -R plugins/pstack "$out/opt/agents-shell/pstack"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/SKILL.md"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/references/codex-tools.md"
-      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54
-      test "$(find "$out/opt/agents-shell/pstack/.codex-plugin/prompts" -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
+      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 68
       runHook postInstall
     '';
   };
@@ -293,12 +293,26 @@ let
     "@proompteng/temporal-bun-sdk"
   ];
 
+  # Package only the sync CLI's WASM parser and its dependency, not the scripts workspace.
+  # Keep the archive hashes aligned with bun.lock. Zod is already in the Agents runtime.
+  libpgQueryVersion = (lib.importJSON (repoRoot + "/packages/scripts/package.json")).dependencies.libpg-query;
+  libpgQueryArchive = pkgs.fetchurl {
+    url = "https://registry.npmjs.org/libpg-query/-/libpg-query-${libpgQueryVersion}.tgz";
+    hash = "sha512-JHoTTsuDC85VBQj74iUo61+k74dNU/ef/s3nTPnld7wX+jPUq8oNrAPi1g+CNtj0TK8YoRTQn9ROPGN4/RGVsQ==";
+  };
+  pgsqlTypesArchive = pkgs.fetchurl {
+    url = "https://registry.npmjs.org/@pgsql/types/-/types-18.0.0.tgz";
+    hash = "sha512-jtAY4JU7jdVYZ/Vv3zlZqVP+FRWZokyCLKPPCnAApiaJAElpyyiMC3HRiquBu29kSrVs+rkqZD50SUIb/zyEGw==";
+  };
+
   serviceSourcePaths = [
     "charts/agents/crds"
+    "docs/agents/ontology/agents-knowledge.json"
     "packages/agent-contracts"
     "packages/codex"
     "packages/cx-tools"
     "packages/otel"
+    "packages/scripts/src/agents"
     "packages/temporal-bun-sdk"
     "services/agents"
   ];
@@ -309,6 +323,8 @@ let
     "services/agents/scripts/codex"
     "services/agents/scripts/codex-config-container.toml"
     "services/agents/scripts/apply_patch.py"
+    "services/agents/src/auto-ontology-mcp/config.ts"
+    "services/agents/src/auto-ontology-mcp/contract.ts"
     "services/agents/src/linear-mcp/bridge-auth.ts"
     "services/agents/src/linear-mcp/config.ts"
     "services/agents/src/linear-mcp/contract.ts"
@@ -316,6 +332,7 @@ let
     "services/agents/src/runner-result.ts"
     "services/agents/src/runner-status.ts"
     "services/agents/src/runner-telemetry.ts"
+    "services/agents/src/workspace-cache.ts"
     "services/agents/src/artifact-storage.ts"
     "services/agents/tsconfig.json"
   ];
@@ -356,6 +373,7 @@ let
     "bun --cwd=packages/codex run build"
     ''mkdir -p "$TMPDIR/agents-runner"''
     ''bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile "$TMPDIR/agents-runner/agent-runner.js"''
+    ''bun build services/agents/scripts/codex/auto-ontology-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/auto-ontology-mcp-bridge.js"''
     ''bun build services/agents/scripts/codex/linear-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/linear-mcp-bridge.js"''
     ''bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile "$TMPDIR/agents-runner/fake-app-server.js"''
   ];
@@ -404,6 +422,15 @@ let
     cp -R "$TMPDIR/work/services/agents/scripts" "$out/app/services/agents/scripts"
     cp -R "$TMPDIR/work/services/agents/.output" "$out/app/services/agents/.output"
     copyWorkspaceNodeModules "$TMPDIR/work/services/agents/node_modules" "$out/app/services/agents/node_modules"
+
+    syncDir="$out/app/services/agents/scripts/auto-ontology-sync"
+    mkdir -p "$syncDir/node_modules/libpg-query" "$syncDir/node_modules/@pgsql/types"
+    tar -xzf ${libpgQueryArchive} --strip-components=1 -C "$syncDir/node_modules/libpg-query"
+    tar -xzf ${pgsqlTypesArchive} --strip-components=1 -C "$syncDir/node_modules/@pgsql/types"
+    bun build "$TMPDIR/work/packages/scripts/src/agents/sync-auto-ontology-bundle.ts" --target bun \
+      --external libpg-query --external zod --outfile "$syncDir/sync-auto-ontology-bundle.js"
+    bun --no-install "$syncDir/sync-auto-ontology-bundle.js" \
+      --bundle "$TMPDIR/work/docs/agents/ontology/agents-knowledge.json" --mode dry-run
 
     chmod +x \
       "$out/app/services/agents/scripts/agents-shell-entrypoint.sh" \
@@ -497,7 +524,9 @@ let
     applyPatch
     bun
     nodejs
+    antigravityCli
     openaiCodexCli
+    pstackBundle
     pkgs.bash
     pkgs.cacert
     pkgs.coreutils
@@ -576,6 +605,7 @@ let
       "$out/app/services/agents/scripts/codex" \
       "$out/app/services/agents/scripts" \
       "$out/root/.codex" \
+      "$out/root/.gemini/antigravity-cli" \
       "$out/workspace" \
       "$out/usr/bin" \
       "$out/usr/local/bin"
@@ -583,6 +613,7 @@ let
     cp "$TMPDIR/work/packages/codex/package.json" "$out/app/node_modules/@proompteng/codex/package.json"
     cp -R "$TMPDIR/work/packages/codex/dist" "$out/app/node_modules/@proompteng/codex/dist"
     cp "$TMPDIR/agents-runner/agent-runner.js" "$out/app/services/agents/scripts/codex/agent-runner.js"
+    cp "$TMPDIR/agents-runner/auto-ontology-mcp-bridge.js" "$out/app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/linear-mcp-bridge.js" "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
     cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
@@ -602,14 +633,22 @@ let
     #!${pkgs.bash}/bin/bash
     exec ${bun}/bin/bun /app/services/agents/scripts/codex/linear-mcp-bridge.js "$@"
     EOF
+    cat > "$out/usr/local/bin/auto-ontology-mcp-bridge" <<'EOF'
+    #!${pkgs.bash}/bin/bash
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js "$@"
+    EOF
+    ln -s ${antigravityCli}/bin/agy "$out/usr/local/bin/agy"
+    ln -s ${antigravityCli}/bin/agy "$out/usr/bin/agy"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"
     ln -s ${runnerPython}/bin/alpaca-mcp-server "$out/usr/local/bin/alpaca-mcp-server"
     chmod +x \
       "$out/usr/local/bin/agent-runner" \
+      "$out/usr/local/bin/auto-ontology-mcp-bridge" \
       "$out/usr/local/bin/linear-mcp-bridge" \
       "$out/usr/local/bin/agents-fake-codex-app-server" \
       "$out/app/services/agents/scripts/codex/agent-runner.js" \
+      "$out/app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js" \
       "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js" \
       "$out/app/services/agents/scripts/codex/fake-app-server.js"
 
@@ -657,6 +696,8 @@ let
         "WORKSPACE=/workspace"
         "WORKTREE=/workspace/lab"
         "GIT_TERMINAL_PROMPT=0"
+        "AGENTS_AGY_BINARY=/usr/local/bin/agy"
+        "AGY_CLI_DISABLE_AUTO_UPDATE=true"
         "AGENTS_CODEX_BINARY=/usr/local/bin/codex"
         "CODEX_BINARY=/usr/local/bin/codex"
         "BUN_INSTALL=/usr/local"
@@ -670,6 +711,48 @@ let
         "CC=${pkgs.stdenv.cc}/bin/cc"
         "CXX=${pkgs.stdenv.cc}/bin/c++"
       ];
+    };
+
+  # Kind lifecycle smoke uses the real runner with a deterministic app-server,
+  # without the production runner's development toolchain or workspace cache.
+  mkSmokeRunnerImage =
+    import ./bun-workspace-service.nix {
+      inherit
+        pkgs
+        lib
+        repoRoot
+        bun
+        nodejs
+        depsHash
+        installFilters
+        runtimeSourceFilter
+        ;
+      sourcePaths = runnerSourcePaths;
+      depsName = "agents-controller";
+      packageName = "@proompteng/agents-smoke-runner";
+      serviceName = "agents-smoke-runner";
+      dependencyClosure = "bunCache";
+      buildCommands = [
+        "patchShebangs --build node_modules"
+        "bun --cwd=packages/codex run build"
+        ''bun build --target bun --outdir "$TMPDIR/smoke-runner" services/agents/scripts/codex/{agent-runner,fake-app-server}.ts''
+      ];
+      runtimeInstallPhase = ''
+        mkdir -p "$out/app" "$out/workspace" "$out/usr/local/bin"
+        cp "$TMPDIR/smoke-runner/"{agent-runner,fake-app-server}.js "$out/app/"
+
+        cat > "$out/usr/local/bin/agent-runner" <<'EOF'
+        #!/bin/sh
+        exec ${bun}/bin/bun /app/agent-runner.js "$@"
+        EOF
+        cat > "$out/usr/local/bin/agents-fake-codex-app-server" <<'EOF'
+        #!/bin/sh
+        exec ${bun}/bin/bun /app/fake-app-server.js "$@"
+        EOF
+        chmod +x "$out/usr/local/bin/"{agent-runner,agents-fake-codex-app-server}
+      '';
+      command = [ "/usr/local/bin/agent-runner" ];
+      workingDir = "/workspace";
     };
 in
 {
@@ -741,5 +824,6 @@ in
   };
 
   "agents-codex-runner-image" = mkRunnerImage;
+  "agents-smoke-runner-image" = mkSmokeRunnerImage;
   "ofz-fixture-tools" = import ./ofz-fixture-tools.nix { inherit pkgs lib runnerTools; };
 }

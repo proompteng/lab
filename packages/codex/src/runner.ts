@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import childProcess from 'node:child_process'
 import { createWriteStream, type WriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -317,7 +317,7 @@ export class CodexRunner {
       commandArgs.push('-')
     }
 
-    const child = spawn(this.codexPath, commandArgs, {
+    const child = childProcess.spawn(this.codexPath, commandArgs, {
       env: { ...process.env, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
       signal,

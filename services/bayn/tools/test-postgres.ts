@@ -6,8 +6,9 @@ import { localPostgresTestUrl, removePostgresTestDatabases } from './postgres-te
 import timings from './ci-postgres-timings.json'
 
 const files = [
+  'tools/auto-ontology-postgres.integration.test.ts',
+  'src/db/audit-reader-grants.integration.test.ts',
   'src/db/visual-non-dispatch-migration.integration.test.ts',
-  'src/db/native-equity-short.integration.test.ts',
   'src/db/equity-short-accounting.integration.test.ts',
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
   'src/db/candidate-observation-window.integration.test.ts',
@@ -28,6 +29,7 @@ const files = [
   'src/db/postgres-backend-tracing.integration.test.ts',
   'src/db/snapshot-rows.integration.test.ts',
   'src/db/broker-observations.integration.test.ts',
+  'src/db/broker-protection-binding.integration.test.ts',
   'src/cycle/store/observability.integration.test.ts',
   'src/db/execution-store.integration.test.ts',
   'src/db/execution-store/configured-account.integration.test.ts',
@@ -35,6 +37,7 @@ const files = [
   'src/cycle/store/integration.test.ts',
   'src/execution/intents/blocked-cycle-postgres.integration.test.ts',
   'src/forward-performance/postgres/read.integration.test.ts',
+  'src/forward-performance/postgres/alpha-decisions.integration.test.ts',
   'src/forward-performance/postgres/cycles.integration.test.ts',
   'src/forward-performance/postgres/first-cycle-queries.integration.test.ts',
   'src/forward-performance/postgres/inference-expense-sessions.integration.test.ts',
@@ -69,6 +72,8 @@ const files = [
   'src/postgres-monitoring.integration.test.ts',
   'src/cycle/store/entry-allocation-query.integration.test.ts',
   'src/system-assessment/postgres.integration.test.ts',
+  'src/system-assessment/alpha-observation-witness.integration.test.ts',
+  'src/system-assessment/alpha-baseline-witness.integration.test.ts',
   'src/system-assessment/operational-source-cut.integration.test.ts',
   'src/db/risk-clock-rejection.integration.test.ts',
 ]

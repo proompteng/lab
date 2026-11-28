@@ -1,0 +1,72 @@
+name: Auto Ontology
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**/ontology/**'
+      - 'services/bayn/migrations/**'
+      - 'services/agents/src/server/migrations/**'
+      - 'packages/scripts/src/agents/validate-ontology-bundles.ts'
+      - 'packages/scripts/src/agents/ontology-*.ts'
+      - 'packages/scripts/src/agents/__tests__/validate-ontology-bundles.test.ts'
+      - '**/package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
+      - '.oxfmtrc.json'
+      - '.github/workflows/auto-ontology-validate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).ontology }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/auto-ontology-validate.yml
+          workspaces: |
+            ontology: ['packages/scripts']
+
+  validate:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    name: Validate knowledge bundles
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /**/package.json
+            /.npmrc
+            /.oxfmtrc.json
+            /bun.lock
+            /patches/
+            /docs/*/ontology/
+            /services/bayn/migrations/
+            /services/agents/src/server/migrations/
+            /packages/scripts/src/agents/ontology-*.ts
+            /packages/scripts/src/agents/validate-ontology-bundles.ts
+            /packages/scripts/src/agents/__tests__/validate-ontology-bundles.test.ts
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Validate and test
+        run: |
+          bun install --frozen-lockfile --ignore-scripts --production --filter @proompteng/scripts
+          bun packages/scripts/src/agents/validate-ontology-bundles.ts
+          bun test packages/scripts/src/agents/__tests__/validate-ontology-bundles.test.ts

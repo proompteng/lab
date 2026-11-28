@@ -969,7 +969,7 @@ describe('market data smoke freshness evaluation', () => {
       "httpExecTarget: process.env.TORGHUT_MARKET_DATA_HTTP_EXEC_TARGET ?? 'deploy/torghut-ta'",
     )
     expect(marketDataSmokeSource).toContain('const wsReadyz = await fetchRuntimeJson(settings.wsReadyzUrl, settings)')
-    expect(marketDataSmokeSource).toContain('http://torghut-ws.torghut.svc.cluster.local/readyz')
+    expect(marketDataSmokeSource).toContain('http://torghut-ws.bayn.svc.cluster.local/readyz')
     expect(marketDataSmokeSource).toContain('KAFKA_TOPIC_PARTITIONS')
     expect(marketDataSmokeSource).toContain("raw.trim().toLowerCase() === 'auto'")
     expect(marketDataSmokeSource).toContain("tailArgs(topic, 'partitions', settings, 0, '1')")

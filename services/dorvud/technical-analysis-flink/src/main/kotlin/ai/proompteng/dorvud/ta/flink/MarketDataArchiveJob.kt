@@ -4,7 +4,11 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
 import org.apache.flink.api.common.functions.OpenContext
 import org.apache.flink.api.common.functions.RichFlatMapFunction
@@ -54,6 +58,7 @@ data class ArchiveRoute(
   val feed: String,
   val universe: ArchiveUniverse,
   val kind: ArchiveRecordKind = ArchiveRecordKind.Bar,
+  val sipShadow: Boolean = false,
 ) : Serializable
 
 data class MarketDataArchiveConfig(
@@ -94,6 +99,7 @@ data class MarketDataArchiveConfig(
         idKey: String,
         symbolsKey: String,
         hashKey: String,
+        strictCsv: Boolean = false,
       ): ArchiveUniverse {
         val symbols =
           required(symbolsKey)
@@ -102,6 +108,11 @@ data class MarketDataArchiveConfig(
             .filter { it.isNotEmpty() }
         require(symbols.isNotEmpty()) { "$symbolsKey must contain at least one symbol" }
         require(symbols == symbols.distinct().sorted()) { "$symbolsKey must be unique and canonically sorted" }
+        if (strictCsv) {
+          require(env[symbolsKey] == symbols.joinToString(",") && symbols.none { '*' in it || it.any(Char::isWhitespace) }) {
+            "$symbolsKey must be uppercase CSV of explicit symbols without whitespace or empty entries"
+          }
+        }
         val id = required(idKey)
         require(id.matches(Regex("^[a-z0-9]+(?:[.-][a-z0-9]+)*$"))) {
           "$idKey must be a versioned lowercase identifier"
@@ -130,6 +141,11 @@ data class MarketDataArchiveConfig(
       require(coreFeed == "iex" || enrichedTopics.isNotEmpty()) {
         "ARCHIVE_CORE_FEED requires the complete quote and trade topic contract"
       }
+      val featuresTopic = optional("ARCHIVE_FEATURES_TOPIC")
+      val technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC")
+      val crypto = CryptoArchiveConfig.fromEnv(env)
+      val cryptoFeaturesTopic = optional("ARCHIVE_CRYPTO_FEATURES_TOPIC")
+      val webullTopic = optional("ARCHIVE_WEBULL_TOPIC")
       val routes =
         buildMap {
           put(optional("ARCHIVE_CORE_BARS_TOPIC") ?: required("ARCHIVE_IEX_BARS_TOPIC"), ArchiveRoute(coreFeed, coreUniverse))
@@ -147,9 +163,34 @@ data class MarketDataArchiveConfig(
               ArchiveRoute("delayed_sip", observationUniverse, ArchiveRecordKind.Trade),
             )
           }
+          val expectedRouteCount = if (enrichedTopics.isEmpty()) 3 else 7
+          if (size != expectedRouteCount) error("archive market-data topics must be unique")
+
+          val shadowIdKey = "ARCHIVE_SIP_SHADOW_UNIVERSE_ID"
+          val shadowSymbolsKey = "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS"
+          val shadowHashKey = "ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOL_HASH"
+          val shadowTopicKinds =
+            mapOf(
+              "ARCHIVE_SIP_SHADOW_BARS_TOPIC" to ArchiveRecordKind.Bar,
+              "ARCHIVE_SIP_SHADOW_QUOTES_TOPIC" to ArchiveRecordKind.Quote,
+              "ARCHIVE_SIP_SHADOW_TRADES_TOPIC" to ArchiveRecordKind.Trade,
+            )
+          val shadowKeys = shadowTopicKinds.keys + listOf(shadowIdKey, shadowSymbolsKey, shadowHashKey)
+          if (shadowKeys.any(env::containsKey)) {
+            val missingKeys = shadowKeys.filter { optional(it) == null }
+            require(missingKeys.isEmpty()) {
+              "ARCHIVE_SIP_SHADOW_* settings must be configured together; missing or blank: ${missingKeys.joinToString()}"
+            }
+            require(coreFeed != "sip") { "SIP shadow archive cannot be enabled with ARCHIVE_CORE_FEED=sip" }
+            val sipShadowUniverse = universe(shadowIdKey, shadowSymbolsKey, shadowHashKey, strictCsv = true)
+            val otherTopics = listOfNotNull(featuresTopic, technicalFeaturesTopic, crypto?.topic, cryptoFeaturesTopic, webullTopic)
+            for ((key, kind) in shadowTopicKinds) {
+              val topic = required(key)
+              require(topic !in this && topic !in otherTopics) { "$key topic '$topic' must be distinct from all other archive topics" }
+              put(topic, ArchiveRoute("sip", sipShadowUniverse, kind, sipShadow = true))
+            }
+          }
         }
-      val expectedRouteCount = if (enrichedTopics.isEmpty()) 3 else 7
-      if (routes.size != expectedRouteCount) error("archive market-data topics must be unique")
 
       val checkpointIntervalMs = env["ARCHIVE_CHECKPOINT_INTERVAL_MS"]?.toLongOrNull() ?: 60_000
       val parallelism = env["ARCHIVE_PARALLELISM"]?.toIntOrNull() ?: 3
@@ -191,11 +232,11 @@ data class MarketDataArchiveConfig(
         clickhouseBatchSize = batchSize,
         clickhouseFlushMs = flushMs,
         clickhouseMaxRetries = maxRetries,
-        featuresTopic = optional("ARCHIVE_FEATURES_TOPIC"),
-        technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC"),
-        crypto = CryptoArchiveConfig.fromEnv(env),
-        cryptoFeaturesTopic = optional("ARCHIVE_CRYPTO_FEATURES_TOPIC"),
-        webullTopic = optional("ARCHIVE_WEBULL_TOPIC"),
+        featuresTopic = featuresTopic,
+        technicalFeaturesTopic = technicalFeaturesTopic,
+        crypto = crypto,
+        cryptoFeaturesTopic = cryptoFeaturesTopic,
+        webullTopic = webullTopic,
       )
     }
   }
@@ -401,7 +442,7 @@ internal fun decodeArchiveBar(
   val universe = route.universe
   require(record.partition >= 0) { "archive source partition must be non-negative" }
   require(record.offset >= 0) { "archive source offset must be non-negative" }
-  val envelope = json.decodeFromString(Envelope.serializer(AlpacaBarPayload.serializer()), record.value)
+  val envelope = decodeArchivePayload(record, route, AlpacaBarPayload.serializer(), json)
   require(envelope.provider == "alpaca") { "archive envelope provider must be alpaca" }
   require(envelope.feed == expectedFeed) { "archive envelope feed does not match its source topic" }
   require(envelope.channel in supportedChannels) { "archive envelope channel must be bars or updatedBars" }
@@ -536,19 +577,43 @@ private data class DecodedArchiveEnvelope<Payload>(
   val envelope: Envelope<Payload>,
 )
 
+private fun <Payload> decodeArchivePayload(
+  record: ArchiveKafkaRecord,
+  route: ArchiveRoute,
+  serializer: KSerializer<Payload>,
+  json: Json,
+): Envelope<Payload> {
+  val envelopeSerializer = Envelope.serializer(serializer)
+  if (!route.sipShadow) return json.decodeFromString(envelopeSerializer, record.value)
+
+  // Adapt the Wave 7B wire fields here so the shared Envelope and Flink state layouts do not change.
+  val wire = json.parseToJsonElement(record.value).jsonObject
+  val delayClass = wire["delay_class"]
+  require(delayClass is JsonPrimitive && delayClass.isString) { "SIP shadow envelope delay_class is required" }
+  require("delayClass" !in wire) { "SIP shadow envelope must not contain delayClass" }
+  require(wire["universe_id"] == JsonPrimitive(route.universe.id)) {
+    "SIP shadow envelope universe_id does not match its source topic"
+  }
+  require(wire["universe_symbol_hash"] == JsonPrimitive(route.universe.symbolHash)) {
+    "SIP shadow envelope universe_symbol_hash does not match its source topic"
+  }
+  val normalized = JsonObject(wire - listOf("delay_class", "universe_id", "universe_symbol_hash") + ("delayClass" to delayClass))
+  return json.decodeFromJsonElement(envelopeSerializer, normalized)
+}
+
 private fun <Payload> decodeArchiveEnvelope(
   record: ArchiveKafkaRecord,
   routeByTopic: Map<String, ArchiveRoute>,
   kind: ArchiveRecordKind,
   channel: String,
-  serializer: kotlinx.serialization.KSerializer<Payload>,
+  serializer: KSerializer<Payload>,
   json: Json,
 ): DecodedArchiveEnvelope<Payload> {
   val route = routeByTopic[record.topic] ?: error("unexpected archive topic: ${record.topic}")
   require(route.kind == kind) { "archive topic is not configured for ${channel}s" }
   require(record.partition >= 0) { "archive source partition must be non-negative" }
   require(record.offset >= 0) { "archive source offset must be non-negative" }
-  val envelope = json.decodeFromString(Envelope.serializer(serializer), record.value)
+  val envelope = decodeArchivePayload(record, route, serializer, json)
   require(envelope.provider == "alpaca") { "archive envelope provider must be alpaca" }
   require(envelope.feed == route.feed) { "archive envelope feed does not match its source topic" }
   require(envelope.channel == channel) { "archive envelope channel must be $channel" }

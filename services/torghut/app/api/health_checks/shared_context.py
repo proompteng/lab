@@ -358,6 +358,4 @@ def alpaca_probe_account(
     }
 
 
-shadow_first_toggle_parity_payload = _build_shadow_first_toggle_parity
-active_capital_stage_from_summary = _resolve_active_capital_stage
 lean_authority_status_payload = _lean_authority_status

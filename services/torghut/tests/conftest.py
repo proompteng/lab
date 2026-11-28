@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from functools import cache
+
+import pytest
 
 from tests.hypothesis_profiles import (
     default_profile_name,
@@ -9,6 +12,19 @@ from tests.hypothesis_profiles import (
 )
 
 _ACTIVE_HYPOTHESIS_PROFILE = load_default_hypothesis_profile()
+
+
+@pytest.fixture
+def reuse_execution_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.trading.discovery import candidate_spec_profile_variants
+
+    # Replaying the same profile expansion for every compiled candidate is
+    # quadratic in the number of profiles. The compiler reads the tuple and
+    # copies the selected override; cache the real expansion for this test only.
+    expand = candidate_spec_profile_variants._execution_profiles_for_target
+    monkeypatch.setattr(
+        candidate_spec_profile_variants, "_execution_profiles_for_target", cache(expand)
+    )
 
 
 def pytest_configure() -> None:

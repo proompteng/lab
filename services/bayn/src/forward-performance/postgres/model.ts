@@ -233,6 +233,8 @@ export interface ForwardPerformancePostgresEvidence {
   readonly ambiguousBrokerFeeCount?: number
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
   readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
+  readonly alphaDecisions?: readonly import('../alpha-decisions').NativeAlphaDecisionEvidence[]
+  readonly unverifiedAlphaDecisionHashes?: readonly string[]
   readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[]
   readonly receipts: readonly AccountingReceipt[]

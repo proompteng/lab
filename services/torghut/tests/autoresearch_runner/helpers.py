@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import app.whitepapers.claim_compiler as claim_compiler
-
 import json
 from argparse import Namespace
 from contextlib import contextmanager
@@ -12,34 +10,18 @@ from unittest.mock import patch
 
 from sqlalchemy import create_engine
 
+import app.whitepapers.claim_compiler as claim_compiler
 import scripts.run_whitepaper_autoresearch_profit_target as runner
 import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
 from app.models import (
     Base,
 )
 from app.trading.discovery.candidate_specs import (
-    CandidateSpec,
     LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
+    CandidateSpec,
 )
 
-
 _CHIP_UNIVERSE = list(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
-
-
-class _FakeSigalrmSignal:
-    SIGALRM = object()
-
-    @staticmethod
-    def getsignal(_signum: object) -> None:
-        return None
-
-    @staticmethod
-    def signal(_signum: object, _handler: Any) -> None:
-        return None
-
-    @staticmethod
-    def alarm(_seconds: int) -> None:
-        return None
 
 
 def _authoritative_exact_replay_ledger_rows() -> list[dict[str, object]]:
@@ -197,6 +179,7 @@ def _compact_recent_whitepaper_sources(
 
 class AutoresearchRunnerTestCase(TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.dict("os.environ", {"TORGHUT_CODE_COMMIT": "a" * 40}))
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(self.engine)
 

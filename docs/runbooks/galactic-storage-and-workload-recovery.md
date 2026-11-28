@@ -330,6 +330,9 @@ state, and verify the workload endpoint. Keep the snapshot until a separate roll
 
 ## Phase 5: Recover Host-Local IPAM Exhaustion
 
+For Turin and Altra's current Flannel `cbr0` ranges, use the [lease audit and reversible archival runbook](turin-cni-ipam-exhaustion.md).
+The older `/24` procedure below is retained as incident history.
+
 Typical evidence is `FailedCreatePodSandBox` with a host-local error indicating that no IP addresses are available.
 
 ### Prove the capacity mismatch

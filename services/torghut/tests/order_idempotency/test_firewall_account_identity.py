@@ -1,30 +1,24 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from sqlalchemy import select
+
 from app.models import BrokerMutationReceipt, TradeDecisionSubmissionClaim
+from app.trading.execution import OrderExecutor
 from app.trading.firewall import OrderFirewall
-from tests.order_idempotency.support import (
-    Decimal,
-    FakeAlpacaClient,
-    OrderExecutor,
-    Strategy,
-    StrategyDecision,
-    _TestOrderIdempotencyBase,
-    datetime,
-    select,
-    timezone,
-)
+from app.trading.models import StrategyDecision
+from tests.order_idempotency.support import FakeAlpacaClient, _TestOrderIdempotencyBase
+from tests.trading_fixtures import make_strategy
 
 
 class TestFirewallAccountIdentity(_TestOrderIdempotencyBase):
     def test_account_mismatch_fails_before_claim_receipt_or_broker_io(self) -> None:
         with self.session_local() as session:
-            strategy = Strategy(
+            strategy = make_strategy(
                 name="identity-preflight",
                 description="account identity preflight",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
             )
             session.add(strategy)
             session.commit()

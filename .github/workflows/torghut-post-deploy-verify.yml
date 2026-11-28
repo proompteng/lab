@@ -244,13 +244,14 @@ jobs:
 
           for deployment in \
             torghut-ta \
-            market-data-archive \
-            torghut-ws; do
+            market-data-archive; do
             kubectl rollout status "deployment/${deployment}" -n torghut --timeout=10m
           done
 
+          kubectl rollout status deployment/torghut-ws -n bayn --timeout=10m
+
           pull_failures="$(
-            kubectl get pods -n torghut -o json |
+            { kubectl get pods -n torghut -o json && kubectl get pods -n bayn -l app=torghut-ws -o json; } |
               jq -r '
                 .items[] as $pod
                 | (($pod.status.initContainerStatuses // []) + ($pod.status.containerStatuses // []))[]?

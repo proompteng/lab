@@ -6,6 +6,7 @@ import { ValkeyCacheLive } from '../valkey-cache'
 import { BrokerObservationsLive } from '../db/broker-observations'
 import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
+import { NativeAlphaBaselinePreparationLive } from '../db/alpha-baseline-preparation-postgres'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevInferenceWorkStoreLive } from '../db/jev-inference-work-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
@@ -16,8 +17,10 @@ import { JevFailure } from '../jev/contract'
 import { JevHttpClientLive } from '../jev/http'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 
+import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
-import { Effect, Layer, type Context } from 'effect'
+import { Effect, Layer, Redacted, type Context } from 'effect'
+import { ClickhouseTrailingBaselineLive } from '../market-data/intraday/trailing-baseline'
 
 import type { ApplicationIdentity, ApplicationPlan } from '../app'
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
@@ -199,10 +202,28 @@ export const AutonomousRuntimeResourcesLive = (
     ExecutionCycleClosureStorePostgresLive,
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(WriterFenceLive), Layer.provideMerge(JournalLive(plan.config)))
+  const trailingBaseline = ClickhouseTrailingBaselineLive.pipe(
+    Layer.provide(
+      ClickhouseClient.layer({
+        url: plan.config.clickhouse.url,
+        username: plan.config.clickhouse.username,
+        password: Redacted.value(plan.config.clickhouse.password),
+        database: 'signal',
+        application: 'bayn-trailing-baseline',
+        request_timeout: 15_000,
+      }),
+    ),
+  )
   return Layer.mergeAll(
     DecisionConstructionLive,
     BrokerSessionResourceLive(plan.config),
     executionPersistence,
+    trailingBaseline,
+    NativeAlphaBaselinePreparationLive({
+      sourceRevision: plan.config.build.sourceRevision,
+      imageRepository: plan.config.build.imageRepository,
+      imageDigest: plan.config.build.imageDigest,
+    }).pipe(Layer.provide(trailingBaseline)),
     WriterFencedCycleStoreLive.pipe(Layer.provide(executionPersistence)),
   ).pipe(
     Layer.provideMerge(ValkeyCacheLive),

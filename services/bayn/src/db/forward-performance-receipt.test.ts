@@ -456,6 +456,7 @@ describe('forward-performance receipt persistence contract', () => {
     const decoded = Result.getOrThrow(decodeForwardPerformanceReceiptEnvelopeResult(envelope))
     expect(decoded).toEqual(envelope)
     expect(decoded.receipt).not.toHaveProperty('positionEpisodes')
+    expect(decoded.receipt).not.toHaveProperty('nativeAlpha')
   })
 
   test('retains unverified decision hashes only with undetermined execution quality', () => {

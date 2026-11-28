@@ -88,7 +88,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -100,10 +100,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          filter: blob:none
       - uses: ./.github/actions/affected-inputs
         id: filter
         with:
           workflow: .github/workflows/signal-publisher-build-push.yml
+          dependency-aware-push: 'true'
           workspaces: |
             service: ['', 'services/signal-publisher']
 
@@ -117,10 +119,14 @@ jobs:
 
   image:
     needs: dependency-closure
+    concurrency:
+      group: signal-publisher-publish-${{ github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: signal-publisher
       package_attr: signal-publisher-image
+      tmpfs: true
       tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
       publish_kargo_tag: true
       pr_number: ''

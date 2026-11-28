@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
-    RuntimeWindowImportTestCaseBase,
-    _FakeCursor,
     _active_carry_in_ledger_rows,
     _build_realized_strategy_pnl_rows,
-    _complete_runtime_ledger_bucket,
     _filter_carry_in_source_rows_for_active_lots,
     _filter_source_rows_for_runtime_window,
     _flat_start_position_snapshot_authority,
@@ -18,8 +18,6 @@ from tests.runtime_window_import.runtime_window_import_base import (
     _runtime_ledger_tca_materialization_metadata,
     _runtime_observation_authority_payload,
     _runtime_open_qtys_by_symbol_from_execution_rows,
-    _runtime_split_ts,
-    _source_backed_runtime_split_rows,
     _source_decision_action_offsets_open_qty,
     _source_row_lineage_missing_or_matches,
     _source_window_classification_counts,
@@ -28,13 +26,17 @@ from tests.runtime_window_import.runtime_window_import_base import (
     _source_window_query_context,
     _source_window_status_counts,
     _with_runtime_ledger_source_authority_context,
-    datetime,
-    timedelta,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import execution_fill
+from tests.runtime_window_import.runtime_window_import_support import (
+    _complete_runtime_ledger_bucket,
+    _FakeCursor,
+    _runtime_split_ts,
+    _source_backed_runtime_split_rows,
 )
 
 
-class TestRuntimeWindowImportSourceContext(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportSourceContext(TestCase):
     def test_post_window_closeout_helpers_fail_closed(self) -> None:
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
 
@@ -317,52 +319,44 @@ class TestRuntimeWindowImportSourceContext(RuntimeWindowImportTestCaseBase):
                 },
             ],
             carry_in_execution_rows=[
-                {
-                    "execution_id": "old-route-buy-exec",
-                    "trade_decision_id": "old-route-buy-decision",
-                    "computed_at": datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
-                    "execution_event_at": datetime(
+                execution_fill(
+                    execution_id="old-route-buy-exec",
+                    trade_decision_id="old-route-buy-decision",
+                    computed_at=datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+                    execution_event_at=datetime(
                         2026, 6, 1, 14, 0, 2, tzinfo=timezone.utc
                     ),
-                    "symbol": "AAPL",
-                    "side": "buy",
-                    "filled_qty": Decimal("2"),
-                    "avg_fill_price": Decimal("90"),
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "intraday-tsmom-profit-v3",
-                    "decision_hash": "old-route-buy-hash",
-                    "alpaca_order_id": "old-route-buy-order",
-                    "execution_policy_hash": "old-route-policy",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                    "source_decision_mode": "route_acquisition_probe",
-                    "profit_proof_eligible": False,
-                },
-                {
-                    "execution_id": "old-route-sell-exec",
-                    "trade_decision_id": "old-route-sell-decision",
-                    "computed_at": datetime(2026, 6, 1, 14, 5, tzinfo=timezone.utc),
-                    "execution_event_at": datetime(
+                    side="buy",
+                    filled_qty=Decimal("2"),
+                    avg_fill_price=Decimal("90"),
+                    cost_amount=Decimal("0.10"),
+                    account_label="TORGHUT_SIM",
+                    strategy_id="intraday-tsmom-profit-v3",
+                    decision_hash="old-route-buy-hash",
+                    alpaca_order_id="old-route-buy-order",
+                    execution_policy_hash="old-route-policy",
+                    source_decision_mode="route_acquisition_probe",
+                    profit_proof_eligible=False,
+                ),
+                execution_fill(
+                    execution_id="old-route-sell-exec",
+                    trade_decision_id="old-route-sell-decision",
+                    computed_at=datetime(2026, 6, 1, 14, 5, tzinfo=timezone.utc),
+                    execution_event_at=datetime(
                         2026, 6, 1, 14, 5, 2, tzinfo=timezone.utc
                     ),
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("2"),
-                    "avg_fill_price": Decimal("91"),
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "intraday-tsmom-profit-v3",
-                    "decision_hash": "old-route-sell-hash",
-                    "alpaca_order_id": "old-route-sell-order",
-                    "execution_policy_hash": "old-route-policy",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                    "source_decision_mode": "route_acquisition_probe",
-                    "profit_proof_eligible": False,
-                },
+                    side="sell",
+                    filled_qty=Decimal("2"),
+                    avg_fill_price=Decimal("91"),
+                    cost_amount=Decimal("0.10"),
+                    account_label="TORGHUT_SIM",
+                    strategy_id="intraday-tsmom-profit-v3",
+                    decision_hash="old-route-sell-hash",
+                    alpaca_order_id="old-route-sell-order",
+                    execution_policy_hash="old-route-policy",
+                    source_decision_mode="route_acquisition_probe",
+                    profit_proof_eligible=False,
+                ),
             ],
             allow_authoritative_runtime_ledger_materialization=True,
         )

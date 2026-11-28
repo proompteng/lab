@@ -1,0 +1,50 @@
+{
+  "acronyms": [
+    {
+      "description": "GlitchTip groups similar issue events into a single issue. The audit catalog identifies groups by numeric GlitchTip issue ID and never exposes issue titles or individual events.",
+      "name": "GlitchTip Issue Group"
+    },
+    {
+      "description": "Releases with a recorded release time, grouped by project and UTC hour. This groups release activity without returning version strings or treating release records as proof of a deployment.",
+      "name": "GlitchTip Release Cohort"
+    }
+  ],
+  "customAnalyses": [
+    {
+      "description": "Recorded issue-event volume per project and UTC hour for the last 24 complete hours. GlitchTip's project counters do not distinguish severity. Returns up to 240 observed project-hours, newest first.",
+      "name": "GlitchTip hourly error volume by project",
+      "sql": "WITH bounds AS (SELECT date_trunc('hour', CURRENT_TIMESTAMP, 'UTC') AS end_hour)\nSELECT project_id, hour_start, event_count\nFROM glitchtip_audit.project_hourly_errors CROSS JOIN bounds\nWHERE hour_start >= end_hour - INTERVAL '24 hours' AND hour_start < end_hour\nORDER BY hour_start DESC, event_count DESC, project_id\nLIMIT 240"
+    },
+    {
+      "description": "Top 25 issue groups by absolute increase in recorded events over the last seven complete days compared with the preceding seven days, aligned to the UTC hour. A missing baseline contributes zero recorded events. An increase is not a GlitchTip reopen transition.",
+      "name": "GlitchTip 7d top regressing issues",
+      "sql": "WITH bounds AS (SELECT date_trunc('hour', CURRENT_TIMESTAMP, 'UTC') AS end_hour),\nevent_totals AS (\n  SELECT project_id, issue_id,\n    COALESCE(SUM(event_count) FILTER (WHERE hour_start >= end_hour - INTERVAL '168 hours'), 0) AS recent_events,\n    COALESCE(SUM(event_count) FILTER (WHERE hour_start < end_hour - INTERVAL '168 hours'), 0) AS prior_events\n  FROM glitchtip_audit.issue_hourly_events CROSS JOIN bounds\n  WHERE hour_start >= end_hour - INTERVAL '336 hours' AND hour_start < end_hour\n  GROUP BY project_id, issue_id\n)\nSELECT project_id, issue_id, recent_events, prior_events, recent_events - prior_events AS event_increase\nFROM event_totals\nWHERE recent_events > prior_events\nORDER BY event_increase DESC, project_id, issue_id\nLIMIT 25"
+    },
+    {
+      "description": "Compare recorded project issue events in the 24 complete hours before and after a release cohort, excluding its release hour. Consider the latest 100 eligible project-hours from the last 30 days; show up to 50 ordered by event increase. Overlapping windows and missing counters limit inference; this is temporal correlation, not attribution.",
+      "name": "GlitchTip release regression correlation",
+      "sql": "WITH bounds AS (SELECT date_trunc('hour', CURRENT_TIMESTAMP, 'UTC') AS end_hour),\nrecent_releases AS (\n  SELECT project_id, release_hour, releases\n  FROM glitchtip_audit.project_release_activity CROSS JOIN bounds\n  WHERE release_hour >= end_hour - INTERVAL '720 hours' AND release_hour <= end_hour - INTERVAL '25 hours'\n  ORDER BY release_hour DESC, project_id\n  LIMIT 100\n), release_windows AS (\n  SELECT r.project_id, r.release_hour, r.releases,\n    COALESCE(SUM(h.event_count) FILTER (WHERE h.hour_start < r.release_hour), 0) AS before_events,\n    COALESCE(SUM(h.event_count) FILTER (WHERE h.hour_start > r.release_hour), 0) AS after_events\n  FROM recent_releases AS r CROSS JOIN bounds\n  LEFT JOIN glitchtip_audit.project_hourly_errors AS h\n    ON h.project_id = r.project_id\n    AND h.hour_start >= end_hour - INTERVAL '744 hours' AND h.hour_start < end_hour\n    AND h.hour_start >= r.release_hour - INTERVAL '24 hours'\n    AND h.hour_start < r.release_hour + INTERVAL '25 hours'\n  GROUP BY r.project_id, r.release_hour, r.releases\n)\nSELECT project_id, release_hour, releases, before_events, after_events, after_events - before_events AS event_delta\nFROM release_windows\nORDER BY event_delta DESC, release_hour DESC, project_id\nLIMIT 50"
+    },
+    {
+      "description": "Counts currently unresolved issue groups by elapsed time since first seen: under seven, seven to under thirty, and at least thirty days. Includes the total non-deleted issue groups for each project with an unresolved issue, ranked by oldest backlog. Returns up to 100 projects.",
+      "name": "GlitchTip unresolved issue aging",
+      "sql": "SELECT a.project_id, p.issues, a.unresolved_issues, a.under_7_days, a.days_7_to_29, a.at_least_30_days\nFROM glitchtip_audit.unresolved_issue_aging AS a\nJOIN glitchtip_audit.project_issue_counts AS p ON p.project_id = a.project_id\nORDER BY a.at_least_30_days DESC, a.unresolved_issues DESC, a.project_id\nLIMIT 100"
+    }
+  ],
+  "dataSource": "glitchtip-pg",
+  "database": "glitchtip",
+  "ruleTag": "glitchtip canonical rule",
+  "rules": [
+    {
+      "description": "Query only the six aggregate views in glitchtip_audit via glitchtip-pg-ro. Do not ingest the public schema, raw issue payloads, user data, billing, authentication, sessions, or tokens.",
+      "name": "GlitchTip standby audit boundary",
+      "searchTerm": "glitchtip_audit"
+    },
+    {
+      "description": "Use complete UTC hours for comparisons. Counter increases do not establish reopen status, and release-window comparisons do not establish cause. Consider retention, ingestion gaps and standby lag before drawing conclusions.",
+      "name": "GlitchTip regression evidence limits",
+      "searchTerm": "project_release_activity"
+    }
+  ],
+  "version": 1
+}

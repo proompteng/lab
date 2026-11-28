@@ -9,6 +9,7 @@ vi.mock('crossws/adapters/bun', () => ({
 
 import { resetAgentsV1RuntimeForTests } from './v1/runtime'
 import { createAgentsControlPlaneRuntime } from './control-plane'
+import { recordAgentRunOutcome, __private as metricsTest } from './metrics'
 
 const previousEnv = {
   AGENTS_CONTROLLER_ENABLED: process.env.AGENTS_CONTROLLER_ENABLED,
@@ -29,6 +30,19 @@ afterEach(() => {
 })
 
 describe('Agents control-plane runtime', () => {
+  it('exposes Prometheus text on /metrics when enabled', async () => {
+    process.env.AGENTS_PROMETHEUS_METRICS_ENABLED = 'true'
+    try {
+      recordAgentRunOutcome('Succeeded', { runtime: 'job' })
+      const runtime = await createAgentsControlPlaneRuntime({ routeModules: [] })
+      const response = await runtime.handleHttpRequest(new Request('http://agents.test/metrics'))
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toContain('text/plain')
+      expect(await response.text()).toContain('agents_agent_run_outcomes_total{outcome="Succeeded",runtime="job"} 1')
+    } finally {
+      metricsTest.resetMetricsForTest()
+    }
+  })
   it('registers the exact-note read route in the production runtime', async () => {
     process.env.AGENTS_CONTROLLER_ENABLED = '0'
     const runtime = await createAgentsControlPlaneRuntime()

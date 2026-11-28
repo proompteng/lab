@@ -124,15 +124,10 @@ class ForwarderConfigTest {
     )
 
   @Test
-  fun `preserves the supported sip core feed when observations are disabled`() {
+  fun `configures a small consolidated sip lane without a raised budget`() {
     val cfg =
       ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "key",
-          "ALPACA_SECRET_KEY" to "secret",
-          "ALPACA_FEED" to "sip",
-          "SYMBOLS" to "AAPL",
-        ),
+        sipTestEnv(listOf("AAPL")),
       )
 
     val runtime = cfg.marketDataFeedConfigs().single()
@@ -173,12 +168,8 @@ class ForwarderConfigTest {
   fun `keeps consolidated sip core data separate from delayed observation data`() {
     val cfg =
       ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "key",
-          "ALPACA_SECRET_KEY" to "secret",
-          "ALPACA_FEED" to "sip",
-          "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
-        ) + authoritativeUniverse + observationTopics,
+        sipTestEnv(listOf("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")) +
+          ("ALPACA_OBSERVATION_FEEDS" to "delayed_sip") + observationTopics,
       )
 
     val runtimes = cfg.marketDataFeedConfigs()

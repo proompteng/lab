@@ -1,19 +1,3 @@
-const globalFlags = `Global flags:
-  --kube                 Force Kubernetes API mode (default).
-  --grpc                 Force gRPC mode.
-  --namespace, -n <ns>    Namespace (default: agents).
-  --server, --address     gRPC address (use with --grpc).
-  --token <token>         gRPC bearer token.
-  --tls / --no-tls        Enable/disable TLS for gRPC.
-  --kubeconfig <path>     Kubeconfig path.
-  --context <name>        Kube context name.
-  --output, -o <fmt>      Output format: table|wide|json|yaml|yaml-stream|text.
-  --yes, -y               Skip confirmation prompts.
-  --no-input              Disable interactive prompts.
-  --color / --no-color    Enable/disable color output.
-  --pager / --no-pager    Enable/disable pager output.
-`
-
 export const renderShortHelp = (version: string) => `agentctl ${version}
 
 Default transport: Kubernetes API (kube). Use --grpc for direct Agents gRPC access.
@@ -26,15 +10,15 @@ Quickstart:
 
 Common tasks:
   agentctl run submit --agent <name> --impl <name> --runtime <type>
-  agentctl run logs <name> --follow
-  agentctl get run --phase Succeeded
+  agentctl run summary <name>
+  agentctl run batch --spec runs.yaml --verify --concurrency 8
+  agentctl run list --active -o wide
 
 Discover more:
-  agentctl help all
+  agentctl --help
   agentctl examples [topic]
   agentctl completion install <bash|zsh|fish>
-
-${globalFlags}`
+`
 
 export const renderTopicHelp = (topic: string) => {
   const normalized = topic.trim().toLowerCase()
@@ -43,8 +27,10 @@ export const renderTopicHelp = (topic: string) => {
     return `Run commands:
   agentctl run submit --agent <name> --impl <name> --runtime <type>
   agentctl init run --apply --wait
-  agentctl run codex --prompt "<task>" --agent <name> --runtime workflow --wait
-  agentctl get run --phase Succeeded
+  agentctl run codex --prompt-file task.md --repo <owner/repo> --base main --head <branch> --verify
+  agentctl run batch --spec runs.yaml [--verify] [--concurrency 8]
+  agentctl run list --active -o wide
+  agentctl run summary <name> [--json]
   agentctl run logs <name> --follow
   agentctl run wait <name>
 `
@@ -90,5 +76,3 @@ export const renderTopicHelp = (topic: string) => {
   }
   return null
 }
-
-export const renderGlobalFlags = () => globalFlags

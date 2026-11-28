@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-ontology-oauth-discovery
+spec:
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auto-ontology-oauth-discovery
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auto-ontology-oauth-discovery
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 99
+        runAsGroup: 99
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: haproxy
+          image: haproxy:3.4.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /.well-known/oauth-authorization-server/api/auth
+              port: http
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/etc/haproxy
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: auto-ontology-oauth-discovery
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auto-ontology-oauth-discovery
+spec:
+  selector:
+    app.kubernetes.io/name: auto-ontology-oauth-discovery
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

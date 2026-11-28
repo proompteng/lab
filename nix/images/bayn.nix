@@ -24,6 +24,9 @@ let
     "src/jev-study-export-command.ts"
     "src/webull-research-command.ts"
     "tools/equity-edge-screen.ts"
+    "tools/run-macro-etf-core-rebalance.ts"
+    "tools/run-macro-canary-etf-rebalance.ts"
+    "tools/bayn-daily-scorecard.ts"
   ] else [
     "src/decision-construction-worker.ts"
     "src/index.ts"
@@ -56,20 +59,23 @@ let
     "native-arrival-export-command"
     "jev-study-export-command"
     "equity-edge-screen"
+    "run-macro-etf-core-rebalance"
+    "run-macro-canary-etf-rebalance"
+    "bayn-daily-scorecard"
     "webull-research-command"
     "control-opening-command"
     "valkey-command"
   ];
-  # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
-  # Canonical hash of the compiled bayn.jev.protocol.v44 document.
-  strategyParameterHash = "ba1bf25a3c184102bb0243ee2311cd76406a952f48533d7e4bfe1dd04c80e2b3";
+  # SHA-256 identity for bayn.intraday-alpha.behavior.v4, verified by the production executable.
+  strategyBehaviorHash = "35534271edfc916e5a2801b31cfb3fc4b3d2640209666fc22c831401040fb58b";
+  # Canonical hash of the compiled bayn.intraday-alpha-policy.v3 document.
+  strategyParameterHash = "40d0643d63c368dd207d0f6a55b3feadb673dbd74b7c8b82bd7ee8d52e256eb5";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "a6b1d3f53ffefeb407e82c2821c7843f4ff0c952ff66ebf714d30aa24f6257f1";
-  # Canonical uncapped sandbox policy for the build-contract sentinel, without embedding a broker account identity.
+  strategyProtocolHash = "91fab8597a5a70b8aed72c5d709040a775f4718905293bc2f438ec5124a4d100";
+  # Canonical pure ETF sandbox policy (bayn.execution-risk-policy.v6) for the build-contract sentinel.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
-  executionRiskPolicyHash = "817efba3d61cf0c3845999988cf4507e015a60ccf3d13c7f840dac366173007e";
+  executionRiskPolicyHash = "c2aba157b7956d1f5a739928c7d6b8de3973de6868a25760fbc528d7aa1a8b1c";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"

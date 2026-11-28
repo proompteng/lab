@@ -10,7 +10,7 @@ import {
   evaluateOperationalAssessment,
 } from './operational-assessment'
 import { emptySourceCutFixture } from './source-cut.test-support'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema as SystemSourceCutSchema } from './source-cut'
 import { testHash, registrationFixture } from './fixtures.test-support'
 import { SafetyViolationKind } from './assessment'
 import { ObligationClass, ReliabilityStatus } from './reliability'

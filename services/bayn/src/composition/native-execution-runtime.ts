@@ -1,3 +1,4 @@
+import { isIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
@@ -21,6 +22,7 @@ import { operationalError, type OperationalError } from '../errors'
 import type { CycleRunnerError } from '../cycle/runner/model'
 import type { ExecutionBuild } from '../build'
 import {
+  maximumRetainedAlphaObservationReferences,
   maximumRetainedJevObservationReferences,
   type RetainedAutonomousCyclePassObservation,
 } from '../cycle/runner/pass-observation'
@@ -187,6 +189,35 @@ export const bindRecoveryFirstCycleDriver = (
       advance: Effect.gen(function* () {
         const hashes = new Set<string>()
         let complete = true
+        const alphaHashes = new Set<string>()
+        let alphaComplete = true
+        const observeAlpha = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: () => string) =>
+          effect.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                try {
+                  if (Exit.isFailure(exit)) {
+                    alphaComplete = false
+                    return
+                  }
+                  const hash = reference()
+                  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+                    alphaComplete = false
+                    return
+                  }
+                  if (alphaHashes.has(hash)) return
+                  if (alphaHashes.size === maximumRetainedAlphaObservationReferences) {
+                    alphaComplete = false
+                    return
+                  }
+                  alphaHashes.add(hash)
+                } catch {
+                  // Timing evidence must never change the source write or financial pass result.
+                  alphaComplete = false
+                }
+              }),
+            ),
+          )
         const observe = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: (value: A) => string | null) =>
           effect.pipe(
             Effect.onExit((exit) =>
@@ -220,13 +251,19 @@ export const bindRecoveryFirstCycleDriver = (
         if (Option.isSome(observations)) {
           const store = observations.value
           observedContext = Context.add(observedContext, CandidateObservationStore, {
+            ...store,
             record: (observation, policy) =>
-              observe(store.record(observation, policy), () =>
-                observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
-              ),
+              isIntradayAlphaObservation(observation.payload)
+                ? observeAlpha(store.record(observation, policy), () => observation.contentHash)
+                : observe(store.record(observation, policy), () =>
+                    observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
+                  ),
             latestJevWindowEnd: (input) => observe(store.latestJevWindowEnd(input), () => null),
           })
-        } else complete = false
+        } else {
+          complete = false
+          alphaComplete = false
+        }
         const batches = Context.getOption(context, JevBatchStore)
         if (Option.isSome(batches)) {
           const store = batches.value
@@ -277,6 +314,7 @@ export const bindRecoveryFirstCycleDriver = (
             ...advanced.observation,
             executionBuild,
             jevObservationReferences: { hashes: [...hashes].sort(), complete },
+            alphaObservationReferences: { hashes: [...alphaHashes].sort(), complete: alphaComplete },
           },
         }
       }),
@@ -687,6 +725,7 @@ export const awaitNativeMarketProjectionReady = (projection: typeof KafkaMarketP
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlan,
+  allowAccountHandoff = true,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* Effect.fromResult(executionControllerConfig(plan))
@@ -737,7 +776,9 @@ export const acquireNativeExecutionRuntime = (
       config.planHash,
       (signal) =>
         projectionManaged.runPromise(
-          awaitNativeMarketProjectionReady(market).pipe(Effect.andThen(nativeActivationPreflight(plan))),
+          awaitNativeMarketProjectionReady(market).pipe(
+            Effect.andThen(nativeActivationPreflight(plan, allowAccountHandoff)),
+          ),
           { signal },
         ),
     )
@@ -749,14 +790,16 @@ export const acquireNativeExecutionRuntime = (
         brokerAccount: {
           bind: (signal) =>
             projectionManaged.runPromise(
-              selectConfiguredBrokerAccount(identity, plan.config.reconciliationStaleThresholdMs),
+              selectConfiguredBrokerAccount(identity, plan.config.reconciliationStaleThresholdMs, allowAccountHandoff),
               { signal },
             ),
           previousController: (signal) =>
-            projectionManaged.runPromise(
-              PgClient.PgClient.pipe(Effect.flatMap((sql) => previousConfiguredController(sql, identity))),
-              { signal },
-            ),
+            allowAccountHandoff
+              ? projectionManaged.runPromise(
+                  PgClient.PgClient.pipe(Effect.flatMap((sql) => previousConfiguredController(sql, identity))),
+                  { signal },
+                )
+              : Promise.resolve(null),
         },
       },
       inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, {

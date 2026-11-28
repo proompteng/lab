@@ -81,7 +81,8 @@ They do not create unused product image archives or PR registry caches.
 Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Warehouse. All four immutable images
 must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
 successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
-production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+production workflows watch the same cohort inputs, including Landing's resolved Bun dependencies, so a component
+change cannot strand a partially built release. An unrelated Bun lockfile edit only runs input planning.
 The four component READMEs are excluded from publication triggers. A push with a changed runtime input still
 publishes the full cohort.
 
@@ -146,8 +147,14 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
-Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
-image from `main`. This avoids execution-controller reactivation when production code is unchanged.
+Changes restricted to Bayn tests, operating guides, or standalone `tools/research-*.ts` studies do not trigger
+production publication. Packaged research commands still trigger the full cohort. This avoids execution-controller
+reactivation when the shipped code and configuration are unchanged.
+
+Bayn keeps one pending release run while the active run finishes. A surviving push compares its exact source revision
+with the last successful `publish-cohort` job on `main`, not with the preceding push. A successful dependency-only
+no-op does not advance that baseline. If the available history contains no verified cohort, the run builds the full
+cohort rather than risking a skipped release. A failure to read history fails the planner.
 
 If a test-only correction fixes a failed Bayn publication, `bayn-build-push.yml` supports explicit recovery on `main`:
 `gh workflow run bayn-build-push.yml --ref main -f expected_main_sha=<full-reviewed-main-commit>`.

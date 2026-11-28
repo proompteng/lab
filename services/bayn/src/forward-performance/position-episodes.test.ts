@@ -1,3 +1,4 @@
+import { ledgerTotalsFixture } from './ledger-totals.test-support'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
@@ -537,14 +538,7 @@ describe('position episodes', () => {
           },
         ],
         brokerFees: matched === '0' ? [] : [{ ...fee.data, inventoryCostMicros: '0' }],
-        ledgerTotals: {
-          realizedGainMicros: '0',
-          cashSettlementRoundingMicros: '0',
-          realizedLossMicros: '0',
-          brokerExecutionFeesMicros: '8262',
-          otherChargedCostsMicros: '0',
-          cashYieldMicros: '0',
-        },
+        ledgerTotals: ledgerTotalsFixture({ brokerExecutionFeesMicros: '8262' }),
       })
       const report = success(makeForwardPerformanceReport(input, []))
       expect(report.positionEpisodes).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0 })
@@ -1166,9 +1160,10 @@ describe('position episodes', () => {
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v8')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v9')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
+    expect(receipt).not.toHaveProperty('nativeAlpha')
     expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
     expect(
       Result.getOrThrow(

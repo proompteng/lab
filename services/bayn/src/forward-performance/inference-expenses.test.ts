@@ -163,6 +163,7 @@ const runPartitioned = (
         volume: () => Effect.die('unexpected volume'),
         volumeRequest: () => Effect.die('unexpected volume request'),
         decision: () => Effect.die('unexpected decision job'),
+        alphaDecision: () => Effect.die('unexpected alpha decision job'),
         inference: () => Effect.die('unexpected inference job'),
         coverage: (part) =>
           Effect.fromResult(

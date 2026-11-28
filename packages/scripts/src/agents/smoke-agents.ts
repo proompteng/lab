@@ -8,6 +8,7 @@ import process from 'node:process'
 import { inspect } from 'node:util'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { captureFixtureCommand } from './collect-smoke-diagnostics'
+import { assertSmokeRunnerImage, localSmokeRunnerImage } from './resolve-smoke-runner-image'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -170,19 +171,16 @@ type BuildHelmArgsInput = {
   imageRepository?: string
   controlPlaneImageRepository?: string
   controllersImageRepository?: string
-  runnerImageRepository?: string
   imageTag?: string
   controlPlaneImageTag?: string
   controllersImageTag?: string
-  runnerImageTag?: string
   imageDigestSet: boolean
   imageDigest: string
   controlPlaneImageDigestSet?: boolean
   controlPlaneImageDigest?: string
   controllersImageDigestSet?: boolean
   controllersImageDigest?: string
-  runnerImageDigestSet?: boolean
-  runnerImageDigest?: string
+  smokeRunnerImage?: string
 }
 
 export const buildHelmArgs = ({
@@ -194,20 +192,18 @@ export const buildHelmArgs = ({
   imageRepository,
   controlPlaneImageRepository,
   controllersImageRepository,
-  runnerImageRepository,
   imageTag,
   controlPlaneImageTag,
   controllersImageTag,
-  runnerImageTag,
   imageDigestSet,
   imageDigest,
   controlPlaneImageDigestSet,
   controlPlaneImageDigest = '',
   controllersImageDigestSet,
   controllersImageDigest = '',
-  runnerImageDigestSet,
-  runnerImageDigest = '',
+  smokeRunnerImage = localSmokeRunnerImage,
 }: BuildHelmArgsInput) => {
+  assertSmokeRunnerImage(smokeRunnerImage)
   const helmArgs = [
     'upgrade',
     '--install',
@@ -239,16 +235,10 @@ export const buildHelmArgs = ({
       helmArgs.push('--set', `controllers.image.repository=${controllersImageRepository}`)
     }
   }
-  if (runnerImageRepository) {
-    helmArgs.push('--set', `runner.image.repository=${runnerImageRepository}`)
-  }
   if (imageTag) {
     helmArgs.push('--set-string', `image.tag=${imageTag}`)
     helmArgs.push('--set-string', `controlPlane.image.tag=${controlPlaneImageTag ?? imageTag}`)
     helmArgs.push('--set-string', `controllers.image.tag=${controllersImageTag ?? imageTag}`)
-    if (runnerImageRepository) {
-      helmArgs.push('--set-string', `runner.image.tag=${runnerImageTag ?? imageTag}`)
-    }
   } else {
     if (controlPlaneImageTag) {
       helmArgs.push('--set-string', `controlPlane.image.tag=${controlPlaneImageTag}`)
@@ -256,17 +246,11 @@ export const buildHelmArgs = ({
     if (controllersImageTag) {
       helmArgs.push('--set-string', `controllers.image.tag=${controllersImageTag}`)
     }
-    if (runnerImageTag) {
-      helmArgs.push('--set-string', `runner.image.tag=${runnerImageTag}`)
-    }
   }
   if (imageDigestSet) {
     helmArgs.push('--set', `image.digest=${imageDigest}`)
     helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest ?? imageDigest}`)
     helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest ?? imageDigest}`)
-    if (runnerImageRepository) {
-      helmArgs.push('--set', `runner.image.digest=${runnerImageDigest ?? imageDigest}`)
-    }
   } else {
     if (controlPlaneImageDigestSet) {
       helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest}`)
@@ -274,10 +258,10 @@ export const buildHelmArgs = ({
     if (controllersImageDigestSet) {
       helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest}`)
     }
-    if (runnerImageDigestSet) {
-      helmArgs.push('--set', `runner.image.digest=${runnerImageDigest}`)
-    }
   }
+
+  // Both deployments consume this chart env var. Keep the fixture image independent of their image overrides.
+  helmArgs.push('--set-string', `env.vars.AGENTS_AGENT_RUNNER_IMAGE=${smokeRunnerImage}`)
 
   return helmArgs
 }
@@ -793,11 +777,9 @@ const main = async () => {
   const imageRepository = process.env.AGENTS_IMAGE_REPOSITORY
   const controlPlaneImageRepository = process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY
   const controllersImageRepository = process.env.AGENTS_CONTROLLER_IMAGE_REPOSITORY
-  const runnerImageRepository = process.env.AGENTS_RUNNER_IMAGE_REPOSITORY
   const imageTag = process.env.AGENTS_IMAGE_TAG
   const controlPlaneImageTag = process.env.AGENTS_CONTROL_PLANE_IMAGE_TAG
   const controllersImageTag = process.env.AGENTS_CONTROLLER_IMAGE_TAG
-  const runnerImageTag = process.env.AGENTS_RUNNER_IMAGE_TAG
   const imageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_IMAGE_DIGEST')
   const imageDigest = process.env.AGENTS_IMAGE_DIGEST ?? ''
   const controlPlaneImageDigestSet = Object.prototype.hasOwnProperty.call(
@@ -807,8 +789,8 @@ const main = async () => {
   const controlPlaneImageDigest = process.env.AGENTS_CONTROL_PLANE_IMAGE_DIGEST ?? ''
   const controllersImageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_CONTROLLER_IMAGE_DIGEST')
   const controllersImageDigest = process.env.AGENTS_CONTROLLER_IMAGE_DIGEST ?? ''
-  const runnerImageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_RUNNER_IMAGE_DIGEST')
-  const runnerImageDigest = process.env.AGENTS_RUNNER_IMAGE_DIGEST ?? ''
+  const smokeRunnerImage = process.env.AGENTS_SMOKE_RUNNER_IMAGE ?? localSmokeRunnerImage
+  assertSmokeRunnerImage(smokeRunnerImage)
 
   const agentctlCommand = agentctlBin.endsWith('.js') ? ['node', agentctlBin] : [agentctlBin]
   const agentctlExecutable = agentctlCommand[0]
@@ -896,19 +878,16 @@ const main = async () => {
     imageRepository,
     controlPlaneImageRepository,
     controllersImageRepository,
-    runnerImageRepository,
     imageTag,
     controlPlaneImageTag,
     controllersImageTag,
-    runnerImageTag,
     imageDigestSet,
     imageDigest,
     controlPlaneImageDigestSet,
     controlPlaneImageDigest,
     controllersImageDigestSet,
     controllersImageDigest,
-    runnerImageDigestSet,
-    runnerImageDigest,
+    smokeRunnerImage,
   })
 
   log('Applying Agents chart CRDs...')

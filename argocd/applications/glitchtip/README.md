@@ -30,17 +30,21 @@ The official Helm chart is pinned to 9.2.0 and the app to 7.0.0.
   replica. The scheduler retries transient broker failures.
   Without recovery, maintenance stops and event ingestion eventually fails when
   the seven-day partition horizon expires. The read-only probe accepts a
-  scheduler on either replica, allows 60 seconds beyond its lock expiry and
-  requires five consecutive failures before restarting a container. New pods
-  get 120 seconds to initialize. Database exceptions are reduced to their class
-  names so connection details cannot appear in probe logs.
+  scheduler on either replica and allows 60 seconds beyond its lock expiry.
+  Kubelet requires 15 consecutive failures at 10-second intervals before
+  restarting a container. The first and fifteenth checks are 140 seconds apart,
+  enough for a 65-second slowdown plus up to 60 seconds of scheduler retry
+  backoff. New pods get 120 seconds to initialize. Database exceptions are
+  reduced to their class names so connection details cannot appear in probe logs.
   A shared scheduler failure can restart both replicas; kubelet liveness
   restarts are independent of the Deployment's rolling-update budget.
   The script uses a read-only projected ConfigMap volume and is loaded afresh
   for each probe, so subsequent script updates take effect after projection.
 
 Run the probe regression checks with
-`python3 -m unittest discover -s argocd/applications/glitchtip -p 'test_*.py'`.
+`python3 -m unittest discover -s argocd/applications/glitchtip -p 'test_*.py'`
+and the rendered liveness timing check with
+`bun test argocd/applications/glitchtip/web-liveness.test.ts` (Helm 3 required).
 
 ## Delivery and verification
 
@@ -58,6 +62,7 @@ Run the probe regression checks with
    partitions cover today plus the next six UTC days; confirm fresh event rows
    and their aggregate statistics are stored. HTTP success and updated issue
    counts alone do not prove event ingestion or maintenance is healthy.
+   Check that the web pods' restart counts stay flat through a slow batch.
 5. Send a one-time SMTP test to the **existing** operations recipient using
    Django `send_mail`, then confirm provider delivery without printing emails
    or credentials. Rotate nothing and send to no new destination.

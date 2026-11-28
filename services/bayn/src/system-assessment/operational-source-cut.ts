@@ -21,7 +21,7 @@ import { executionOrderPlans, protectionIntentsByDecision } from './execution-pl
 import { earliestDurableWitnesses } from './obligation-witnesses'
 import { bindOperationalWork, registeredControllerWork, registeredDecisionWork } from './operational-obligations'
 import { type OperationalRegistration, verifyStoredOperationalRegistration } from './operational-period'
-import { readSystemSourceCutPayload, SystemSourceCutSchema } from './source-cut'
+import { readSystemSourceCutPayload, RetainedSystemSourceCutSchema } from './source-cut'
 import { RecordedSystemSourceCutSchema } from './recorded-source-cut'
 import { readSystemSourceRecord, SystemSourceRecordKind } from './source-records'
 import { makeOperationalSafetyScan, type NativeOperationalSafetyAudit } from './operational-safety'
@@ -38,12 +38,12 @@ export const OperationalSourceCutSchema = Schema.Struct({
   registrationHash: Sha256Schema,
   asOf: UtcInstantSchema,
   runtimeConfigurationHash: Sha256Schema,
-  financial: SystemSourceCutSchema.fields.financial,
+  financial: RetainedSystemSourceCutSchema.fields.financial,
   records: Schema.Array(OperationalSourceReferenceSchema),
-  protectionIntents: SystemSourceCutSchema.fields.protectionIntents,
-  decisionAdmissions: SystemSourceCutSchema.fields.decisionAdmissions,
-  mutations: SystemSourceCutSchema.fields.mutations,
-  durableObservations: SystemSourceCutSchema.fields.durableObservations,
+  protectionIntents: RetainedSystemSourceCutSchema.fields.protectionIntents,
+  decisionAdmissions: RetainedSystemSourceCutSchema.fields.decisionAdmissions,
+  mutations: RetainedSystemSourceCutSchema.fields.mutations,
+  durableObservations: RetainedSystemSourceCutSchema.fields.durableObservations,
   sourceMaterial: Schema.Unknown,
   sourceMaterialHash: Sha256Schema,
 })

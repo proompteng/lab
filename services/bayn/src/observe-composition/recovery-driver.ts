@@ -1,7 +1,8 @@
+import { alphaObservationVersion } from '../strategy/intraday-alpha/policy'
 import { positionProtectionIntervalMs } from '../jev/exit-policy'
 import { ExecutionProtectionRelease } from '../execution/events'
 import { firstIntradayObservationAtMs, selectIntradayExecutionSession } from '../cycle/runner/calendar-decisions'
-import { strategyTradingProtocol } from '../strategy'
+import { isIntradayAlphaRuntime, strategyTradingProtocol } from '../strategy'
 import { continuousExecutionPolicy } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
@@ -80,7 +81,7 @@ import {
   runRecoveryFirstCyclePass,
   recoverExpiredEntryBeforeReconciliation,
   executeProtectionReleaseClose,
-  readUnfinishedMutationCycle,
+  readUnfinishedMutationCycles,
 } from './execution-cycle'
 
 type MutationReconciliationCadenceState = ReconciliationCadenceState & {
@@ -857,7 +858,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       )
     const advanceCycle = (
       preflight: ReconciliationPassResult | undefined,
-      unfinished?: { readonly cycle: AutonomousCycle | undefined },
+      unfinished?: { readonly cycles: readonly AutonomousCycle[] },
     ) =>
       Effect.gen(function* () {
         const authorityStore = yield* AuthorityGenerationStore
@@ -879,9 +880,13 @@ const makeRecoveryFirstCycleDriverEffect = (
           authorityGenerationHash: input.authorityGenerationHash,
           executionPolicy: preparation.executionPolicy,
           nextEntryWindowDueAt: (cycleId) =>
-            nextJevEntryWindowDueAt(cycleId, strategyTradingProtocol(input.strategy)).pipe(
-              Effect.mapError(decisionBuildError),
-            ),
+            nextJevEntryWindowDueAt(
+              cycleId,
+              strategyTradingProtocol(input.strategy),
+              isIntradayAlphaRuntime(input.strategy)
+                ? alphaObservationVersion(input.strategy.definition.parameters)
+                : undefined,
+            ).pipe(Effect.mapError(decisionBuildError)),
           buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance, readForPricing),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
@@ -905,7 +910,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       cadence,
       reconcile,
     )
-    const reconcileAndAdvance = (unfinished?: { readonly cycle: AutonomousCycle | undefined }) =>
+    const reconcileAndAdvance = (unfinished?: { readonly cycles: readonly AutonomousCycle[] }) =>
       Ref.set(preflightOnly, true).pipe(
         Effect.andThen(reconciliationPreflight),
         Effect.matchEffect({
@@ -947,31 +952,31 @@ const makeRecoveryFirstCycleDriverEffect = (
       }
       const lookup =
         capability._tag === 'RecoveryOnly'
-          ? Result.succeed(undefined)
-          : yield* readUnfinishedMutationCycle({
+          ? Result.succeed<readonly AutonomousCycle[]>([])
+          : yield* readUnfinishedMutationCycles({
               cycleBindingId: startup.cycleBindingId,
               accountId: input.accountId,
             }).pipe(Effect.result)
       if (Result.isFailure(lookup)) return yield* observeCycleFailure(lookup.failure)
-      const unfinished = capability._tag === 'RecoveryOnly' ? undefined : { cycle: lookup.success }
+      const unfinished = capability._tag === 'RecoveryOnly' ? undefined : { cycles: lookup.success }
       const release = yield* ExecutionProtectionRelease
       if (release !== undefined) {
+        const releaseCycle = unfinished?.cycles.find((candidate) => candidate.identity.cycleId === release.cycleId)
         const accelerated = yield* runMutationPassWithinTimeout(
-          executeProtectionReleaseClose(input, unfinished?.cycle, policy, capability, release),
+          executeProtectionReleaseClose(input, releaseCycle, policy, capability, release),
           cyclePassTimeoutMs,
         ).pipe(Effect.result)
         if (Result.isFailure(accelerated)) return yield* observeCycleFailure(accelerated.failure)
         if (accelerated.success?._tag === 'PostMutationReconciliation')
           return yield* completeCycleAdvance(accelerated.success)
       }
-      const containment = yield* recoverExpiredEntryBeforeReconciliation(
-        input,
-        unfinished?.cycle,
-        policy,
-        capability,
-      ).pipe(Effect.result)
-      if (Result.isFailure(containment)) return yield* observeCycleFailure(containment.failure)
-      if (containment.success !== undefined) return yield* completeCycleAdvance(containment.success)
+      for (const candidate of unfinished?.cycles ?? []) {
+        const containment = yield* recoverExpiredEntryBeforeReconciliation(input, candidate, policy, capability).pipe(
+          Effect.result,
+        )
+        if (Result.isFailure(containment)) return yield* observeCycleFailure(containment.failure)
+        if (containment.success !== undefined) return yield* completeCycleAdvance(containment.success)
+      }
       return yield* reconcileAndAdvance(unfinished)
     }).pipe(Effect.map((advanced): RecoveryFirstCycleAdvance => advanced))
     const selectDeadline = (advanced: RecoveryFirstCycleAdvance) =>

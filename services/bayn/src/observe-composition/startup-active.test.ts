@@ -5,7 +5,13 @@ import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../
 import { canonicalHashV1Result } from '../hash'
 import { makeJevDefinition } from '../jev/decision'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
-import type { StrategyRuntime } from '../strategy'
+import {
+  activeStrategyBehaviorHash,
+  activeStrategyName,
+  loadActiveStrategyProtocol,
+  makeActiveStrategyRuntime,
+  type StrategyRuntime,
+} from '../strategy'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { prepareObserveStartup } from './startup'
 
@@ -18,7 +24,27 @@ const prepare = (strategy: StrategyRuntime) =>
     strategy,
   })
 
-test('autonomous startup admits the exact source-selected model trade-plan identity', () => {
+test('autonomous startup admits the exact source-selected intraday-alpha active identity', () => {
+  const activePolicy = Result.getOrThrow(loadActiveStrategyProtocol())
+  expect(activePolicy.schemaVersion).toBe('bayn.intraday-alpha-policy.v3')
+  const provenance = Result.getOrThrow(
+    makeRuntimeProvenanceResult({
+      ...fixtureRuntime.provenance,
+      strategy: {
+        name: activeStrategyName,
+        behaviorHash: activeStrategyBehaviorHash,
+        parameterHash: Result.getOrThrow(canonicalHashV1Result(activePolicy)),
+        parameterSchemaVersion: activePolicy.schemaVersion,
+      },
+    }),
+  )
+  const activeRuntime = makeActiveStrategyRuntime(activePolicy, provenance)
+  const result = Result.getOrThrow(prepare(activeRuntime))
+  expect(result.strategyProtocolHash).toBe(Result.getOrThrow(makeStrategyProtocolHashResult(provenance.strategy)))
+  expect(result.strategyProtocolHash).toBe('91fab8597a5a70b8aed72c5d709040a775f4718905293bc2f438ec5124a4d100')
+})
+
+test('autonomous startup also admits retained shared v44 protocol evidence', () => {
   expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v44')
   const result = Result.getOrThrow(prepare(fixtureRuntime))
   expect(result.strategyProtocolHash).toBe(

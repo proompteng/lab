@@ -7,9 +7,23 @@ import { utcInstantFromEpochMillis } from '../time'
 import { CandidateObservationStore } from './candidate-observation'
 
 /** An eligible time follows retained consumption; the eventual decision still verifies actual source arrival. */
-export const nextJevEntryWindowDueAt = (cycleId: string, protocol: Pick<JevProtocol, 'decisionDelaySeconds'>) =>
+export const nextJevEntryWindowDueAt = (
+  cycleId: string,
+  protocol: Pick<JevProtocol, 'decisionDelaySeconds'>,
+  schemaVersion?:
+    | 'bayn.jev-observation.v1'
+    | 'bayn.intraday-alpha-observation.v1'
+    | 'bayn.intraday-alpha-observation.v2'
+    | 'bayn.intraday-alpha-observation.v3',
+) =>
   CandidateObservationStore.pipe(
-    Effect.flatMap((store) => store.latestJevWindowEnd({ cycleId, purpose: JevPurpose.Entry })),
+    Effect.flatMap((store) =>
+      store.latestJevWindowEnd({
+        cycleId,
+        purpose: JevPurpose.Entry,
+        ...(schemaVersion === undefined ? {} : { schemaVersion }),
+      }),
+    ),
     Effect.map(
       Option.map((windowEndAt) =>
         utcInstantFromEpochMillis(jevSignalDueAtMs(Date.parse(windowEndAt) + jevSignalIntervalMs, protocol)),

@@ -107,6 +107,7 @@ test('native completion preserves admitted evidence without discarded broker eli
   const resumed = Result.getOrThrow(await runObservation(observeNativeEntry(context)))
   expect(resumed.snapshot).toBe(restored.snapshot)
   expect<unknown>(resumed.decision.evidence.observation).toEqual(restored.observation)
+  if (resumed.decision.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected Jev entry target')
   expect(resumed.decision.evidence.batchPlan).toEqual(saved.plan)
   expect(resumed.decision.evidence.batchResult).toEqual(saved.result)
 })

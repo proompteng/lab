@@ -4,6 +4,18 @@ metadata:
   name: jangar-db
 spec:
   instances: 2
+  managed:
+    roles:
+      - name: jangar_audit_ro
+        login: true
+        inherit: false
+        superuser: false
+        createdb: false
+        createrole: false
+        replication: false
+        bypassrls: false
+        passwordSecret:
+          name: jangar-audit-ro-db
   postgresql:
     parameters:
       wal_buffers: 16MB

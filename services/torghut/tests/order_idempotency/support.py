@@ -1,32 +1,17 @@
 from __future__ import annotations
 
-
-import json
-from datetime import datetime, timezone
-from decimal import Decimal
 from unittest import TestCase
-from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.config import settings
 from app.models import (
     Base,
-    Execution,
-    ExecutionOrderEvent,
-    ExecutionTCAMetric,
-    Strategy,
-    TradeDecision,
 )
-from app.config import settings
 from app.trading.execution_adapters import (
     OrderSubmission,
-    SimulationExecutionAdapter,
 )
-from app.trading.execution import OrderExecutor
-from app.trading.models import StrategyDecision, decision_hash
-from app.trading.reconcile import Reconciler
-from app.trading.scheduler.pipeline_helpers import _format_order_submit_rejection
 
 
 class FakeAlpacaClient:
@@ -162,34 +147,6 @@ class ConflictingOrderClient(FakeAlpacaClient):
         ]
 
 
-class HeldInventoryClient(FakeAlpacaClient):
-    def list_positions(self) -> list[dict[str, str]]:
-        return [
-            {
-                "symbol": "AAPL",
-                "qty": "1",
-                "side": "long",
-            }
-        ]
-
-    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
-        if status != "open":
-            return []
-        return [
-            {
-                "id": "order-held-1",
-                "client_order_id": "existing-sell-order",
-                "symbol": "AAPL",
-                "side": "sell",
-                "type": "limit",
-                "time_in_force": "day",
-                "qty": "1",
-                "filled_qty": "0",
-                "status": "accepted",
-            }
-        ]
-
-
 class PositionLookupUnavailableClient(FakeAlpacaClient):
     def list_positions(self) -> list[dict[str, str]]:
         raise RuntimeError("positions lookup unavailable")
@@ -198,53 +155,6 @@ class PositionLookupUnavailableClient(FakeAlpacaClient):
 class PositionLookupNoneClient(FakeAlpacaClient):
     def list_positions(self) -> list[dict[str, str]] | None:
         return None
-
-
-class PositionLookupUnavailableHeldInventoryClient(PositionLookupUnavailableClient):
-    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
-        if status != "open":
-            return []
-        return [
-            {
-                "id": "order-held-unknown-1",
-                "client_order_id": "existing-sell-order",
-                "symbol": "AAPL",
-                "side": "sell",
-                "type": "limit",
-                "time_in_force": "day",
-                "qty": "1",
-                "filled_qty": "0",
-                "status": "accepted",
-            }
-        ]
-
-
-class PartiallyHeldInventoryClient(FakeAlpacaClient):
-    def list_positions(self) -> list[dict[str, str]]:
-        return [
-            {
-                "symbol": "AAPL",
-                "qty": "2",
-                "side": "long",
-            }
-        ]
-
-    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
-        if status != "open":
-            return []
-        return [
-            {
-                "id": "order-held-partial-1",
-                "client_order_id": "existing-sell-order",
-                "symbol": "AAPL",
-                "side": "sell",
-                "type": "limit",
-                "time_in_force": "day",
-                "qty": "1",
-                "filled_qty": "0",
-                "status": "accepted",
-            }
-        ]
 
 
 class AccountShortingDisabledClient(FakeAlpacaClient):
@@ -265,70 +175,9 @@ class SymbolNotShortableClient(FakeAlpacaClient):
         }
 
 
-class SymbolNotEasyToBorrowClient(FakeAlpacaClient):
-    def get_account(self) -> dict[str, bool]:
-        return {"shorting_enabled": True}
-
-    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
-        return {
-            "symbol": symbol_or_asset_id,
-            "tradable": True,
-            "shortable": True,
-            "easy_to_borrow": False,
-        }
-
-
 class AccountMetadataUnavailableClient(FakeAlpacaClient):
     def get_account(self) -> dict[str, bool]:
         raise RuntimeError("account lookup unavailable")
-
-
-class AccountShortingUnknownClient(FakeAlpacaClient):
-    def get_account(self) -> dict[str, str]:
-        return {"status": "active"}
-
-    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
-        return {
-            "symbol": symbol_or_asset_id,
-            "tradable": True,
-            "shortable": True,
-            "easy_to_borrow": True,
-        }
-
-
-class AssetMetadataUnavailableClient(FakeAlpacaClient):
-    def get_account(self) -> dict[str, bool]:
-        return {"shorting_enabled": True}
-
-    def get_asset(self, symbol_or_asset_id: str) -> dict[str, bool]:
-        _ = symbol_or_asset_id
-        raise RuntimeError("asset lookup unavailable")
-
-
-class AssetShortabilityUnknownClient(FakeAlpacaClient):
-    def get_account(self) -> dict[str, bool]:
-        return {"shorting_enabled": True}
-
-    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
-        return {
-            "symbol": symbol_or_asset_id,
-            "tradable": True,
-            "easy_to_borrow": True,
-        }
-
-
-class AccountMetadataUnavailableClientWithLongPosition(
-    AccountMetadataUnavailableClient
-):
-    def list_positions(self) -> list[dict[str, str]]:
-        return [
-            {
-                "symbol": "AAPL",
-                "qty": "2",
-                "side": "long",
-                "market_value": "200",
-            }
-        ]
 
 
 class _TestOrderIdempotencyBase(TestCase):
@@ -356,46 +205,3 @@ class _TestOrderIdempotencyBase(TestCase):
             self._orig_fractional_equities_enabled
         )
         settings.trading_mode = self._orig_trading_mode
-
-
-__all__: tuple[str, ...] = (
-    "AccountMetadataUnavailableClient",
-    "AccountMetadataUnavailableClientWithLongPosition",
-    "AccountShortingDisabledClient",
-    "AccountShortingUnknownClient",
-    "AssetMetadataUnavailableClient",
-    "AssetShortabilityUnknownClient",
-    "Base",
-    "ConflictingOrderClient",
-    "Decimal",
-    "Execution",
-    "ExecutionOrderEvent",
-    "ExecutionTCAMetric",
-    "FakeAlpacaClient",
-    "FilledAlpacaClient",
-    "HeldInventoryClient",
-    "OrderExecutor",
-    "PartiallyHeldInventoryClient",
-    "PositionLookupNoneClient",
-    "PositionLookupUnavailableClient",
-    "PositionLookupUnavailableHeldInventoryClient",
-    "Reconciler",
-    "SimulationExecutionAdapter",
-    "Strategy",
-    "StrategyDecision",
-    "SymbolNotEasyToBorrowClient",
-    "SymbolNotShortableClient",
-    "TestCase",
-    "TradeDecision",
-    "_TestOrderIdempotencyBase",
-    "_format_order_submit_rejection",
-    "create_engine",
-    "datetime",
-    "decision_hash",
-    "json",
-    "patch",
-    "select",
-    "sessionmaker",
-    "settings",
-    "timezone",
-)

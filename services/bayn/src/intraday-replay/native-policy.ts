@@ -16,6 +16,15 @@ import {
   repeatedMomentumStrategyIdentity,
 } from '../strategy/repeated-momentum/policy'
 import { Sha256Schema } from '../schemas'
+import { makeIntradayAlphaPolicy, makePureEtfPolicy } from '../strategy/intraday-alpha/policy'
+import {
+  makeResearchStrategyBinding,
+  ResearchStrategyEngine,
+  researchStrategyEngineMatchesRole,
+  validateResearchStrategyBinding,
+  type ResearchStrategyBinding,
+} from '../system-assessment/strategy-binding'
+import { SystemAssessmentError } from '../system-assessment/economics'
 
 const CompiledReplayPolicySchema = Schema.Literals([
   JevResearchPolicy.Candidate,
@@ -78,3 +87,55 @@ export const nativeReplayPolicyIdentity = <ReplayPolicy extends NativeReplayPoli
 
 export const nativeReplayPolicyManifest = (protocol: JevProtocol) =>
   Result.all(CompiledReplayPolicySchema.literals.map((policy) => nativeReplayPolicyIdentity(policy, protocol)))
+
+/** The new catalog names implementations; Candidate and Incumbent are economic roles only. */
+export const nativeReplayStrategyManifest = (protocol: JevProtocol) =>
+  Result.all([
+    makeResearchStrategyBinding({ engine: ResearchStrategyEngine.Jev, parameters: protocol }),
+    makeResearchStrategyBinding({
+      engine: ResearchStrategyEngine.IntradayAlpha,
+      parameters: makeIntradayAlphaPolicy(protocol),
+    }),
+    makeResearchStrategyBinding({
+      engine: ResearchStrategyEngine.PureEtf,
+      parameters: makePureEtfPolicy(protocol),
+    }),
+    makeResearchStrategyBinding({
+      engine: ResearchStrategyEngine.EntryAblation,
+      parameters: makeEntryAblationPolicy(protocol),
+    }),
+    makeResearchStrategyBinding({
+      engine: ResearchStrategyEngine.RepeatedMomentum,
+      parameters: makeRepeatedMomentumPolicy(protocol),
+    }),
+  ])
+
+export const nativeReplayStrategyIdentity = (
+  policy: NativeReplayPolicy,
+  raw: ResearchStrategyBinding,
+  protocol: JevProtocol,
+) =>
+  Result.gen(function* () {
+    const binding = yield* validateResearchStrategyBinding(raw)
+    const compiled = yield* nativeReplayStrategyManifest(protocol)
+    const exact = compiled.find((entry) => entry.engine === binding.engine)
+    if (
+      !researchStrategyEngineMatchesRole(policy, binding.engine) ||
+      exact === undefined ||
+      (yield* canonicalHashV1Result(exact)) !== (yield* canonicalHashV1Result(binding))
+    )
+      return yield* Result.fail(
+        new SystemAssessmentError({ message: 'Replay binding differs from its compiled engine or policy role' }),
+      )
+    return {
+      policy,
+      strategy: binding.strategy,
+      protocolHash: binding.protocolHash,
+      planVersion:
+        binding.engine === ResearchStrategyEngine.Jev
+          ? JevBatchPlanVersion.V8
+          : binding.engine === ResearchStrategyEngine.EntryAblation
+            ? JevBatchPlanVersion.Ablation
+            : null,
+    }
+  })

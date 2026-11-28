@@ -1,23 +1,31 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import import_hypothesis_runtime_windows as runtime_import_cli
+from scripts.hypothesis_runtime_window_import import cli_parsing as runtime_import_args
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
-    Path,
-    RuntimeWindowImportTestCaseBase,
-    SimpleNamespace,
-    TemporaryDirectory,
-    _FakeSession,
-    _complete_runtime_ledger_bucket,
-    datetime,
-    json,
     main,
-    patch,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import (
+    march_6_market_hour,
+    paper_import_args,
+)
+from tests.runtime_window_import.runtime_window_import_support import (
+    _complete_runtime_ledger_bucket,
+    _FakeSession,
 )
 
 
-class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportMainA(TestCase):
     def test_main_rejects_artifact_refs_without_exact_runtime_ledger_rows(self) -> None:
         with TemporaryDirectory() as temp_dir:
             artifact_path = Path(temp_dir) / "malformed-rows.json"
@@ -30,30 +38,19 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                 ),
                 encoding="utf-8",
             )
-            args = SimpleNamespace(
+            args = paper_import_args(
                 run_id="run-empty-ledger-artifact",
                 candidate_id="H-TSMOM-LIQ-01",
                 hypothesis_id="H-TSMOM-LIQ-01",
-                observed_stage="paper",
                 strategy_family="intraday_tsmom_consistent",
                 source_dsn="",
-                source_dsn_env="DB_DSN",
                 strategy_name="intraday-tsmom-profit-v3",
-                account_label="TORGHUT_SIM",
-                window_start="2026-03-06T14:30:00Z",
-                window_end="2026-03-06T15:00:00Z",
-                bucket_minutes=30,
-                sample_minutes=5,
                 source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
                 source_kind="paper_runtime_observed",
                 artifact_ref=[str(artifact_path)],
                 delay_adjusted_depth_stress_report_ref="",
                 dataset_snapshot_ref="runtime-ledger-empty-artifact-snapshot",
                 target_metadata_json="",
-                dependency_quorum_decision="allow",
-                continuity_ok="true",
-                drift_ok="true",
-                json=False,
             )
             manifest = SimpleNamespace(
                 strategy_family="intraday_tsmom_consistent",
@@ -62,12 +59,10 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
             )
 
             with (
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._parse_args",
-                    return_value=args,
-                ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                patch.object(runtime_import_cli, "_parse_args", return_value=args),
+                patch.object(
+                    runtime_import_cli,
+                    "resolve_hypothesis_manifest",
                     return_value=(
                         SimpleNamespace(
                             path="config/trading/hypotheses/h-tsmom-liq-01.json"
@@ -75,8 +70,9 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                         manifest,
                     ),
                 ),
-                patch(
-                    "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_durable_buckets",
+                patch.object(
+                    runtime_import_cli,
+                    "_runtime_ledger_tca_rows_from_durable_buckets",
                     return_value=(
                         [],
                         {
@@ -88,9 +84,8 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                         },
                     ),
                 ),
-                patch(
-                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                    return_value=_FakeSession(),
+                patch.object(
+                    runtime_import_args, "SessionLocal", return_value=_FakeSession()
                 ),
                 patch.dict("os.environ", {}, clear=True),
             ):
@@ -100,27 +95,15 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
     def test_main_preserves_registry_manifest_fallback_when_source_manifest_ref_missing(
         self,
     ) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-1",
             candidate_id="cand-1",
             hypothesis_id="H-CONT-01",
-            observed_stage="paper",
             strategy_family="",
             source_dsn="postgresql://example",
-            source_dsn_env="DB_DSN",
             strategy_name="intraday-tsmom-profit-v2",
-            account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="",
             source_kind="simulation_paper_runtime",
-            artifact_ref=[],
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
-            json=False,
         )
         fake_session = _FakeSession()
         manifest = SimpleNamespace(
@@ -130,40 +113,37 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         )
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+            patch.object(
+                runtime_import_cli,
+                "_query_timestamps",
                 return_value=(
-                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [march_6_market_hour(35)],
+                    [march_6_market_hour(36)],
                     [],
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
-                return_value=[],
+            patch.object(
+                runtime_import_cli, "build_regular_session_buckets", return_value=[]
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
-                return_value=[],
+            patch.object(
+                runtime_import_cli, "build_observed_runtime_buckets", return_value=[]
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli,
+                "persist_observed_runtime_windows",
                 return_value={"run_id": "run-1"},
             ) as persist_windows,
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                return_value=fake_session,
+            patch.object(
+                runtime_import_args, "SessionLocal", return_value=fake_session
             ),
             patch("builtins.print"),
         ):
@@ -190,30 +170,19 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
     def test_main_audit_only_reports_source_to_ledger_path_without_persisting(
         self,
     ) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-audit",
             candidate_id="cand-audit",
             hypothesis_id="H-CONT-01",
-            observed_stage="paper",
             strategy_family="",
             source_dsn="postgresql://example",
-            source_dsn_env="DB_DSN",
             strategy_name="intraday-tsmom-profit-v2",
-            account_label="TORGHUT_SIM",
             source_account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="",
             source_kind="paper_runtime_observed",
-            artifact_ref=[],
             delay_adjusted_depth_stress_report_ref="",
             dataset_snapshot_ref="runtime-audit-snapshot",
             target_metadata_json="",
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
             audit_only=True,
             json=True,
         )
@@ -224,7 +193,7 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         )
         runtime_bucket = _complete_runtime_ledger_bucket()
         tca_row = {
-            "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+            "computed_at": march_6_market_hour(36),
             "abs_slippage_bps": Decimal("1"),
             "post_cost_expectancy_bps": Decimal("40"),
             "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
@@ -234,27 +203,27 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         }
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+            patch.object(
+                runtime_import_cli,
+                "_query_timestamps",
                 return_value=(
-                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [march_6_market_hour(35)],
+                    [march_6_market_hour(36)],
                     [tca_row],
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_source_dsn",
+            patch.object(
+                runtime_import_cli,
+                "_runtime_ledger_tca_rows_from_source_dsn",
                 return_value=(
                     [],
                     {
@@ -266,18 +235,20 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                     },
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+            patch.object(
+                runtime_import_cli,
+                "build_regular_session_buckets",
                 return_value=[
                     (
-                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        march_6_market_hour(30),
                         datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                         6,
                     )
                 ],
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+            patch.object(
+                runtime_import_cli,
+                "build_observed_runtime_buckets",
                 return_value=[
                     SimpleNamespace(
                         payload_json={
@@ -287,8 +258,9 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                     )
                 ],
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli,
+                "persist_observed_runtime_windows",
                 return_value={"run_id": "run-audit"},
             ) as persist_windows,
             patch("builtins.print") as print_result,
@@ -313,27 +285,27 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         args_plain = SimpleNamespace(**vars(args))
         args_plain.json = False
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args_plain,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args_plain),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+            patch.object(
+                runtime_import_cli,
+                "_query_timestamps",
                 return_value=(
-                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [march_6_market_hour(35)],
+                    [march_6_market_hour(36)],
                     [tca_row],
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_source_dsn",
+            patch.object(
+                runtime_import_cli,
+                "_runtime_ledger_tca_rows_from_source_dsn",
                 return_value=(
                     [],
                     {
@@ -345,18 +317,20 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                     },
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+            patch.object(
+                runtime_import_cli,
+                "build_regular_session_buckets",
                 return_value=[
                     (
-                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        march_6_market_hour(30),
                         datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                         6,
                     )
                 ],
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+            patch.object(
+                runtime_import_cli,
+                "build_observed_runtime_buckets",
                 return_value=[
                     SimpleNamespace(
                         payload_json={
@@ -366,8 +340,9 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                     )
                 ],
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli,
+                "persist_observed_runtime_windows",
                 return_value={"run_id": "run-audit"},
             ) as plain_persist_windows,
             patch("builtins.print") as print_plain,
@@ -381,23 +356,15 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         )
 
     def test_main_attaches_target_metadata_to_runtime_payload(self) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-probation",
             candidate_id="cand-paper-probation",
             hypothesis_id="H-MICRO-01",
-            observed_stage="paper",
             strategy_family="microstructure_breakout",
             source_dsn="postgresql://example",
-            source_dsn_env="DB_DSN",
             strategy_name="microbar-volume-continuation-long-top2-chip-v1",
-            account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
             source_kind="paper_runtime_observed",
-            artifact_ref=[],
             delay_adjusted_depth_stress_report_ref="",
             dataset_snapshot_ref="runtime-probation-snapshot",
             target_metadata_json=json.dumps(
@@ -409,10 +376,6 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                     "final_promotion_authorized": False,
                 }
             ),
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
-            json=False,
         )
         fake_session = _FakeSession()
         manifest = SimpleNamespace(
@@ -422,40 +385,37 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         )
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(path="config/trading/hypotheses/h-micro-01.json"),
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+            patch.object(
+                runtime_import_cli,
+                "_query_timestamps",
                 return_value=(
-                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [march_6_market_hour(35)],
+                    [march_6_market_hour(36)],
                     [],
                 ),
             ) as query_timestamps,
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
-                return_value=[],
+            patch.object(
+                runtime_import_cli, "build_regular_session_buckets", return_value=[]
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
-                return_value=[],
+            patch.object(
+                runtime_import_cli, "build_observed_runtime_buckets", return_value=[]
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli,
+                "persist_observed_runtime_windows",
                 return_value={"run_id": "run-probation"},
             ) as persist_windows,
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                return_value=fake_session,
+            patch.object(
+                runtime_import_args, "SessionLocal", return_value=fake_session
             ),
             patch("builtins.print"),
         ):
@@ -479,29 +439,17 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         self.assertEqual(runtime_payload["source_activity_symbol_filter"], ["AAPL"])
 
     def test_main_skips_persist_when_source_activity_is_empty(self) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-empty",
             candidate_id="cand-empty",
             hypothesis_id="H-CONT-01",
-            observed_stage="paper",
             strategy_family="",
             source_dsn="postgresql://example",
-            source_dsn_env="DB_DSN",
             strategy_name="intraday-tsmom-profit-v2",
-            account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="",
             source_kind="simulation_paper_runtime",
-            artifact_ref=[],
             dataset_snapshot_ref="runtime-empty-snapshot",
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
             audit_only=True,
-            json=False,
         )
         manifest = SimpleNamespace(
             strategy_family="intraday_continuation",
@@ -510,30 +458,25 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
         )
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._query_timestamps",
-                return_value=([], [], []),
+            patch.object(
+                runtime_import_cli, "_query_timestamps", return_value=([], [], [])
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+            patch.object(
+                runtime_import_cli, "build_regular_session_buckets"
             ) as build_buckets,
-            patch(
-                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            patch.object(
+                runtime_import_cli, "persist_observed_runtime_windows"
             ) as persist_windows,
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-            ) as session_local,
+            patch.object(runtime_import_args, "SessionLocal") as session_local,
             patch("builtins.print") as print_mock,
         ):
             exit_code = main()

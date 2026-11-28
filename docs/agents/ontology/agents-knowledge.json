@@ -1,0 +1,104 @@
+{
+  "acronyms": [
+    {
+      "description": "A Kubernetes resource that declares a reusable agent identity and references the provider that runs it.",
+      "name": "Agent"
+    },
+    {
+      "description": "A Kubernetes resource that configures an agent runtime, including its runner image, environment, and output artifact declarations.",
+      "name": "AgentProvider"
+    },
+    {
+      "description": "A Kubernetes resource representing one execution of an agent task. Its status records the observed outcome and retained artifact references.",
+      "name": "AgentRun"
+    },
+    {
+      "description": "Actions Runner Controller, which manages Kubernetes-backed GitHub Actions runner scale sets.",
+      "name": "ARC"
+    },
+    {
+      "description": "NVIDIA Auto Ontology, the semantic catalog used to discover shared terms and query approved data sources through read-only tools.",
+      "name": "AutoOntology"
+    },
+    {
+      "description": "CloudNativePG, the Kubernetes operator that manages PostgreSQL clusters, including agents-db-next.",
+      "name": "CNPG"
+    },
+    {
+      "description": "A Kargo resource identifying the immutable artifacts discovered by a Warehouse and eligible for promotion to a Stage.",
+      "name": "Freight"
+    },
+    {
+      "description": "A Kubernetes resource that holds the source and task text for an AgentRun. A run can also carry its implementation inline.",
+      "name": "ImplementationSpec"
+    },
+    {
+      "description": "The GitOps promotion controller that selects Freight and writes the exact rendered inputs to kargo/<stage> for Argo CD to reconcile.",
+      "name": "Kargo"
+    },
+    {
+      "description": "Model Context Protocol, the tool discovery and invocation protocol used by the read-only Auto Ontology agent interface.",
+      "name": "MCP"
+    },
+    {
+      "description": "A memory-backed Linux temporary filesystem. Files are ephemeral and usage counts against the writer's memory limit.",
+      "name": "tmpfs"
+    },
+    {
+      "description": "A Kubernetes resource that configures version-control access for Agents, including provider type and permitted repository operations.",
+      "name": "VCSProvider"
+    }
+  ],
+  "customAnalyses": [
+    {
+      "description": "Thirty-day terminal AgentRun duration and cost inputs by namespace, agent, provider, and observed model using retained control-plane snapshots. Duration uses observed start and finish, not queue time. Token sums cover only runs with recorded telemetry. The migrations do not store billed USD; billed_cost_usd is unknown, not zero.",
+      "name": "AgentRun duration and cost inputs by agent and model",
+      "sql": "WITH completed AS (\n  SELECT namespace,\n    COALESCE(NULLIF(spec_agent_ref_name, ''), 'unknown') AS agent,\n    COALESCE(NULLIF(runner_provider, ''), 'unknown') AS provider,\n    COALESCE(NULLIF(runner_model, ''), 'unknown') AS model,\n    NULLIF(started_at, '')::timestamptz AS started_at,\n    NULLIF(finished_at, '')::timestamptz AS finished_at,\n    input_tokens::numeric AS input_tokens,\n    cached_input_tokens::numeric AS cached_input_tokens,\n    cache_write_input_tokens::numeric AS cache_write_input_tokens,\n    output_tokens::numeric AS output_tokens\n  FROM agents_audit.agent_run_activity\n  WHERE status_phase IN ('Succeeded', 'Failed', 'Cancelled')\n    AND resource_updated_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'\n)\nSELECT namespace, agent, provider, model, COUNT(*) AS terminal_runs,\n  COUNT(*) FILTER (WHERE finished_at >= started_at) AS runs_with_duration,\n  ROUND(AVG(EXTRACT(EPOCH FROM finished_at - started_at)) FILTER (WHERE finished_at >= started_at), 2) AS mean_duration_seconds,\n  COUNT(input_tokens) AS runs_with_token_usage, SUM(input_tokens) AS input_tokens,\n  SUM(cached_input_tokens) AS cached_input_tokens, SUM(cache_write_input_tokens) AS cache_write_input_tokens,\n  SUM(output_tokens) AS output_tokens, NULL::numeric AS billed_cost_usd\nFROM completed\nGROUP BY namespace, agent, provider, model\nORDER BY terminal_runs DESC, namespace, agent, provider, model\nLIMIT 100"
+    },
+    {
+      "description": "Fourteen-day failed AgentRun counts by namespace and runtime from retained control-plane snapshots. Groups structured status reasons without returning raw messages, prompts, or run identities.",
+      "name": "AgentRun failure taxonomy",
+      "sql": "SELECT namespace, COALESCE(spec_runtime_type, 'unknown') AS runtime,\n  CASE\n    WHEN failure_reason IN ('MissingAgent', 'MissingImplementation', 'MissingProvider', 'MissingRuntime', 'MissingEndpoint', 'MissingMemory', 'MissingTemporalConfig', 'MissingWorkloadImage', 'RuntimeConfigMapMissing', 'WorkflowConfigMapMissing', 'ProviderNotReady') THEN 'configuration'\n    WHEN failure_reason IN ('SecretBlocked', 'SecretNotAllowed', 'ServiceAccountNotAllowed', 'ImplementationSourceProviderNotAllowed', 'SpecImmutableViolation') THEN 'policy'\n    WHEN failure_reason IN ('TimedOut', 'WorkflowStepTimedOut') THEN 'timeout'\n    WHEN failure_reason IN ('JobFailed', 'JobMissing', 'WorkflowJobMissing', 'RunnerFailed', 'SubmitFailed', 'TemporalError', 'WorkflowLoopConditionError', 'WorkflowStepFailed', 'WorkflowStepRetriesExhausted', 'Terminated') THEN 'execution'\n    WHEN NULLIF(failure_reason, '') IS NULL THEN 'unknown'\n    ELSE 'other'\n  END AS failure_category,\n  COUNT(*) AS failed_runs\nFROM agents_audit.agent_run_activity\nWHERE status_phase = 'Failed'\n  AND resource_updated_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'\nGROUP BY 1, 2, 3\nORDER BY failed_runs DESC, namespace, runtime, failure_category\nLIMIT 100"
+    },
+    {
+      "description": "Thirty-day rerun submissions by parent namespace, run attempt, and current submission status. Distinct parent counts and submission_attempt show repeated intake separately from execution outcomes.",
+      "name": "AgentRun rerun patterns",
+      "sql": "SELECT parent_agent_run_namespace, attempt, status, COUNT(*) AS rerun_submissions,\n  COUNT(DISTINCT parent_ref) AS distinct_parents,\n  COUNT(*) FILTER (WHERE submission_attempt > 1) AS retried_submissions\nFROM agents_audit.agent_run_rerun_submissions\nWHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'\nGROUP BY parent_agent_run_namespace, attempt, status\nORDER BY rerun_submissions DESC, parent_agent_run_namespace, attempt, status\nLIMIT 100"
+    },
+    {
+      "description": "Lookup coverage of active engineering memory by note namespace. last_accessed_at records the latest retrieval only, not how many times a note was used or whether it influenced a run.",
+      "name": "Memory note reuse",
+      "sql": "SELECT task_name AS note_namespace, COUNT(*) AS active_notes,\n  COUNT(last_accessed_at) AS notes_ever_retrieved,\n  COUNT(*) FILTER (WHERE last_accessed_at >= CURRENT_TIMESTAMP - INTERVAL '30 days') AS notes_retrieved_in_30_days\nFROM agents_audit.memory_notes\nWHERE retired_at IS NULL\nGROUP BY task_name\nORDER BY notes_retrieved_in_30_days DESC, note_namespace\nLIMIT 100"
+    }
+  ],
+  "dataSource": "agents-db-next",
+  "database": "agents",
+  "ruleTag": "agents canonical rule",
+  "rules": [
+    {
+      "description": "Use Conventional Commits and matching PR titles in the form <type>(<scope>): <summary>. Stage only owned paths and link the issue if there is one. Follow AGENTS.md and the repository PR template.",
+      "name": "Conventional Commits"
+    },
+    {
+      "description": "Promote reviewed main builds via immutable images, the owning Warehouse and Freight, and the authorized Stage. Argo CD reconciles the exact kargo/<stage> revision. Never bypass this with manual image retagging or a direct deployment. See docs/release-automation.md.",
+      "name": "Kargo promotion"
+    },
+    {
+      "description": "Do not poll CI, reviews, or rollouts in shell loops. Use bounded readback at the delivery decision or the owning event-driven mechanism. Report pending gates as pending.",
+      "name": "No polling loops"
+    },
+    {
+      "description": "Use the authorized read-only Auto Ontology interface and a least-privileged source role. Publish only reviewed, bounded SELECTs over migration-backed tables. Do not expose credential, prompt, message, or raw payload fields in results.",
+      "name": "Read-only SQL"
+    },
+    {
+      "description": "Never put credentials, raw logs, tokens, or personal data in logs, retained artifacts, knowledge proposals, or a PR. Use sanitized evidence and keep credentials on their existing secret path.",
+      "name": "Secret-free evidence"
+    },
+    {
+      "description": "The 32 GiB RAM tmpfs AgentRun profile has a 32 GiB mount ceiling, not 32 GiB of usable process memory. Check the mount and container limits before large installs or builds, keep headroom, and remove temporary files. Lower provider and ARC limits still apply.",
+      "name": "tmpfs workspace budget"
+    }
+  ],
+  "version": 1
+}

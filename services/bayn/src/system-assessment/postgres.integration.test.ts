@@ -15,6 +15,9 @@ import {
   readPersistedOperationalAssessment,
 } from './postgres'
 import { historicalRegistrationFixture } from './historical-registration.test-support'
+import { strategyBoundRegistrationFixture } from './strategy-registration.test-support'
+import { preparedAlphaRegistrationFixture } from './prepared-alpha-registration.test-support'
+import { ResearchStrategyEngine } from './strategy-binding'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
 import { readSystemExecutionOrders } from './execution-capture'
@@ -52,7 +55,12 @@ import {
   registerSystemQualification,
   verifyNativeCashLedgerSources,
 } from './postgres'
-import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } from './source-cut'
+import {
+  persistSystemSourceCut,
+  readSystemSourceCut,
+  RetainedSystemSourceCutSchema,
+  SystemSourceCutSchema,
+} from './source-cut'
 import { EdgeStatus, QualificationVerdict, evaluateSystemAssessment } from './assessment'
 import {
   readSystemCashObservations,
@@ -230,7 +238,11 @@ postgres('PostgreSQL prospective system qualification', () => {
       priorAttemptHash: testHash(history),
     }
   }
-  const registration = (sessionCount = 20) => nativeRegistrationFixture(retainedRegistration(sessionCount))
+  const registration = (sessionCount = 20) =>
+    preparedAlphaRegistrationFixture(nativeRegistrationFixture(retainedRegistration(sessionCount)), {
+      candidate: ResearchStrategyEngine.Jev,
+      incumbent: ResearchStrategyEngine.Jev,
+    })
   const restorePriorAdmission = (lastMigration: number) =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -417,6 +429,7 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('operational registration preserves capital, has its own retained history and cannot certify economics', async () => {
+    await restorePriorAdmission(223)
     const base = operationalRegistrationFixture()
     const definition = base.policies[0]
     const operationalHistory = {
@@ -677,6 +690,26 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       ).toBe(true)
     const storedCompact = await runtime.runPromise(asApplication(persistOperationalSourceCut(compact)))
+    const retainedOperationalHistory = Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      return {
+        registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY registration_hash`,
+        cuts: yield* sql`SELECT * FROM system_evidence_cuts ORDER BY source_cut_hash`,
+        receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
+        sources: yield* sql`SELECT * FROM system_source_records ORDER BY record_hash`,
+      }
+    })
+    const beforeEngineMigration = await runtime.runPromise(retainedOperationalHistory)
+    await runtime.runPromise(postgresMigrations)
+    expect(await runtime.runPromise(retainedOperationalHistory)).toEqual(beforeEngineMigration)
+    const postMigrationCompact = { ...compact, asOf: await runtime.runPromise(databaseNow) }
+    const postMigrationStored = await runtime.runPromise(
+      asApplication(persistOperationalSourceCut(postMigrationCompact)),
+    )
+    const postMigrationReplayed = await runtime.runPromise(
+      readOperationalAssessmentSourceCut(postMigrationStored.sourceCutHash, prospective),
+    )
+    expect('cut' in postMigrationReplayed && postMigrationReplayed.cut).toEqual(postMigrationCompact)
     expect(await runtime.runPromise(readSystemSourceCut(savedCut.sourceCutHash))).toEqual(savedCut.cut)
     expect(Exit.isFailure(await runtime.runPromiseExit(readSystemSourceCut(storedCompact.sourceCutHash)))).toBe(true)
     const replayed = await runtime.runPromise(
@@ -1203,7 +1236,9 @@ postgres('PostgreSQL prospective system qualification', () => {
     ) => {
       const retained = sourceMaterial(transactions, accountCashSettlements, positionReconciledAt)
       return Schema.decodeUnknownSync(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v4',
+        schemaVersion: 'bayn.system-source-cut.v6',
+        alphaObservations: [],
+        alphaBaselinePreparations: [],
         protectionIntents: [],
         decisionAdmissions: [],
         orders: [],
@@ -1537,11 +1572,22 @@ postgres('PostgreSQL prospective system qualification', () => {
   test.each([
     ['conditional confidence', 181, JevAcceptanceVersion.RetainedV5, 'bayn.system-registration.v3'],
     ['native calendar', 206, JevAcceptanceVersion.Current, 'bayn.system-registration.v4'],
+    ['explicit engine binding', 223, JevAcceptanceVersion.Current, 'bayn.system-registration.v5'],
+    ['prepared baseline', 224, JevAcceptanceVersion.Current, 'bayn.system-registration.v6'],
   ] as const)(
     '%s migration preserves the previous registration, receipt and attempt chain',
     async (_, prior, version, schema) => {
       await restorePriorAdmission(prior)
-      const retained = retainedRegistration(4, version)
+      const base = retainedRegistration(4, version)
+      const retained =
+        schema === 'bayn.system-registration.v6'
+          ? strategyBoundRegistrationFixture(nativeRegistrationFixture(base), {
+              candidate: ResearchStrategyEngine.Jev,
+              incumbent: ResearchStrategyEngine.Jev,
+            })
+          : schema === 'bayn.system-registration.v5'
+            ? nativeRegistrationFixture(base)
+            : base
       expect(retained.schemaVersion).toBe(schema)
       const hash = testHash(retained)
       await runtime.runPromise(
@@ -1557,6 +1603,9 @@ postgres('PostgreSQL prospective system qualification', () => {
       const cut = await runtime.runPromise(
         persistSystemSourceCut({
           ...emptySourceCutFixture().cut,
+          ...(retained.schemaVersion === 'bayn.system-registration.v6'
+            ? { schemaVersion: 'bayn.system-source-cut.v5' as const, alphaObservations: [] }
+            : {}),
           registrationHash: hash,
           asOf,
           runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
@@ -1590,6 +1639,7 @@ postgres('PostgreSQL prospective system qualification', () => {
         return {
           registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY attempt_index`,
           receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
+          cuts: yield* sql`SELECT * FROM system_evidence_cuts ORDER BY source_cut_hash`,
           authority: yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`,
         }
       })
@@ -1813,10 +1863,11 @@ postgres('PostgreSQL prospective system qualification', () => {
         ...first,
         policies: first.policies.map((policy) => ({
           ...policy,
-          promptsHash: policy.policy === 'JEV' ? sha256('different candidate prompt') : policy.promptsHash,
+          sourceRevision: policy.policy === 'JEV' ? 'b'.repeat(40) : policy.sourceRevision,
         })),
       }),
     ]
+    expect(testHash(candidates[0])).not.toBe(testHash(candidates[1]))
     for (const candidate of candidates) expect(Result.isSuccess(validateSystemRegistration(candidate))).toBe(true)
     const exits = await Promise.all(
       candidates.map((input) => runtime.runPromiseExit(asApplication(registerFixture(input)))),
@@ -2748,7 +2799,9 @@ postgres('PostgreSQL prospective system qualification', () => {
       await runtime.runPromise(Effect.sleep('10 millis'))
       const asOf = new Date().toISOString()
       const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v4',
+        schemaVersion: 'bayn.system-source-cut.v6',
+        alphaObservations: [],
+        alphaBaselinePreparations: [],
         protectionIntents: [],
         decisionAdmissions: [],
         orders: [],
@@ -2770,7 +2823,7 @@ postgres('PostgreSQL prospective system qualification', () => {
           },
         ],
         inference: policy.sessions.map((s) => ({
-          ...Schema.decodeUnknownSync(SystemSourceCutSchema.fields.inference.value)(s.inferenceEvidence),
+          ...Schema.decodeUnknownSync(RetainedSystemSourceCutSchema.fields.inference.value)(s.inferenceEvidence),
           asOf,
         })),
         inferenceLedgerEvidenceHash: testHash({ inference: version }),
@@ -2886,7 +2939,9 @@ postgres('PostgreSQL prospective system qualification', () => {
             if (definition === undefined) throw new Error('Missing selected policy')
             const asOf = yield* databaseNow
             const cut = yield* persistSystemSourceCut({
-              schemaVersion: 'bayn.system-source-cut.v4',
+              schemaVersion: 'bayn.system-source-cut.v6',
+              alphaObservations: [],
+              alphaBaselinePreparations: [],
               protectionIntents: [],
               decisionAdmissions: [],
               orders: [],

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time as time_mod
 from datetime import date
-from decimal import Decimal
 from typing import Any
 
 from app.config import settings
@@ -24,7 +23,7 @@ from .order_resolution import (
     _censor_pending_orders,
     _fill_matching_pending_orders,
 )
-from .positions import _position_equity, _positions_payload
+from .positions import _positions_payload
 from .replay_payload import _build_payload
 from .replay_state import ReplayRunState, _active_day_stats, _active_symbol_funnel
 from .replay_stats import (
@@ -273,14 +272,6 @@ def _maybe_log_progress(
             cash=state.cash,
             equity=equity,
         )
-    )
-
-
-def _latest_equity(state: ReplayRunState) -> Decimal:
-    return _position_equity(
-        cash=state.cash,
-        positions=state.positions,
-        last_prices=state.last_prices,
     )
 
 

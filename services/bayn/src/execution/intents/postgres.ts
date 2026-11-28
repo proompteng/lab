@@ -733,7 +733,7 @@ const makeStore = Effect.gen(function* () {
           Effect.flatMap((rows) => decodeStoredEffect('read', rows)),
         ),
       ),
-    beginProtectionCancel: (intentId, brokerOrderId, observedAt, exitTarget) =>
+    beginProtectionCancel: (intentId, brokerOrderId, observedAt, exitTarget, reanchor = false) =>
       runProtectionCancel(
         fence.transaction(
           Effect.gen(function* () {
@@ -745,9 +745,9 @@ const makeStore = Effect.gen(function* () {
           -- The account clock includes measured replay work. Lock acquisition precedes this sample.
           SELECT intent_id, execution_account_commit_now(account_id) AS admitted_at FROM locked_intent
         )
-        INSERT INTO native_protection_cancel_commands (intent_id, account_id, broker_order_id, requested_at, exit_target)
+        INSERT INTO native_protection_cancel_commands (intent_id, account_id, broker_order_id, requested_at, exit_target, reanchor)
         SELECT i.intent_id, i.account_id, latest.broker_order_id, date_trunc('milliseconds', clock.admitted_at),
-          ${exitTarget === undefined ? null : JSON.stringify(exitTarget)}::jsonb
+          ${exitTarget === undefined ? null : JSON.stringify(exitTarget)}::jsonb, ${reanchor}
         FROM intents i JOIN admission_clock clock USING (intent_id) JOIN LATERAL (
           SELECT o.broker_order_id, o.side, o.status, o.parent_broker_order_id, e.observed_at
           FROM orders o JOIN broker_events e USING (event_id)
@@ -769,6 +769,13 @@ const makeStore = Effect.gen(function* () {
             AND i.symbol = ${exitTarget?.symbols[0] ?? null}
             AND ${exitTarget?.observedAt ?? observedAt}::timestamptz <= ${observedAt}::timestamptz
             AND clock.admitted_at < ${exitTarget?.commitDeadlineAt ?? observedAt}::timestamptz))
+          AND (NOT ${reanchor} OR (${exitTarget === undefined}
+            AND i.state = 'TERMINAL' AND i.protection ->> '_tag' IN ('Bracket','EquityShortBracket')
+            AND latest.parent_broker_order_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM autonomous_cycle_shadow_decisions d WHERE d.cycle_id = i.cycle_id
+                AND d.document -> 'orderedIntentIds' ? i.intent_id
+                AND d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v3'
+            )))
           AND latest.status IN ('NEW','PENDING','PARTIALLY_FILLED')
           AND NOT EXISTS (SELECT 1 FROM native_protection_cancel_commands c WHERE c.broker_order_id = latest.broker_order_id
             AND (c.requested_at > clock.admitted_at - interval '5 seconds' OR c.requested_at > latest.observed_at))

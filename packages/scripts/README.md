@@ -43,6 +43,12 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | `src/torghut/storage-stability-gate.ts`               | Collects a read-only 30-minute clean observation window from Talos, Ceph/current SMART health, Kafka, Torghut and Jangar PostgreSQL, Argo CD, and contained Torghut write workloads; exits non-zero unless current storage, quorum, durability, WAL budgets, and runtime evidence prove staged activation is safe. | `kubectl`, `talosctl`              | `bun run gate:torghut-storage-stability --observation-start 2026-07-15T11:00:00Z --output json`                                   |
 | `src/torghut/generate-whitepaper-replay-workflows.ts` | Fetches closed whitepaper issues from GitHub, deduplicates them by source PDF, writes one direct-intake payload per unique paper under `docs/whitepapers/replay-workflows/`, and can optionally POST them to Torghut.                                                                                              | `gh`                               | `bun run whitepapers:replay --post --base-url http://localhost:8181`                                                              |
 
+## Agents collective knowledge
+
+`src/agents/emit-knowledge-delta.ts` emits or checks a canonical proposal pinned to the verified checkout's Git SHA.
+`src/agents/curate-ontology-deltas.ts` validates the selected proposals against an in-memory copy of the Agents schema
+and updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
+
 ## Registry maintenance
 
 The Python 3.14 controller `src/registry/run.py` runs one cleanup worker inside the existing registry Pod.
@@ -64,42 +70,66 @@ syncs that branch; no script, SHA bump, deployment PR, release branch, Image Upd
 of the normal path. See
 [`docs/release-automation.md`](../../docs/release-automation.md) for enrollment, evidence, and recovery.
 
-## PR input selection
+## CI input selection
 
 `src/ci/affected-inputs.ts` runs through `.github/actions/affected-inputs` before expensive Bun service and image jobs.
 Each target declares its installed workspaces and source paths. The planner compares PR merge-base and head lockfiles,
 following dependencies, optional dependencies, peers, and linked workspaces. An unrelated workspace manifest or lockfile
 change skips the target. Changes to its resolved packages, integrity, shared source, or build configuration still run it.
 Unsupported lockfiles and unresolved required dependencies fail the planner instead of silently skipping validation.
+An optional `only-paths` list requires a nonempty PR diff in which every path matches, including both sides of
+moves. It checks the raw paths before dependency or workspace filtering and is false for non-PR events.
 
-Push events retain path-based selection because Kargo requires groups of published images at one source revision.
-Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
-and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
-use the root Bun lockfile.
+The [root PR workflow](../../.github/workflows/pull-request.yml) evaluates Bumba, Froussard, Jangar, Ofz, Oirat,
+and Signal Publisher together on its existing planner runner. It calls only affected services, and `ci-pr`
+rejects missing decisions or unsuccessful selected checks. Merge groups still run their full validation set.
+The separate product image workflow starts on PRs only for candidate App dependency-closure inputs; source-only
+changes stay with the owning application validators.
 
-The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
-commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted
-digests. The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
+Main push workflows that watch the root lockfile use `dependency-aware-push` to compare the before and head revisions.
+GitHub's path filters still wake the planner for `bun.lock`, but unrelated changes do not schedule tests, native builds,
+or publishes. Co-built images use the same source paths and Bun workspace union even when only one member
+uses Bun: Landing drives the Ofz/Tengri/Nanoagent/Proompteng cohort, and Signal Publisher drives the Torghut cohort.
+Publication slots are shared only after selection so unrelated pushes cannot displace a pending publish.
+Bayn retains its comparison against the last verified cohort. Manual selection retains each workflow's existing controls.
+
+The Agents Kind smoke test resolves unaffected control-plane and controller images from one fetched `kargo/agents`
+commit, records it as `gitops_revision`, and reads its values without changing the checkout. Kargo owns those digests.
+The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
+Lifecycle jobs use the slim `agents-smoke-runner` image. Local smoke builds it from the checkout. Published smoke
+uses the digest for `agents-smoke-runner:sha-<promoted source SHA>` and builds from checkout only if the registry
+confirms the tag is absent. The smoke image is published separately from the four-image Kargo receipt. CI still
+verifies the full toolchain in a fresh Pod when the plan selects a local production runner build.
 
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
-Bayn also publishes images only from `main`. Its PRs retain source builds, type checks, PostgreSQL, archive, ledger,
-replay and production metadata validation. Python checks run for GEPA inputs; ordinary service test edits skip
-the independent proof pipeline unless they change its PostgreSQL conformance cases. Replay image and execution
-acceptance share one hosted job and Nix environment, including dependency source boundary checks.
-The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
+Bayn also publishes images only from `main`. PRs limited to offline Bayn tools or documentation use the fast tier:
+lint, type checks, and tools unit tests without disposable services. Full-tier inputs include Bayn source (including
+tests), migrations, Bayn workflows and their shared workflow/action, and the integration drivers and runtime inputs
+stored under tools and docs. Mixed PRs are not eligible for the fast tier. Bayn GitOps changes select PR contracts
+and keep root manifest validation; the PostgreSQL monitoring ConfigMap and shared ClickHouse archive DDL also select
+the integration suites that execute those inputs. Formal verification and GEPA are selected independently for their
+proof/conformance and strategy/prompt inputs. The same `Bayn release gate` requires success for every selected job
+and a skip for every unselected job. Merge groups, dispatches, and release callers always run every suite.
+See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
+Replay image and execution acceptance share one hosted job and Nix environment, including dependency boundaries.
+The inference ledger group owns the native equity-short regression with and without TigerBeetle, so the PostgreSQL
+matrix does not repeat the PostgreSQL-only case.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
 the controller. Runtime compiler tools retain main-branch publication.
-Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
-GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
+Ofz, Tengri, and Nanoagent source validation uses GitHub-hosted runners; native image and KVM jobs retain the cluster
+runners.
 
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
 
-Agents' existing Kind smoke job forces a rebuild of its shared dependency closure only when its Nix dependency
-inputs, installed workspace manifests or the installed Effect patch change. Ordinary runtime edits reuse the cache;
-test-only edits retain the unit tier. All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
+Agents CI runs the selected unit, chart/CRD, and Kind jobs in parallel once planning succeeds. Changes limited to the
+chart/CRD verifier or schema extractor need only the chart/CRD job; changes to charts and Kind inputs still run smoke.
+The central gate still requires the called workflow to pass, and merge groups select all suites. Kind forces a rebuild
+of its shared dependency closure only when its Nix dependency inputs, installed workspace manifests or the installed
+Effect patch change. Ordinary runtime edits reuse the cache; test-only edits retain the unit tier.
+All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
 semaphore used by Bayn; Agents' publication and Kargo discovery include that installed dependency input.
 A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.
 The shared verifier's own changes use its behavioral regressions and App's existing two native checks. Other services

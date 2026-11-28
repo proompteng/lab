@@ -3,6 +3,7 @@ import { Schema } from 'effect'
 import { GitSourceRevisionSchema, ImageDigestSchema, ImageRepositorySchema, Sha256Schema } from '../schemas'
 import { JevInstructionsSchema } from './instructions-contract'
 import { NativeReplayIdentitySchema } from '../intraday-replay/native-policy'
+import { ResearchStrategyBindingSchema } from '../system-assessment/strategy-binding'
 
 export const JevInstructionVariantSpecSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-instruction-variant.v1'),
@@ -31,12 +32,28 @@ export const JevInstructionVariantBuildSchema = Schema.Struct({
   receiptHash: Sha256Schema,
 })
 
-export const JevCompilerDependencyReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v4'),
+const compilerDependencyFields = {
   sourceRevision: GitSourceRevisionSchema,
   bunVersion: Schema.Literal('1.4.2'),
   files: Schema.Record(Schema.String, Sha256Schema),
   controlFiles: Schema.Record(Schema.String, Sha256Schema),
   compilerFiles: Schema.Record(Schema.String, Sha256Schema),
+}
+export const JevCompilerDependencyReceiptV4Schema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v4'),
+  ...compilerDependencyFields,
   nativeReplayPolicies: Schema.Array(NativeReplayIdentitySchema).check(Schema.isMinLength(3), Schema.isMaxLength(3)),
 })
+export const JevCompilerDependencyReceiptV5Schema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v5'),
+  ...compilerDependencyFields,
+  applicationStrategyBinding: ResearchStrategyBindingSchema,
+  compiledReplayStrategies: Schema.Array(ResearchStrategyBindingSchema).check(
+    Schema.isMinLength(4),
+    Schema.isMaxLength(5),
+  ),
+})
+export const JevCompilerDependencyReceiptSchema = Schema.Union([
+  JevCompilerDependencyReceiptV4Schema,
+  JevCompilerDependencyReceiptV5Schema,
+])

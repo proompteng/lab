@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const metricsMocks = vi.hoisted(() => ({
+  clearAgentsControllerGauges: vi.fn(),
   recordReconcileDurationMs: vi.fn(),
   recordAgentRunOutcome: vi.fn(),
   recordAgentRunResyncAdoptions: vi.fn(),
@@ -14,8 +15,10 @@ const metricsMocks = vi.hoisted(() => ({
   recordAgentRunRetentionDeleteErrors: vi.fn(),
   recordAgentRunRetentionDeletes: vi.fn(),
   recordAgentConcurrency: vi.fn(),
+  recordAgentConcurrencyLimit: vi.fn(),
   recordAgentQueueDepth: vi.fn(),
   recordAgentRateLimitRejection: vi.fn(),
+  recordRunnerCompletion: vi.fn(),
 }))
 
 const featureFlagsMocks = vi.hoisted(() => ({
@@ -368,6 +371,16 @@ describe('agents controller startup', () => {
     })
     expect(getLastStatus(kube as never).phase).toBe('Running')
     expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(1)
+    expect(metricsMocks.recordAgentConcurrency).toHaveBeenLastCalledWith(0, { scope: 'namespace', namespace: 'agents' })
+    expect(metricsMocks.recordAgentConcurrencyLimit).toHaveBeenLastCalledWith(defaultConcurrency.cluster, {
+      scope: 'cluster',
+    })
+    expect(metricsMocks.recordAgentQueueDepth).toHaveBeenCalledWith(1, {
+      scope: 'namespace',
+      namespace: 'agents',
+      source: 'snapshot',
+    })
+    expect(metricsMocks.recordAgentRunUntouchedBacklog).toHaveBeenLastCalledWith(1, { namespace: 'agents' })
   })
 
   it('does not count Template AgentRuns as untouched during controller resync', async () => {
@@ -404,6 +417,7 @@ describe('agents controller startup', () => {
     expect(kube.patch).not.toHaveBeenCalled()
     expect(kube.applyStatus).not.toHaveBeenCalled()
     expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(0)
+    expect(metricsMocks.recordAgentRunUntouchedBacklog).toHaveBeenLastCalledWith(0, { namespace: 'agents' })
   })
 
   it('cleans stale terminal runtime Pods during controller resync', async () => {
@@ -3152,13 +3166,25 @@ describe('agents controller reconcileAgentRun', () => {
     expect(requiredVar?.value).toBe('true')
   })
 
-  it('advances workflow steps and completes', async () => {
+  it.each([
+    'registry.ide-newton.ts.net/lab/agents-smoke-runner:nix',
+    `registry.ide-newton.ts.net/lab/agents-smoke-runner:sha-${'a'.repeat(40)}@sha256:${'b'.repeat(64)}`,
+  ])('advances workflow steps on the configured smoke runner (%s) and completes', async (runnerImage) => {
+    vi.stubEnv('AGENTS_AGENT_RUNNER_IMAGE', runnerImage)
+    onTestFinished(() => {
+      vi.unstubAllEnvs()
+    })
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
       const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
       const applied = { ...resource, metadata: { ...metadata, uid } }
       if (resource.kind === 'Job') {
+        expect(resource).toMatchObject({
+          spec: {
+            template: { spec: { containers: [{ image: runnerImage, command: ['/usr/local/bin/agent-runner'] }] } },
+          },
+        })
         const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
         if (name) {
           jobStatuses.set(name, applied)
@@ -3196,7 +3222,6 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'step-one' }, { name: 'step-two' }],
         },
@@ -3385,11 +3410,43 @@ describe('agents controller reconcileAgentRun', () => {
     ])
   })
 
-  it('continues and stops loop workflow steps with CEL expressions', async () => {
+  it('continues and stops loop steps and accounts for each committed runner completion once', async () => {
+    metricsMocks.recordRunnerCompletion.mockClear()
     const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
     process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
+      const telemetry = {
+        version: 1,
+        state: 'finished',
+        startedAt: '2026-01-20T00:00:10Z',
+        heartbeatAt: '2026-01-20T00:00:45Z',
+        lastActivityAt: null,
+        model: 'gpt-6.2-sol',
+        effort: 'max',
+        podName: 'workflow-runner',
+        threadId: null,
+        turnId: null,
+        activeTools: [],
+        activeToolCount: 0,
+        usage: {
+          inputTokens: 100,
+          cachedInputTokens: 50,
+          cacheWriteInputTokens: 0,
+          outputTokens: 20,
+          reasoningOutputTokens: 5,
+          totalTokens: 120,
+        },
+        quota: {
+          limitId: 'codex',
+          limitName: null,
+          primary: { usedPercent: 86, windowDurationMins: 10080, resetsAt: 1796400000 },
+          secondary: null,
+        },
+        publishErrors: 2,
+      }
       const jobStatuses = new Map<string, Record<string, unknown>>()
+      const runnerMessages = new Map<string, string>()
+      let resourceVersion = 1
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
         const metadata = (resource.metadata ?? {}) as Record<string, unknown>
         const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
@@ -3404,6 +3461,12 @@ describe('agents controller reconcileAgentRun', () => {
       })
       const kube = buildKube({
         apply,
+        applyStatus: vi.fn(async (resource: Record<string, unknown>) => {
+          const version = (resource.metadata as Record<string, unknown>).resourceVersion
+          if (version !== undefined && version !== String(resourceVersion)) throw new Error('stale workflow status')
+          resourceVersion += 1
+          return resource
+        }),
         get: vi.fn(async (resource: string, name: string) => {
           if (resource === RESOURCE_MAP.Agent) {
             return {
@@ -3424,6 +3487,17 @@ describe('agents controller reconcileAgentRun', () => {
             return jobStatuses.get(name) ?? null
           }
           return null
+        }),
+        list: vi.fn(async (resource: string, _namespace: string, selector?: string) => {
+          const message =
+            resource === 'pods' && selector?.startsWith('job-name=')
+              ? runnerMessages.get(selector.slice('job-name='.length))
+              : undefined
+          return {
+            items: message
+              ? [{ status: { containerStatuses: [{ name: 'agent-runner', state: { terminated: { message } } }] } }]
+              : [],
+          }
         }),
       })
 
@@ -3456,7 +3530,41 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      const currentRun = () => ({
+        ...agentRun,
+        metadata: { ...agentRun.metadata, resourceVersion: String(resourceVersion) },
+        status: getLastStatus(kube),
+      })
+      const reconcile = (run = currentRun()) =>
+        __test.reconcileAgentRun(kube as never, run, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+      const completeJob = (name: string, keepLooping: boolean, runnerTelemetry: typeof telemetry) => {
+        const job = jobStatuses.get(name)
+        jobStatuses.set(name, {
+          ...job,
+          metadata: {
+            ...(job?.metadata as Record<string, unknown>),
+            annotations: { 'agents.proompteng.ai/loop-control': JSON.stringify({ continue: keepLooping }) },
+          },
+          status: { succeeded: 1 },
+        })
+        runnerMessages.set(
+          name,
+          JSON.stringify({
+            status: 'succeeded',
+            finishedAt: runnerTelemetry.heartbeatAt,
+            telemetry: runnerTelemetry,
+          }),
+        )
+      }
+
+      const initialRun = currentRun()
+      await reconcile({ ...initialRun, metadata: { ...initialRun.metadata, finalizers: [] } })
+      expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
+        metadata: { finalizers: [finalizer], resourceVersion: initialRun.metadata.resourceVersion },
+      })
+      expect(kube.applyStatus).not.toHaveBeenCalled()
+      resourceVersion += 1 // The watch resumes with the version written by the finalizer patch.
+      await reconcile()
 
       const firstStatus = getLastStatus(kube)
       const firstWorkflow = firstStatus.workflow as Record<string, unknown>
@@ -3465,25 +3573,21 @@ describe('agents controller reconcileAgentRun', () => {
       expect(firstJobName).toContain('iter-1')
       expect(firstStep.phase).toBe('Running')
 
-      jobStatuses.set(firstJobName ?? '', {
-        ...jobStatuses.get(firstJobName ?? ''),
-        metadata: {
-          ...((jobStatuses.get(firstJobName ?? '')?.metadata as Record<string, unknown> | undefined) ?? {}),
-          annotations: { 'agents.proompteng.ai/loop-control': '{"continue":true}' },
-        },
-        status: { succeeded: 1, startTime: '2026-01-20T00:00:00Z', completionTime: '2026-01-20T00:01:00Z' },
-      })
+      completeJob(firstJobName!, true, telemetry)
+      const staleRun = currentRun()
+      kube.applyStatus.mockRejectedValueOnce(new Error('workflow status unavailable'))
+      await expect(reconcile(staleRun)).rejects.toThrow('workflow status unavailable')
+      expect(metricsMocks.recordRunnerCompletion).not.toHaveBeenCalled()
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        { ...agentRun, status: firstStatus },
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await reconcile(staleRun)
+      expect(metricsMocks.recordRunnerCompletion).toHaveBeenCalledExactlyOnceWith({
+        outcome: 'Succeeded',
+        agent: 'agent-1',
+        model: 'gpt-6.2-sol',
+        effort: 'max',
+        durationSeconds: 35,
+        telemetry,
+      })
 
       const secondStatus = getLastStatus(kube)
       const secondWorkflow = secondStatus.workflow as Record<string, unknown>
@@ -3491,17 +3595,11 @@ describe('agents controller reconcileAgentRun', () => {
       expect(secondStep.phase).toBe('Pending')
       expect((secondStep.loop as Record<string, unknown> | undefined)?.currentIteration).toBe(2)
       expect((secondStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(1)
+      const nextRun = currentRun()
+      await expect(reconcile(staleRun)).rejects.toThrow('stale workflow status')
+      expect(metricsMocks.recordRunnerCompletion).toHaveBeenCalledTimes(1)
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        { ...agentRun, status: secondStatus },
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await reconcile(nextRun)
 
       const thirdStatus = getLastStatus(kube)
       const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
@@ -3510,25 +3608,13 @@ describe('agents controller reconcileAgentRun', () => {
       expect(thirdStep.phase).toBe('Running')
       expect(secondJobName).toContain('iter-2')
 
-      jobStatuses.set(secondJobName ?? '', {
-        ...jobStatuses.get(secondJobName ?? ''),
-        metadata: {
-          ...((jobStatuses.get(secondJobName ?? '')?.metadata as Record<string, unknown> | undefined) ?? {}),
-          annotations: { 'agents.proompteng.ai/loop-control': '{"continue":false}' },
-        },
-        status: { succeeded: 1, startTime: '2026-01-20T00:02:00Z', completionTime: '2026-01-20T00:03:00Z' },
-      })
-
-      await __test.reconcileAgentRun(
-        kube as never,
-        { ...agentRun, status: thirdStatus },
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      const secondTelemetry = {
+        ...telemetry,
+        startedAt: '2026-01-20T00:02:10Z',
+        heartbeatAt: '2026-01-20T00:02:30Z',
+      }
+      completeJob(secondJobName!, false, secondTelemetry)
+      await reconcile()
 
       const fourthStatus = getLastStatus(kube)
       const fourthWorkflow = fourthStatus.workflow as Record<string, unknown>
@@ -3538,6 +3624,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(fourthStep.phase).toBe('Succeeded')
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(2)
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionFalse')
+      expect(metricsMocks.recordRunnerCompletion).toHaveBeenLastCalledWith({
+        outcome: 'Succeeded',
+        agent: 'agent-1',
+        model: 'gpt-6.2-sol',
+        effort: 'max',
+        durationSeconds: 20,
+        telemetry: secondTelemetry,
+      })
+      await reconcile()
+      expect(metricsMocks.recordRunnerCompletion).toHaveBeenCalledTimes(2)
     } finally {
       if (previousLoopsEnabled === undefined) {
         delete process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
@@ -4391,7 +4487,15 @@ describe('agents controller reconcileAgentRun', () => {
     expect(steps[0]?.message).toBe('Runtime ConfigMap missing; retrying')
   })
 
-  it('retries workflow steps with backoff', async () => {
+  it('records a failed runner attempt when a workflow step retries with backoff', async () => {
+    metricsMocks.recordRunnerCompletion.mockClear()
+    const runnerMessage = JSON.stringify({
+      status: 'failed',
+      startedAt: '2026-01-20T00:00:10Z',
+      finishedAt: '2026-01-20T00:00:30Z',
+      model: 'gpt-6.2-sol',
+      effort: 'max',
+    })
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
@@ -4428,9 +4532,22 @@ describe('agents controller reconcileAgentRun', () => {
         }
         return null
       }),
+      list: vi.fn(async (resource: string, _namespace: string, selector?: string) => ({
+        items:
+          resource === 'pods' && selector?.startsWith('job-name=')
+            ? [
+                {
+                  status: {
+                    containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: runnerMessage } } }],
+                  },
+                },
+              ]
+            : [],
+      })),
     })
 
     const agentRun = buildAgentRun({
+      metadata: { name: 'run-1', namespace: 'agents', generation: 1, finalizers: [finalizer], resourceVersion: '7' },
       spec: {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
@@ -4470,6 +4587,15 @@ describe('agents controller reconcileAgentRun', () => {
     const secondSteps = (secondWorkflow.steps as Record<string, unknown>[]) ?? []
     expect(secondSteps[0]?.phase).toBe('Retrying')
     expect(secondSteps[0]?.nextRetryAt).toBeTruthy()
+    expect(secondStatus.phase).toBe('Running')
+    expect(metricsMocks.recordRunnerCompletion).toHaveBeenCalledExactlyOnceWith({
+      outcome: 'Failed',
+      agent: 'agent-1',
+      model: 'gpt-6.2-sol',
+      effort: 'max',
+      durationSeconds: 20,
+      telemetry: undefined,
+    })
 
     const retryStatus = {
       ...secondStatus,
@@ -4500,6 +4626,7 @@ describe('agents controller reconcileAgentRun', () => {
     const thirdSteps = (thirdWorkflow.steps as Record<string, unknown>[]) ?? []
     expect(thirdSteps[0]?.attempt).toBe(2)
     expect(thirdSteps[0]?.phase).toBe('Running')
+    expect(metricsMocks.recordRunnerCompletion).toHaveBeenCalledTimes(1)
   })
 
   it('propagates failed workflow job reason and message onto AgentRun status', async () => {
@@ -4895,7 +5022,25 @@ describe('agents controller reconcileAgentRun', () => {
     expect(warning?.message).toContain('run-1-spec')
   })
 
-  it('propagates runner terminal status and output artifacts from direct job pods', async () => {
+  it('accounts for runner telemetry only after persisting direct Job completion', async () => {
+    metricsMocks.recordRunnerCompletion.mockClear()
+    const telemetry = {
+      version: 1,
+      state: 'finished',
+      startedAt: '2026-05-19T12:00:10Z',
+      heartbeatAt: '2026-05-19T12:00:45Z',
+      lastActivityAt: null,
+      model: 'gpt-6.2-sol',
+      effort: 'max',
+      podName: 'job-1-pod',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      activeTools: [],
+      activeToolCount: 0,
+      usage: null,
+      quota: null,
+      publishErrors: 2,
+    }
     const runnerMessage = JSON.stringify({
       status: 'succeeded',
       adapter: 'codex-app-server',
@@ -4903,6 +5048,9 @@ describe('agents controller reconcileAgentRun', () => {
       exitCode: 0,
       threadId: 'thread-1',
       turnId: 'turn-1',
+      startedAt: '2026-05-19T12:00:10Z',
+      finishedAt: '2026-05-19T12:00:45Z',
+      telemetry,
       artifacts: {
         outputArtifacts: [{ name: 'summary', key: 'runs/run-1/summary.json' }],
       },
@@ -4936,6 +5084,7 @@ describe('agents controller reconcileAgentRun', () => {
     })
 
     const agentRun = buildAgentRun({
+      metadata: { name: 'run-1', namespace: 'agents', generation: 1, finalizers: [finalizer], resourceVersion: '7' },
       status: {
         phase: 'Running',
         runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
@@ -4943,7 +5092,26 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    const reconcile = () =>
+      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    kube.applyStatus.mockRejectedValueOnce(new Error('stale resource version'))
+    await expect(reconcile()).rejects.toThrow('stale resource version')
+    expect(metricsMocks.recordRunnerCompletion).not.toHaveBeenCalled()
+
+    await reconcile()
+    expect(kube.applyStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        metadata: { name: 'run-1', namespace: 'agents', resourceVersion: '7' },
+      }),
+    )
+    expect(metricsMocks.recordRunnerCompletion).toHaveBeenCalledExactlyOnceWith({
+      outcome: 'Succeeded',
+      agent: 'agent-1',
+      model: 'gpt-6.2-sol',
+      effort: 'max',
+      durationSeconds: 35,
+      telemetry,
+    })
 
     const status = getLastStatus(kube)
     expect(status.phase).toBe('Succeeded')
@@ -4952,6 +5120,7 @@ describe('agents controller reconcileAgentRun', () => {
       adapter: 'codex-app-server',
       threadId: 'thread-1',
       turnId: 'turn-1',
+      telemetry,
     })
     expect(status.artifacts).toEqual([
       { name: 'existing', path: '/workspace/existing.json' },
