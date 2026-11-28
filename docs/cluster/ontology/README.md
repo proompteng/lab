@@ -16,9 +16,10 @@ authorization to operate the cluster. The bundle has no SQL analyses: it does no
 - Image eligibility, promotion, and rollout proof: [release automation](../../release-automation.md).
 
 Update this bundle through Git review against those sources. Acronym identities are global; keep each Galactic name
-distinct, ignoring case, from the [Agents](../../agents/ontology/agents-knowledge.json) and
-[Bayn](../../bayn/ontology/bayn-knowledge.json) seeds. Refer to terms already owned by those bundles, such as `Kargo`
-and `Freight`, rather than redefining them here.
+distinct, ignoring case, from the [Agents](../../agents/ontology/agents-knowledge.json),
+[Bayn](../../bayn/ontology/bayn-knowledge.json), and [CI release](../../ci/ontology/ci-release-knowledge.json) seeds.
+Refer to terms already owned by those bundles, such as `Kargo`, `Freight`, `Attic`, `Stage`, and `Warehouse`, rather
+than redefining them here.
 
 ## Validate offline
 

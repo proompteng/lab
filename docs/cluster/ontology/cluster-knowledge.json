@@ -9,10 +9,6 @@
       "name": "ArgoCD"
     },
     {
-      "description": "The Nix binary cache used to substitute reusable build outputs and dependencies. It is not the OCI registry or a promotion authority.",
-      "name": "Attic"
-    },
-    {
       "description": "Loki, Grafana, Tempo, and Mimir: Galactic's observability stack for logs, visualization, traces, and metrics, respectively.",
       "name": "LGTM"
     },
@@ -41,10 +37,6 @@
       "name": "SealedSecret"
     },
     {
-      "description": "A Kargo resource defining which Freight it accepts, the steps that promote it, and how the result is verified. A Galactic application Stage writes generated desired state to kargo/<stage>.",
-      "name": "Stage"
-    },
-    {
       "description": "The private mesh network used for remote Galactic Kubernetes API and service access. Omni owns the Talos extension; the Kubernetes operator manages in-cluster service exposure and subnet routing.",
       "name": "Tailscale"
     },
@@ -59,10 +51,6 @@
     {
       "description": "A durable workflow orchestration platform. Workers execute workflow and activity code, and the service persists workflow histories so execution can resume after failures.",
       "name": "Temporal"
-    },
-    {
-      "description": "A Kargo resource that discovers eligible artifacts from configured subscriptions and produces Freight that a Stage may promote.",
-      "name": "Warehouse"
     }
   ],
   "customAnalyses": [],
