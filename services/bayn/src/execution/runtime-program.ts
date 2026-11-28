@@ -30,13 +30,7 @@ import {
   type GrantedCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
-import {
-  IntentStore,
-  type IntentStoreService,
-  type NativeProtectionCancelCommand,
-  type NativeProtectionCancelReceipt,
-  type StoredIntent,
-} from './intents/domain'
+import { IntentStore, type IntentStoreService, type StoredIntent } from './intents/domain'
 import { MutationStore, type ExpiredEntryCancellationAdmission, type MutationStoreShape } from './mutations/model'
 import {
   makeAuthorityGuardedBrokerMutation,
@@ -85,11 +79,6 @@ export interface ExecutionProgramDependencies {
     proofId: string,
   ) => Effect.Effect<typeof VerifiedProtectionReleaseSchema.Type | undefined, FinalSubmitAuthorizationFailure>
 }
-
-export type ProtectionCancelOutcome =
-  | { readonly _tag: 'Accepted'; readonly phase: 'Fresh' | 'Durable'; readonly receipt: NativeProtectionCancelReceipt }
-  | { readonly _tag: 'PendingUnknown'; readonly command: NativeProtectionCancelCommand }
-  | { readonly _tag: 'NotEligible' }
 
 interface FinalExecutionCapitalAuthorization {
   readonly limits: ExecutionCapitalLimits
