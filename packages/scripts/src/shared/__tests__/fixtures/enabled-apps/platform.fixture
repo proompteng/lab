@@ -37,13 +37,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
-              - name: cockroach-operator-system
-                path: argocd/applications/cockroach-operator
-                namespace: cockroach-operator-system
-                annotations:
-                  argocd.argoproj.io/sync-wave: "-1"
-                automation: auto
-                enabled: "true"
               - name: tigresse
                 path: argocd/applications/tigresse
                 namespace: tigresse-system
