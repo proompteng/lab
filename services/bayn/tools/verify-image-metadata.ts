@@ -21,6 +21,7 @@ const identity = Result.getOrThrow(
       'build-contract',
       protocol.sharedProtocol.universe,
       BrokerEnvironment.Sandbox,
+      true,
     )
     return {
       strategyBehaviorHash: activeStrategyBehaviorHash,

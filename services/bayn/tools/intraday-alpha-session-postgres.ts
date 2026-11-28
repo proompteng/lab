@@ -22,6 +22,7 @@ import {
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
 import { IntradayAlphaPhase } from '../src/strategy/intraday-alpha/constants'
 import type { ActiveAlphaPhase } from '../src/strategy/intraday-alpha/signals'
+import { isIntradayAlphaTarget } from '../src/strategy/runtime-decision'
 
 const Id = StrictNonEmptyStringSchema
 const nullableId = Schema.NullOr(Id)
@@ -176,7 +177,7 @@ const projectDecision = (
   }).verifiedRows[0]?.document
   if (document?.mode !== legacyExecutionAuthorityToken) return 'UNVERIFIED'
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.intraday-alpha-target.v2') return 'UNVERIFIED'
+  if (!isIntradayAlphaTarget(target)) return 'UNVERIFIED'
   const bindings = document.bindings
   if (
     document.contentHash !== row.decision_hash ||
@@ -291,7 +292,7 @@ export const readAlphaSession = (
     FROM autonomous_cycles c JOIN autonomous_cycle_shadow_decisions d
       ON d.cycle_id = c.cycle_id AND d.decision_hash = c.decision_hash
     JOIN authority_generations g ON g.account_id = c.account_id AND g.maximum = 'PAPER'
-      AND g.strategy_parameter_schema_version = 'bayn.intraday-alpha-policy.v2'
+      AND g.strategy_parameter_schema_version IN ('bayn.intraday-alpha-policy.v2', 'bayn.intraday-alpha-policy.v3')
       AND coalesce(g.qualification_run_id,g.research_plan_hash) = c.qualification_run_id
       AND coalesce(g.protocol_hash,g.strategy_protocol_hash) = c.strategy_protocol_hash
       AND d.created_at >= g.activated_at
@@ -301,7 +302,7 @@ export const readAlphaSession = (
           AND next.maximum='PAPER' AND next.activated_at<=d.created_at
       )
     WHERE c.account_id=${accountId} AND c.execution_session_date=${sessionDate}::date
-      AND (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v2'
+      AND (d.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.intraday-alpha-target.v2', 'bayn.intraday-alpha-target.v3')
         OR d.document #>> '{strategyDecision,schemaVersion}' IS NULL)
     ORDER BY d.created_at,c.cycle_id COLLATE "C"
   `.pipe(decode(DecisionRow))

@@ -149,8 +149,12 @@ spec:
                   ;;
                 *)
                   kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json |
-                    jq -e '
-                      .spec.podSelector == {} and
+                    jq -e --arg namespace "$namespace" '
+                      .spec.podSelector == (
+                        if $namespace == "agents" then
+                          {"matchExpressions":[{"key":"app.kubernetes.io/name","operator":"NotIn","values":["auto-ontology-sync"]}]}
+                        else {} end
+                      ) and
                       (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
                       .spec.ingress == [{}] and
                       .spec.egress == [{}]

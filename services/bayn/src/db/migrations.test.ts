@@ -48,6 +48,8 @@ test('runtime migration loader preserves the retained controller cutover sequenc
     [225, 'alpha_baseline_preparation'],
     [226, 'audit_reader_grants'],
     [227, 'audit_reader_view_grant'],
+    [228, 'intraday_alpha_v3_admission'],
+    [229, 'intraday_alpha_v2_paper_settlement'],
   ])
 })
 

@@ -2,10 +2,13 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import process from 'node:process'
 
-import { runCodexAppServerAdapter } from '../../src/runner/codex-app-server'
 import { uploadOutputArtifacts } from '../../src/runner/artifact-upload'
+import { runCodexAppServerAdapter } from '../../src/runner/codex-app-server'
+import { installPstackSkills } from '../../src/runner/pstack'
 import {
   buildTemplateContext,
   type AgentProviderInputFile,
@@ -20,7 +23,6 @@ import {
   resolveAdapter,
 } from '../../src/runner/spec'
 
-import { runCli } from './lib/cli'
 import { ensureFileDirectory } from './lib/fs'
 
 type ExecAgentRunnerStatus = {
@@ -66,7 +68,7 @@ const loadSpecFromEnv = async (): Promise<AgentRunnerSpec | null> => {
   }
 }
 
-export const loadAgentRunnerSpec = async (argv: string[]): Promise<AgentRunnerSpec> => {
+const loadAgentRunnerSpec = async (argv: string[]): Promise<AgentRunnerSpec> => {
   const [specPath] = argv
   if (specPath) {
     return loadSpecFromPath(specPath)
@@ -243,7 +245,7 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
   return exitCode
 }
 
-export const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> => {
+const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> => {
   const spec = normalizeRunnerSpec(rawSpec)
   const adapter = resolveAdapter(spec)
   if (adapter.type === 'codex-app-server') {
@@ -256,6 +258,10 @@ export const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> 
     process.once('SIGTERM', abort)
     process.once('SIGINT', abort)
     try {
+      installPstackSkills({
+        codexHome: process.env.CODEX_HOME || join(homedir(), '.codex'),
+        enabled: process.env.AGENTS_RUNNER_PSTACK_ENABLED,
+      })
       return await runCodexAppServerAdapter(spec, adapter.codex, { abortSignal: abortController.signal })
     } finally {
       process.off('SIGTERM', abort)
@@ -265,9 +271,14 @@ export const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> 
   return runExecAdapter(spec, adapter.provider)
 }
 
-const main = async () => {
-  const spec = await loadAgentRunnerSpec(process.argv.slice(2))
-  return runAgentRunner(spec)
+if (import.meta.main) {
+  try {
+    const spec = await loadAgentRunnerSpec(process.argv.slice(2))
+    // eslint-disable-next-line unicorn/no-process-exit
+    process.exit(await runAgentRunner(spec))
+  } catch (error) {
+    console.error(toErrorMessage(error))
+    // eslint-disable-next-line unicorn/no-process-exit
+    process.exit(1)
+  }
 }
-
-await runCli(import.meta, main)

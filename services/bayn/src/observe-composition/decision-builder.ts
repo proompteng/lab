@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import { buildExecutionDecision, buildObserveShadowDecision, type DecisionConstruction } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
@@ -1497,7 +1498,7 @@ export function buildStrategyCycleDecision<R>(
     }
     const entryLimitSlippageBps =
       requirements.documentMode === Authority.Execution
-        ? entryDecision.schemaVersion === 'bayn.intraday-alpha-target.v2'
+        ? isIntradayAlphaTarget(entryDecision)
           ? Math.min(input.policy.maxAdverseSlippageBps, entryDecision.policy.entryLimitSlippageBps)
           : isProtectedEntryTarget(entryDecision)
             ? Math.min(
@@ -1829,14 +1830,17 @@ const buildClosingExecutionCycleDecisionWithSource = <R, Evidence extends CloseP
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
       ? entryMarketData.universe
       : undefined
-    const ownedSymbols =
-      entryDocument.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
-        ? Object.keys(entryDocument.strategyDecision.exitPolicy.plans).sort()
+    const ownedSymbols = isIntradayAlphaTarget(entryDocument.strategyDecision)
+      ? Object.keys(entryDocument.strategyDecision.exitPolicy.plans).sort()
+      : undefined
+    const requestedLeg =
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v3'
+        ? request.exitTarget?.symbols
         : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
-      ownedSymbols,
+      requestedLeg === undefined ? ownedSymbols : ownedSymbols?.filter((symbol) => requestedLeg.includes(symbol)),
     )
     const symbols = closingPass.symbols
     const closingSymbol = symbols[0]

@@ -512,7 +512,10 @@ const expected = {
       'packages/codex',
       'packages/cx-tools',
       'packages/otel',
+      'packages/scripts/src/agents/ontology-bundle-sql.ts',
       'packages/scripts/src/agents/update-values.ts',
+      'packages/scripts/src/agents/sync-auto-ontology-bundle.ts',
+      'packages/scripts/src/agents/sync-auto-ontology-bundle-core.ts',
       'packages/temporal-bun-sdk',
       'services/agents',
       'charts/agents/crds',
@@ -521,6 +524,7 @@ const expected = {
       'nix/images/openai-codex-cli.nix',
       'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',
+      'docs/agents/ontology',
       'charts/agents',
     ],
     excludePaths: [

@@ -6,6 +6,13 @@ Sync the reviewed revision of Saigak first. Verify the Radeon serves the embeddi
 
 The model settings in the SealedSecret template point to Flamingo, Saigak, and Nemotron Rerank. `DEFAULT_MODELS_API_KEY` supplies the nonempty string the client library requires for these unauthenticated cluster services.
 
+## PostgreSQL commit durability
+
+The single-instance catalog database uses [`synchronous_commit=off`](https://www.postgresql.org/docs/19/wal-async-commit.html)
+so Better Auth's per-request API key updates release row locks without waiting for a Ceph RBD WAL flush. Crash recovery
+remains consistent, but a crash can lose recently acknowledged writes. Source catalogs and knowledge bundles can be
+re-synced; revisit this setting if acknowledged writes must survive a crash or if synchronous replication is introduced.
+
 ## Verify MCP OAuth discovery
 
 The MCP resource advertises the Better Auth issuer `https://auto-ontology.ide-newton.ts.net/api/auth`.
