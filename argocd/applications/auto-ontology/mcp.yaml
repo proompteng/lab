@@ -16,6 +16,24 @@ spec:
       containers:
         - name: mcp
           image: nvcr.io/nvidia/auto-ontology-mcp:1.3.0@sha256:c0b46acbf957d1210341a3984ca7941f5a7b292aee8fefd16c6305cc34f9fdf0
+          # Remove once the image includes https://github.com/NVIDIA/auto-ontology/pull/648.
+          args:
+            - /opt/venv/bin/python
+            - -c
+            - |
+              from auto_ontology_mcp.__main__ import main
+              from auto_ontology_mcp import server
+              from pydantic import AnyHttpUrl
+
+              build_auth = server.build_auto_ontology_auth
+
+              def build_auth_with_issuer(settings):
+                  auth = build_auth(settings)
+                  auth.authorization_servers = [AnyHttpUrl(f"{settings.api_url}/api/auth")]
+                  return auth
+
+              server.build_auto_ontology_auth = build_auth_with_issuer
+              raise SystemExit(main())
           env:
             - name: AUTO_ONTOLOGY_API_URL
               value: https://auto-ontology.ide-newton.ts.net
