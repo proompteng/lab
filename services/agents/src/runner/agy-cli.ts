@@ -12,6 +12,7 @@ import { SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../workspace-cache'
 
 import { uploadOutputArtifacts } from './artifact-upload'
 import {
+  ensureGitAskpass,
   prepareRunnerWorkspace,
   readRunnerSystemPrompt,
   readRunnerWorkspaceTmpfsBytes,
@@ -357,14 +358,24 @@ export const runAgyCliAdapter = async (
     const systemPrompt = await readRunnerSystemPrompt(adapter, spec, runPayload)
     const effectivePrompt = composeAgyPrompt(rawPrompt, systemPrompt)
 
-    stagedCreds = await stageAgyCredentials(adapter, baseEnv)
+    await prepareRunnerWorkspace(
+      { cwd: adapter.cwd },
+      runPayload,
+      options.runCommand ?? runDefaultCommand,
+      options.sharedCachePath ?? SHARED_WORKSPACE_CACHE_MOUNT_PATH,
+      reportStartupPhase,
+    )
+
+    const effectiveEnv: Record<string, string | undefined> = options.env ? { ...options.env } : { ...process.env }
+    stagedCreds = await stageAgyCredentials(adapter, effectiveEnv)
     const childEnv: Record<string, string> = {}
     const credentialsEnvVar = nonEmptyString(adapter.credentialsEnvVar) ?? DEFAULT_AGY_CREDENTIALS_ENV_VAR
-    for (const [key, value] of Object.entries(baseEnv)) {
+    for (const [key, value] of Object.entries(effectiveEnv)) {
       if (value !== undefined && key !== credentialsEnvVar) {
         childEnv[key] = value
       }
     }
+    await ensureGitAskpass(childEnv)
     if (stagedCreds) {
       childEnv.GOOGLE_APPLICATION_CREDENTIALS = stagedCreds.path
     }
@@ -384,14 +395,6 @@ export const runAgyCliAdapter = async (
 
     const homeDir = nonEmptyString(childEnv.HOME) ?? '/root'
     await mkdir(join(homeDir, '.gemini', 'antigravity-cli'), { recursive: true })
-
-    await prepareRunnerWorkspace(
-      { cwd: adapter.cwd },
-      runPayload,
-      options.runCommand ?? runDefaultCommand,
-      options.sharedCachePath ?? SHARED_WORKSPACE_CACHE_MOUNT_PATH,
-      reportStartupPhase,
-    )
 
     if (options.abortSignal?.aborted) {
       exitCode = 130

@@ -559,17 +559,17 @@ const readVcsWorkspaceContext = (runPayload: AgentRunPayload): VcsWorkspaceConte
 const resolveCloneUrl = (vcs: VcsWorkspaceContext): string =>
   `${vcs.cloneBaseUrl.replace(/\/+$/, '')}/${vcs.repository}.git`
 
-const ensureGitAskpass = async () => {
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.VCS_TOKEN
+export const ensureGitAskpass = async (env: Record<string, string | undefined> = process.env) => {
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN || env.VCS_TOKEN
   if (!token) return
 
-  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = token
-  if (!process.env.GH_TOKEN) process.env.GH_TOKEN = token
-  if (!process.env.GIT_ASKPASS_USERNAME) process.env.GIT_ASKPASS_USERNAME = 'x-access-token'
-  process.env.GIT_ASKPASS_TOKEN = token
-  process.env.GIT_TERMINAL_PROMPT ??= '0'
+  if (!env.GITHUB_TOKEN) env.GITHUB_TOKEN = token
+  if (!env.GH_TOKEN) env.GH_TOKEN = token
+  if (!env.GIT_ASKPASS_USERNAME) env.GIT_ASKPASS_USERNAME = 'x-access-token'
+  env.GIT_ASKPASS_TOKEN = token
+  env.GIT_TERMINAL_PROMPT ??= '0'
 
-  if (process.env.GIT_ASKPASS) return
+  if (env.GIT_ASKPASS) return
   const askpassPath = '/tmp/agents-git-askpass.sh'
   const script = `#!/bin/sh
 case "$1" in
@@ -580,7 +580,7 @@ esac
 `
   await writeFile(askpassPath, script, 'utf8')
   await chmod(askpassPath, 0o700)
-  process.env.GIT_ASKPASS = askpassPath
+  env.GIT_ASKPASS = askpassPath
 }
 
 const fetchBranch = async (

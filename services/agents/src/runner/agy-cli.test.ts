@@ -132,6 +132,12 @@ writeFileSync(${JSON.stringify(envDumpPath)}, JSON.stringify({
   quotaProject: process.env.GOOGLE_CLOUD_QUOTA_PROJECT,
   location: process.env.GOOGLE_CLOUD_LOCATION,
   autoUpdateDisabled: process.env.AGY_CLI_DISABLE_AUTO_UPDATE,
+  gitAskpass: process.env.GIT_ASKPASS,
+  gitAskpassExists: Boolean(process.env.GIT_ASKPASS && existsSync(process.env.GIT_ASKPASS)),
+  gitAskpassToken: process.env.GIT_ASKPASS_TOKEN,
+  gitAskpassUsername: process.env.GIT_ASKPASS_USERNAME,
+  gitTerminalPrompt: process.env.GIT_TERMINAL_PROMPT,
+  ghToken: process.env.GH_TOKEN,
 }))
 console.log(JSON.stringify({ event: 'init', conversation_id: 'conv-neon-1', init: { cwd: process.cwd(), tools: ['run_command'], permission_mode: 'always-proceed', model: 'gemini-4-neon' } }))
 console.log(JSON.stringify({ event: 'step_update', step_update: { conversation_id: 'conv-neon-1', step_index: 1, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: { CommandLine: 'echo ok' } } } }))
@@ -176,6 +182,12 @@ console.log(JSON.stringify({ event: 'result', result: { conversation_id: 'conv-n
         env: {
           ...process.env,
           HOME: homeDir,
+          GITHUB_TOKEN: 'ghp_test_token_123',
+          GH_TOKEN: undefined,
+          GIT_ASKPASS: undefined,
+          GIT_ASKPASS_TOKEN: undefined,
+          GIT_ASKPASS_USERNAME: undefined,
+          GIT_TERMINAL_PROMPT: undefined,
           GOOGLE_APPLICATION_CREDENTIALS_JSON: JSON.stringify({
             type: 'service_account',
             project_id: 'proompteng',
@@ -193,6 +205,11 @@ console.log(JSON.stringify({ event: 'result', result: { conversation_id: 'conv-n
       quotaProject: 'proompteng',
       location: 'global',
       autoUpdateDisabled: 'true',
+      gitAskpassExists: true,
+      gitAskpassToken: 'ghp_test_token_123',
+      gitAskpassUsername: 'x-access-token',
+      gitTerminalPrompt: '0',
+      ghToken: 'ghp_test_token_123',
     })
     expect(seenEnv.argv).not.toContain('-p')
     expect(JSON.parse(seenEnv.stdinLine)).toEqual({
