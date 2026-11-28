@@ -73,6 +73,7 @@
   ],
   "dataSource": "agents-db-next",
   "database": "agents",
+  "ruleTag": "agents canonical rule",
   "rules": [
     {
       "description": "Use Conventional Commits and matching PR titles in the form <type>(<scope>): <summary>. Stage only owned paths and link the issue if there is one. Follow AGENTS.md and the repository PR template.",
