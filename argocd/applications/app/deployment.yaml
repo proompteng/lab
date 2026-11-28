@@ -4,6 +4,7 @@ metadata:
   name: app
   namespace: app
 spec:
+  revisionHistoryLimit: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:

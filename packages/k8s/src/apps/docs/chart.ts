@@ -20,6 +20,7 @@ export class DocsChart extends Chart {
         namespace: props.namespace,
       },
       spec: {
+        revisionHistoryLimit: 2,
         strategy: {
           type: 'RollingUpdate',
           rollingUpdate: {
