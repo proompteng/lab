@@ -57,6 +57,7 @@ git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
   "${ROOT_DIR}/services/agents/api"
 
 run_with_helm3 helm lint --kube-version "${KUBE_VERSION_FOR_HELM}" "${CHART_DIR}"
+run_with_helm3 python3 -m unittest discover -s "${CHART_DIR}/tests"
 
 for identity_mode in default override; do
   identity_name='Greg Konush'
