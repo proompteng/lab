@@ -630,6 +630,64 @@ const text = (value: unknown): string => {
   return value
 }
 
+test('Jangar CI selects runtime and dependency changes without taking Agents or observability ownership', () => {
+  const router: unknown = Bun.YAML.parse(readFileSync('.github/workflows/pull-request.yml', 'utf8'))
+  const steps = property(property(property(router, 'jobs'), 'plan'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing CI planner steps')
+  const step = steps.find((candidate) => property(candidate, 'id') === 'jangar')
+  expect(step).toMatchObject({
+    if: "github.event_name == 'pull_request'",
+    uses: './.github/actions/affected-inputs',
+  })
+  const inputs = property(step, 'with')
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters')),
+    '',
+    'pull_request',
+  )
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8')) as { packages: Record<string, unknown[]> }
+  const unrelated = [
+    'argocd/applications/agents/values.yaml',
+    'argocd/applications/agents/agents-primitives-agentprovider.yaml',
+    'charts/agents/templates/deployment.yaml',
+    'argocd/applications/observability/graf-mimir-rules.yaml',
+    'services/agents/src/server/control-plane.ts',
+    'docs/jangar/architecture-inventory.md',
+    'packages/codex/src/app-server-client.test.ts',
+    'packages/temporal-bun-sdk/tests/client.test.ts',
+    'packages/temporal-bun-sdk/README.md',
+  ]
+  for (const file of unrelated) expect(selectAffectedInputs([file], configured, lock, lock).jangar, file).toBe(false)
+
+  for (const file of [
+    'services/jangar/src/server/index.ts',
+    'services/bumba/src/atlas/reconciliation.ts',
+    'packages/agent-contracts/src/index.ts',
+    'packages/codex/src/app-server-client.ts',
+    'packages/cx-tools/src/index.ts',
+    'packages/cx-tools/package.json',
+    'packages/design/src/components/ui/button.tsx',
+    'packages/discord/src/index.ts',
+    'packages/otel/src/index.ts',
+    'packages/temporal-bun-sdk/src/index.ts',
+    'packages/design/package.json',
+    'argocd/applications/jangar/deployment.yaml',
+    'argocd/bootstrap/jangar/kustomization.yaml',
+    '.github/workflows/jangar-ci.yml',
+  ]) {
+    expect(selectAffectedInputs([...unrelated, file], configured, lock, lock).jangar, file).toBe(true)
+  }
+
+  const upgraded = (name: string) => {
+    const entry = lock.packages[name]
+    if (!Array.isArray(entry)) throw new Error(`Missing lock entry for ${name}`)
+    return { ...lock, packages: { ...lock.packages, [name]: [...entry.slice(0, -1), 'new-integrity'] } }
+  }
+  expect(selectAffectedInputs([...unrelated, 'bun.lock'], configured, lock, upgraded('vite')).jangar).toBe(true)
+  expect(selectAffectedInputs([...unrelated, 'bun.lock'], configured, lock, upgraded('nitro')).jangar).toBe(false)
+})
+
 test('planner implementation, action, and map changes retain their owning validation', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
   for (const event of ['pull_request', 'push']) {
