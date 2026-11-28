@@ -325,11 +325,20 @@ test('verifies supplemental gzip and applies the split to price and volume witho
     expect(price(series, 0, Field.Open)).toBe(50)
     expect(price(series, 0, Field.Vwap) * price(series, 0, Field.Volume)).toBe(202_000)
   }
+  const rejection = (run: Promise<void>) =>
+    run.then(
+      () => {
+        throw new Error('Expected tape verification to reject')
+      },
+      (cause: unknown) => (cause instanceof Error ? cause.message : null),
+    )
   const duplicate = archive(first + first)
-  await expect(loadTape(duplicate.reader, index(), Tape.Supplement, duplicate.receipt, 2, ['XLB'])).rejects.toThrow(
-    'duplicate',
-  )
-  await expect(
-    loadTape(fixture.reader, index(), Tape.Supplement, { ...fixture.receipt, sha256: 'wrong' }, 2, ['XLB']),
-  ).rejects.toThrow('byte receipt mismatch')
+  expect(
+    await rejection(loadTape(duplicate.reader, index(), Tape.Supplement, duplicate.receipt, 2, ['XLB'])),
+  ).toContain('duplicate')
+  expect(
+    await rejection(
+      loadTape(fixture.reader, index(), Tape.Supplement, { ...fixture.receipt, sha256: 'wrong' }, 2, ['XLB']),
+    ),
+  ).toContain('byte receipt mismatch')
 })
