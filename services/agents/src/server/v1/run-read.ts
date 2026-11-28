@@ -140,7 +140,7 @@ export class RunReadKubernetesService extends Context.Service<
   RunReadKubernetesServiceDefinition
 >()('agents/RunReadKubernetesService') {}
 
-export type RunReadServices = RunReadStoreService | RunReadKubernetesService
+type RunReadServices = RunReadStoreService | RunReadKubernetesService
 
 const extractStatusPhase = (resource: Record<string, unknown>) => {
   const status = asRecord(resource.status)

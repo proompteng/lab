@@ -9,9 +9,9 @@ type ModuleStat = {
   loc: number
 }
 
-export type RouteKind = 'page' | 'handler' | 'redirect'
+type RouteKind = 'page' | 'handler' | 'redirect'
 
-export type RouteStat = {
+type RouteStat = {
   boundary: string
   filePath: string
   routePath: string
