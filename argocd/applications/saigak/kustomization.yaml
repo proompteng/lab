@@ -2,9 +2,17 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: saigak
 resources:
-  - configmap.yaml
   - pvc-altra.yaml
   - pvc-ryzen.yaml
   - pvc.yaml
   - statefulset.yaml
   - service.yaml
+configMapGenerator:
+  - name: saigak-runtime
+    files:
+      - proxy.py
+      - qwen3-embedding-8b.modelfile
+    options:
+      labels:
+        app.kubernetes.io/name: saigak
+        app.kubernetes.io/component: embeddings

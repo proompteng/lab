@@ -710,6 +710,17 @@ data:
               runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
       - name: agents-auto-ontology.rules
         rules:
+          - alert: AgentsServiceHealthProbeFailed
+            expr: max by (namespace, service) (probe_success{job=~"integrations/blackbox/agents-health/.+"}) == 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              notify: email
+            annotations:
+              summary: Health probe failed for {{ $labels.namespace }}/{{ $labels.service }}
+              description: The in-cluster HTTP health probe has failed for five minutes. Check the Service's EndpointSlices, pod readiness and network policy.
+              runbook_url: argocd/applications/observability/README.md#agents-and-auto-ontology-http-probes
           - alert: AgentsAutoOntologyMcpGatewayUnavailable
             expr: |
               max by (namespace, deployment) (

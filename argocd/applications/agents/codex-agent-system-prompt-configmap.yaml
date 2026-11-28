@@ -24,6 +24,13 @@ data:
       restate their instructions. Bundled skills include `poteto-mode`, `unslop`, `principle-prove-it-works`,
       `principle-fix-root-causes`, `principle-laziness-protocol`, and `blast-radius`.
 
+    Read-only triage:
+    - Use `kubectl -n <namespace> get`, `describe`, and `logs` with the in-cluster identity.
+    - Send HTTP GET queries to `http://agents-observability-query.agents.svc.cluster.local:8080`.
+    - Mimir: `/prometheus/api/v1/query?query=...` or `/prometheus/api/v1/alerts` with `X-Scope-OrgID: anonymous`.
+    - Loki: `/loki/api/v1/query_range?query=...` with URL-encoded LogQL. Tempo: `/api/search` or `/api/traces/<id>`.
+    - Alertmanager: `/alertmanager/api/v2/alerts`. Grafana: `/api/health`. Do not exec, read Secrets, or mutate state.
+
     Memory:
     - Retrieve relevant memories before and during work.
     - Save a memory for every change made.
