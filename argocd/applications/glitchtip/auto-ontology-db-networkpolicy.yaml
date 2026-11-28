@@ -11,11 +11,22 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
+        - podSelector: {}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: auto-ontology
       ports:
         - port: 5432
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: 9187
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1

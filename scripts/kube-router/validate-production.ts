@@ -54,6 +54,7 @@ export const productionPaths = {
   tengriPolicies: 'argocd/applications/tengri/network-policies.yaml',
   tengriReaderPolicies: 'argocd/applications/tengri/run-reader.yaml',
   relayPolicies: 'argocd/applications/relay/network-policy.yaml',
+  glitchtipPolicies: 'argocd/applications/glitchtip/auto-ontology-db-networkpolicy.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
   daemonSet: 'argocd/applications/kube-router/daemonset.yaml',
   readme: 'argocd/applications/kube-router/README.md',
@@ -316,6 +317,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'tengri',
   )
   const expectedRelayPolicyHash = networkPolicyHash(files.relayPolicies, 'relay')
+  const expectedGlitchtipPolicyHash = networkPolicyHash(files.glitchtipPolicies, 'glitchtip')
   if (
     hook?.metadata?.annotations?.['argocd.argoproj.io/hook'] !== 'Sync' ||
     hook?.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-2' ||
@@ -332,6 +334,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n kube-system get namespace tengri',
     'kubectl -n kube-system get namespace relay',
     "printf '%s\\n' relay",
+    'kubectl -n kube-system get namespace glitchtip',
+    "printf '%s\\n' glitchtip",
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
     'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
@@ -343,6 +347,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     `expected_tengri_policy_hash=${expectedTengriPolicyHash}`,
     `expected_relay_policy_hash=${expectedRelayPolicyHash}`,
     'if [[ "$actual_relay_policy_hash" != "$expected_relay_policy_hash" ]]',
+    `expected_glitchtip_policy_hash=${expectedGlitchtipPolicyHash}`,
+    'if [[ "$actual_glitchtip_policy_hash" != "$expected_glitchtip_policy_hash" ]]',
     'kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json',
     "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
     'Hermes NetworkPolicies differ from the exact reviewed policy set.',
@@ -364,6 +370,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     `printf '%s\\n' hermes ${reviewedNamespaces.join(' ')}`,
     'kubectl -n kube-system get namespace relay',
     "printf '%s\\n' relay",
+    'kubectl -n kube-system get namespace glitchtip',
+    "printf '%s\\n' glitchtip",
   ])
   const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
   for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
