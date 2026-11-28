@@ -9,7 +9,6 @@
     "build": "bun run generate:control-plane-registry && vite build",
     "start": "bun .output/server/index.mjs",
     "start:agents-shell": "bun run src/server/agents-shell-mcp.ts",
-    "start:legacy": "bun run src/server/index.ts",
     "test": "bunx vitest run --config vitest.config.ts",
     "tsc": "bun run generate:control-plane-registry && bunx tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src scripts",

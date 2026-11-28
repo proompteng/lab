@@ -158,14 +158,14 @@ describe('classifyAgentsImageMode', () => {
   it('merges mixed image impact in stable component order', () => {
     const result = classifyAgentsImageMode([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
 
     expect(result.imageTargets).toEqual(['control-plane', 'controller', 'runner'])
     expect(result.matchedPaths).toEqual([
       'services/agents/scripts/codex/agent-runner.ts',
-      'services/agents/src/server/index.ts',
+      'services/agents/src/server/start-runtime.ts',
     ])
   })
 
