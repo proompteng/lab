@@ -10,7 +10,7 @@ type Container = {
   command: string[]
   args: string[]
   envFrom?: unknown[]
-  env: { name: string; valueFrom?: { secretKeyRef?: SecretRef } }[]
+  env: { name: string; value?: string; valueFrom?: { secretKeyRef?: SecretRef } }[]
   volumeMounts: { name: string; mountPath: string; readOnly?: boolean }[]
 }
 type PodSpec = {
@@ -71,6 +71,7 @@ test('Bayn jobs are registered, weekday after the SIP embargo, and use the resea
       expect(container.envFrom ?? []).toEqual([])
     }
     expect(JSON.stringify(job)).not.toContain('bayn-alpaca-auth')
+    expect(JSON.stringify(job)).not.toContain('bayn-db-app')
   }
 })
 
@@ -106,16 +107,31 @@ test('each macro sleeve can only run in shadow and receives only its own account
   }
 })
 
-test('scorecard has only the audit login, TLS trust, and a read-only receipt mount', () => {
+test('scorecard is enabled with bounded job retention', () => {
+  expect(scorecard.spec).toMatchObject({
+    suspend: false,
+    successfulJobsHistoryLimit: 3,
+    failedJobsHistoryLimit: 3,
+    jobTemplate: { spec: { ttlSecondsAfterFinished: 3600 } },
+  })
+})
+
+test('scorecard has only the audit login, Paper account ID, TLS trust, and a read-only receipt mount', () => {
   expect(pod(scorecard).containers).toHaveLength(1)
   const [container] = pod(scorecard).containers
   expect(container.command).toEqual(['node', 'dist/bayn-daily-scorecard.js'])
   expect(container.args).toContain('--postgres')
-  expect(secretRefs(container)).toEqual({
-    BAYN_SCORECARD_POSTGRES_USERNAME: { name: 'bayn-scorecard-db-ro', key: 'username' },
-    BAYN_SCORECARD_POSTGRES_PASSWORD: { name: 'bayn-scorecard-db-ro', key: 'password' },
-    BAYN_AUDIT_ACCOUNT_ID: { name: 'bayn-scorecard-db-ro', key: 'account-id' },
-  })
+  expect(container.env).toEqual([
+    {
+      name: 'BAYN_SCORECARD_POSTGRES_USERNAME',
+      valueFrom: { secretKeyRef: { name: 'bayn-audit-ro-db', key: 'username' } },
+    },
+    {
+      name: 'BAYN_SCORECARD_POSTGRES_PASSWORD',
+      valueFrom: { secretKeyRef: { name: 'bayn-audit-ro-db', key: 'password' } },
+    },
+    { name: 'BAYN_AUDIT_ACCOUNT_ID', value: 'c0111180-21b2-4d7e-aef0-48e7abb9ad6d' },
+  ])
   expect(container.volumeMounts).toContainEqual({
     name: 'postgres-ca',
     mountPath: '/var/run/secrets/bayn/postgres',
