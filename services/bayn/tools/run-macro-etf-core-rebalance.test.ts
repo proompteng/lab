@@ -854,7 +854,7 @@ test('portfolio uses distinct credentials and real Wave 9C planning with full QQ
     )
     expect(primary.posts).toEqual([])
     expect(other.posts).toEqual([])
-    expect(await readdir(dir)).toEqual(['manifest.json', 'portfolio.json'])
+    expect((await readdir(dir)).sort()).toEqual(['manifest.json', 'portfolio.json'])
     const stored = await readFile(output, 'utf8')
     for (const value of [testKey, testSecret, otherKey, otherSecret]) expect(stored).not.toContain(value)
     expect(JSON.parse(stored)).toEqual(receipt)
