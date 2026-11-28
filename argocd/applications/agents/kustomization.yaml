@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: agents
 resources:
   - postgres-upgrade-backup.yaml
+  - agents-audit-ro-db-sealedsecret.yaml
   - postgres-cluster.yaml
   - codex-auth-master-externalsecret.yaml
   - codex-auth-externalsecret.yaml

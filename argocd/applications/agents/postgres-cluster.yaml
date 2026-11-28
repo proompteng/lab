@@ -11,6 +11,16 @@ spec:
       shared_buffers: 512MB
       wal_buffers: 16MB
   instances: 1
+  managed:
+    roles:
+      - name: agents_audit_ro
+        login: true
+        inherit: false
+        superuser: false
+        createdb: false
+        createrole: false
+        passwordSecret:
+          name: agents-audit-ro-db
   resources:
     requests:
       cpu: "1"
