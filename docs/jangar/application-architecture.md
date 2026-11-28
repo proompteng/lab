@@ -6,7 +6,6 @@ Use this document together with:
 
 - `services/jangar/README.md` for local development and operator commands
 - `docs/jangar/build-contract.md` for CI/CD, image, and rollout expectations
-- `docs/jangar/architecture-inventory.md` for generated runtime/profile/route/module inventory
 
 ## Runtime model
 
@@ -186,7 +185,6 @@ Current operational docs:
 - `services/jangar/README.md`
 - `docs/jangar/application-architecture.md`
 - `docs/jangar/build-contract.md`
-- `docs/jangar/architecture-inventory.md`
 
 Historical or design context docs:
 
