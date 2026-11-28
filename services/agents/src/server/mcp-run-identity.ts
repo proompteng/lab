@@ -29,7 +29,7 @@ const owner = (resource: Record<string, unknown>, apiVersion: string, kind: stri
 
 type IdentityConfig = { namespace: string; audience: string; serviceAccountsByProvider: Record<string, string> }
 
-export type McpRunIdentity = { agentRun: string; namespace: string; serviceAccount: string }
+export type McpRunIdentity = { agentRun: string; agentRunUid: string; namespace: string; serviceAccount: string }
 
 export const createMcpRunIdentityVerifier = (
   { namespace, audience, serviceAccountsByProvider }: IdentityConfig,
@@ -99,6 +99,6 @@ export const createMcpRunIdentityVerifier = (
     ) {
       throw denied()
     }
-    return { agentRun: runRef.name, namespace, serviceAccount }
+    return { agentRun: runRef.name, agentRunUid: runRef.uid, namespace, serviceAccount }
   }
 }

@@ -16,11 +16,18 @@ import { ownerPrefix } from './policy'
 import { createColabGatewayHandler } from './server'
 import { COLAB_TOOLS, createColabUpstream } from './upstream'
 
-const identity = { agentRun: 'example-run', namespace: 'agents', serviceAccount: 'google-triage-runner' }
-const runCaller = `${identity.namespace}/${identity.agentRun}`
+const identity = {
+  agentRun: 'example-run',
+  agentRunUid: 'example-run-uid',
+  namespace: 'agents',
+  serviceAccount: 'google-triage-runner',
+}
+const runCaller = `${identity.namespace}/${identity.agentRun}/${identity.agentRunUid}`
 const runPrefix = ownerPrefix(runCaller)
-const otherRunCaller = `${identity.namespace}/other-run`
+const otherRunCaller = `${identity.namespace}/other-run/other-run-uid`
 const otherRunPrefix = ownerPrefix(otherRunCaller)
+const recreatedRunCaller = `${identity.namespace}/${identity.agentRun}/recreated-run-uid`
+const recreatedRunPrefix = ownerPrefix(recreatedRunCaller)
 const ownedRuntime = (suffix: string, prefix = runPrefix) => `runtimes/${prefix}${suffix}`
 const url = new URL('http://agents-colab-mcp-gateway.agents.svc.cluster.local:8080/mcp')
 const toolResult = (structuredContent: Record<string, unknown>): CallToolResult => ({ content: [], structuredContent })
@@ -84,7 +91,8 @@ const fixture = (
   const audit = vi.fn()
   const verify = vi.fn(async (candidate: string) => {
     if (candidate === projectedToken) return identity
-    if (candidate === 'other-run-token') return { ...identity, agentRun: 'other-run' }
+    if (candidate === 'other-run-token') return { ...identity, agentRun: 'other-run', agentRunUid: 'other-run-uid' }
+    if (candidate === 'recreated-run-token') return { ...identity, agentRunUid: 'recreated-run-uid' }
     throw new McpRunIdentityError(401, 'invalid_token')
   })
   const handle = createColabGatewayHandler({
@@ -543,6 +551,18 @@ it('isolates runtimes and sessions per verified AgentRun and strips proxy creden
   expect(await call('delete_session', { name: runBSession }, 'other-run-token')).toMatchObject({
     result: { structuredContent: { ok: true } },
   })
+
+  // A recreated AgentRun with the same namespace/name but a new UID gets a distinct prefix and cannot touch Run A.
+  expect(recreatedRunPrefix).not.toBe(runPrefix)
+  const listRecreated = await call('list_runtimes', {}, 'recreated-run-token')
+  expect(listRecreated.result.structuredContent).toEqual({ runtimes: [] })
+  const callsBeforeRecreatedForbidden = google.mock.calls.length
+  expect(await call('get_runtime', { name: runARuntime }, 'recreated-run-token')).toMatchObject(runtimeForbidden)
+  expect(await call('delete_runtime', { name: runARuntime }, 'recreated-run-token')).toMatchObject(runtimeForbidden)
+  expect(await call('execute_code', { code: 'print(1)', session: runASession }, 'recreated-run-token')).toMatchObject(
+    runtimeForbidden,
+  )
+  expect(google).toHaveBeenCalledTimes(callsBeforeRecreatedForbidden)
 })
 
 it('bridges MCP discovery and calls with the rotated projected token, without network I/O', async () => {

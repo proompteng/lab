@@ -54,7 +54,7 @@ const REDACTED_KEYS = new Set([
 ])
 
 type Reservation = {
-  phase: 'creating' | 'unobserved'
+  phase: 'creating' | 'unobserved' | 'observed'
   requestId: string
   runtimeSpec: string
   caller: string
@@ -384,6 +384,40 @@ export const createColabRuntimePolicy = (upstream: ColabUpstream, maxConcurrentR
     if (name === 'list_runtimes') {
       const token = await upstream.getToken()
       const result = await upstream.callTool(name, args, token, context)
+      if (!result.isError) {
+        const rawPayload = asRecord(toolPayload(result))
+        if (rawPayload) {
+          const rawRuntimes = rawPayload.runtimes
+          const listed = new Set<string>()
+          let validList = rawRuntimes === undefined
+          if (Array.isArray(rawRuntimes)) {
+            validList = true
+            for (const item of rawRuntimes) {
+              const runtimeName = asRecord(item)?.name
+              if (typeof runtimeName === 'string' && runtimeNameSchema.safeParse(runtimeName).success) {
+                listed.add(runtimeName)
+              } else {
+                validList = false
+                break
+              }
+            }
+          }
+          if (validList) {
+            const paginated = Boolean(
+              args.pageToken || args.page_token || rawPayload.nextPageToken || rawPayload.next_page_token,
+            )
+            for (const [reserved, entry] of reservations) {
+              if (listed.has(reserved)) {
+                if (entry.phase === 'unobserved') {
+                  reservations.set(reserved, { ...entry, phase: 'observed' })
+                }
+              } else if (!paginated && entry.phase === 'observed') {
+                reservations.delete(reserved)
+              }
+            }
+          }
+        }
+      }
       return sanitizeListRuntimesResult(result, normalizedCaller)
     }
 
@@ -401,7 +435,8 @@ export const createColabRuntimePolicy = (upstream: ColabUpstream, maxConcurrentR
       const reservation = reservations.get(targetRuntime)
       if (
         !result.isError &&
-        reservation?.phase === 'unobserved' &&
+        reservation &&
+        reservation.phase !== 'creating' &&
         reservation.caller === normalizedCaller &&
         !args.allowMissing &&
         !args.allow_missing
@@ -439,6 +474,7 @@ export const createColabRuntimePolicy = (upstream: ColabUpstream, maxConcurrentR
     const runtimeSpec = canonicalJson(parsed.data.runtime)
     const token = await upstream.getToken()
     let isRetry = false
+    let wasObserved = false
     const check = admission.then(async () => {
       context.signal.throwIfAborted()
       const list = await upstream.callTool('list_runtimes', {}, token, context, COLAB_DISCOVERY_TIMEOUT_MS)
@@ -450,15 +486,20 @@ export const createColabRuntimePolicy = (upstream: ColabUpstream, maxConcurrentR
       const existing = reservations.get(resource)
       const matchingRetry =
         existing !== undefined &&
-        existing.phase === 'unobserved' &&
+        (existing.phase === 'unobserved' || (existing.phase === 'observed' && active.has(resource))) &&
         existing.requestId === requestId &&
         existing.runtimeSpec === runtimeSpec &&
         existing.caller === normalizedCaller
       let unlisted = 0
       for (const [reserved, entry] of reservations) {
-        if (!active.has(reserved)) unlisted++
-        else if (entry.phase === 'unobserved' && !(reserved === resource && matchingRetry)) {
+        if (active.has(reserved)) {
+          if (entry.phase === 'unobserved') {
+            reservations.set(reserved, { ...entry, phase: 'observed' })
+          }
+        } else if (entry.phase === 'observed') {
           reservations.delete(reserved)
+        } else {
+          unlisted++
         }
       }
       if (!matchingRetry) {
@@ -477,6 +518,7 @@ export const createColabRuntimePolicy = (upstream: ColabUpstream, maxConcurrentR
       }
       context.signal.throwIfAborted()
       isRetry = matchingRetry
+      wasObserved = active.has(resource)
       reservations.set(resource, { phase: 'creating', requestId, runtimeSpec, caller: normalizedCaller })
     })
     // Only admission takes the lock. The slow creates can run concurrently up to the available slots.
@@ -504,7 +546,14 @@ export const createColabRuntimePolicy = (upstream: ColabUpstream, maxConcurrentR
       )
     } finally {
       if (rejected) reservations.delete(resource)
-      else reservations.set(resource, { phase: 'unobserved', requestId, runtimeSpec, caller: normalizedCaller })
+      else {
+        reservations.set(resource, {
+          phase: wasObserved ? 'observed' : 'unobserved',
+          requestId,
+          runtimeSpec,
+          caller: normalizedCaller,
+        })
+      }
     }
     return sanitizeRuntimeResult(result, normalizedCaller, { enforceOwnedName: true, allowNonRuntimeName: true })
   }

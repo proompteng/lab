@@ -456,4 +456,33 @@ describe('createColabRuntimePolicy security isolation', () => {
     expect(completed.structuredContent).toEqual({ name: `runtimes/${prefixA}r5` })
     expect(createAttempt).toBe(4)
   })
+
+  it('reconciles reservations observed via list_runtimes so stopped runtimes do not leak slots', async () => {
+    const activeRuntimes: Array<{ name: string }> = []
+    const { upstream } = mockUpstream((name, args) => {
+      if (name === 'list_runtimes') return { content: [], structuredContent: { runtimes: [...activeRuntimes] } }
+      if (name === 'create_runtime') {
+        const created = `runtimes/${args.runtimeId}`
+        activeRuntimes.push({ name: created })
+        return { content: [], structuredContent: { name: created } }
+      }
+      return { content: [], structuredContent: {} }
+    })
+    const call = createColabRuntimePolicy(upstream, 5)
+
+    // Five successive runs create a runtime, observe it via list_runtimes, and the runtime then stops upstream.
+    for (let index = 1; index <= 5; index++) {
+      const caller = `agents/run-${index}/uid-${index}`
+      const created = await call('create_runtime', { runtime: {}, runtimeId: `rt${index}` }, context(), caller)
+      expect(created.structuredContent).toEqual({ name: `runtimes/${ownerPrefix(caller)}rt${index}` })
+      const listed = await call('list_runtimes', {}, context(), caller)
+      expect(listed.structuredContent).toEqual({ runtimes: [{ name: `runtimes/${ownerPrefix(caller)}rt${index}` }] })
+      activeRuntimes.length = 0
+    }
+
+    // Because each runtime was observed via list_runtimes before stopping, none leaked a slot.
+    const sixthCaller = 'agents/run-6/uid-6'
+    const sixth = await call('create_runtime', { runtime: {}, runtimeId: 'rt6' }, context(), sixthCaller)
+    expect(sixth.structuredContent).toEqual({ name: `runtimes/${ownerPrefix(sixthCaller)}rt6` })
+  })
 })

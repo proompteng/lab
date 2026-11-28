@@ -76,6 +76,7 @@ it.each(['codex', 'google'] as const)('validates the projected token and active 
   const { verify, reviewToken, run } = fixture(provider)
   await expect(verify('projected-token')).resolves.toEqual({
     agentRun: 'run',
+    agentRunUid: 'run-uid',
     namespace: 'agents',
     serviceAccount: config.serviceAccountsByProvider[provider],
   })

@@ -89,6 +89,7 @@ describe('Auto Ontology MCP projected identity', () => {
     const { get, reviewToken, verify } = fixture()
     await expect(verify('projected-token')).resolves.toEqual({
       agentRun: 'run',
+      agentRunUid: 'run-uid',
       namespace: 'agents',
       serviceAccount: config.expectedServiceAccount,
     })

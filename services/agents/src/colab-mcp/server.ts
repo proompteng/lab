@@ -146,7 +146,8 @@ export const createColabGatewayHandler = (options: {
       tool = input.data.params.name
       const callerNamespace = identity.namespace.trim()
       const callerRun = identity.agentRun.trim()
-      const caller = callerNamespace && callerRun ? `${callerNamespace}/${callerRun}` : ''
+      const callerUid = identity.agentRunUid.trim()
+      const caller = callerNamespace && callerRun && callerUid ? `${callerNamespace}/${callerRun}/${callerUid}` : ''
       const result = await callTool(tool, input.data.params.arguments ?? {}, context, caller)
       if (result.isError) status = 'tool_error'
       return reply(result)
