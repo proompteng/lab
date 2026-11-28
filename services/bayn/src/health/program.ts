@@ -129,6 +129,7 @@ const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, Br
         openOrders: select('open orders read', (value) => value.openOrders),
         recentOrders: select('recent orders read', (value) => value.recentOrders),
         fills: select('recent fills read', (value) => value.recentFills),
+        pendingCashFeeCount: result._tag === 'Available' ? result.value.pendingCashFeeCount : 0,
       }
     }),
     Effect.timeoutOrElse({
@@ -145,6 +146,7 @@ const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, Br
           openOrders: timedOut('open orders read'),
           recentOrders: timedOut('recent orders read'),
           fills: timedOut('recent fills read'),
+          pendingCashFeeCount: 0,
         })
       },
     }),
@@ -153,10 +155,10 @@ const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, Br
 
 const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<ProbeResult<BrokerHealthObservation>> =>
   (read.projection?.healthSnapshot === undefined
-    ? observeBrokerComponents(read, timeoutMs)
+    ? observeBrokerComponents(read, timeoutMs).pipe(Effect.map((results) => ({ ...results, pendingCashFeeCount: 0 })))
     : observeBrokerProjection(read.projection.healthSnapshot, timeoutMs)
   ).pipe(
-    Effect.map((results): ProbeResult<BrokerHealthObservation> => {
+    Effect.map(({ pendingCashFeeCount, ...results }): ProbeResult<BrokerHealthObservation> => {
       const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result] : []))
       if (failures.length > 0) {
         const observationFailure = failures[0]?.observationFailure
@@ -177,13 +179,27 @@ const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<
         results.account.value.value,
         results.accountConfiguration.value.value,
       )
+      if (Result.isFailure(permissions)) {
+        return {
+          _tag: 'Available',
+          value: {
+            accountId: results.account.value.value.id,
+            permissionError: `Alpaca account permission drift detected: ${renderBrokerPermissionFailure(permissions.failure)}`,
+          },
+        }
+      }
+      if (pendingCashFeeCount > 0) {
+        return {
+          _tag: 'Unavailable',
+          error: 'Broker observation is awaiting authoritative cash fee records',
+          observationFailure: 'CASH_FEES_PENDING',
+        }
+      }
       return {
         _tag: 'Available',
         value: {
           accountId: results.account.value.value.id,
-          permissionError: Result.isFailure(permissions)
-            ? `Alpaca account permission drift detected: ${renderBrokerPermissionFailure(permissions.failure)}`
-            : null,
+          permissionError: null,
         },
       }
     }),

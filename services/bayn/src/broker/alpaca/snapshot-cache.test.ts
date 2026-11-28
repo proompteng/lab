@@ -233,7 +233,26 @@ describe('durable broker observations', () => {
           operational: { ready: false },
           broker: { readAvailable: false, reasonCode: 'BROKER_CASH_FEES_PENDING', error: 'BROKER_CASH_FEES_PENDING' },
         })
-        snapshot = { ...snapshot, pendingCashFeeCount: 0 }
+        const blockedSnapshot = {
+          ...snapshot,
+          snapshot: {
+            ...snapshot.snapshot,
+            account: {
+              ...snapshot.snapshot.account,
+              value: { ...snapshot.snapshot.account.value, tradingBlocked: true },
+            },
+          },
+        }
+        snapshot = blockedSnapshot
+        expect(yield* facts()).toMatchObject({
+          operational: { ready: false },
+          broker: {
+            readAvailable: false,
+            reasonCode: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+            error: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+          },
+        })
+        snapshot = { ...observedBrokerSnapshotFixture(accountId, '1970-01-01T00:00:00.000Z'), pendingCashFeeCount: 0 }
         expect(yield* facts()).toMatchObject({
           operational: { ready: true },
           broker: { readAvailable: true, reasonCode: null, error: null },
