@@ -76,6 +76,27 @@ export const providerUsesControllerAuthSecret = (provider: Record<string, unknow
   )
 }
 
+export const resolveProviderSecretEnv = (provider: Record<string, unknown> | null | undefined): unknown[] => {
+  if (!provider) return []
+  const providerSpec = asRecord(provider.spec) ?? provider
+  if (Array.isArray(providerSpec.secretEnv)) return providerSpec.secretEnv
+  const adapter = asRecord(providerSpec.adapter) ?? {}
+  if (Array.isArray(adapter.secretEnv)) return adapter.secretEnv
+  const codexAdapter = asRecord(adapter.codex) ?? {}
+  if (Array.isArray(codexAdapter.secretEnv)) return codexAdapter.secretEnv
+  const agyAdapter = asRecord(adapter.agy) ?? {}
+  return Array.isArray(agyAdapter.secretEnv) ? agyAdapter.secretEnv : []
+}
+
+export const extractProviderSecretEnvNames = (provider: Record<string, unknown> | null | undefined): string[] => {
+  const names = new Set<string>()
+  for (const entry of resolveProviderSecretEnv(provider)) {
+    const secretName = asString(asRecord(entry)?.secretName)?.trim()
+    if (secretName) names.add(secretName)
+  }
+  return Array.from(names)
+}
+
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const matchesPattern = (value: string, pattern: string) => {
@@ -178,6 +199,19 @@ export const validateAuthSecretPolicy = (allowedSecrets: string[], authSecret: A
       ok: false as const,
       reason: 'SecretNotAllowed',
       message: `auth secret ${authSecret.name} is not allowlisted by the Agent`,
+    }
+  }
+  return { ok: true as const }
+}
+
+export const validateProviderSecretEnvPolicy = (allowedSecrets: string[], providerSecretNames: string[]) => {
+  if (allowedSecrets.length === 0 || providerSecretNames.length === 0) return { ok: true as const }
+  const forbidden = providerSecretNames.filter((secret) => !allowedSecrets.includes(secret))
+  if (forbidden.length > 0) {
+    return {
+      ok: false as const,
+      reason: 'SecretNotAllowed',
+      message: `provider secretEnv references disallowed secrets: ${forbidden.join(', ')}`,
     }
   }
   return { ok: true as const }

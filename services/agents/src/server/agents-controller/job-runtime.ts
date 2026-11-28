@@ -6,7 +6,7 @@ import { asRecord, asString, readNested } from '../primitives'
 import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
 import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../../workspace-cache'
-import { providerUsesControllerAuthSecret } from './policy'
+import { providerUsesControllerAuthSecret, resolveProviderSecretEnv } from './policy'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
@@ -182,17 +182,6 @@ const buildJobResources = (
     ...(Object.keys(requests).length > 0 ? { requests } : {}),
     ...(Object.keys(limits).length > 0 ? { limits } : {}),
   }
-}
-
-const resolveProviderSecretEnv = (providerSpec: Record<string, unknown>) => {
-  if (Array.isArray(providerSpec.secretEnv)) return providerSpec.secretEnv
-  const adapter = asRecord(providerSpec.adapter) ?? {}
-  const adapterSecretEnv = adapter.secretEnv
-  if (Array.isArray(adapterSecretEnv)) return adapterSecretEnv
-  const codexAdapter = asRecord(adapter.codex) ?? {}
-  if (Array.isArray(codexAdapter.secretEnv)) return codexAdapter.secretEnv
-  const agyAdapter = asRecord(adapter.agy) ?? {}
-  return Array.isArray(agyAdapter.secretEnv) ? agyAdapter.secretEnv : []
 }
 
 const buildProviderSecretEnv = (providerSpec: Record<string, unknown>): EnvVar[] => {

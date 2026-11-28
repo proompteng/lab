@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  extractProviderSecretEnvNames,
   matchesAnyPattern,
   normalizeLabelMap,
   providerUsesControllerAuthSecret,
   validateAuthSecretPolicy,
   validateImagePolicy,
   validateLabelPolicy,
+  validateProviderSecretEnvPolicy,
 } from '~/server/agents-controller/policy'
 
 afterEach(() => {
@@ -112,5 +114,28 @@ describe('agents controller policy module', () => {
         spec: { binary: '/usr/local/bin/anypi-runner', adapter: { type: 'exec' } },
       }),
     ).toBe(false)
+  })
+
+  it('extracts and validates provider secretEnv secret names against Agent allowedSecrets', () => {
+    expect(
+      extractProviderSecretEnvNames({
+        spec: {
+          secretEnv: [
+            { name: 'GOOGLE_APPLICATION_CREDENTIALS_JSON', secretName: 'google-adc-auth', key: 'credentials.json' },
+            { name: 'EXTRA', secretName: 'google-adc-auth', key: 'other' },
+          ],
+        },
+      }),
+    ).toEqual(['google-adc-auth'])
+
+    expect(validateProviderSecretEnvPolicy(['github-token'], ['google-adc-auth'])).toEqual({
+      ok: false,
+      reason: 'SecretNotAllowed',
+      message: 'provider secretEnv references disallowed secrets: google-adc-auth',
+    })
+    expect(validateProviderSecretEnvPolicy(['github-token', 'google-adc-auth'], ['google-adc-auth'])).toEqual({
+      ok: true,
+    })
+    expect(validateProviderSecretEnvPolicy([], ['google-adc-auth'])).toEqual({ ok: true })
   })
 })

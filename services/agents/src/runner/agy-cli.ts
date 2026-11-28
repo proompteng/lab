@@ -26,7 +26,6 @@ import {
   buildTemplateContext,
   isRecord,
   renderOutputArtifacts,
-  renderTemplate,
   type AgentProviderOutputArtifact,
   type AgentRunnerSpec,
   type AgyCliAdapterConfig,
@@ -129,16 +128,9 @@ const loadRunPayload = async (spec: AgentRunnerSpec): Promise<AgentRunPayload> =
   return parsed
 }
 
-const resolvePrompt = (spec: AgentRunnerSpec, adapter: AgyCliAdapterConfig, runPayload: AgentRunPayload): string => {
-  const runtimeContext = {
-    ...buildTemplateContext(spec),
-    run: runPayload,
-    env: process.env,
-  }
-  if (adapter.prompt) {
-    const rendered = nonBlankStringPreserve(renderTemplate(adapter.prompt, runtimeContext))
-    if (rendered) return rendered
-  }
+const resolvePrompt = (adapter: AgyCliAdapterConfig, runPayload: AgentRunPayload): string => {
+  const adapterPrompt = nonBlankStringPreserve(adapter.prompt)
+  if (adapterPrompt) return adapterPrompt
   const impl = isRecord(runPayload.implementation) ? runPayload.implementation : {}
   const event = isRecord(runPayload.event) ? runPayload.event : {}
   const candidates = [runPayload.prompt, impl.text, impl.summary, runPayload.issueBody, event.body]
@@ -354,7 +346,7 @@ export const runAgyCliAdapter = async (
       run: runPayload,
     })
 
-    const rawPrompt = resolvePrompt(spec, adapter, runPayload)
+    const rawPrompt = resolvePrompt(adapter, runPayload)
     const systemPrompt = await readRunnerSystemPrompt(adapter, spec, runPayload)
     const effectivePrompt = composeAgyPrompt(rawPrompt, systemPrompt)
 

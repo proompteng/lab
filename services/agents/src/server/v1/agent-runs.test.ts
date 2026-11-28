@@ -1010,4 +1010,80 @@ describe('AgentRun v1 API', () => {
     expect(body.details).toMatchObject({ namespace: 'agents', agentName: 'demo-agent' })
     expect(kube.createManifest).not.toHaveBeenCalled()
   })
+
+  it('requires secretBindingRef for provider secretEnv even when secrets is explicitly empty', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    vi.mocked(kube.get).mockImplementation(async (resource, name, namespace) => {
+      if (resource === RESOURCE_MAP.Agent && name === 'gemini-neon-agent' && namespace === 'agents') {
+        return {
+          spec: {
+            providerRef: { name: 'gemini-neon' },
+            security: { allowedSecrets: ['google-adc-auth'] },
+          },
+        }
+      }
+      if (resource === RESOURCE_MAP.AgentProvider && name === 'gemini-neon' && namespace === 'agents') {
+        return {
+          spec: {
+            binary: '/usr/local/bin/agent-runner',
+            adapter: { type: 'agy-cli' },
+            secretEnv: [
+              { name: 'GOOGLE_APPLICATION_CREDENTIALS_JSON', secretName: 'google-adc-auth', key: 'credentials.json' },
+            ],
+          },
+        }
+      }
+      return null
+    })
+
+    const validatePolicies = vi.fn(async () => {})
+    const blocked = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'gemini-neon-agent' },
+        namespace: 'agents',
+        secrets: [],
+        implementation: { text: 'Test literal prompt' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies,
+      },
+    )
+
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toMatchObject({
+      error: 'secretBindingRef is required when secrets are requested',
+    })
+    expect(validatePolicies).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
+
+    const allowed = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'gemini-neon-agent' },
+        namespace: 'agents',
+        secrets: [],
+        policy: { secretBindingRef: 'gemini-neon-secrets' },
+        implementation: { text: 'Test literal prompt' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies,
+      },
+    )
+
+    expect(allowed.status).toBe(201)
+    expect(validatePolicies).toHaveBeenCalledWith(
+      'agents',
+      expect.objectContaining({
+        secretBindingRef: 'gemini-neon-secrets',
+        requiredSecrets: ['google-adc-auth'],
+      }),
+      kube,
+    )
+  })
 })

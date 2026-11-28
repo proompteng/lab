@@ -10,10 +10,12 @@ import { hashAgentRunImmutableSpec } from './immutable-spec'
 import type { verifyJobConfigMaps } from './job-runtime'
 import { resolveMemory } from './namespace-state'
 import {
+  extractProviderSecretEnvNames,
   type ImagePolicyCandidate,
   providerUsesControllerAuthSecret,
   validateAuthSecretPolicy,
   validateImagePolicy,
+  validateProviderSecretEnvPolicy,
 } from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import { resolveImplementation, resolveParameters } from './run-utils'
@@ -352,8 +354,10 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     }
 
     const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+    const providerSecretNames = extractProviderSecretEnvNames(provider)
     const blockedSecrets = collectBlockedSecrets([
       ...runSecrets,
+      ...providerSecretNames,
       ...(memorySecretName ? [memorySecretName] : []),
       ...(authSecret ? [authSecret.name] : []),
     ])
@@ -368,6 +372,10 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const authSecretPolicy = validateAuthSecretPolicy(allowedSecrets, authSecret)
     if (!authSecretPolicy.ok) {
       return authSecretPolicy
+    }
+    const providerSecretEnvPolicy = validateProviderSecretEnvPolicy(allowedSecrets, providerSecretNames)
+    if (!providerSecretEnvPolicy.ok) {
+      return providerSecretEnvPolicy
     }
     if (memorySecretName) {
       if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {

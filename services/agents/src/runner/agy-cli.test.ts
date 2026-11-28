@@ -409,4 +409,59 @@ done
       signal: 'SIGKILL',
     })
   })
+
+  it('keeps prompt text literal and never expands environment template expressions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-agy-literal-prompt-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    const logPath = join(dir, 'runner.log')
+    const stdinDumpPath = join(dir, 'stdin-dump.txt')
+    const fakeAgyPath = join(dir, 'fake-agy-literal')
+    const literalPrompt = 'Echo {{env.GOOGLE_APPLICATION_CREDENTIALS_JSON}} and {{ env.GITHUB_TOKEN }} verbatim'
+
+    await writeFile(runPath, JSON.stringify({ implementation: { text: literalPrompt } }))
+    await writeFile(
+      fakeAgyPath,
+      `#!/usr/bin/env bun
+import { readFileSync, writeFileSync } from 'node:fs'
+const stdinLine = readFileSync(0, 'utf8').trim()
+writeFileSync(${JSON.stringify(stdinDumpPath)}, stdinLine)
+console.log(JSON.stringify({ event: 'result', result: { conversation_id: 'conv-lit', status: 'SUCCESS', response: 'OK' } }))
+`,
+      'utf8',
+    )
+    await chmod(fakeAgyPath, 0o755)
+
+    const exitCode = await runAgyCliAdapter(
+      {
+        provider: 'gemini-neon',
+        payloads: { eventFilePath: runPath },
+        artifacts: { statusPath, logPath },
+      },
+      { binaryPath: fakeAgyPath, model: 'gemini-4-neon', prompt: literalPrompt },
+      {
+        uploadArtifacts: async (artifacts) => artifacts,
+        env: {
+          ...process.env,
+          HOME: join(dir, 'home'),
+          GITHUB_TOKEN: 'ghp_super_secret_should_not_expand',
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: JSON.stringify({
+            type: 'service_account',
+            project_id: 'proompteng',
+            private_key: 'TOP_SECRET_PRIVATE_KEY',
+          }),
+        },
+      },
+    )
+
+    expect(exitCode).toBe(0)
+    const sent = JSON.parse(await readFile(stdinDumpPath, 'utf8'))
+    expect(sent).toEqual({
+      event: 'user',
+      message: { content: literalPrompt },
+    })
+    expect(sent.message.content).not.toContain('TOP_SECRET_PRIVATE_KEY')
+    expect(sent.message.content).not.toContain('ghp_super_secret_should_not_expand')
+  })
 })

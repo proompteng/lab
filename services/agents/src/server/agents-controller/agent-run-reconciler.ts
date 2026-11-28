@@ -10,11 +10,13 @@ import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
 import {
+  extractProviderSecretEnvNames,
   normalizeLabelMap,
   providerUsesControllerAuthSecret,
   validateAuthSecretPolicy,
   validateImagePolicy,
   validateLabelPolicy,
+  validateProviderSecretEnvPolicy,
 } from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import {
@@ -963,8 +965,10 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
       const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+      const providerSecretNames = extractProviderSecretEnvNames(resolvedProvider)
       const blockedSecrets = collectBlockedSecrets([
         ...runSecrets,
+        ...providerSecretNames,
         ...(memorySecretName ? [memorySecretName] : []),
         ...(authSecret ? [authSecret.name] : []),
       ])
@@ -995,6 +999,23 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           message: authSecretPolicy.message,
         })
         logInvalidSpec(authSecretPolicy.reason, authSecretPolicy.message)
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          conditions: updated,
+          phase: 'Failed',
+          contract: contractStatus,
+        })
+        return
+      }
+      const providerSecretEnvPolicy = validateProviderSecretEnvPolicy(allowedSecrets, providerSecretNames)
+      if (!providerSecretEnvPolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: providerSecretEnvPolicy.reason,
+          message: providerSecretEnvPolicy.message,
+        })
+        logInvalidSpec(providerSecretEnvPolicy.reason, providerSecretEnvPolicy.message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           conditions: updated,
