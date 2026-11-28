@@ -1,0 +1,33 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: google
+spec:
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: agy-cli
+    agy:
+      model: gemini-4-neon
+      effort: high
+      cwd: /workspace/lab
+      dangerouslySkipPermissions: true
+      adcAuth: true
+      quotaProject: proompteng
+      location: global
+  secretEnv:
+    - name: GOOGLE_APPLICATION_CREDENTIALS_JSON
+      secretName: google-adc-auth
+      key: credentials.json
+  argsTemplate: []
+  envTemplate:
+    AGY_CLI_DISABLE_AUTO_UPDATE: "true"
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
+  outputArtifacts:
+    - name: runner-result
+      path: /workspace/.agent/result.json
+      key: "{{ inputs.artifactKey }}"
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

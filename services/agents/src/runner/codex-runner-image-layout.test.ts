@@ -20,6 +20,8 @@ describe('Agents Codex runner image layout', () => {
   it('builds the production runner with the complete Nix toolchain', () => {
     const content = image()
     expect(content).toContain('runnerTools.contents ++ [')
+    expect(content).toContain('antigravityCli = import ./antigravity-cli.nix')
+    expect(content).toContain('AGY_CLI_DISABLE_AUTO_UPDATE=true')
     expect(content).toContain('agentsShellInterpreterCompat')
     expect(content).toContain('PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1')
     expect(content).toContain('runner-acceptance.sh')
@@ -80,6 +82,7 @@ describe('Agents Codex runner image layout', () => {
       const bundle = await readFile(outfile, 'utf8')
       expect(bundle).toContain('// services/agents/src/runner/codex-app-server.ts')
       expect(bundle).toContain('// services/agents/src/runner/pstack.ts')
+      expect(bundle).toContain('// services/agents/src/runner/agy-cli.ts')
       expect(bundle).not.toMatch(/from ["']effect["']/)
       expect(bundle).not.toMatch(/require\(["']effect["']\)/)
       expect(bundle).not.toMatch(/import\(["']effect["']\)/)
