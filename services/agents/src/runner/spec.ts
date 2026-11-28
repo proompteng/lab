@@ -55,7 +55,8 @@ export type CodexAppServerAdapterConfig = {
   systemPromptExpectedHash?: string
 }
 
-export type AgyCliEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export const AGY_CLI_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+export type AgyCliEffort = (typeof AGY_CLI_EFFORTS)[number]
 
 export type AgyCliAdapterConfig = {
   binaryPath?: string

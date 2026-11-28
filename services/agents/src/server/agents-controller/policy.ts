@@ -1,6 +1,34 @@
+import { AGY_CLI_EFFORTS } from '../../runner/spec'
 import { asRecord, asString, readNested } from '../primitives'
 
 import { parseEnvStringList } from './env-config'
+
+export type ProviderAdapterType = 'codex-app-server' | 'agy-cli' | 'exec'
+
+export const MODEL_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/
+export const CODEX_APP_SERVER_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+export type CodexAppServerEffort = (typeof CODEX_APP_SERVER_EFFORTS)[number]
+
+const AGY_CLI_EFFORT_SET = new Set<string>(AGY_CLI_EFFORTS)
+const CODEX_APP_SERVER_EFFORT_SET = new Set<string>(CODEX_APP_SERVER_EFFORTS)
+
+export type ProviderModelEffortOverrideResult =
+  | {
+      ok: true
+      adapterType: ProviderAdapterType
+      model?: string
+      effort?: string
+    }
+  | {
+      ok: false
+      reason:
+        | 'InvalidModelOverride'
+        | 'ModelOverrideNotAllowed'
+        | 'InvalidEffortOverride'
+        | 'EffortOverrideNotAllowed'
+        | 'InvalidProviderConfig'
+      message: string
+    }
 
 export type ImagePolicyCandidate = {
   image: string
@@ -61,19 +89,165 @@ export const isAutonomousCodexProvider = (provider: Record<string, unknown>) => 
   })
 }
 
+const isAgentRunnerBinary = (binary: string | null) =>
+  !binary || binary === '/usr/local/bin/agent-runner' || binary.endsWith('/agent-runner')
+
+export const resolveProviderAdapterType = (provider: Record<string, unknown>): ProviderAdapterType => {
+  const spec = asRecord(provider.spec) ?? provider
+  const explicitType = asString(readNested(spec, ['adapter', 'type']))
+  if (explicitType === 'exec') return 'exec'
+  if (explicitType === 'agy-cli') return 'agy-cli'
+  if (explicitType === 'codex-app-server') return 'codex-app-server'
+  return isAgentRunnerBinary(asString(spec.binary)) ? 'codex-app-server' : 'exec'
+}
+
 export const providerUsesControllerAuthSecret = (provider: Record<string, unknown>) => {
   const spec = asRecord(provider.spec) ?? provider
   const adapterType = asString(readNested(spec, ['adapter', 'type']))
   if (adapterType === 'agy-cli') return false
   if (adapterType === 'exec') return isAutonomousCodexProvider(provider)
   if (adapterType === 'codex-app-server') return true
-  const binary = asString(spec.binary)
-  return (
-    isAutonomousCodexProvider(provider) ||
-    !binary ||
-    binary === '/usr/local/bin/agent-runner' ||
-    binary.endsWith('/agent-runner')
-  )
+  return isAutonomousCodexProvider(provider) || isAgentRunnerBinary(asString(spec.binary))
+}
+
+const parseProviderAllowlist = (
+  value: unknown,
+  fieldPath: string,
+): { ok: true; values: string[] | null } | { ok: false; reason: 'InvalidProviderConfig'; message: string } => {
+  if (value === undefined || value === null) return { ok: true, values: null }
+  if (!Array.isArray(value)) {
+    return {
+      ok: false,
+      reason: 'InvalidProviderConfig',
+      message: `${fieldPath} must be an array of non-empty strings`,
+    }
+  }
+  const values: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.trim().length === 0) {
+      return {
+        ok: false,
+        reason: 'InvalidProviderConfig',
+        message: `${fieldPath} must contain only non-empty strings`,
+      }
+    }
+    values.push(entry.trim())
+  }
+  return { ok: true, values }
+}
+
+export const validateProviderModelEffortOverrides = (
+  provider: Record<string, unknown>,
+  parameters: Record<string, unknown>,
+  options: { context?: string } = {},
+): ProviderModelEffortOverrideResult => {
+  const adapterType = resolveProviderAdapterType(provider)
+  if (adapterType === 'exec') {
+    return { ok: true, adapterType }
+  }
+
+  const prefix = (message: string) => (options.context ? `${options.context}: ${message}` : message)
+  const spec = asRecord(provider.spec) ?? provider
+  const adapter = asRecord(spec.adapter) ?? {}
+  const adapterKey = adapterType === 'agy-cli' ? 'agy' : 'codex'
+  const adapterConfig = asRecord(adapter[adapterKey]) ?? {}
+  const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? adapterType
+
+  const allowedModels = parseProviderAllowlist(adapterConfig.allowedModels, `adapter.${adapterKey}.allowedModels`)
+  if (!allowedModels.ok) {
+    return { ok: false, reason: allowedModels.reason, message: prefix(allowedModels.message) }
+  }
+  const allowedEfforts = parseProviderAllowlist(adapterConfig.allowedEfforts, `adapter.${adapterKey}.allowedEfforts`)
+  if (!allowedEfforts.ok) {
+    return { ok: false, reason: allowedEfforts.reason, message: prefix(allowedEfforts.message) }
+  }
+
+  let model: string | undefined
+  if (Object.prototype.hasOwnProperty.call(parameters, 'model') && parameters.model !== undefined) {
+    const rawModel = parameters.model
+    if (typeof rawModel !== 'string') {
+      return {
+        ok: false,
+        reason: 'InvalidModelOverride',
+        message: prefix('parameters.model must be a string'),
+      }
+    }
+    if (rawModel.trim().length === 0) {
+      return {
+        ok: false,
+        reason: 'InvalidModelOverride',
+        message: prefix('parameters.model must not be empty'),
+      }
+    }
+    if (!MODEL_IDENTIFIER_PATTERN.test(rawModel)) {
+      return {
+        ok: false,
+        reason: 'InvalidModelOverride',
+        message: prefix(
+          'parameters.model must match ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$ without whitespace, control characters, or a leading "-"',
+        ),
+      }
+    }
+    if (allowedModels.values !== null && !allowedModels.values.includes(rawModel)) {
+      return {
+        ok: false,
+        reason: 'ModelOverrideNotAllowed',
+        message: prefix(
+          allowedModels.values.length === 0
+            ? `parameters.model "${rawModel}" is not allowed by AgentProvider ${providerName} (model overrides are disabled)`
+            : `parameters.model "${rawModel}" is not allowed by AgentProvider ${providerName} (allowed: ${allowedModels.values.join(', ')})`,
+        ),
+      }
+    }
+    model = rawModel
+  }
+
+  let effort: string | undefined
+  if (Object.prototype.hasOwnProperty.call(parameters, 'effort') && parameters.effort !== undefined) {
+    const rawEffort = parameters.effort
+    if (typeof rawEffort !== 'string') {
+      return {
+        ok: false,
+        reason: 'InvalidEffortOverride',
+        message: prefix('parameters.effort must be a string'),
+      }
+    }
+    if (rawEffort.trim().length === 0) {
+      return {
+        ok: false,
+        reason: 'InvalidEffortOverride',
+        message: prefix('parameters.effort must not be empty'),
+      }
+    }
+    const supportedEfforts = adapterType === 'agy-cli' ? AGY_CLI_EFFORTS : CODEX_APP_SERVER_EFFORTS
+    const supportedSet = adapterType === 'agy-cli' ? AGY_CLI_EFFORT_SET : CODEX_APP_SERVER_EFFORT_SET
+    if (!supportedSet.has(rawEffort)) {
+      return {
+        ok: false,
+        reason: 'InvalidEffortOverride',
+        message: prefix(`parameters.effort must be one of ${supportedEfforts.join(', ')} for ${adapterType}`),
+      }
+    }
+    if (allowedEfforts.values !== null && !allowedEfforts.values.includes(rawEffort)) {
+      return {
+        ok: false,
+        reason: 'EffortOverrideNotAllowed',
+        message: prefix(
+          allowedEfforts.values.length === 0
+            ? `parameters.effort "${rawEffort}" is not allowed by AgentProvider ${providerName} (effort overrides are disabled)`
+            : `parameters.effort "${rawEffort}" is not allowed by AgentProvider ${providerName} (allowed: ${allowedEfforts.values.join(', ')})`,
+        ),
+      }
+    }
+    effort = rawEffort
+  }
+
+  return {
+    ok: true,
+    adapterType,
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+  }
 }
 
 export const resolveProviderSecretEnv = (provider: Record<string, unknown> | null | undefined): unknown[] => {

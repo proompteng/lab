@@ -84,4 +84,109 @@ describe('workflow source and workload identity policy', () => {
       message: 'implementation source provider github is not allowlisted',
     })
   })
+
+  it('rejects a workflow with invalid base or step model/effort overrides as InvalidSpec before submitting jobs', async () => {
+    const googleAgent = {
+      metadata: { name: 'google-agent' },
+      spec: { providerRef: { name: 'google' } },
+    }
+    const googleProvider = {
+      metadata: { name: 'google' },
+      spec: {
+        binary: '/usr/local/bin/agent-runner',
+        adapter: {
+          type: 'agy-cli',
+          agy: {
+            model: 'gemini-4-neon',
+            effort: 'high',
+            allowedModels: ['gemini-4-neon', 'gemini-2.5-pro'],
+          },
+        },
+      },
+    }
+    const googleKube = {
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) return googleAgent
+        if (resource === RESOURCE_MAP.AgentProvider) return googleProvider
+        return null
+      }),
+    }
+
+    const dependencies = makeDependencies()
+    const reconciler = createWorkflowReconciler(dependencies)
+
+    await reconciler.reconcileWorkflowRun(
+      googleKube as never,
+      {
+        metadata: { name: 'google-wf-bad-base', namespace: 'agents', generation: 1 },
+        spec: {
+          agentRef: { name: 'google-agent' },
+          implementation: { inline: { text: 'Implement change.' } },
+          parameters: { model: 'gemini-2.0-flash' },
+          runtime: { type: 'workflow', config: {} },
+          workflow: { steps: [{ name: 'implement' }] },
+        },
+      },
+      'agents',
+      [],
+      { initialSubmit: true },
+    )
+
+    expect(dependencies.submitJobRun).not.toHaveBeenCalled()
+    expect(dependencies.setStatus).toHaveBeenLastCalledWith(
+      googleKube,
+      expect.any(Object),
+      expect.objectContaining({
+        phase: 'Failed',
+        reason: 'ModelOverrideNotAllowed',
+        conditions: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'ModelOverrideNotAllowed',
+          }),
+        ]),
+      }),
+    )
+
+    await reconciler.reconcileWorkflowRun(
+      googleKube as never,
+      {
+        metadata: { name: 'google-wf-bad-step', namespace: 'agents', generation: 1 },
+        spec: {
+          agentRef: { name: 'google-agent' },
+          implementation: { inline: { text: 'Implement change.' } },
+          parameters: { model: 'gemini-2.5-pro' },
+          runtime: { type: 'workflow', config: {} },
+          workflow: {
+            steps: [
+              { name: 'plan', parameters: { effort: 'low' } },
+              { name: 'implement', parameters: { effort: 'ultra' } },
+            ],
+          },
+        },
+      },
+      'agents',
+      [],
+      { initialSubmit: true },
+    )
+
+    expect(dependencies.submitJobRun).not.toHaveBeenCalled()
+    expect(dependencies.setStatus).toHaveBeenLastCalledWith(
+      googleKube,
+      expect.any(Object),
+      expect.objectContaining({
+        phase: 'Failed',
+        reason: 'InvalidEffortOverride',
+        message: expect.stringContaining('workflow step implement:'),
+        conditions: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'InvalidEffortOverride',
+          }),
+        ]),
+      }),
+    )
+  })
 })

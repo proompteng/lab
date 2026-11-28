@@ -884,4 +884,222 @@ describe('agents controller job-runtime module', () => {
     expect(container.volumeMounts.find((mount) => mount.mountPath === '/root/.gemini')).toBeDefined()
     expect(job.spec.template.spec.volumes.find((vol) => vol.secret?.secretName === 'codex-auth')).toBeUndefined()
   })
+
+  it('applies validated parameters.model and parameters.effort overrides for agy-cli and preserves unspecified defaults', async () => {
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+    }
+
+    const provider = {
+      metadata: { name: 'google' },
+      spec: {
+        binary: '/usr/local/bin/agent-runner',
+        adapter: {
+          type: 'agy-cli',
+          agy: {
+            model: 'gemini-4-neon',
+            effort: 'high',
+            cwd: '/workspace/lab',
+            allowedModels: ['gemini-4-neon', 'gemini-2.5-pro'],
+            allowedEfforts: ['low', 'medium', 'high', 'xhigh'],
+          },
+        },
+      },
+    }
+
+    await submitJobRun(
+      kube as never,
+      {
+        metadata: { name: 'google-override-both', uid: 'uid-both', namespace: 'agents' },
+        spec: { parameters: { model: 'gemini-2.5-pro', effort: 'xhigh' } },
+      },
+      { metadata: { name: 'google-agent' }, spec: {} },
+      provider,
+      { text: 'Run with overridden model and effort' },
+      null,
+      'agents',
+      'registry.example/agents-codex-runner:standard',
+      'job',
+    )
+
+    const bothSpecCm = applied.find(
+      (resource) =>
+        resource.kind === 'ConfigMap' &&
+        (resource.metadata as Record<string, unknown>)?.name === 'google-override-both-spec',
+    ) as { data?: Record<string, string> } | undefined
+    const bothRunnerSpec = JSON.parse(bothSpecCm?.data?.['agent-runner.json'] ?? '{}') as {
+      adapter?: { type?: string; agy?: Record<string, unknown> }
+    }
+    expect(bothRunnerSpec.adapter).toEqual({
+      type: 'agy-cli',
+      agy: {
+        cwd: '/workspace/lab',
+        model: 'gemini-2.5-pro',
+        effort: 'xhigh',
+        dangerouslySkipPermissions: true,
+        prompt: 'Run with overridden model and effort',
+        adcAuth: true,
+        location: 'global',
+      },
+    })
+    expect(bothRunnerSpec.adapter?.agy).not.toHaveProperty('allowedModels')
+    expect(bothRunnerSpec.adapter?.agy).not.toHaveProperty('allowedEfforts')
+
+    await submitJobRun(
+      kube as never,
+      {
+        metadata: { name: 'google-override-effort-only', uid: 'uid-effort', namespace: 'agents' },
+        spec: { parameters: { effort: 'low' } },
+      },
+      { metadata: { name: 'google-agent' }, spec: {} },
+      provider,
+      { text: 'Run with overridden effort only' },
+      null,
+      'agents',
+      'registry.example/agents-codex-runner:standard',
+      'job',
+    )
+
+    const effortOnlySpecCm = applied.find(
+      (resource) =>
+        resource.kind === 'ConfigMap' &&
+        (resource.metadata as Record<string, unknown>)?.name === 'google-override-effort-only-spec',
+    ) as { data?: Record<string, string> } | undefined
+    const effortOnlyRunnerSpec = JSON.parse(effortOnlySpecCm?.data?.['agent-runner.json'] ?? '{}') as {
+      adapter?: { agy?: Record<string, unknown> }
+    }
+    expect(effortOnlyRunnerSpec.adapter?.agy?.model).toBe('gemini-4-neon')
+    expect(effortOnlyRunnerSpec.adapter?.agy?.effort).toBe('low')
+  })
+
+  it('applies validated parameters.model and parameters.effort overrides for codex-app-server', async () => {
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+    }
+
+    await submitJobRun(
+      kube as never,
+      {
+        metadata: { name: 'codex-override-run', uid: 'uid-codex', namespace: 'agents' },
+        spec: { parameters: { model: 'gpt-5.4', effort: 'ultra' } },
+      },
+      { metadata: { name: 'codex-agent' }, spec: {} },
+      {
+        metadata: { name: 'codex' },
+        spec: {
+          binary: '/usr/local/bin/agent-runner',
+          adapter: {
+            type: 'codex-app-server',
+            codex: {
+              model: 'gpt-6.2-sol',
+              effort: 'max',
+              allowedModels: ['gpt-6.2-sol', 'gpt-5.4'],
+              allowedEfforts: ['high', 'max', 'ultra'],
+            },
+          },
+        },
+      },
+      { text: 'Run codex override' },
+      null,
+      'agents',
+      'registry.example/agents-codex-runner:standard',
+      'job',
+    )
+
+    const specCm = applied.find((resource) => resource.kind === 'ConfigMap') as
+      | { data?: Record<string, string> }
+      | undefined
+    const runnerSpec = JSON.parse(specCm?.data?.['agent-runner.json'] ?? '{}') as {
+      adapter?: { codex?: Record<string, unknown> }
+    }
+    expect(runnerSpec.adapter?.codex?.model).toBe('gpt-5.4')
+    expect(runnerSpec.adapter?.codex?.effort).toBe('ultra')
+    expect(runnerSpec.adapter?.codex).not.toHaveProperty('allowedModels')
+    expect(runnerSpec.adapter?.codex).not.toHaveProperty('allowedEfforts')
+  })
+
+  it('rejects invalid or disallowed model/effort overrides in submitJobRun before applying resources', async () => {
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => resource),
+    }
+
+    const googleProvider = {
+      metadata: { name: 'google' },
+      spec: {
+        binary: '/usr/local/bin/agent-runner',
+        adapter: {
+          type: 'agy-cli',
+          agy: {
+            model: 'gemini-4-neon',
+            effort: 'high',
+            allowedModels: ['gemini-4-neon'],
+          },
+        },
+      },
+    }
+
+    await expect(
+      submitJobRun(
+        kube as never,
+        {
+          metadata: { name: 'google-bad-flag', namespace: 'agents' },
+          spec: { parameters: { model: '--dangerously-skip-permissions' } },
+        },
+        { metadata: { name: 'google-agent' }, spec: {} },
+        googleProvider,
+        { text: 'Should fail' },
+        null,
+        'agents',
+        'registry.example/agents-codex-runner:standard',
+        'job',
+      ),
+    ).rejects.toThrow('InvalidModelOverride')
+
+    await expect(
+      submitJobRun(
+        kube as never,
+        {
+          metadata: { name: 'google-disallowed-model', namespace: 'agents' },
+          spec: { parameters: { model: 'gemini-2.5-pro' } },
+        },
+        { metadata: { name: 'google-agent' }, spec: {} },
+        googleProvider,
+        { text: 'Should fail' },
+        null,
+        'agents',
+        'registry.example/agents-codex-runner:standard',
+        'job',
+      ),
+    ).rejects.toThrow('ModelOverrideNotAllowed')
+
+    await expect(
+      submitJobRun(
+        kube as never,
+        {
+          metadata: { name: 'google-bad-effort', namespace: 'agents' },
+          spec: { parameters: { effort: 'ultra' } },
+        },
+        { metadata: { name: 'google-agent' }, spec: {} },
+        googleProvider,
+        { text: 'Should fail' },
+        null,
+        'agents',
+        'registry.example/agents-codex-runner:standard',
+        'job',
+      ),
+    ).rejects.toThrow('InvalidEffortOverride')
+
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
 })

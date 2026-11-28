@@ -260,6 +260,62 @@ Expected payload shape:
 }
 ```
 
+## Google Agent (`google-agent`) And Per-Run Model/Effort Overrides
+
+`google-agent` targets `AgentProvider/google` (`adapter.type: agy-cli`), which defaults to `model: gemini-4-neon` and
+`effort: high`, mounts `google-adc-auth` via provider `secretEnv`, and uses `vcsRef: github`.
+
+Callers using either `google-agent` (`agy-cli`) or `codex-agent` (`codex-app-server`) can override model or reasoning
+effort per run via `spec.parameters.model` and `spec.parameters.effort` (or per workflow step via
+`spec.workflow.steps[].parameters`) without creating separate `AgentProvider` manifests. Omitting either parameter
+preserves the provider default.
+
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: google-override-example
+  namespace: agents
+spec:
+  agentRef:
+    name: google-agent
+  implementation:
+    inline:
+      text: Implement the requested change and validate affected tests.
+  ttlSecondsAfterFinished: 7200
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/google-override-example
+    model: gemini-2.5-pro
+    effort: xhigh
+  runtime:
+    type: job
+  secrets:
+    - github-token
+    - google-adc-auth
+```
+
+Validation rules:
+
+- `parameters.model` must be non-empty and match `^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$` (no whitespace, control
+  characters, or leading `-`).
+- `parameters.effort` must be a supported effort for the provider adapter:
+  - `agy-cli`: `low`, `medium`, `high`, `xhigh`, `max`
+  - `codex-app-server`: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
+- An `AgentProvider` can optionally restrict overrides with `spec.adapter.{agy,codex}.allowedModels` and
+  `spec.adapter.{agy,codex}.allowedEfforts` string arrays (when omitted, any syntactically valid model and supported
+  effort are accepted; an empty array disables overrides for that field).
+- Invalid or disallowed overrides fail reconciliation with condition `InvalidSpec` instead of silently falling back or
+  launching a Job.
+
+After apply, verify the resolved adapter settings in the generated runner ConfigMap:
+
+```bash
+CM=$(kubectl -n agents get cm -l agents.proompteng.ai/agent-run=google-override-example -o jsonpath='{.items[0].metadata.name}')
+kubectl -n agents get cm "$CM" -o jsonpath='{.data.agent-runner\.json}' | jq '.adapter'
+```
+
 ## Preflight: Validate References Before `kubectl apply`
 
 Run this check before creating an AgentRun:

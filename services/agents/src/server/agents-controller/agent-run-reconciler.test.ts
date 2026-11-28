@@ -550,4 +550,119 @@ describe('agents controller agent-run reconciler', () => {
     expect(kube.get).toHaveBeenCalledWith('job', 'run-1-job', 'agents')
     expect(setStatus).not.toHaveBeenCalled()
   })
+
+  it('rejects a direct job AgentRun with invalid or disallowed model/effort overrides as InvalidSpec', async () => {
+    const setStatus = vi.fn(async () => undefined)
+    const submitJobRun = vi.fn()
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string) => {
+        if (kind === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'google-agent' },
+            spec: { providerRef: { name: 'google' } },
+          }
+        }
+        if (kind === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'google' },
+            spec: {
+              binary: '/usr/local/bin/agent-runner',
+              adapter: {
+                type: 'agy-cli',
+                agy: {
+                  model: 'gemini-4-neon',
+                  effort: 'high',
+                  allowedEfforts: ['medium', 'high'],
+                },
+              },
+            },
+          }
+        }
+        return null
+      }),
+    }
+    const reconciler = createAgentRunReconciler(createBaseDependencies({ setStatus, submitJobRun }))
+    const concurrency = {
+      perNamespace: 10,
+      perAgent: 10,
+      cluster: 10,
+      repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+    }
+    const inFlight = { total: 0, perAgent: new Map(), perRepository: new Map() }
+
+    await reconciler.reconcileAgentRun(
+      kube as never,
+      {
+        metadata: { name: 'google-bad-model', namespace: 'agents', generation: 1 },
+        spec: {
+          agentRef: { name: 'google-agent' },
+          runtime: { type: 'job' },
+          implementation: { inline: { text: 'Run task' } },
+          parameters: { model: '--mode=plan' },
+          workload: {},
+        },
+      },
+      'agents',
+      [],
+      [],
+      concurrency,
+      inFlight,
+      0,
+    )
+
+    expect(submitJobRun).not.toHaveBeenCalled()
+    expect(setStatus).toHaveBeenLastCalledWith(
+      kube,
+      expect.any(Object),
+      expect.objectContaining({
+        phase: 'Failed',
+        reason: 'InvalidModelOverride',
+        conditions: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'InvalidModelOverride',
+          }),
+        ]),
+      }),
+    )
+
+    await reconciler.reconcileAgentRun(
+      kube as never,
+      {
+        metadata: { name: 'google-disallowed-effort', namespace: 'agents', generation: 1 },
+        spec: {
+          agentRef: { name: 'google-agent' },
+          runtime: { type: 'job' },
+          implementation: { inline: { text: 'Run task' } },
+          parameters: { effort: 'xhigh' },
+          workload: {},
+        },
+      },
+      'agents',
+      [],
+      [],
+      concurrency,
+      inFlight,
+      0,
+    )
+
+    expect(submitJobRun).not.toHaveBeenCalled()
+    expect(setStatus).toHaveBeenLastCalledWith(
+      kube,
+      expect.any(Object),
+      expect.objectContaining({
+        phase: 'Failed',
+        reason: 'EffortOverrideNotAllowed',
+        conditions: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'EffortOverrideNotAllowed',
+          }),
+        ]),
+      }),
+    )
+  })
 })
