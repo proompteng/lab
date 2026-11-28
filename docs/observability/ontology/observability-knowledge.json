@@ -1,0 +1,89 @@
+{
+  "acronyms": [
+    {
+      "description": "Grafana Alloy is a telemetry collector. In Galactic, the central Alloy collector discovers Kubernetes targets, filters Prometheus metrics before remote write to Mimir, and forwards selected logs to Loki.",
+      "name": "Alloy"
+    },
+    {
+      "description": "The number of distinct metric series or log streams formed by their label combinations. An unbounded label can create a new series or stream for every event and exhaust ingestion capacity.",
+      "name": "Cardinality"
+    },
+    {
+      "description": "The dashboard and exploration UI for Galactic telemetry. Its provisioned data sources query Mimir for metrics, Loki for logs, and Tempo for traces, with links between logs and traces by trace ID.",
+      "name": "Grafana"
+    },
+    {
+      "description": "Loki's query language. Start with a stream label selector, then filter or parse log lines; range aggregations can derive metrics from matching records.",
+      "name": "LogQL"
+    },
+    {
+      "description": "OpenTelemetry Protocol, used to export telemetry such as metrics, logs, and traces over gRPC or HTTP. Galactic's Tempo distributor enables both OTLP transports for traces.",
+      "name": "OTLP"
+    },
+    {
+      "description": "PodDisruptionBudget, a Kubernetes resource that constrains voluntary evictions of matching pods. It does not protect against node loss or limit a workload controller's rolling update.",
+      "name": "PDB"
+    },
+    {
+      "description": "A metrics monitoring and alerting system. Galactic's central Alloy collector scrapes Prometheus-format metrics and remote-writes them to Mimir, which provides a Prometheus-compatible query API.",
+      "name": "Prometheus"
+    },
+    {
+      "description": "Prometheus Query Language, used to select and aggregate time series. Galactic uses PromQL in Mimir recording and alerting rules and in Grafana metrics panels.",
+      "name": "PromQL"
+    },
+    {
+      "description": "A Prometheus Operator custom resource that selects Kubernetes Services and describes how to scrape their endpoints. Creating one does not add a target to Galactic's explicitly configured central Alloy collector.",
+      "name": "ServiceMonitor"
+    },
+    {
+      "description": "Service Level Indicator, a measured aspect of service behavior, such as the fraction of eligible requests served successfully. Specify the population and window; missing telemetry does not indicate success.",
+      "name": "SLI"
+    },
+    {
+      "description": "Service Level Objective, a target for an SLI over a defined window. A success-ratio objective determines the allowable fraction of unsuccessful events, or error budget.",
+      "name": "SLO"
+    },
+    {
+      "description": "Tempo's query language for finding traces by span attributes, duration, status, or relationships between spans.",
+      "name": "TraceQL"
+    }
+  ],
+  "customAnalyses": [],
+  "dataSource": "observability",
+  "rules": [
+    {
+      "description": "Use bounded labels such as service, namespace, and normalized route. Never use request or trace IDs, raw URLs, or other unbounded values as metric or log-stream labels. Review Alloy allowlists and estimate added series and streams before enabling collection; verify headroom under Mimir's 300,000-series shared tenant limit.",
+      "name": "Bound telemetry cardinality",
+      "provenance": {
+        "sourceCommit": "aa0a2d91f1f20dca27e59634655311676f26d102",
+        "verificationNote": "See cluster-metrics-alloy-config.river for allowlists, mimir-values.yaml for the anonymous tenant limit, and loki-v3-values.yaml for the stream label limit, all in argocd/applications/observability/."
+      }
+    },
+    {
+      "description": "Never emit secrets or personally identifiable information (PII) in metrics, logs, or traces, including labels, exemplars, log bodies, and span attributes or events. Exclude sensitive fields at the producer and allowlist or redact before forwarding. Test with synthetic data, not real credentials or personal records.",
+      "name": "Keep telemetry free of secrets and PII",
+      "provenance": {
+        "sourceCommit": "aa0a2d91f1f20dca27e59634655311676f26d102",
+        "verificationNote": "The bayn_rgw_logs pipeline in argocd/applications/observability/cluster-metrics-alloy-config.river drops unrelated records and emits only approved receipt fields, omitting headers, query strings, and principals. This is a scoped example, not a stack-wide redaction guarantee."
+      }
+    },
+    {
+      "description": "Budget Ceph object storage from observed ingest volume, bucket growth, and available headroom. Loki log expiry is disabled, Mimir blocks have no age expiry, and Tempo trace blocks retain 48 hours. Loki's 168-hour sample admission window is not retention. Review any new expiry or shorter retention separately because deleted history cannot be recovered by reverting config.",
+      "name": "Review retention and storage budgets",
+      "provenance": {
+        "sourceCommit": "aa0a2d91f1f20dca27e59634655311676f26d102",
+        "verificationNote": "See argocd/applications/observability/loki-v3-values.yaml and the observability README's linked LGTM section in docs/runbooks/cluster-performance-audit-2026-11-27.md for admission, retention, and storage headroom."
+      }
+    },
+    {
+      "description": "Extract graf-rules.yaml from the Mimir rules ConfigMap. Run promtool check rules on that file and promtool test rules with matching fixtures. For changed alerts, cover firing delays, recovery, and missing telemetry where relevant; for recording rules, verify expected values and labels.",
+      "name": "Test Prometheus rules with promtool",
+      "provenance": {
+        "sourceCommit": "aa0a2d91f1f20dca27e59634655311676f26d102",
+        "verificationNote": "See graf-mimir-rules.yaml, the promtool example in README.md, and the alert and recording rule scenarios in tests/ under argocd/applications/observability/."
+      }
+    }
+  ],
+  "version": 1
+}
