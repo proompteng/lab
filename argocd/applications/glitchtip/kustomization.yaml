@@ -115,7 +115,8 @@ patches:
                   initialDelaySeconds: 120
                   periodSeconds: 10
                   timeoutSeconds: 8
-                  failureThreshold: 5
+                  # Allow a 65s slowdown plus up to 60s of scheduler retry backoff.
+                  failureThreshold: 15
   - target:
       kind: Pod
       name: glitchtip-test-connection

@@ -26,8 +26,9 @@ export const createAutoOntologyGatewayHandler =
     if (request.method === 'GET' && path === '/healthz') return json(200, { status: 'ok' })
     if (request.method === 'GET' && path === '/readyz') {
       try {
-        // Catalog readiness is reported by the tool, not by the pod probe.
-        await options.upstream.checkReadiness(request.signal)
+        // Probe unauthenticated /api/health so kubelet readiness checks avoid Better Auth API-key row-lock contention.
+        // Catalog readiness is reported by the check_readiness tool, not by the pod probe.
+        await options.upstream.checkHealth(request.signal)
         return json(200, { status: 'ok' })
       } catch {
         return json(503, { status: 'degraded' })
