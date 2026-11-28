@@ -81,20 +81,26 @@ For deterministic CPU reproduction (e.g. CI or verification without CUDA), pass 
 Inspect `/tmp/experiment_receipt.json` and confirm:
 
 - `schemaVersion == "bayn.colab-cpcv-receipt.v1"` and `devCutoff == "2023-12-29"`,
-- top candidate passes plateau robustness (`plateau.medianNeighborSharpe`), DSR haircut (`dsr.dsr5bp`, `dsr.dsr10bp`), cost-surface resilience across `[2, 5, 10, 15]` bp, and decorrelation / marginal Sharpe lift against `B0`/`F4`/`O1`.
+- top candidate passes plateau robustness (`plateau.medianNeighborSharpe`), purged/embargoed CPCV train-to-test generalization (`cpcv.pbo`, `cpcv.meanOosRankDegradation`, `cpcvSelection`), DSR haircut (`dsr.dsr5bp`, `dsr.dsr10bp`), cost-surface resilience across `[2, 5, 10, 15]` bp, and decorrelation / marginal Sharpe lift against `B0`/`F4`/`O1`.
 
 Encode the selected `topCandidates[0].parameters` (`lookbackDays`, `volWindowDays`, `entryZScore`, `rebalanceCadenceDays`, `topK`, `targetVol`, `longOnly`) as pure, immutable TypeScript rules under `services/bayn/src/strategy/<sleeve>/policy.ts` (never load JSON strategy files at runtime) with colocated unit tests, then commit the Bayn source changes before running the holdout gate.
 
 ## 4. Single-Shot Sealed-Holdout Verification on Galactic
 
-Run the two-step `--develop` -> `--score <receipt>` protocol on Galactic so the sealed holdout (`2024-01-02` to `2026-11-25`) is opened **once** against the committed, content-addressed development receipt:
+Bayn's walk-forward evaluators do **not** read or automatically ingest `experiment_receipt.json` (for example, `services/bayn/tools/research-noise-area-v4.ts` only evaluates its own compiled noise-area v4 arms).
+
+Before opening the sealed holdout (`2024-01-02` to `2026-11-25`):
+
+1. Register the compiled strategy from `services/bayn/src/strategy/<sleeve>/policy.ts` as a named candidate arm in the owning study, or add a dedicated walk-forward evaluator `services/bayn/tools/research-<sleeve>.ts` following the same two-step `--develop` -> `--score <receipt>` protocol and clean-git-tree checks as `services/bayn/tools/research-noise-area-v4.ts`.
+2. Commit all Bayn source changes so the development receipt binds the exact git commit SHA.
+3. Run `--develop` on Galactic to generate a **fresh** 64-hex development receipt for that registered arm/evaluator on the dev split only, then run `--score <64-hex-development-receipt>` **once** against the sealed holdout:
 
 ```sh
-# Step 1: Lock the committed candidate on dev split only and print its 64-hex development receipt
-bun services/bayn/tools/research-noise-area-v4.ts --develop
+# Step 1: Lock the committed sleeve/arm on dev split only and emit its fresh 64-hex development receipt
+bun services/bayn/tools/research-<sleeve>.ts --develop
 
-# Step 2: Single-shot sealed-holdout scoring against the exact development receipt
-bun services/bayn/tools/research-noise-area-v4.ts --score <64-hex-development-receipt>
+# Step 2: Single-shot sealed-holdout scoring against that exact development receipt
+bun services/bayn/tools/research-<sleeve>.ts --score <64-hex-development-receipt>
 ```
 
 Remove `/tmp/bayn-dev-cube` and `/tmp/experiment_receipt.json` once the research run is archived.

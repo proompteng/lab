@@ -509,12 +509,18 @@ def marginal_portfolio_metrics(
 
 def resolve_device(requested: str = "auto") -> tuple[str, Any]:
     """Select CUDA/XLA PyTorch accelerator when available, else NumPy CPU."""
-    if requested == "cpu" or torch is None:
+    if requested == "cpu":
         return "numpy-cpu", None
     if requested == "cuda":
+        if torch is None:
+            raise RuntimeError("CUDA requested via --device cuda, but PyTorch is not installed")
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA requested via --device cuda, but torch.cuda.is_available() is False")
         return "cuda", torch.device("cuda")
+    if requested != "auto":
+        raise ValueError(f"Unsupported device request: {requested!r}")
+    if torch is None:
+        return "numpy-cpu", None
     if torch.cuda.is_available():
         return "cuda", torch.device("cuda")
     try:  # pragma: no cover - Google Colab TPU runtime
@@ -549,67 +555,119 @@ def default_parameter_grid(n_assets: int) -> list[CandidateParams]:
     return grid
 
 
+@dataclass(frozen=True)
+class PrecomputedFeatures:
+    close_valid: np.ndarray  # shape (T, A), bool
+    mom: dict[int, np.ndarray]
+    mom_valid: dict[int, np.ndarray]
+    vol: dict[int, np.ndarray]
+    vol_valid: dict[int, np.ndarray]
+
+
 def _precompute_features(
     closes: np.ndarray,
     returns: np.ndarray,
     lookbacks: set[int],
     vol_windows: set[int],
-) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
-    """Precompute causal rolling momentum and trailing volatility matrices on CPU/NumPy."""
+) -> PrecomputedFeatures:
+    """Precompute causal rolling momentum, trailing volatility, and strict validity masks."""
     t_len, a_len = closes.shape
+    close_valid = np.isfinite(closes) & (closes > 0.0)
+    ret_valid = np.zeros((t_len, a_len), dtype=bool)
+    if t_len > 1:
+        ret_valid[1:] = close_valid[:-1] & close_valid[1:]
+
+    csum_close = np.vstack([np.zeros((1, a_len), dtype=np.int64), np.cumsum(close_valid.astype(np.int64), axis=0)])
+    csum_ret_valid = np.vstack([np.zeros((1, a_len), dtype=np.int64), np.cumsum(ret_valid.astype(np.int64), axis=0)])
+    clean_returns = np.where(ret_valid, returns, 0.0)
+    csum_r = np.vstack([np.zeros((1, a_len), dtype=np.float64), np.cumsum(clean_returns, axis=0)])
+    csum_r2 = np.vstack([np.zeros((1, a_len), dtype=np.float64), np.cumsum(clean_returns * clean_returns, axis=0)])
+
     mom_cache: dict[int, np.ndarray] = {}
+    mom_valid_cache: dict[int, np.ndarray] = {}
     for lb in sorted(lookbacks):
-        mom = np.zeros((t_len, a_len), dtype=np.float64)
-        if lb < t_len:
+        mom = np.full((t_len, a_len), np.nan, dtype=np.float64)
+        mom_valid = np.zeros((t_len, a_len), dtype=bool)
+        if lb >= 1 and lb < t_len:
             past = closes[:-lb]
             curr = closes[lb:]
-            valid = np.isfinite(past) & np.isfinite(curr) & (past > 0.0)
-            mom[lb:] = np.where(valid, curr / past - 1.0, 0.0)
+            full_window = (csum_close[lb + 1 :] - csum_close[: t_len - lb]) == (lb + 1)
+            valid = full_window & np.isfinite(past) & np.isfinite(curr) & (past > 0.0) & (curr > 0.0)
+            mom_valid[lb:] = valid
+            mom[lb:] = np.where(valid, curr / past - 1.0, np.nan)
         mom_cache[lb] = mom
+        mom_valid_cache[lb] = mom_valid
 
     vol_cache: dict[int, np.ndarray] = {}
+    vol_valid_cache: dict[int, np.ndarray] = {}
     for vw in sorted(vol_windows):
-        vol = np.full((t_len, a_len), 0.15, dtype=np.float64)
+        vol = np.full((t_len, a_len), np.nan, dtype=np.float64)
+        vol_valid = np.zeros((t_len, a_len), dtype=bool)
         if vw >= 2 and vw < t_len:
-            csum = np.vstack([np.zeros((1, a_len)), np.cumsum(returns, axis=0)])
-            csum2 = np.vstack([np.zeros((1, a_len)), np.cumsum(returns * returns, axis=0)])
-            window_mean = (csum[vw:] - csum[:-vw]) / float(vw)
+            full_window = (csum_ret_valid[vw:] - csum_ret_valid[:-vw]) == vw
+            window_mean = (csum_r[vw:] - csum_r[:-vw]) / float(vw)
             window_var = np.maximum(
                 0.0,
-                (csum2[vw:] - csum2[:-vw] - float(vw) * window_mean * window_mean) / float(vw - 1),
+                (csum_r2[vw:] - csum_r2[:-vw] - float(vw) * window_mean * window_mean) / float(vw - 1),
             )
             ann_vol = np.sqrt(window_var * ANNUAL_SESSIONS)
-            # Align strictly causally: window [t - vw + 1 .. t] uses returns up to close of day t.
-            vol[vw - 1 :] = np.maximum(0.04, ann_vol)
+            # Align strictly causally: window [t - vw + 1 .. t] uses vw valid returns up to close of day t.
+            vol_valid[vw - 1 :] = full_window
+            vol[vw - 1 :] = np.where(full_window, np.maximum(0.04, ann_vol), np.nan)
         vol_cache[vw] = vol
-    return mom_cache, vol_cache
+        vol_valid_cache[vw] = vol_valid
+
+    return PrecomputedFeatures(
+        close_valid=close_valid,
+        mom=mom_cache,
+        mom_valid=mom_valid_cache,
+        vol=vol_cache,
+        vol_valid=vol_valid_cache,
+    )
 
 
 def _build_candidate_weights(
     params: CandidateParams,
     mom: np.ndarray,
     vol: np.ndarray,
-) -> np.ndarray:
-    """Build causal end-of-day target weights W[t, a] (applied to day t+1 returns)."""
+    valid_mask: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build causal scheduled target weights W_target[t, a] and rebalance_mask[t].
+
+    Assets failing valid_mask (missing price, incomplete momentum lookback, or incomplete
+    volatility window) are excluded from cross-sectional z-scoring, ranking, and weighting.
+    Between rebalance dates, weights drift according to realized returns in
+    _evaluate_weights_vectorized rather than being silently rebalanced daily.
+    """
     t_len, a_len = mom.shape
-    weights = np.zeros((t_len, a_len), dtype=np.float64)
+    target_weights = np.zeros((t_len, a_len), dtype=np.float64)
+    rebalance_mask = np.zeros(t_len, dtype=bool)
     warmup = max(params.lookback_days, params.vol_window_days)
     if warmup >= t_len:
-        return weights
+        return target_weights, rebalance_mask
 
-    # Cross-sectional z-score of risk-adjusted momentum at each date.
-    raw_score = mom / np.maximum(vol, 0.04)
-    row_mean = np.mean(raw_score, axis=1, keepdims=True)
-    row_std = np.std(raw_score, axis=1, ddof=0, keepdims=True)
+    if valid_mask is None:
+        mask = np.isfinite(mom) & np.isfinite(vol) & (vol > 0.0)
+    else:
+        mask = valid_mask & np.isfinite(mom) & np.isfinite(vol) & (vol > 0.0)
+
+    # Cross-sectional z-score of risk-adjusted momentum strictly over valid assets at each date.
+    safe_vol = np.where(mask, np.maximum(vol, 0.04), 1.0)
+    raw_score = np.where(mask, mom / safe_vol, 0.0)
+    valid_count = np.sum(mask, axis=1, keepdims=True).astype(np.float64)
+    safe_count = np.where(valid_count > 0.0, valid_count, 1.0)
+    row_mean = np.sum(raw_score, axis=1, keepdims=True) / safe_count
+    centered = np.where(mask, raw_score - row_mean, 0.0)
+    row_var = np.sum(centered * centered, axis=1, keepdims=True) / safe_count
+    row_std = np.sqrt(row_var)
     safe_std = np.where(row_std > 1e-12, row_std, 1.0)
-    z_scores = np.where(row_std > 1e-12, (raw_score - row_mean) / safe_std, 0.0)
+    z_scores = np.where(mask, np.where(row_std > 1e-12, centered / safe_std, 0.0), np.nan)
 
-    current = np.zeros(a_len, dtype=np.float64)
     for t in range(warmup, t_len):
         if (t - warmup) % params.rebalance_cadence_days == 0:
+            rebalance_mask[t] = True
             scores_t = z_scores[t]
-            eligible = np.flatnonzero(scores_t >= params.entry_z_score)
-            target = np.zeros(a_len, dtype=np.float64)
+            eligible = np.flatnonzero(mask[t] & np.isfinite(scores_t) & (scores_t >= params.entry_z_score))
             if len(eligible) > 0:
                 order = eligible[np.argsort(-scores_t[eligible], kind="mergesort")]
                 chosen = order[: params.top_k]
@@ -618,41 +676,96 @@ def _build_candidate_weights(
                 # Volatility scaling capped at 1.0x gross leverage (no unmodeled margin).
                 port_vol = float(np.sqrt(np.sum((base_w * vol[t, chosen]) ** 2)))
                 scale = min(1.0, params.target_vol / max(port_vol, 0.04))
-                target[chosen] = base_w * scale
-            current = target
-        weights[t] = current
-    return weights
+                target_weights[t, chosen] = base_w * scale
+    return target_weights, rebalance_mask
 
 
 def _evaluate_weights_vectorized(
-    weights_stack: np.ndarray,  # (M, T, A)
+    target_weights_stack: np.ndarray,  # (M, T, A)
+    rebalance_masks: np.ndarray,  # (M, T) bool
     asset_returns: np.ndarray,  # (T, A)
     cost_bps: tuple[int, ...],
     backend: str,
     device: Any,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute net return tensor (M, C, T) and one-way turnover (M, T) on GPU or CPU."""
-    m_count, t_len, _ = weights_stack.shape
+    *,
+    return_realized_weights: bool = False,
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Simulate drifted portfolio weights, one-way turnover, and net returns (M, C, T).
+
+    Between scheduled rebalance dates, end-of-day weights drift with realized returns:
+        w_post = w_t * (1 + r_t) / (1 + sum(w_t * r_t))
+    with implied cash weight c_post = (1 - sum(w_t)) / (1 + sum(w_t * r_t)).
+    On rebalance dates, one-way turnover is measured against the drifted end-of-day
+    weights: 0.5 * sum(|w_target - w_drifted|), charging true drift restoration costs.
+    """
+    m_count, t_len, a_len = target_weights_stack.shape
     c_count = len(cost_bps)
     if backend in ("cuda", "xla") and torch is not None and device is not None:  # pragma: no cover - GPU path
         with torch.no_grad():
-            w_t = torch.as_tensor(weights_stack, dtype=torch.float64, device=device)
+            targets_t = torch.as_tensor(target_weights_stack, dtype=torch.float64, device=device)
+            reb_t = torch.as_tensor(rebalance_masks, dtype=torch.bool, device=device)
             r_t = torch.as_tensor(asset_returns, dtype=torch.float64, device=device)
-            prev_w = torch.zeros_like(w_t)
-            prev_w[:, 1:, :] = w_t[:, :-1, :]
-            gross = torch.einsum("mta,ta->mt", prev_w, r_t)
-            turnover = 0.5 * torch.sum(torch.abs(w_t - prev_w), dim=-1)
+            w_curr = torch.zeros((m_count, a_len), dtype=torch.float64, device=device)
+            gross = torch.zeros((m_count, t_len), dtype=torch.float64, device=device)
+            turnover = torch.zeros((m_count, t_len), dtype=torch.float64, device=device)
+            realized = (
+                torch.zeros((m_count, t_len, a_len), dtype=torch.float64, device=device)
+                if return_realized_weights
+                else None
+            )
+            for t in range(t_len):
+                ret_day = r_t[t]
+                g_day = torch.sum(w_curr * ret_day[None, :], dim=-1)
+                gross[:, t] = g_day
+                denom = 1.0 + g_day
+                safe_denom = torch.where(denom > 1e-12, denom, torch.ones_like(denom))
+                w_drifted = torch.where(
+                    (denom > 1e-12)[:, None],
+                    w_curr * (1.0 + ret_day[None, :]) / safe_denom[:, None],
+                    torch.zeros_like(w_curr),
+                )
+                is_reb = reb_t[:, t]
+                target_day = targets_t[:, t, :]
+                day_turnover = 0.5 * torch.sum(torch.abs(target_day - w_drifted), dim=-1)
+                turnover[:, t] = torch.where(is_reb, day_turnover, torch.zeros_like(day_turnover))
+                w_curr = torch.where(is_reb[:, None], target_day, w_drifted)
+                if realized is not None:
+                    realized[:, t, :] = w_curr
             costs = torch.tensor([bp / 10_000.0 for bp in cost_bps], dtype=torch.float64, device=device)
             net = gross[:, None, :] - costs[None, :, None] * turnover[:, None, :]
+            if realized is not None:
+                return net.cpu().numpy(), turnover.cpu().numpy(), realized.cpu().numpy()
             return net.cpu().numpy(), turnover.cpu().numpy()
 
-    prev_w = np.zeros_like(weights_stack)
-    prev_w[:, 1:, :] = weights_stack[:, :-1, :]
-    gross = np.einsum("mta,ta->mt", prev_w, asset_returns, optimize=True)
-    turnover = 0.5 * np.sum(np.abs(weights_stack - prev_w), axis=-1)
+    w_curr = np.zeros((m_count, a_len), dtype=np.float64)
+    gross = np.zeros((m_count, t_len), dtype=np.float64)
+    turnover = np.zeros((m_count, t_len), dtype=np.float64)
+    realized_np = np.zeros((m_count, t_len, a_len), dtype=np.float64) if return_realized_weights else None
+
+    for t in range(t_len):
+        ret_day = asset_returns[t]
+        g_day = np.sum(w_curr * ret_day[None, :], axis=-1)
+        gross[:, t] = g_day
+        denom = 1.0 + g_day
+        safe_denom = np.where(denom > 1e-12, denom, 1.0)
+        w_drifted = np.where(
+            (denom > 1e-12)[:, None],
+            w_curr * (1.0 + ret_day[None, :]) / safe_denom[:, None],
+            0.0,
+        )
+        is_reb = rebalance_masks[:, t]
+        target_day = target_weights_stack[:, t, :]
+        day_turnover = 0.5 * np.sum(np.abs(target_day - w_drifted), axis=-1)
+        turnover[:, t] = np.where(is_reb, day_turnover, 0.0)
+        w_curr = np.where(is_reb[:, None], target_day, w_drifted)
+        if realized_np is not None:
+            realized_np[:, t, :] = w_curr
+
     costs = np.array([bp / 10_000.0 for bp in cost_bps], dtype=np.float64)
     net = gross[:, None, :] - costs[None, :, None] * turnover[:, None, :]
     assert net.shape == (m_count, c_count, t_len)
+    if realized_np is not None:
+        return net, turnover, realized_np
     return net, turnover
 
 
@@ -703,6 +816,15 @@ def compute_plateau_scores(
     return results
 
 
+def _annualized_sharpe(series: np.ndarray) -> float | None:
+    if len(series) < 2 or not np.all(np.isfinite(series)):
+        return None
+    std = float(np.std(series, ddof=1))
+    if not math.isfinite(std) or std <= 0.0:
+        return None
+    return float(np.mean(series)) / std * math.sqrt(ANNUAL_SESSIONS)
+
+
 def run_cpcv_sweep(
     cube: DevCubeData,
     *,
@@ -735,22 +857,42 @@ def run_cpcv_sweep(
         embargo_sessions=embargo_sessions,
     )
 
-    mom_cache, vol_cache = _precompute_features(
+    features = _precompute_features(
         cube.closes,
         cube.returns,
         {c.lookback_days for c in grid},
         {c.vol_window_days for c in grid},
     )
 
-    weights_stack = np.stack(
-        [_build_candidate_weights(c, mom_cache[c.lookback_days], vol_cache[c.vol_window_days]) for c in grid],
-        axis=0,
+    target_weights_list: list[np.ndarray] = []
+    rebalance_masks_list: list[np.ndarray] = []
+    for c in grid:
+        valid_mask = features.close_valid & features.mom_valid[c.lookback_days] & features.vol_valid[c.vol_window_days]
+        t_w, r_m = _build_candidate_weights(
+            c,
+            features.mom[c.lookback_days],
+            features.vol[c.vol_window_days],
+            valid_mask=valid_mask,
+        )
+        target_weights_list.append(t_w)
+        rebalance_masks_list.append(r_m)
+
+    target_weights_stack = np.stack(target_weights_list, axis=0)
+    rebalance_masks = np.stack(rebalance_masks_list, axis=0)
+    net_returns, turnover = _evaluate_weights_vectorized(
+        target_weights_stack,
+        rebalance_masks,
+        cube.returns,
+        cost_bps,
+        backend,
+        device,
     )
-    net_returns, turnover = _evaluate_weights_vectorized(weights_stack, cube.returns, cost_bps, backend, device)
 
     sel_idx = cost_bps.index(selection_cost_bp)
     stress_idx = cost_bps.index(stress_cost_bp)
     n_trials = len(grid)
+    n_splits = len(splits)
+    candidate_ids = [c.candidate_id() for c in grid]
 
     # Cross-sectional daily Sharpe dispersion across all N trials at selection & stress costs for DSR.
     def daily_sharpes_at(c_idx: int) -> np.ndarray:
@@ -764,9 +906,14 @@ def run_cpcv_sweep(
     sel_sr_std = float(np.std(sel_daily_sharpes, ddof=1)) if n_trials >= 2 else 0.0
     stress_sr_std = float(np.std(stress_daily_sharpes, ddof=1)) if n_trials >= 2 else 0.0
 
-    # Evaluate CPCV fold OOS Sharpes for every candidate and cost level.
+    # Compute per-split in-sample train Sharpes (strictly on purged/embargoed train_indices)
+    # and out-of-sample test Sharpes (strictly on test_indices) for every candidate & cost.
+    train_sharpes = np.full((len(cost_bps), n_splits, n_trials), np.nan, dtype=np.float64)
+    test_sharpes = np.full((len(cost_bps), n_splits, n_trials), np.nan, dtype=np.float64)
+
     cpcv_summary: list[dict[str, dict[str, float | None]]] = []
     selection_cpcv_sharpes: list[float] = []
+    selection_train_sharpes: list[float | None] = []
     stress_cpcv_sharpes: list[float] = []
     dsr_records: list[dict[str, float | int | None]] = []
     baseline_records: list[dict[str, Any]] = []
@@ -777,23 +924,33 @@ def run_cpcv_sweep(
             r_series = net_returns[i, c_i]
             t_series = turnover[i]
             full_metrics = compute_series_metrics(r_series, t_series)
-            fold_sharpes: list[float] = []
-            for sp in splits:
-                fold_r = r_series[sp.test_indices]
-                fold_std = float(np.std(fold_r, ddof=1)) if len(fold_r) >= 2 else 0.0
-                if fold_std > 0.0:
-                    fold_sharpes.append(float(np.mean(fold_r)) / fold_std * math.sqrt(ANNUAL_SESSIONS))
+            fold_train_sharpes: list[float] = []
+            fold_test_sharpes: list[float] = []
+            for s_i, sp in enumerate(splits):
+                tr_sr = _annualized_sharpe(r_series[sp.train_indices])
+                if tr_sr is not None:
+                    train_sharpes[c_i, s_i, i] = tr_sr
+                    fold_train_sharpes.append(tr_sr)
+                te_sr = _annualized_sharpe(r_series[sp.test_indices])
+                if te_sr is not None:
+                    test_sharpes[c_i, s_i, i] = te_sr
+                    fold_test_sharpes.append(te_sr)
             by_cost[str(bp)] = {
                 **full_metrics,
-                "cpcvMeanSharpe": float(np.mean(fold_sharpes)) if fold_sharpes else None,
-                "cpcvMedianSharpe": float(statistics.median(fold_sharpes)) if fold_sharpes else None,
-                "cpcvMinSharpe": float(min(fold_sharpes)) if fold_sharpes else None,
+                "cpcvTrainMeanSharpe": float(np.mean(fold_train_sharpes)) if fold_train_sharpes else None,
+                "cpcvTrainMedianSharpe": float(statistics.median(fold_train_sharpes)) if fold_train_sharpes else None,
+                "cpcvTrainMinSharpe": float(min(fold_train_sharpes)) if fold_train_sharpes else None,
+                "cpcvMeanSharpe": float(np.mean(fold_test_sharpes)) if fold_test_sharpes else None,
+                "cpcvMedianSharpe": float(statistics.median(fold_test_sharpes)) if fold_test_sharpes else None,
+                "cpcvMinSharpe": float(min(fold_test_sharpes)) if fold_test_sharpes else None,
             }
         cpcv_summary.append(by_cost)
 
         sel_med = by_cost[str(selection_cost_bp)]["cpcvMedianSharpe"]
+        sel_train_med = by_cost[str(selection_cost_bp)]["cpcvTrainMedianSharpe"]
         stress_med = by_cost[str(stress_cost_bp)]["cpcvMedianSharpe"]
         selection_cpcv_sharpes.append(sel_med if sel_med is not None else float("-inf"))
+        selection_train_sharpes.append(sel_train_med)
         stress_cpcv_sharpes.append(stress_med if stress_med is not None else float("-inf"))
 
         dsr_sel, sr0_sel = deflated_sharpe_ratio(net_returns[i, sel_idx], n_trials, sel_sr_std)
@@ -808,41 +965,148 @@ def run_cpcv_sweep(
         )
         baseline_records.append(marginal_portfolio_metrics(net_returns[i, sel_idx], cube.baselines))
 
+    # On each CPCV split, rank and select the winner strictly on purged/embargoed train_indices,
+    # then evaluate the train-selected winner strictly on test_indices (PBO & OOS rank degradation).
+    train_selection_counts = [0] * n_trials
+    candidate_train_ranks: list[list[float]] = [[] for _ in range(n_trials)]
+    winner_train_sharpes: list[float] = []
+    winner_test_sharpes: list[float] = []
+    winner_stress_test_sharpes: list[float] = []
+    winner_sharpe_degradations: list[float] = []
+    split_omegas: list[float] = []
+    split_logits: list[float] = []
+    split_rank_degradations: list[float] = []
+    split_selections: list[dict[str, Any]] = []
+
+    for s_i, sp in enumerate(splits):
+        tr_row = train_sharpes[sel_idx, s_i, :]
+        te_row = test_sharpes[sel_idx, s_i, :]
+        te_stress_row = test_sharpes[stress_idx, s_i, :]
+
+        valid_tr = np.flatnonzero(np.isfinite(tr_row))
+        if len(valid_tr) == 0:
+            split_selections.append(
+                {
+                    "splitId": sp.split_id,
+                    "testGroups": list(sp.test_groups),
+                    "trainSessions": int(len(sp.train_indices)),
+                    "testSessions": int(len(sp.test_indices)),
+                    "purgedSessions": int(len(sp.purged_indices)),
+                    "embargoedSessions": int(len(sp.embargoed_indices)),
+                    "trainWinnerId": None,
+                    "trainWinnerTrainSharpe": None,
+                    "trainWinnerTestSharpe": None,
+                    "oosRelativeRank": None,
+                    "oosRankDegradation": None,
+                }
+            )
+            continue
+
+        # In-sample ranking strictly from purged/embargoed train_indices (1 = best).
+        tr_safe = np.where(np.isfinite(tr_row), tr_row, float("-inf"))
+        for i in range(n_trials):
+            greater = int(np.sum(tr_safe > tr_safe[i]))
+            equal = int(np.sum(tr_safe == tr_safe[i]))
+            candidate_train_ranks[i].append(greater + 0.5 * (equal + 1.0))
+
+        # Deterministic selection of train-only winner (tie-break by candidateId).
+        winner_idx = min(valid_tr.tolist(), key=lambda idx: (-float(tr_row[idx]), candidate_ids[idx]))
+        train_selection_counts[winner_idx] += 1
+
+        w_train_sr = float(tr_row[winner_idx])
+        w_test_sr = float(te_row[winner_idx]) if math.isfinite(te_row[winner_idx]) else None
+        w_stress_sr = float(te_stress_row[winner_idx]) if math.isfinite(te_stress_row[winner_idx]) else None
+        winner_train_sharpes.append(w_train_sr)
+        if w_test_sr is not None:
+            winner_test_sharpes.append(w_test_sr)
+            winner_sharpe_degradations.append(w_train_sr - w_test_sr)
+        if w_stress_sr is not None:
+            winner_stress_test_sharpes.append(w_stress_sr)
+
+        omega_bar: float | None = None
+        rank_deg: float | None = None
+        if n_trials >= 2 and w_test_sr is not None:
+            oos_safe = np.where(np.isfinite(te_row), te_row, float("-inf"))
+            less = int(np.sum(oos_safe < w_test_sr))
+            equal = int(np.sum(oos_safe == w_test_sr))
+            rank_1_based = less + 0.5 * (equal + 1.0)
+            omega_bar = rank_1_based / float(n_trials + 1)
+            logit = math.log(omega_bar / (1.0 - omega_bar))
+            rank_deg = 1.0 - (rank_1_based - 1.0) / float(n_trials - 1)
+            split_omegas.append(omega_bar)
+            split_logits.append(logit)
+            split_rank_degradations.append(rank_deg)
+
+        split_selections.append(
+            {
+                "splitId": sp.split_id,
+                "testGroups": list(sp.test_groups),
+                "trainSessions": int(len(sp.train_indices)),
+                "testSessions": int(len(sp.test_indices)),
+                "purgedSessions": int(len(sp.purged_indices)),
+                "embargoedSessions": int(len(sp.embargoed_indices)),
+                "trainWinnerId": candidate_ids[winner_idx],
+                "trainWinnerTrainSharpe": w_train_sr,
+                "trainWinnerTestSharpe": w_test_sr,
+                "oosRelativeRank": omega_bar,
+                "oosRankDegradation": rank_deg,
+            }
+        )
+
+    pbo = (sum(1 for w in split_omegas if w < 0.5) / float(len(split_omegas))) if split_omegas else None
+
     plateau_info = compute_plateau_scores(grid, selection_cpcv_sharpes)
 
-    # Composite ranking favors plateau-robust, DSR-surviving, stress-resilient, decorrelated sleeves.
+    # Composite ranking favors plateau-robust, train-consistent, DSR-surviving, stress-resilient, decorrelated sleeves.
     scored_indices: list[tuple[float, int]] = []
     composite_scores: list[float] = []
     for i in range(n_trials):
         p_med = plateau_info[i]["medianNeighborSharpe"]
         s_med = stress_cpcv_sharpes[i]
+        train_med = selection_train_sharpes[i]
+        sel_med = selection_cpcv_sharpes[i]
         dsr_val = dsr_records[i]["dsr5bp"]
         b_rec = baseline_records[i]
-        if p_med is None or not math.isfinite(s_med):
+        if p_med is None or not math.isfinite(s_med) or train_med is None:
             score = -1e9
         else:
             dsr_factor = float(dsr_val) if isinstance(dsr_val, float) and math.isfinite(dsr_val) else 0.0
+            overfit_gap = max(0.0, train_med - sel_med) if math.isfinite(sel_med) else 0.0
             score = (
-                0.55 * p_med
+                0.45 * p_med
+                + 0.15 * train_med
                 + 0.25 * s_med
                 + 0.20 * dsr_factor
                 + 0.35 * float(b_rec["marginalPortfolioSharpe"])
                 - float(b_rec["correlationPenalty"])
+                - 0.15 * overfit_gap
             )
         composite_scores.append(score)
         scored_indices.append((score, i))
 
-    scored_indices.sort(key=lambda item: (-item[0], grid[item[1]].candidate_id()))
+    scored_indices.sort(key=lambda item: (-item[0], candidate_ids[item[1]]))
     top_candidates: list[dict[str, Any]] = []
     for rank, (score, idx) in enumerate(scored_indices[: max(1, top_n)], start=1):
+        tr_med = selection_train_sharpes[idx]
+        te_med = cpcv_summary[idx][str(selection_cost_bp)]["cpcvMedianSharpe"]
         top_candidates.append(
             {
                 "rank": rank,
-                "candidateId": grid[idx].candidate_id(),
+                "candidateId": candidate_ids[idx],
                 "parameters": grid[idx].to_dict(),
                 "plateau": {
                     **plateau_info[idx],
                     "compositeScore": score,
+                },
+                "cpcvSelection": {
+                    "trainSelectionCount": int(train_selection_counts[idx]),
+                    "trainSelectionFrequency": float(train_selection_counts[idx]) / float(n_splits),
+                    "meanTrainRank": (
+                        float(np.mean(candidate_train_ranks[idx])) if candidate_train_ranks[idx] else None
+                    ),
+                    "trainMedianSharpe5bp": tr_med,
+                    "testMedianSharpe5bp": te_med,
+                    "sharpeDegradation5bp": (tr_med - te_med) if (tr_med is not None and te_med is not None) else None,
                 },
                 "dsr": dsr_records[idx],
                 "baselines": baseline_records[idx],
@@ -862,9 +1126,38 @@ def run_cpcv_sweep(
         "cpcv": {
             "nGroups": n_groups,
             "kTestGroups": k_test_groups,
-            "nSplits": len(splits),
+            "nSplits": n_splits,
             "purgeSessions": purge_sessions,
             "embargoSessions": embargo_sessions,
+            "meanTrainSessions": float(np.mean([len(sp.train_indices) for sp in splits])),
+            "meanTestSessions": float(np.mean([len(sp.test_indices) for sp in splits])),
+            "meanPurgedSessions": float(np.mean([len(sp.purged_indices) for sp in splits])),
+            "meanEmbargoedSessions": float(np.mean([len(sp.embargoed_indices) for sp in splits])),
+            "pbo": pbo,
+            "medianLogit": float(statistics.median(split_logits)) if split_logits else None,
+            "meanOosRelativeRank": float(np.mean(split_omegas)) if split_omegas else None,
+            "meanOosRankDegradation": (
+                float(np.mean(split_rank_degradations)) if split_rank_degradations else None
+            ),
+            "selectedWinnerTrainMeanSharpe": (
+                float(np.mean(winner_train_sharpes)) if winner_train_sharpes else None
+            ),
+            "selectedWinnerTrainMedianSharpe": (
+                float(statistics.median(winner_train_sharpes)) if winner_train_sharpes else None
+            ),
+            "selectedWinnerTestMeanSharpe": (
+                float(np.mean(winner_test_sharpes)) if winner_test_sharpes else None
+            ),
+            "selectedWinnerTestMedianSharpe": (
+                float(statistics.median(winner_test_sharpes)) if winner_test_sharpes else None
+            ),
+            "selectedWinnerStressTestMedianSharpe": (
+                float(statistics.median(winner_stress_test_sharpes)) if winner_stress_test_sharpes else None
+            ),
+            "selectedWinnerMeanSharpeDegradation": (
+                float(np.mean(winner_sharpe_degradations)) if winner_sharpe_degradations else None
+            ),
+            "splitSelections": split_selections,
         },
         "trialsTested": n_trials,
         "costSurfaceBps": list(cost_bps),

@@ -12,6 +12,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 
@@ -345,6 +347,259 @@ class SweepCpcvGpuTests(unittest.TestCase):
                 self.assertIn("B0", top["baselines"]["correlations"])
                 self.assertIn("F4", top["baselines"]["correlations"])
                 self.assertIn("O1", top["baselines"]["correlations"])
+                self.assertIn("pbo", receipt["cpcv"])
+                self.assertIn("splitSelections", receipt["cpcv"])
+                self.assertIn("cpcvSelection", top)
+
+    def test_late_starting_asset_receives_zero_weight_before_valid_lookback_window(self) -> None:
+        # 3 existing assets have steadily negative momentum; late-starting XLC has NaN early bars.
+        # XLC must NEVER be ranked or assigned weight before its full lookback & vol windows exist.
+        t_len = 80
+        xlc_start = 40
+        lookback = 10
+        vol_window = 10
+        closes = np.full((t_len, 4), np.nan, dtype=np.float64)
+        for t in range(t_len):
+            closes[t, 0] = 100.0 * (0.996**t)  # SPY falling
+            closes[t, 1] = 100.0 * (0.994**t)  # QQQ falling faster
+            closes[t, 2] = 100.0 * (0.998**t)  # TLT falling slower
+            if t >= xlc_start:
+                # Strong positive rally once XLC actually starts trading
+                closes[t, 3] = 50.0 * (1.010 ** (t - xlc_start))
+
+        returns = np.zeros((t_len, 4), dtype=np.float64)
+        valid = np.isfinite(closes[:-1]) & np.isfinite(closes[1:]) & (closes[:-1] > 0.0)
+        returns[1:] = np.where(valid, closes[1:] / closes[:-1] - 1.0, 0.0)
+
+        features = engine._precompute_features(closes, returns, {lookback}, {vol_window})
+        params = engine.CandidateParams(
+            lookback_days=lookback,
+            vol_window_days=vol_window,
+            entry_z_score=0.0,
+            rebalance_cadence_days=1,
+            top_k=1,
+            target_vol=0.12,
+        )
+        valid_mask = features.close_valid & features.mom_valid[lookback] & features.vol_valid[vol_window]
+        target_w, reb_mask = engine._build_candidate_weights(
+            params,
+            features.mom[lookback],
+            features.vol[vol_window],
+            valid_mask=valid_mask,
+        )
+
+        # First valid day for XLC is xlc_start + max(lookback, vol_window) = 50.
+        first_valid_xlc = xlc_start + max(lookback, vol_window)
+        self.assertTrue(np.all(~valid_mask[:first_valid_xlc, 3]))
+        self.assertTrue(np.all(valid_mask[first_valid_xlc:, 3]))
+        self.assertTrue(np.all(target_w[:first_valid_xlc, 3] == 0.0))
+
+        # After XLC has a full valid lookback and volatility window, its strong positive momentum wins.
+        self.assertTrue(np.all(target_w[first_valid_xlc:, 3] > 0.0))
+
+        # Verify simulated realized weights also remain strictly zero for XLC prior to first_valid_xlc.
+        _, _, realized_w = engine._evaluate_weights_vectorized(
+            target_w[None, :, :],
+            reb_mask[None, :],
+            returns,
+            (5,),
+            "numpy-cpu",
+            None,
+            return_realized_weights=True,
+        )
+        self.assertTrue(np.all(realized_w[0, :first_valid_xlc, 3] == 0.0))
+
+    def test_weights_drift_between_rebalances_and_charge_drift_restoration_turnover(self) -> None:
+        # 2-asset unequal-return path with partial cash (initial target [0.4, 0.4], cash 0.2).
+        # Rebalance on day 0 and day 3 to the SAME target [0.4, 0.4].
+        t_len = 4
+        asset_returns = np.array(
+            [
+                [0.0, 0.0],
+                [0.20, -0.10],
+                [0.10, -0.05],
+                [0.05, -0.05],
+            ],
+            dtype=np.float64,
+        )
+        targets = np.zeros((1, t_len, 2), dtype=np.float64)
+        targets[0, 0] = [0.4, 0.4]
+        targets[0, 3] = [0.4, 0.4]
+        reb_masks = np.array([[True, False, False, True]], dtype=bool)
+
+        cost_bp = 10
+        net, turnover, realized = engine._evaluate_weights_vectorized(
+            targets,
+            reb_masks,
+            asset_returns,
+            (cost_bp,),
+            "numpy-cpu",
+            None,
+            return_realized_weights=True,
+        )
+
+        # Hand-compute exact drifted trajectory day by day.
+        w0 = np.array([0.4, 0.4])
+        self.assertTrue(np.allclose(realized[0, 0], w0))
+        self.assertAlmostEqual(float(turnover[0, 0]), 0.4, places=12)
+
+        # Day 1 (non-rebalance): weights drift with returns and cash adjusts consistently.
+        g1 = float(np.dot(w0, asset_returns[1]))
+        w1 = w0 * (1.0 + asset_returns[1]) / (1.0 + g1)
+        self.assertTrue(np.allclose(realized[0, 1], w1))
+        self.assertAlmostEqual(1.0 - float(np.sum(realized[0, 1])), 0.2 / (1.0 + g1), places=12)
+        self.assertEqual(float(turnover[0, 1]), 0.0)
+        self.assertAlmostEqual(float(net[0, 0, 1]), g1, places=12)
+
+        # Day 2 (non-rebalance): earns return on drifted w1 (not un-drifted w0!) and drifts to w2.
+        g2 = float(np.dot(w1, asset_returns[2]))
+        self.assertNotAlmostEqual(g2, float(np.dot(w0, asset_returns[2])), places=4)
+        w2 = w1 * (1.0 + asset_returns[2]) / (1.0 + g2)
+        self.assertTrue(np.allclose(realized[0, 2], w2))
+        self.assertEqual(float(turnover[0, 2]), 0.0)
+        self.assertAlmostEqual(float(net[0, 0, 2]), g2, places=12)
+
+        # Day 3 (rebalance back to [0.4, 0.4]): drifts to w3_pre, then pays true drift restoration cost.
+        g3 = float(np.dot(w2, asset_returns[3]))
+        w3_drifted = w2 * (1.0 + asset_returns[3]) / (1.0 + g3)
+        expected_turnover_3 = 0.5 * float(np.sum(np.abs(w0 - w3_drifted)))
+        self.assertGreater(expected_turnover_3, 0.05)
+        self.assertAlmostEqual(float(turnover[0, 3]), expected_turnover_3, places=12)
+        self.assertTrue(np.allclose(realized[0, 3], w0))
+        expected_net_3 = g3 - (cost_bp / 10_000.0) * expected_turnover_3
+        self.assertAlmostEqual(float(net[0, 0, 3]), expected_net_3, places=12)
+
+    def test_cpcv_purge_and_embargo_govern_train_selection_and_oos_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cube = engine.verify_and_load_dev_cube(_write_synthetic_cube(Path(tmp), n_sessions=240, seed=99))
+            candidates = [
+                engine.CandidateParams(10, 10, 0.0, 5, 2, 0.12),
+                engine.CandidateParams(21, 20, 0.0, 5, 2, 0.12),
+                engine.CandidateParams(42, 20, 0.5, 10, 2, 0.12),
+                engine.CandidateParams(63, 40, 0.0, 21, 3, 0.10),
+            ]
+
+            unpurged = engine.run_cpcv_sweep(
+                cube,
+                candidates=candidates,
+                n_groups=6,
+                k_test_groups=2,
+                purge_sessions=0,
+                embargo_sessions=0,
+                device_request="cpu",
+                top_n=4,
+            )
+            purged = engine.run_cpcv_sweep(
+                cube,
+                candidates=candidates,
+                n_groups=6,
+                k_test_groups=2,
+                purge_sessions=18,
+                embargo_sessions=7,
+                device_request="cpu",
+                top_n=4,
+            )
+
+            # Purge and embargo must strictly shrink train_indices while keeping test_indices identical.
+            self.assertEqual(unpurged["cpcv"]["meanPurgedSessions"], 0.0)
+            self.assertEqual(unpurged["cpcv"]["meanEmbargoedSessions"], 0.0)
+            self.assertGreater(purged["cpcv"]["meanPurgedSessions"], 0.0)
+            self.assertGreater(purged["cpcv"]["meanEmbargoedSessions"], 0.0)
+            self.assertGreater(unpurged["cpcv"]["meanTrainSessions"], purged["cpcv"]["meanTrainSessions"])
+            self.assertEqual(unpurged["cpcv"]["meanTestSessions"], purged["cpcv"]["meanTestSessions"])
+
+            # Split train/selection metrics must actually reflect purged train_indices rather than being ignored.
+            self.assertNotAlmostEqual(
+                unpurged["cpcv"]["selectedWinnerTrainMeanSharpe"],
+                purged["cpcv"]["selectedWinnerTrainMeanSharpe"],
+                places=6,
+            )
+            unpurged_by_id = {c["candidateId"]: c for c in unpurged["topCandidates"]}
+            purged_by_id = {c["candidateId"]: c for c in purged["topCandidates"]}
+            train_diffs = [
+                abs(
+                    unpurged_by_id[cid]["cpcvSelection"]["trainMedianSharpe5bp"]
+                    - purged_by_id[cid]["cpcvSelection"]["trainMedianSharpe5bp"]
+                )
+                for cid in unpurged_by_id
+            ]
+            self.assertGreater(max(train_diffs), 1e-6)
+
+            # PBO and OOS rank degradation must be populated and lie in [0, 1].
+            self.assertIsNotNone(purged["cpcv"]["pbo"])
+            self.assertGreaterEqual(purged["cpcv"]["pbo"], 0.0)
+            self.assertLessEqual(purged["cpcv"]["pbo"], 1.0)
+            self.assertIsNotNone(purged["cpcv"]["meanOosRankDegradation"])
+            self.assertGreaterEqual(purged["cpcv"]["meanOosRankDegradation"], 0.0)
+            self.assertLessEqual(purged["cpcv"]["meanOosRankDegradation"], 1.0)
+
+            # Verify split 0's trainWinnerTrainSharpe and trainWinnerTestSharpe match direct evaluation
+            # on split 0's purged train_indices and test_indices respectively.
+            splits = engine.generate_cpcv_splits(
+                n_sessions=len(cube.dates),
+                n_groups=6,
+                k_test_groups=2,
+                purge_sessions=18,
+                embargo_sessions=7,
+            )
+            features = engine._precompute_features(
+                cube.closes,
+                cube.returns,
+                {c.lookback_days for c in candidates},
+                {c.vol_window_days for c in candidates},
+            )
+            sel0 = purged["cpcv"]["splitSelections"][0]
+            winner = next(c for c in candidates if c.candidate_id() == sel0["trainWinnerId"])
+            vmask = (
+                features.close_valid
+                & features.mom_valid[winner.lookback_days]
+                & features.vol_valid[winner.vol_window_days]
+            )
+            tw, rm = engine._build_candidate_weights(
+                winner,
+                features.mom[winner.lookback_days],
+                features.vol[winner.vol_window_days],
+                valid_mask=vmask,
+            )
+            net_5bp, _ = engine._evaluate_weights_vectorized(
+                tw[None, :, :],
+                rm[None, :],
+                cube.returns,
+                (5,),
+                "numpy-cpu",
+                None,
+            )
+            expected_train_sr = engine._annualized_sharpe(net_5bp[0, 0, splits[0].train_indices])
+            expected_test_sr = engine._annualized_sharpe(net_5bp[0, 0, splits[0].test_indices])
+            self.assertAlmostEqual(sel0["trainWinnerTrainSharpe"], expected_train_sr, places=10)
+            self.assertAlmostEqual(sel0["trainWinnerTestSharpe"], expected_test_sr, places=10)
+
+    def test_resolve_device_cuda_fails_closed_when_torch_or_cuda_unavailable(self) -> None:
+        # Case 1: PyTorch is not installed (torch is None)
+        with mock.patch.object(engine, "torch", None):
+            with self.assertRaisesRegex(RuntimeError, "PyTorch is not installed"):
+                engine.resolve_device("cuda")
+            self.assertEqual(engine.resolve_device("auto"), ("numpy-cpu", None))
+            self.assertEqual(engine.resolve_device("cpu"), ("numpy-cpu", None))
+
+        # Case 2: PyTorch is installed, but CUDA is unavailable
+        fake_torch_no_cuda = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False),
+            device=lambda name: f"device:{name}",
+        )
+        with mock.patch.object(engine, "torch", fake_torch_no_cuda):
+            with self.assertRaisesRegex(RuntimeError, "torch.cuda.is_available\\(\\) is False"):
+                engine.resolve_device("cuda")
+            self.assertEqual(engine.resolve_device("cpu"), ("numpy-cpu", None))
+
+        # Case 3: PyTorch and CUDA are available
+        fake_torch_cuda = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True),
+            device=lambda name: f"device:{name}",
+        )
+        with mock.patch.object(engine, "torch", fake_torch_cuda):
+            self.assertEqual(engine.resolve_device("cuda"), ("cuda", "device:cuda"))
+            self.assertEqual(engine.resolve_device("auto"), ("cuda", "device:cuda"))
 
 
 if __name__ == "__main__":
