@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import {
+  CodexAppServerBootstrapTimeoutError,
   CodexAppServerClient,
   type CodexAppServerOptions,
   type CodexAppServerTurnOptions,
@@ -37,6 +39,7 @@ import {
 type AgentRunPayload = Record<string, unknown>
 
 export const DEFAULT_CODEX_BINARY_PATH = '/usr/local/bin/codex'
+const BOOTSTRAP_RETRY_DELAY_MS = 2_000
 const MAX_RESULT_RESPONSE_CHARS = 64_000
 
 export type CodexAppServerRunnerStatus = {
@@ -64,6 +67,7 @@ export type CodexAppServerRunnerStatus = {
 }
 
 export type CodexAppServerRunnerClient = {
+  ensureReady?: () => Promise<void>
   runTurnStream: (
     prompt: string,
     options?: CodexAppServerTurnOptions,
@@ -75,6 +79,7 @@ export type CodexAppServerRunnerClient = {
   interruptTurn?: (turnId: string, threadId: string) => Promise<void>
   getTurnItems?: (threadId: string, turnId: string) => Promise<Turn['items']>
   stop?: () => void
+  stopAndWait?: () => Promise<void>
 }
 
 export type RunCodexAppServerAdapterOptions = {
@@ -294,8 +299,8 @@ const throwIfCancelledEffect = (signal: AbortSignal | undefined, threadId?: stri
 
 const createCancellationWaiter = (
   signal: AbortSignal | undefined,
-  getThreadId: () => string | undefined,
-  getTurnId: () => string | undefined,
+  getThreadId: () => string | undefined = () => undefined,
+  getTurnId: () => string | undefined = () => undefined,
 ): { promise: Promise<never>; cleanup: () => void } | null => {
   if (!signal) return null
 
@@ -421,15 +426,37 @@ const createDefaultClient = (options: CodexAppServerOptions) =>
 
 const createRunnerClient = async (
   clientOptions: CodexAppServerOptions,
-  factory: RunCodexAppServerAdapterOptions['createClient'],
+  { createClient, abortSignal }: RunCodexAppServerAdapterOptions,
 ): Promise<CodexAppServerRunnerClient> => {
-  if (!factory) {
-    return createDefaultClient(clientOptions)
-  }
-  try {
-    return factory(clientOptions)
-  } catch (cause) {
-    throw new CodexRunnerClientError({ operation: 'create-client', cause })
+  for (let attempt = 1; ; attempt += 1) {
+    throwIfCancelled(abortSignal)
+    const client = createClient ? createClient(clientOptions) : await createDefaultClient(clientOptions)
+    let cleanupCancellation: (() => void) | undefined
+    try {
+      const ready = client.ensureReady?.()
+      const cancellation = createCancellationWaiter(abortSignal)
+      cleanupCancellation = cancellation?.cleanup
+      await (cancellation ? Promise.race([ready, cancellation.promise]) : ready)
+      throwIfCancelled(abortSignal)
+      return client
+    } catch (cause) {
+      if (client.stopAndWait) await client.stopAndWait()
+      else client.stop?.()
+      throwIfCancelled(abortSignal)
+      if (attempt !== 1 || !(cause instanceof CodexAppServerBootstrapTimeoutError)) throw cause
+      clientOptions.onNotification?.({
+        method: 'error',
+        params: { error: { message: `${cause.message}; retrying startup once` } },
+      })
+    } finally {
+      cleanupCancellation?.()
+    }
+    try {
+      await delay(BOOTSTRAP_RETRY_DELAY_MS, undefined, { signal: abortSignal })
+    } catch (cause) {
+      throwIfCancelled(abortSignal)
+      throw cause
+    }
   }
 }
 
@@ -880,14 +907,11 @@ const interruptAppServerTurn = async (
   }
 }
 
-const createRunnerClientEffect = (
-  clientOptions: CodexAppServerOptions,
-  factory: RunCodexAppServerAdapterOptions['createClient'],
-) =>
+const createRunnerClientEffect = (clientOptions: CodexAppServerOptions, options: RunCodexAppServerAdapterOptions) =>
   Effect.tryPromise({
-    try: () => createRunnerClient(clientOptions, factory),
+    try: () => createRunnerClient(clientOptions, options),
     catch: (cause) =>
-      cause instanceof CodexRunnerClientError
+      cause instanceof CodexRunnerClientError || cause instanceof CodexRunnerCancellationError
         ? cause
         : new CodexRunnerClientError({ operation: 'create-client', cause }),
   })
@@ -1042,7 +1066,7 @@ export const runCodexAppServerAdapterEffect = ({
 
     yield* prepareCodexCwdEffect(adapter, runPayload, options.runCommand ?? runDefaultCommand)
     yield* throwIfCancelledEffect(options.abortSignal)
-    state.client = yield* createRunnerClientEffect(clientOptions, options.createClient)
+    state.client = yield* createRunnerClientEffect(clientOptions, options)
 
     const turnOptions: CodexAppServerTurnOptions = {
       model: adapter.model,

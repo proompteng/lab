@@ -9,6 +9,9 @@ export const overnightCapCents = 15_000_000
 export const intradayCapCents = 18_000_000
 export const collarBp = 15
 const driftBand = 0.1
+const smallAccountEquityCeilingCents = 2_500_000
+export const outsideDriftBand = (target: number, current: number | null, held: number) =>
+  current === null ? held > 0 : Math.abs(target - current) + 1e-12 >= driftBand
 export const microsPerCent = 10_000
 const intradaySymbols = ['QQQ', 'SMH']
 const wholeShares = (qty: string) => Number(qty.split('.')[0])
@@ -120,8 +123,6 @@ export const planRebalance = (
         : account.account_blocked || account.trading_blocked || account.trade_suspended_by_user
           ? 'Broker account is blocked for trading'
           : null
-    const outsideDriftBand = (target: number, current: number | null, held: number) =>
-      current === null ? held > 0 : Math.abs(target - current) + 1e-12 >= driftBand
     const strategic = []
     for (const { symbol, weight } of targets) {
       const referenceMicros = rawBySymbol.get(symbol)
@@ -185,6 +186,17 @@ export const planRebalance = (
     const buyCash = Math.min(cashCents, buyingPowerCents)
     const buyGrossRoom = Math.max(0, budgetCents - managedGross)
     const buyScale = desiredBuyCost === 0 ? 1 : Math.min(1, buyCash / desiredBuyCost, buyGrossRoom / desiredBuyGross)
+    // Scaling independent one-lot buys can floor every order to zero even when one fits. On the isolated
+    // small account, take the affordable lot that closes the most dollar drift, without expecting any sells.
+    const affordableLot =
+      equityCents < smallAccountEquityCeilingCents &&
+      excluded.size === 0 &&
+      buyScale < 1 &&
+      candidates.every((order) => order.side === Side.Buy && order.desiredQuantity === 1)
+        ? candidates
+            .filter((order) => order.limit <= buyCash && order.riskUnitCents <= buyGrossRoom)
+            .toSorted((a, b) => b.referenceMicros - a.referenceMicros)[0]
+        : undefined
     const orders: PlannedOrder[] = []
     let buyGross = 0
     let buyLimitNotionalCents = 0
@@ -193,7 +205,12 @@ export const planRebalance = (
     for (const side of [Side.Sell, Side.Buy]) {
       for (const order of candidates) {
         if (order.side !== side) continue
-        const qty = side === Side.Buy ? Math.floor(order.desiredQuantity * buyScale) : order.desiredQuantity
+        const qty =
+          order === affordableLot
+            ? 1
+            : side === Side.Buy
+              ? Math.floor(order.desiredQuantity * buyScale)
+              : order.desiredQuantity
         if (qty === 0) continue
         const limitNotional = qty * order.limit
         const referenceNotional = qty * order.referenceMicros

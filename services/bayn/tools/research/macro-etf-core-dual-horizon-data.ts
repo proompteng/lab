@@ -1,4 +1,8 @@
+import { Effect, Result } from 'effect'
+
+import { canonicalHashV1Result } from '../../src/hash'
 import { type Etf, universe } from '../../src/strategy/macro-etf-core/policy'
+import { closeSnapshotSchema } from '../../src/strategy/macro-etf-core/signals'
 import { receipts, tapeReceipt } from '../pure-etf-dual-horizon-data'
 import { noiseRosters } from '../pure-etf-dual-horizon-noise'
 import { normalizeResearchCalendar, requireCalendarCoverage } from '../research-lib/calendar'
@@ -39,8 +43,12 @@ const bar = (fields: readonly string[], volumeAt: number, label: string): Bar =>
   return { open, high, low, close }
 }
 
-const load = async ({ readJson, readGzip }: ArchiveReader) => {
-  for (const dataset of Object.values(datasets))
+const verifiedLines = (archive: ArchiveReader, receipt: Dataset, onLine: (line: string, index: number) => void) =>
+  archive.readGzip(tapeReceipt(receipt), countArchiveLines(onLine))
+
+const loadDaily = async (archive: ArchiveReader) => {
+  const { readJson } = archive
+  for (const dataset of [datasets.daily, datasets.macro])
     await readJson(`${dataset.prefix}/MANIFEST.json`, dataset.manifestSha256)
   const readCalendar = (receipt: (typeof calendars)[keyof typeof calendars]) =>
     readJson(`${receipt.prefix}/${receipt.name}`, receipt.sha256)
@@ -56,14 +64,12 @@ const load = async ({ readJson, readGzip }: ArchiveReader) => {
     last,
     729,
   )
-  const verifiedLines = (receipt: Dataset, onLine: (line: string, index: number) => void) =>
-    readGzip(tapeReceipt(receipt), countArchiveLines(onLine))
   const calendar = [...blind, ...recent]
   const byDate = new Map(calendar.map(({ date }) => [date, new Map<Etf, Bar>()]))
   for (const kind of ['daily', 'macro'] as const) {
     const receipt = datasets[kind]
     const seen = new Map<Etf, string>()
-    const rows = await verifiedLines(receipt, (line) => {
+    const rows = await verifiedLines(archive, receipt, (line) => {
       const symbol = line.slice(0, line.indexOf('\t')) as Etf
       if (!dailySymbols.has(symbol)) return
       const fields = line.split('\t')
@@ -93,6 +99,34 @@ const load = async ({ readJson, readGzip }: ArchiveReader) => {
     }
     return { date, openAt: openMs, closeAt: openMs + minutes * 60_000, bars }
   })
+  return { daily, blind, recent }
+}
+
+export const closeEvidence = (daily: readonly DailyFrame[]) => {
+  const calendar = daily.map(({ date, openAt, closeAt }) => ({ date, openAt, closeAt }))
+  const bars = daily
+    .slice(0, -1)
+    .map(({ date, closeAt, bars }) =>
+      [...bars].map(([symbol, bar]) => ({ date, symbol, availableAt: closeAt, ...bar })),
+    )
+  const snapshot = {
+    schema: closeSnapshotSchema,
+    datasetVersion: 'alpacav2-sip-10yr-sp100-with-dia-uup-2026-11-27',
+    adjustment: 'all',
+    calendar,
+    bars,
+  }
+  return {
+    asOf: daily[daily.length - 1].openAt,
+    snapshot,
+    snapshotHash: Result.getOrThrow(canonicalHashV1Result(snapshot)),
+  }
+}
+
+const load = async (archive: ArchiveReader) => {
+  for (const dataset of [datasets.blind, datasets.recent])
+    await archive.readJson(`${dataset.prefix}/MANIFEST.json`, dataset.manifestSha256)
+  const { daily, blind, recent } = await loadDaily(archive)
   const intraday: IntradayFrame[] = []
   const coverage = []
   for (const [kind, sessions] of [
@@ -113,7 +147,7 @@ const load = async ({ readJson, readGzip }: ArchiveReader) => {
     const accepted = new Map<NoiseEtf, number>()
     const lastSeen = new Map<NoiseEtf, number>()
     let header = 0
-    const rows = await verifiedLines(receipt, (line, index) => {
+    const rows = await verifiedLines(archive, receipt, (line, index) => {
       if (kind === 'blind' && index === 0 && line === 'symbol\tt\to\th\tl\tc\tv\tn\tvw') {
         header++
         return
@@ -167,3 +201,7 @@ const load = async ({ readJson, readGzip }: ArchiveReader) => {
 }
 
 export const loadFrozenFrames = withS3Archive(load)
+export const loadFrozenDailyFrames = withS3Archive(loadDaily).pipe(
+  Effect.map(({ daily }) => daily),
+  Effect.timeout('1 minute'),
+)

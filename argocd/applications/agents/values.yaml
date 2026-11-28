@@ -36,7 +36,7 @@ runner:
     tag: sha-1cabb3c79880542f44f4a7195cb938879df3f648
     digest: sha256:7b8a41fa0b957323dff2f0df427a3535dac944c67caf0048861a435ecf1f52ab
 autoOntologyMcpGateway:
-  enabled: false
+  enabled: true
 linearMcpGateway:
   enabled: false
   replicaCount: 2

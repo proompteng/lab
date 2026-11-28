@@ -31,7 +31,7 @@ spec:
             }
           }
         runtime: |-
-          {"type":"job","config":{"serviceAccountName":"agents-sa"}}
+          {"type":"job","config":{"serviceAccountName":"codex-auto-ontology-runner"}}
         secrets: '["github-token","codex-auth"]'
         policy: |-
           {"secretBindingRef":"codex-github-token"}
@@ -76,7 +76,7 @@ spec:
             }
           }
         runtime: |-
-          {"type":"job","config":{"serviceAccountName":"agents-sa"}}
+          {"type":"job","config":{"serviceAccountName":"codex-auto-ontology-runner"}}
         secrets: '["github-token","codex-auth"]'
         policy: |-
           {"secretBindingRef":"codex-github-token"}

@@ -10,10 +10,9 @@ import {
 } from './8yr-unseen-intraday-data'
 import { baselineNames, blind, listingDates, noiseNames, stocks, universe } from './8yr-unseen-intraday-protocol'
 import { createPreparation, exitPath, netAt, replayDay } from './8yr-unseen-intraday-replay'
-import { stationaryPlan } from './8yr-unseen-intraday-statistics'
+import { stationaryP, stationaryPlan } from './8yr-unseen-intraday-statistics'
 import { Field, makeSeries, price, readTape } from './8yr-unseen-intraday-tape'
 import { verifyScorePublication } from './research-8yr-unseen-intraday-oos'
-import { StationaryCentering, stationaryMeanP } from './research-lib/statistics'
 
 describe('Wave 5A score publication', () => {
   const freeze = '0ade8141ccba92cd20346579676ee2ca04e62a97'
@@ -274,10 +273,9 @@ describe('Frozen replay on synthetic fixtures', () => {
   test('stationary resampling preserves the registered Wave 4E upper-tail calculation', () => {
     const plan = stationaryPlan(12, 24)
     expect(
-      stationaryMeanP(
+      stationaryP(
         Array.from({ length: 12 }, (_, i) => 10 + i),
         plan,
-        StationaryCentering.AfterSum,
       ),
     ).toBe(1 / 25)
   })
