@@ -68,6 +68,15 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     'ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453',
   )
   expect(cluster.spec.postgresql.parameters).toMatchObject({
+    shared_buffers: '512MB',
+    effective_cache_size: '4GB',
+    work_mem: '8MB',
+    random_page_cost: '1.5',
+    max_wal_size: '4GB',
+    checkpoint_timeout: '15min',
+    checkpoint_completion_target: '0.9',
+    autovacuum_vacuum_scale_factor: '0.1',
+    autovacuum_analyze_scale_factor: '0.05',
     log_lock_waits: 'on',
     deadlock_timeout: '1s',
     log_min_duration_statement: '1000ms',
