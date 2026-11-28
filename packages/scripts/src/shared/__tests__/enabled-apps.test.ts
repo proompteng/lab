@@ -595,15 +595,15 @@ describe('enabled app inventory', () => {
     expect(openWebUIValues.image?.tag).toBe('v0.13.4')
   })
 
-  it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
+  it('pins both Saigak Ollama containers to the immutable ROCm image', () => {
     const podSpec = saigakStatefulSet.spec?.template?.spec
     const ollamaImages = [...(podSpec?.initContainers ?? []), ...(podSpec?.containers ?? [])]
       .filter((container) => container.name === 'model-init' || container.name === 'ollama')
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754',
-      'ollama/ollama:0.40.17@sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754',
+      'ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd',
+      'ollama/ollama:0.40.19-rocm@sha256:4f73cdd3226204f3778e1c81f87c0b10ed92fd33270ccfcc815ffffc0b2600cd',
     ])
   })
 

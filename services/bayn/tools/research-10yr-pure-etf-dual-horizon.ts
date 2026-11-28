@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import { sha256 } from '../src/hash'
 import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect } from 'effect'
 
@@ -21,7 +22,7 @@ import {
   type LedgerRow,
   type Mode,
 } from './pure-etf-dual-horizon-account'
-import { elapsedDays, etfs, loadData, receipts, sha256, type DailyFrame } from './pure-etf-dual-horizon-data'
+import { etfs, loadData, receipts, type DailyFrame } from './pure-etf-dual-horizon-data'
 import { bindExitSupplement, executionSupplement, noiseOrders } from './pure-etf-dual-horizon-noise'
 import {
   attribution,
@@ -29,9 +30,10 @@ import {
   bootstrapRisk,
   correlations,
   spyDrawdownIndices,
-  stationaryBlocks,
   summarize,
 } from './pure-etf-dual-horizon-statistics'
+import { elapsedDays, foldBounds, requireAlignedSessions } from './research-lib/calendar'
+import { stationaryBootstrap, StationarySampling, sum } from './research-lib/statistics'
 
 const sourceRevisions = {
   O1: '06e85b0e59f70c8b09181266a883179c8c90b498',
@@ -48,16 +50,15 @@ const bounds = (dates: readonly string[]): Record<string, Window> & { full: Wind
     through: dates[end - 1],
     sessions: end - first,
   })
-  const find = (from: string, through: string) => window(dates.indexOf(from), dates.indexOf(through) + 1)
+  const find = (from: string, through: string, sessions?: number) => {
+    const { first, end } = foldBounds(dates, from, through, sessions)
+    return window(first, end)
+  }
   return {
     full: window(0, dates.length),
     blind: find('2016-01-04', '2023-12-29'),
     ...Object.fromEntries(
-      Object.entries(splits).map(([id, [from, through, sessions]]) => {
-        const w = find(from, through)
-        if (w.sessions !== sessions) throw new Error(`Wrong session count for ${id}`)
-        return [id, w]
-      }),
+      Object.entries(splits).map(([id, [from, through, sessions]]) => [id, find(from, through, sessions)]),
     ),
     ...Object.fromEntries(
       Array.from({ length: 11 }, (_, i) => {
@@ -81,7 +82,6 @@ const benchmarks = (daily: readonly DailyFrame[], symbol: string) =>
     if (current === undefined || previous === undefined) throw new Error(`Missing benchmark: ${symbol} ${frame.date}`)
     return current.close / previous - 1
   })
-const sum = (rows: readonly number[]) => rows.reduce((total, v) => total + v, 0)
 const closeTo = (observed: number, frozen: number, tolerance: number, label: string) => {
   if (!Number.isFinite(observed) || Math.abs(observed - frozen) >= tolerance)
     throw new Error(`Frozen ${label} mismatch: ${observed} vs ${frozen}`)
@@ -90,6 +90,7 @@ const closeTo = (observed: number, frozen: number, tolerance: number, label: str
 class StudyError extends Data.TaggedError('PureEtfStudyError')<{ cause: unknown }> {}
 const run = async (directory: string, output: string, ledgerDirectory: string | undefined, signal: AbortSignal) => {
   const { daily, intraday, coverage } = await loadData(directory, signal)
+  requireAlignedSessions(daily, intraday)
   const dates = daily.map(({ date }) => date)
   const windows = bounds(dates)
   const canary = daily.map(({ date, bars }) => ({
@@ -112,7 +113,7 @@ const run = async (directory: string, output: string, ledgerDirectory: string | 
   const SHY = benchmarks(daily, 'SHY')
   const IEF = benchmarks(daily, 'IEF')
   const GLD = benchmarks(daily, 'GLD')
-  const blocks = stationaryBlocks(daily.length)
+  const plan = stationaryBootstrap(daily.length, bootstrapProtocol, StationarySampling.RightTailMidpoint)
   const report = (net: readonly number[], mode: Mode, ledger?: readonly LedgerRow[]) => ({
     byWindow: Object.fromEntries(
       Object.entries(windows).map(([name, { first, end }]) => {
@@ -126,7 +127,7 @@ const run = async (directory: string, output: string, ledgerDirectory: string | 
         ]
       }),
     ),
-    bootstrap: bootstrapRisk(net, SHY, mode, blocks),
+    bootstrap: bootstrapRisk(net, SHY, mode, plan),
   })
   if (ledgerDirectory !== undefined) await mkdir(ledgerDirectory, { recursive: true })
   const recordLedger = async (name: string, rows: readonly LedgerRow[]) => {
@@ -158,7 +159,7 @@ const run = async (directory: string, output: string, ledgerDirectory: string | 
   // Replay upstream conventions before harmonizing the books. These are not mixed-dollar overlays.
   const originalMarks = marks(canary)
   const o1Paper = ([2, 5, 10] as const).map((bp, index) => {
-    const path = canaryReplay(originalMarks, target.O1, bp, true)
+    const path = canaryReplay(originalMarks, target.O1, mix, bp, true, -1)
     const net = Array.from(path.net)
     const result = summarize(dates, net, SHY, SPY, 'compound')
     closeTo(result.netReturn, [0.9442965714, 0.9286692789, 0.9029113849][index], 1e-9, `O1 full ${bp} bp`)
@@ -186,8 +187,8 @@ const run = async (directory: string, output: string, ledgerDirectory: string | 
     }
   })
   const originalO2Splits = Object.entries(splits).map(([id, [from, through]]) => {
-    const w = dates.indexOf(from)
-    const rows = premiaReplay(premia, target.O2, w, dates.indexOf(through))
+    const { first, end } = foldBounds(dates, from, through)
+    const rows = premiaReplay(premia, target.O2, first, end - 1)
     return {
       id,
       withShy: sum(rows.map((row) => investedReturn(row, 10))) * initialEquity,

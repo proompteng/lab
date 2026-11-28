@@ -30,6 +30,18 @@ spec:
         comment: Isolated native Jev editor claims and receipts
         passwordSecret:
           name: bayn-research-db
+      - name: bayn_audit_ro
+        ensure: present
+        login: true
+        inherit: false
+        superuser: false
+        createdb: false
+        createrole: false
+        replication: false
+        bypassrls: false
+        comment: Read-only profitability audit and observation evidence
+        passwordSecret:
+          name: bayn-audit-ro-db
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:

@@ -118,7 +118,7 @@ describe('ARC Nix runner toolchain', () => {
         runnerScaleSetName: label,
         scaleSetLabels: [label],
         minRunners: 0,
-        maxRunners: sizeLimit === '16Gi' ? 3 : 2,
+        maxRunners: sizeLimit === '16Gi' ? (architecture === 'amd64' ? 10 : 8) : 6,
         listenerTemplate: baseline.listenerTemplate,
         template: {
           spec: {

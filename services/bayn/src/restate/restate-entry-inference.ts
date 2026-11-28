@@ -1,3 +1,4 @@
+import { executionServiceName } from './execution-service-names'
 import * as restate from '@restatedev/restate-sdk'
 import { Result, Schema } from 'effect'
 
@@ -46,9 +47,13 @@ const InferenceWatchResultSchema = Schema.Union([
   Schema.Struct({ active: Schema.Literal(true), pending: PendingJobs, dispatch: PendingJobs }),
 ])
 
-export const startInferenceWatch = (ctx: restate.Context, scope: InferenceControllerEpoch) =>
+export const startInferenceWatch = (
+  ctx: restate.Context,
+  servicePrefix: string | undefined,
+  scope: InferenceControllerEpoch,
+) =>
   ctx.genericSend({
-    service: 'BaynEntryInference',
+    service: executionServiceName('inference', servicePrefix),
     method: 'watch',
     parameter: { ...scope, schemaVersion: 'bayn.inference-watch.v1', pending: [] },
     inputSerde: brokerObservationJsonSerde,
@@ -62,7 +67,7 @@ export const makeBaynEntryInference = (
   hooks: readonly restate.HooksProvider[] = [],
 ) =>
   restate.service({
-    name: 'BaynEntryInference',
+    name: executionServiceName('inference', config.servicePrefix),
     handlers: {
       watch: restate.handlers.handler(
         { ingressPrivate: true },
@@ -85,7 +90,7 @@ export const makeBaynEntryInference = (
 
           for (const jobId of result.success.dispatch) {
             ctx.genericSend({
-              service: 'BaynEntryInference',
+              service: executionServiceName('inference', config.servicePrefix),
               method: 'evaluate',
               parameter: { ...scope, schemaVersion: 'bayn.inference-dispatch.v1', jobId },
               inputSerde: brokerObservationJsonSerde,
@@ -94,7 +99,7 @@ export const makeBaynEntryInference = (
           }
           // Each scoped wait closes its listener and keeps the invocation journal bounded.
           ctx.genericSend({
-            service: 'BaynEntryInference',
+            service: executionServiceName('inference', config.servicePrefix),
             method: 'watch',
             parameter: { ...scope, schemaVersion, pending: result.success.pending },
             inputSerde: brokerObservationJsonSerde,
@@ -134,7 +139,7 @@ export const makeBaynEntryInference = (
             completion = await execute()
           }
           ctx.genericSend({
-            service: 'BaynExecutionController',
+            service: executionServiceName('controller', config.servicePrefix),
             method: 'wake',
             key: command.controllerKey,
             parameter: {

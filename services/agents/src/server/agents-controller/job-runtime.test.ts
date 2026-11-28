@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildRunSpecContext,
@@ -18,8 +18,34 @@ const readJobPodSpec = (job: Record<string, unknown> | undefined) => {
 }
 
 describe('agents controller job-runtime module', () => {
+  let previousEnv: Record<string, string | undefined>
+  const savedEnv = new Map<string, string | undefined>()
+  const setEnv = (key: string, value: string | undefined) => {
+    if (!savedEnv.has(key)) savedEnv.set(key, process.env[key])
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+
+  beforeEach(() => {
+    previousEnv = {
+      AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT: process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT,
+      AGENTS_AGENT_RUNNER_IMAGE: process.env.AGENTS_AGENT_RUNNER_IMAGE,
+      AGENTS_AGENT_RUNNER_RESOURCES: process.env.AGENTS_AGENT_RUNNER_RESOURCES,
+      AGENTS_CONTROLLER_AUTH_SECRET_NAME: process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME,
+      AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH: process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH,
+    }
+  })
+
   afterEach(() => {
-    delete process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT
+    for (const [key, value] of savedEnv) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    savedEnv.clear()
+    for (const [name, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
   })
 
   it('creates DNS-safe names and appends stable hash when needed', () => {
@@ -38,7 +64,7 @@ describe('agents controller job-runtime module', () => {
   })
 
   it('resolves runner service account from runtime, provider, then env default', () => {
-    process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT = 'runner-default'
+    setEnv('AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT', 'runner-default')
     expect(resolveRunnerServiceAccount({ serviceAccount: 'runtime-sa' })).toBe('runtime-sa')
     expect(resolveRunnerServiceAccount({ serviceAccountName: 'runtime-sa-name' })).toBe('runtime-sa-name')
     expect(resolveRunnerServiceAccount({}, { spec: { workload: { serviceAccountName: 'provider-sa' } } })).toBe(
@@ -137,6 +163,56 @@ describe('agents controller job-runtime module', () => {
       }),
     )
   })
+
+  it.each([
+    { enabled: true, hostPath: '/var/lib/agents-workspace-cache', standard: true, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: undefined, standard: true, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: '/var/lib/..', standard: true, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: '/var/lib/agents-workspace-cache', standard: false, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: '/var/lib/agents-workspace-cache', standard: true, repository: 'org/other' },
+  ])(
+    'mounts the host workspace cache only for opted-in standard lab runs ($enabled, $hostPath, $standard, $repository)',
+    async ({ enabled, hostPath, standard, repository }) => {
+      const standardImage = 'registry.example/agents-codex-runner:standard'
+      setEnv('AGENTS_AGENT_RUNNER_IMAGE', standardImage)
+      setEnv('AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH', hostPath)
+      const kube = {
+        get: vi.fn(async () => null),
+        apply: vi.fn(async (resource: Record<string, unknown>) => resource),
+      }
+      await submitJobRun(
+        kube as never,
+        { metadata: { name: 'cache-run', namespace: 'agents' } },
+        { metadata: { name: 'codex-agent' } },
+        { metadata: { name: 'codex' }, spec: { adapter: { type: 'codex-app-server' } } },
+        { summary: 'Run summary' },
+        null,
+        'agents',
+        standard ? standardImage : 'registry.example/custom-runner:tag',
+        'job',
+        {
+          vcs: {
+            ok: true,
+            skip: false,
+            mode: 'read-only',
+            requiredSecrets: [],
+            context: { repository, cloneBaseUrl: 'https://github.com' },
+          },
+        },
+      )
+
+      const podSpec = readJobPodSpec(kube.apply.mock.calls.find(([resource]) => resource.kind === 'Job')?.[0])
+      const volumes = podSpec.volumes as Record<string, unknown>[]
+      const [container] = podSpec.containers as { volumeMounts: Record<string, unknown>[] }[]
+      const name = 'cache-run-shared-workspace-cache'
+      expect(volumes.filter((volume) => volume.hostPath)).toEqual(
+        enabled ? [{ name, hostPath: { path: hostPath, type: 'DirectoryOrCreate' } }] : [],
+      )
+      expect(container.volumeMounts.filter((mount) => mount.mountPath === '/var/cache/agents-shared')).toEqual(
+        enabled ? [{ name, mountPath: '/var/cache/agents-shared', readOnly: true }] : [],
+      )
+    },
+  )
 
   it('builds run spec with rendered event payload and optional vcs/system prompt', () => {
     const runSpec = buildRunSpec(
@@ -289,6 +365,85 @@ describe('agents controller job-runtime module', () => {
     })
     expect(agentRunnerContainer.terminationMessagePath).toBe('/workspace/.agent/status.json')
     expect(agentRunnerContainer.terminationMessagePolicy).toBe('File')
+  })
+
+  it.each([
+    {
+      name: 'standard runner',
+      sizeLimits: { '/workspace': '16Gi', '/tmp': '6Gi', '/opt/bun/install/cache': '8Gi', '/root/.codex': '1Gi' },
+    },
+    {
+      name: 'standard runner with a smaller workload memory limit',
+      memoryLimit: '1.5Gi',
+      sizeLimits: { '/workspace': '1.5Gi', '/tmp': '1.5Gi', '/opt/bun/install/cache': '1.5Gi', '/root/.codex': '1Gi' },
+    },
+    {
+      name: 'standard runner with a sub-GiB workload memory limit',
+      memoryLimit: '500M',
+      sizeLimits: { '/workspace': '500M', '/tmp': '500M', '/opt/bun/install/cache': '500M', '/root/.codex': '500M' },
+    },
+    {
+      name: 'declared workspace and Bun install mounts',
+      persistentWorkspace: true,
+      sizeLimits: { '/tmp': '6Gi', '/root/.codex': '1Gi' },
+    },
+    { name: 'custom runner image', customImage: true, sizeLimits: {} },
+  ])('bounds the generated tmpfs volumes for $name', async (testCase) => {
+    const { customImage, persistentWorkspace, memoryLimit, sizeLimits } = testCase
+    const standardImage = 'registry.example/agents-codex-runner:standard'
+    setEnv('AGENTS_AGENT_RUNNER_IMAGE', standardImage)
+    setEnv('AGENTS_AGENT_RUNNER_RESOURCES', JSON.stringify({ limits: { memory: '32Gi' } }))
+    setEnv('AGENTS_CONTROLLER_AUTH_SECRET_NAME', 'codex-auth')
+    setEnv('AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH', '/root/.codex')
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => resource),
+    }
+    const workload: Record<string, unknown> = {}
+    if (memoryLimit) workload.resources = { limits: { memory: memoryLimit } }
+    if (persistentWorkspace) {
+      workload.volumes = [
+        { type: 'pvc', name: 'worktree', claimName: 'worktree-pvc', mountPath: '/workspace' },
+        { type: 'pvc', name: 'bun-install', claimName: 'bun-install-pvc', mountPath: '/opt/bun/install' },
+      ]
+    }
+
+    await submitJobRun(
+      kube as never,
+      { metadata: { name: 'run-1', namespace: 'agents' }, spec: { workload } },
+      { metadata: { name: 'agent-a' }, spec: {} },
+      { metadata: { name: 'codex' }, spec: {} },
+      { summary: 'Run summary' },
+      null,
+      'agents',
+      customImage ? 'registry.example/custom-runner:tag' : standardImage,
+      'job',
+    )
+
+    const podSpec = readJobPodSpec(kube.apply.mock.calls.find(([resource]) => resource.kind === 'Job')?.[0])
+    const volumes = podSpec.volumes as { name: string; emptyDir?: { medium?: string; sizeLimit?: string } }[]
+    const [container] = podSpec.containers as {
+      volumeMounts: { name: string; mountPath: string }[]
+      resources: { limits: { memory: string } }
+    }[]
+    const memoryLimits = new Map(
+      volumes
+        .filter((volume) => volume.emptyDir?.medium === 'Memory')
+        .map((volume) => [volume.name, volume.emptyDir?.sizeLimit]),
+    )
+    expect(container.resources.limits.memory).toBe(memoryLimit ?? '32Gi')
+    expect(
+      Object.fromEntries(
+        container.volumeMounts
+          .filter((mount) => memoryLimits.has(mount.name))
+          .map((mount) => [mount.mountPath, memoryLimits.get(mount.name)]),
+      ),
+    ).toStrictEqual(sizeLimits)
+    if (persistentWorkspace) {
+      expect(container.volumeMounts.filter((mount) => mount.mountPath === '/workspace')).toEqual([
+        { name: 'worktree', mountPath: '/workspace', readOnly: false },
+      ])
+    }
   })
 
   it('preserves the image-baked Codex home when no auth secret is configured', async () => {

@@ -349,7 +349,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   })
   expect(databasePolicy.spec.podSelector.matchLabels).toEqual({ 'cnpg.io/cluster': 'bayn-db' })
   expect(databasePolicy.spec.policyTypes).toEqual(['Ingress'])
-  expect(databasePolicy.spec.ingress).toHaveLength(5)
+  expect(databasePolicy.spec.ingress).toHaveLength(6)
   expect(databasePolicy.spec.ingress).toEqual(
     expect.arrayContaining([
       {
@@ -357,6 +357,10 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
           { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
           { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
         ],
+        ports: [{ port: 5432, protocol: 'TCP' }],
+      },
+      {
+        from: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-daily-scorecard' } } }],
         ports: [{ port: 5432, protocol: 'TCP' }],
       },
       {
@@ -401,6 +405,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-research' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-broker-feed' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-macro-daily-sleeves' } } },
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })

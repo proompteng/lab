@@ -160,7 +160,7 @@ const riskBasis = (sessions: readonly Session[], omitted: Symbol | undefined) =>
   })
 }
 
-const trendSeries = (values: (number | undefined)[], window: number) => {
+export const trendSeries = (values: (number | undefined)[], window: number) => {
   let ema = 0
   let seen = 0
   return values.map((value) => {

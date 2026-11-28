@@ -1,33 +1,29 @@
-import { spawn } from 'node:child_process'
+import childProcess from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 
-import { CodexAppServerClient } from './app-server-client'
-
-vi.mock('node:child_process', () => ({
-  spawn: vi.fn(),
-}))
+import { CodexAppServerBootstrapTimeoutError, CodexAppServerClient } from './app-server-client'
 
 class FakeChildProcess extends EventEmitter {
+  pid = 1
+  exitCode: number | null = null
+  signalCode: NodeJS.Signals | null = null
   stdin = new PassThrough()
   stdout = new PassThrough()
   stderr = new PassThrough()
   killed = false
 
-  kill(): boolean {
+  kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
     this.killed = true
-    this.emit('exit', 0, null)
+    this.signalCode = signal
+    this.emit('exit', null, signal)
     return true
   }
 }
 
-const spawnMock = spawn as unknown as {
-  mock: { calls: unknown[][] }
-  mockReturnValue: (value: unknown) => void
-  mockReset: () => void
-}
+let spawnMock: MockInstance<typeof childProcess.spawn>
 
 const writeLine = (child: FakeChildProcess, payload: unknown) => {
   child.stdout.write(Buffer.from(`${JSON.stringify(payload)}\n`))
@@ -158,7 +154,7 @@ const respondToGoalSet = async (child: FakeChildProcess, inspect?: (request: Jso
 
 const setupClient = (options: ConstructorParameters<typeof CodexAppServerClient>[0] = {}) => {
   const child = new FakeChildProcess()
-  spawnMock.mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+  spawnMock.mockReturnValue(child as unknown as ReturnType<typeof childProcess.spawn>)
   const client = new CodexAppServerClient({ logger: () => {}, ...options })
   return { child, client }
 }
@@ -190,11 +186,59 @@ const withTimeout = async <T>(promise: Promise<T>, label: string): Promise<T> =>
 
 describe('CodexAppServerClient v2 notifications', () => {
   beforeEach(() => {
-    spawnMock.mockReset()
+    spawnMock = vi.spyOn(childProcess, 'spawn')
   })
 
   afterEach(() => {
-    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('allows 60 seconds for the initialize handshake before stopping the child', async () => {
+    const schedule = vi.spyOn(globalThis, 'setTimeout')
+    const { child, client } = setupClient()
+    const readiness = client.ensureReady().catch((error) => error)
+    try {
+      const [expire, timeoutMs] = schedule.mock.calls[0] ?? []
+      expect(timeoutMs).toBe(60_000)
+      expect(child.killed).toBe(false)
+      expire?.()
+
+      expect(await readiness).toBeInstanceOf(CodexAppServerBootstrapTimeoutError)
+      expect(child.killed).toBe(true)
+    } finally {
+      client.stop()
+    }
+  })
+
+  it('waits for child exit and escalates if startup shutdown ignores SIGTERM', async () => {
+    const gracePeriod = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(gracePeriod.signal)
+    const { child, client } = setupClient()
+    const readiness = client.ensureReady().catch((error) => error)
+    const forced = Promise.withResolvers<void>()
+    const kill = vi.spyOn(child, 'kill').mockImplementation((signal) => {
+      child.killed = true
+      if (signal === 'SIGKILL') forced.resolve()
+      return true
+    })
+
+    const stopping = client.stopAndWait()
+    expect(kill).toHaveBeenCalledTimes(1)
+    gracePeriod.abort()
+    await forced.promise
+    expect(kill).toHaveBeenLastCalledWith('SIGKILL')
+    child.signalCode = 'SIGKILL'
+    child.emit('exit', null, child.signalCode)
+    await stopping
+    expect(await readiness).toMatchObject({ message: expect.stringContaining('SIGKILL') })
+  })
+
+  it('propagates child spawn errors instead of treating them as bootstrap timeouts', async () => {
+    const { child, client } = setupClient()
+    const error = new Error('spawn codex ENOENT')
+    const ready = client.ensureReady()
+    child.emit('error', error)
+    await expect(ready).rejects.toBe(error)
   })
 
   it('observes continuation notifications after the requested turn stream has closed', async () => {
@@ -218,7 +262,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       params: { threadId: 'thread-observed', turnId: 'next-turn', tokenUsage: { total: { totalTokens: 42 } } },
     }
     writeLine(child, continuation)
-    await vi.waitFor(() => expect(observed).toHaveBeenCalledWith(continuation))
+    expect(observed).toHaveBeenCalledWith(continuation)
     client.stop()
   })
 
