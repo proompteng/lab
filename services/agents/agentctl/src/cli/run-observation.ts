@@ -2,6 +2,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as Effect from 'effect/Effect'
 import { posix } from 'node:path'
 
+import { applyVcsMetadataToParameters } from '../../../src/server/agents-controller/run-utils'
 import type { KubeBackend } from '../kube/backend'
 import type { PodSpec } from '../kube/resources'
 import {
@@ -18,6 +19,7 @@ import {
 } from '../kube/runs'
 import { outputResource, parseJson, readNestedValue, RESOURCE_SPECS } from '../runtime'
 import { asAgentctlError, validationError } from './errors'
+import { buildEventContext } from './run-input'
 import { renderRunRows } from './run-list'
 import { redactRunText } from './run-redaction'
 
@@ -283,9 +285,24 @@ export const readVerificationIdentity = (backend: KubeBackend, namespace: string
   })
 
 export type Verification = { serviceAccountName: string; audience: string; mountPath: string } & (
-  | { prompt: string; stepPrompts?: never }
-  | { prompt?: never; stepPrompts: readonly string[] }
+  | { prompt: string }
+  | { stepPrompts: readonly string[] }
+  | { jobTask: { implementation: Record<string, unknown>; parameters: Record<string, string> } }
 )
+
+const expectedPrompt = (expected: Verification, observation: RunObservation) => {
+  if ('prompt' in expected) return expected.prompt
+  if ('jobTask' in expected) {
+    const { implementation, parameters } = expected.jobTask
+    const status = observation.run.status
+    // A skipped VCS resolution may report branches without applying them to the prompt.
+    const vcsSkipped = status?.conditions?.some(({ type, status }) => type === 'VcsSkipped' && status === 'True')
+    const resolved = applyVcsMetadataToParameters(parameters, vcsSkipped ? null : (status?.vcs ?? null))
+    return buildEventContext(implementation, resolved).payload.prompt
+  }
+  const index = Number(observation.pod?.metadata.labels?.[STEP_INDEX] ?? observation.job?.metadata.labels?.[STEP_INDEX])
+  return expected.stepPrompts.length === 1 ? expected.stepPrompts[0] : expected.stepPrompts[index - 1]
+}
 
 export const verifyRun = (
   backend: KubeBackend,
@@ -299,7 +316,8 @@ export const verifyRun = (
     while (true) {
       const observation = yield* kubeCall((signal) => readRunObservation(backend, namespace, name, signal))
       const spec = observation.pod?.spec
-      if (spec) {
+      // The Job and Pod can appear before the controller publishes the resolved VCS status.
+      if (spec && (!('jobTask' in expected) || observation.phase !== 'Pending')) {
         const account = spec.serviceAccountName
         if (account !== expected.serviceAccountName) {
           return yield* Effect.fail(
@@ -314,13 +332,8 @@ export const verifyRun = (
         }
         const payload = yield* kubeCall((signal) => readPrompt(backend, namespace, observation, signal, true))
         if (payload) {
-          const index = Number(
-            observation.pod?.metadata.labels?.[STEP_INDEX] ?? observation.job?.metadata.labels?.[STEP_INDEX],
-          )
-          const prompt =
-            expected.prompt ??
-            (expected.stepPrompts.length === 1 ? expected.stepPrompts[0] : expected.stepPrompts[index - 1])
-          if (!prompt || payload.prompt.trim() !== prompt.trim()) {
+          const prompt = expectedPrompt(expected, observation)
+          if (typeof prompt !== 'string' || payload.prompt.trim() !== prompt.trim()) {
             return yield* Effect.fail(
               kubeError(`AgentRun ${name}: ${payload.name} run.json.prompt does not match the task text.`),
             )

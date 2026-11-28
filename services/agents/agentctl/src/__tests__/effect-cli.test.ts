@@ -784,6 +784,31 @@ describe('AgentRun prompt and verification boundary', () => {
     expect(requests.filter(({ args }) => args[5] === 'agents.agents.proompteng.ai/codex-agent')).toHaveLength(1)
   })
 
+  it('verifies a batch job prompt using the controller-resolved base and generated head', async () => {
+    const head = 'codex/agentctl-run-summary-and-parallel-batch-dispatch'
+    const run = batchRun('verification', 'Work on ${head} based on ${base}.')
+    const spec = { ...run.spec, parameters: { repository: 'owner/project' } }
+    const client = await fixture('batch-verify-vcs', {
+      ...data,
+      [`get ${agentRuns}/verification`]: {
+        ...verificationRun,
+        spec,
+        status: { phase: 'Running', vcs: { baseBranch: 'release', headBranch: head } },
+      },
+      'get configmap/verification-spec-step-1-attempt-1': {
+        metadata: { name: 'verification-spec-step-1-attempt-1' },
+        data: { 'run.json': JSON.stringify({ prompt: `Work on ${head} based on release.` }) },
+      },
+    })
+    const file = resolve(directory, 'batch-verify-vcs-manifest.json')
+    await writeFile(file, JSON.stringify({ ...run, spec }))
+    const result = await client.run(['run', 'batch', '--spec', file, '--verify', '-o', 'json'])
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout).runs).toEqual([
+      { entry: 1, name: 'verification', node: 'node-arm', status: 'Verified' },
+    ])
+  })
+
   it('rejects prompt overrides before local Codex, filesystem reads, or kubectl', async () => {
     const client = await fixture('rejected', {})
     const variants = [

@@ -25,7 +25,7 @@ describe('AgentRun batch preflight', () => {
     ]
     for (const content of variants) {
       const entries = prepareRunBatch(parseRunBatch(content, 'fixture', true), new Map())
-      expect(entries.map(({ manifest, prompts }) => [manifest.metadata.namespace, prompts[0]])).toEqual([
+      expect(entries.map(({ manifest, tasks }) => [manifest.metadata.namespace, tasks[0].prompt])).toEqual([
         ['fixture', 'Implement a task on codex/first.'],
         ['fixture', 'Implement a task on codex/second.'],
       ])
@@ -61,7 +61,7 @@ describe('AgentRun batch preflight', () => {
       }),
     )
     const entries = parseRunBatch(JSON.stringify(manifests), 'fixture', false)
-    expect(prepareRunBatch(entries, new Map()).map(({ prompts }) => prompts)).toEqual([
+    expect(prepareRunBatch(entries, new Map()).map(({ tasks }) => tasks.map(({ prompt }) => prompt))).toEqual([
       ['Implement a task on codex/first-implement.', 'Implement a task on codex/first-verify.'],
       ['Implement a task on codex/second-implement.', 'Implement a task on codex/second-verify.'],
     ])
@@ -126,9 +126,9 @@ describe('AgentRun batch preflight', () => {
     expect(() => prepareRunBatch(entries, new Map([['task', { text: '  ' }]]))).toThrow(
       'ImplementationSpec must have non-empty spec.text',
     )
-    expect(prepareRunBatch(entries, new Map([['task', { text: 'Build ${head}.' }]]))[0].prompts).toEqual([
+    expect(prepareRunBatch(entries, new Map([['task', { text: 'Build ${head}.' }]]))[0].tasks[0].prompt).toBe(
       'Build codex/ref.',
-    ])
+    )
   })
 
   it('rejects malformed documents, empty batches, duplicate names and a different namespace', () => {

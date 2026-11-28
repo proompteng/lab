@@ -147,7 +147,7 @@ export const parseRunBatch = (content: string, namespace: string, verify: boolea
         })
       }
     }
-    return { index, agent, tasks, manifest: { ...resource, metadata: { ...metadata, namespace } } }
+    return { index, agent, runtime: type, tasks, manifest: { ...resource, metadata: { ...metadata, namespace } } }
   })
 }
 
@@ -157,7 +157,7 @@ export const prepareRunBatch = (
 ) => {
   const branchOwners = new Map<string, number>()
   return entries.map((entry) => {
-    const prompts = entry.tasks.flatMap(({ implementation, parameters, executable }) => {
+    const tasks = entry.tasks.flatMap(({ implementation, parameters, executable }) => {
       const spec =
         implementation.source === 'inline' ? implementation.spec : asRecord(implementations.get(implementation.name))
       if (!spec || !asString(spec.text))
@@ -174,9 +174,9 @@ export const prepareRunBatch = (
           throw validationError(`Batch entry ${entry.index}: duplicate head branch (also used by entry ${owner}).`)
         branchOwners.set(head, entry.index)
       }
-      return [prompt]
+      return [{ implementation: spec, parameters, prompt }]
     })
-    return { ...entry, prompts }
+    return { ...entry, tasks }
   })
 }
 
@@ -269,10 +269,11 @@ const dispatchBatch = (
             const { entry } = submitted[index]
             const identity = identities.get(entry.agent)
             if (!identity) return yield* Effect.die(new Error('Missing preflight verification identity'))
-            const result = yield* verifyRun(backend, namespace, row.name, {
-              ...identity,
-              stepPrompts: entry.prompts,
-            }).pipe(
+            const prompts =
+              entry.runtime === 'job'
+                ? { jobTask: entry.tasks[0] }
+                : { stepPrompts: entry.tasks.map(({ prompt }) => prompt) }
+            const result = yield* verifyRun(backend, namespace, row.name, { ...identity, ...prompts }).pipe(
               Effect.match({
                 onSuccess: ({ node }) => ({ node: node ?? null, status: 'Verified' }),
                 onFailure: (error) => {
