@@ -11,6 +11,20 @@ families now would expose Holdout before the full grid can be frozen.
 | `2026-11-27-sip-10yr-sp100/`                             | `ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e` | Not in the ETF roster |
 | `2026-11-27-sip-10yr-sp100-supplement-dia-uup/`          | `ea0324abff46b2a44ea718dfbac625b9c434a1d21addc77eb5491d0249a79355` | Only DIA and UUP      |
 
+## Development-only comparator verification
+
+The exact frozen daily and intraday calendars matched on all 2,012 Train and Validation dates.
+The existing replay implementations reproduced the published [F4 SHY-idle returns](../2026-11-27-10yr-vol-regime-carry/README.md)
+and [B0 fixed-$100k P&L](../2026-11-27-10yr-qqq-smh-conditioning/README.md) at their overlapping reference costs.
+
+| Fold       | F4 10 / 20 bp RT    | B0 2 / 5 bp RT          |
+| ---------- | ------------------- | ----------------------- |
+| Train      | 42.6060% / 41.8367% | $33,107.45 / $14,806.00 |
+| Validation | 7.8920% / 7.7613%   | $29,982.77 / $23,345.90 |
+
+Those checks do not select any Pillar 3 candidate. The study charges one-way cost, not the round-trip (RT)
+convention used to verify the published controls.
+
 ## Resume without changing the grid
 
 Supply an explicitly approved, immutable Alpaca SIP daily `adjustment=all` TIP export covering exactly the
