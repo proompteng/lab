@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-ontology-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auto-ontology-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auto-ontology-mcp
+    spec:
+      containers:
+        - name: mcp
+          image: nvcr.io/nvidia/auto-ontology-mcp:1.3.0@sha256:c0b46acbf957d1210341a3984ca7941f5a7b292aee8fefd16c6305cc34f9fdf0
+          env:
+            - name: AUTO_ONTOLOGY_API_URL
+              value: https://auto-ontology.ide-newton.ts.net
+            - name: AUTO_ONTOLOGY_MCP_PUBLIC_URL
+              value: https://auto-ontology-mcp.ide-newton.ts.net
+          ports:
+            - name: http
+              containerPort: 3003
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auto-ontology-mcp
+spec:
+  selector:
+    app.kubernetes.io/name: auto-ontology-mcp
+  ports:
+    - name: http
+      port: 3003
+      targetPort: http
