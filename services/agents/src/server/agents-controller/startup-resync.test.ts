@@ -13,6 +13,7 @@ vi.mock('../kube-watch', () => ({
 import type { WatchOptions } from '../kube-watch'
 import { RESOURCE_MAP } from '../kube-types'
 import { asRecord, asString, readNested } from '../primitives'
+import { hashAgentRunImmutableSpec } from './immutable-spec'
 import { __test, configureAgentsControllerRuntime, stopAgentsController } from './index'
 import { createControllerState } from './namespace-state'
 
@@ -275,10 +276,59 @@ describe('agents controller startup resync', () => {
 
       expect(kube.applyStatus.mock.calls[1]?.[0]).toMatchObject({
         metadata: { resourceVersion: '11' },
-        status: { phase: 'Running', runtimeRef: { name: 'replayed-job', uid: 'uid-replayed-job' } },
+        status: {
+          phase: 'Running',
+          runtimeRef: { name: 'replayed-job', uid: 'uid-replayed-job' },
+          specHash: hashAgentRunImmutableSpec(run),
+        },
       })
       expect(kube.apply.mock.calls.filter(([resource]) => resource.kind === 'Job')).toHaveLength(1)
-      expect(kube.runs.get('agents/replayed')?.status).toMatchObject({ phase: 'Running' })
+      expect(kube.runs.get('agents/replayed')?.status).toMatchObject({
+        phase: 'Running',
+        specHash: hashAgentRunImmutableSpec(run),
+      })
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
+  it('enforces immutability after adopting a Job whose initial Running status write conflicted with a spec mutation', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED', 'true')
+    const run = makeJobRun('mutated-in-flight')
+    const originalSpecHash = hashAgentRunImmutableSpec(run)
+    const kube = buildJobApi([run])
+    kube.applyStatus.mockImplementationOnce(async (patch) => {
+      expect(readNested(patch, ['metadata', 'resourceVersion'])).toBe('10')
+      expect(readNested(patch, ['status', 'phase'])).toBe('Running')
+      const mutated = {
+        ...run,
+        metadata: { ...run.metadata, generation: 2, resourceVersion: '11' },
+        spec: {
+          ...run.spec,
+          implementation: { inline: { text: 'tampered while job submission was in flight' } },
+        },
+      }
+      kube.runs.set('agents/mutated-in-flight', mutated)
+      throw Object.assign(new Error('resourceVersion conflict'), { code: 409 })
+    })
+
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, 'agents', createControllerState(), defaultConcurrency, handles)
+      await awaitNamespaceIdle('agents')
+      await vi.advanceTimersByTimeAsync(500)
+      await awaitNamespaceIdle('agents')
+
+      expect(kube.apply.mock.calls.filter(([resource]) => resource.kind === 'Job')).toHaveLength(1)
+      expect(kube.delete).toHaveBeenCalledWith('job', 'mutated-in-flight-job', 'agents', { wait: false })
+      expect(kube.runs.get('agents/mutated-in-flight')?.status).toMatchObject({
+        phase: 'Failed',
+        specHash: originalSpecHash,
+        conditions: expect.arrayContaining([
+          expect.objectContaining({ type: 'Failed', status: 'True', reason: 'SpecImmutableViolation' }),
+        ]),
+      })
     } finally {
       __test.stopWatchHandles(handles)
     }

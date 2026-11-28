@@ -1,12 +1,13 @@
 import { asRecord, asString, readNested } from '../primitives'
 import { extractAllowedImplementationSourceProviders, extractImplementationSourceProvider } from '../primitives-policy'
-import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
+import { type createKubernetesClient, isKubeConflict, RESOURCE_MAP } from '../kube-types'
 
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
 import {
   buildRunSpecContext,
+  getJobAcceptanceSpecHash,
   isJobOwnedByAgentRun,
   makeName,
   renderProviderOutputArtifacts,
@@ -159,6 +160,16 @@ type AgentRunReconcilerDependencies = {
   ) => void
   recordAgentRateLimitRejection?: (scope: 'cluster' | 'namespace' | 'repo', attributes: Record<string, string>) => void
 }
+
+const MAX_SUBMIT_STATUS_CONFLICT_RETRIES = 5
+
+const isSameRuntimeRef = (left: RuntimeRef, right: RuntimeRef) =>
+  asString(left.type) === asString(right.type) &&
+  asString(left.name) === asString(right.name) &&
+  asString(left.namespace) === asString(right.namespace) &&
+  (asString(left.workflowId) ?? null) === (asString(right.workflowId) ?? null) &&
+  (asString(left.runId) ?? null) === (asString(right.runId) ?? null) &&
+  (asString(left.uid) ?? null) === (asString(right.uid) ?? null)
 
 export const resolveProviderReadinessBlock = (provider: Record<string, unknown>) => {
   const conditions = readNested(provider, ['status', 'conditions'])
@@ -1117,24 +1128,34 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         })
         return
       }
-      const warnedConditions =
-        (vcsResolution.warnings ?? []).length > 0
-          ? upsertCondition(conditions, {
-              type: 'Warning',
-              status: 'True',
-              reason: vcsResolution.warnings?.[0]?.reason ?? 'Warning',
-              message: (vcsResolution.warnings ?? []).map((warning) => warning.message).join('; '),
-            })
-          : upsertCondition(conditions, { type: 'Warning', status: 'False', reason: 'None', message: '' })
-      const baseConditions =
-        vcsResolution.skip && vcsResolution.reason
-          ? upsertCondition(warnedConditions, {
+      const applyVcsConditions = (currentConditions: Condition[]) => {
+        const warned =
+          (vcsResolution.warnings ?? []).length > 0
+            ? upsertCondition(currentConditions, {
+                type: 'Warning',
+                status: 'True',
+                reason: vcsResolution.warnings?.[0]?.reason ?? 'Warning',
+                message: (vcsResolution.warnings ?? []).map((warning) => warning.message).join('; '),
+              })
+            : upsertCondition(currentConditions, { type: 'Warning', status: 'False', reason: 'None', message: '' })
+        return vcsResolution.skip && vcsResolution.reason
+          ? upsertCondition(warned, {
               type: 'VcsSkipped',
               status: 'True',
               reason: vcsResolution.reason,
               message: vcsResolution.message ?? '',
             })
-          : warnedConditions
+          : warned
+      }
+      const applySubmittedConditions = (currentConditions: Condition[]) => {
+        const accepted = upsertCondition(applyVcsConditions(currentConditions), {
+          type: 'Accepted',
+          status: 'True',
+          reason: 'Submitted',
+        })
+        return upsertCondition(accepted, { type: 'InProgress', status: 'True', reason: 'Running' })
+      }
+      const baseConditions = applyVcsConditions(conditions)
       const vcsContext = vcsResolution.context ?? null
       const vcsStatus = vcsResolution.status ?? undefined
       const resolvedParameters = applyVcsMetadataToParameters(parameters, vcsContext)
@@ -1145,6 +1166,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
       const reservation = await reserveStart()
       if (!reservation.ok) return reservation.retryAt
+      const acceptanceSpecHash = hashAgentRunImmutableSpec(agentRun)
       let newRuntimeRef: RuntimeRef
       try {
         if (runtimeType === 'job') {
@@ -1165,6 +1187,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
               systemPrompt: systemPromptResolution.systemPrompt,
               systemPromptHash: systemPromptResolution.systemPromptHash,
               systemPromptRef: systemPromptResolution.systemPromptRef,
+              specHash: acceptanceSpecHash,
             },
           )
         } else if (runtimeType === 'custom') {
@@ -1209,22 +1232,116 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
       // A rejected status write does not undo the start. Reconcile the already-created runtime instead.
-      const updated = upsertCondition(baseConditions, { type: 'Accepted', status: 'True', reason: 'Submitted' })
       logSubmitted(newRuntimeRef)
-      await setStatus(kube, agentRun, {
+      const submittedStatus = {
         observedGeneration,
         runtimeRef: newRuntimeRef,
         phase: 'Running',
         startedAt: nowIso(),
-        conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
+        conditions: applySubmittedConditions(conditions),
         vcs: vcsStatus ?? undefined,
         ...(declaredArtifacts.length > 0 ? { artifacts: declaredArtifacts } : {}),
         contract: contractStatus,
-        specHash: hashAgentRunImmutableSpec(agentRun),
+        specHash: acceptanceSpecHash,
         ...(systemPromptResolution.systemPromptHash
           ? { systemPromptHash: systemPromptResolution.systemPromptHash }
           : {}),
-      })
+      }
+      if (runtimeType === 'job') {
+        await setStatus(kube, agentRun, submittedStatus)
+        return
+      }
+
+      // External runtimes (custom, temporal) cannot be rediscovered from Kubernetes if this status write conflicts.
+      // Refresh the latest AgentRun resourceVersion and retry persisting the already-created runtimeRef in place.
+      const cancelAbandonedSubmittedRuntime = async (reason: string) => {
+        logAgentsControllerWarn('reconcile_submitted_runtime_abandoned', {
+          ...logContext,
+          decision: 'abandoned',
+          reason,
+          runtimeRefType: asString(newRuntimeRef.type) ?? 'unknown',
+          runtimeRefName: asString(newRuntimeRef.name) ?? '',
+          durationMs: Date.now() - reconcileStartedAt,
+        })
+        try {
+          await cancelRuntime({
+            runtimeRef: newRuntimeRef,
+            namespace,
+            kube,
+            getTemporalClient: getTemporalClient as () => Promise<TemporalCancelClient>,
+          })
+        } catch (cancelError) {
+          console.warn('[agents] failed to cancel abandoned submitted runtime after status conflict', cancelError)
+        }
+      }
+
+      const initialUid = asString(metadata.uid)
+      let targetRun = agentRun
+      let targetStatus = submittedStatus
+      for (let attempt = 0; attempt <= MAX_SUBMIT_STATUS_CONFLICT_RETRIES; attempt += 1) {
+        try {
+          await setStatus(kube, targetRun, targetStatus)
+          return
+        } catch (error) {
+          if (!isKubeConflict(error)) throw error
+          if (attempt >= MAX_SUBMIT_STATUS_CONFLICT_RETRIES) {
+            logAgentsControllerWarn('reconcile_submitted_status_conflict_exhausted', {
+              ...logContext,
+              decision: 'status_conflict_exhausted',
+              attempts: attempt + 1,
+              runtimeRefType: asString(newRuntimeRef.type) ?? 'unknown',
+              runtimeRefName: asString(newRuntimeRef.name) ?? '',
+              durationMs: Date.now() - reconcileStartedAt,
+            })
+            throw new Error(
+              `failed to persist submitted ${runtimeType} runtime status for AgentRun ${namespace}/${name} after ${attempt + 1} conflict attempts`,
+              { cause: error },
+            )
+          }
+          const refreshed = await kube.get(RESOURCE_MAP.AgentRun, name, namespace)
+          if (!refreshed) {
+            await cancelAbandonedSubmittedRuntime('AgentRunDeleted')
+            return
+          }
+          const refreshedMetadata = asRecord(refreshed.metadata) ?? {}
+          const refreshedUid = asString(refreshedMetadata.uid)
+          if (initialUid && refreshedUid && refreshedUid !== initialUid) {
+            await cancelAbandonedSubmittedRuntime('AgentRunReplaced')
+            return
+          }
+          const refreshedStatus = asRecord(refreshed.status) ?? {}
+          const refreshedPhase = asString(refreshedStatus.phase) ?? 'Pending'
+          if (
+            Boolean(refreshedMetadata.deletionTimestamp) ||
+            isAgentRunTemplate(refreshedMetadata) ||
+            isAgentRunTerminalPhase(refreshedPhase)
+          ) {
+            await cancelAbandonedSubmittedRuntime(
+              refreshedMetadata.deletionTimestamp
+                ? 'AgentRunDeleting'
+                : isAgentRunTemplate(refreshedMetadata)
+                  ? 'AgentRunTemplate'
+                  : `AgentRun${refreshedPhase}`,
+            )
+            return
+          }
+          const refreshedRuntimeRef = parseRuntimeRef(refreshedStatus.runtimeRef)
+          if (refreshedRuntimeRef) {
+            if (!isSameRuntimeRef(refreshedRuntimeRef, newRuntimeRef)) {
+              await cancelAbandonedSubmittedRuntime('RuntimeRefConflict')
+            }
+            return
+          }
+          const refreshedGeneration = refreshedMetadata.generation ?? observedGeneration
+          const immutableSpecDrifted = hashAgentRunImmutableSpec(refreshed) !== acceptanceSpecHash
+          targetRun = refreshed
+          targetStatus = {
+            ...submittedStatus,
+            observedGeneration: immutableSpecDrifted ? observedGeneration : refreshedGeneration,
+            conditions: applySubmittedConditions(buildConditions(refreshed)),
+          }
+        }
+      }
       return
     }
 
@@ -1310,6 +1427,10 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         }
         return
       }
+      const adoptedSpecHash =
+        storedSpecHash ??
+        getJobAcceptanceSpecHash(job) ??
+        (recoveredJob ? hashAgentRunImmutableSpec(agentRun) : undefined)
       const jobStatus = asRecord(job.status) ?? {}
       const succeeded = Number(jobStatus.succeeded ?? 0)
       if (succeeded > 0 || isJobComplete(job)) {
@@ -1342,6 +1463,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           runtimeRef,
           conditions: updated,
           vcs: asRecord(status.vcs) ?? undefined,
+          ...(adoptedSpecHash ? { specHash: adoptedSpecHash } : {}),
           ...(runnerStatus ? { runner: runnerStatusForAgentRunStatus(runnerStatus) } : {}),
           ...(runnerArtifacts.length > 0
             ? { artifacts: mergeAgentRunArtifacts(status.artifacts, runnerArtifacts) }
@@ -1379,6 +1501,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           runtimeRef,
           conditions: updated,
           vcs: asRecord(status.vcs) ?? undefined,
+          ...(adoptedSpecHash ? { specHash: adoptedSpecHash } : {}),
           ...(runnerStatus ? { runner: runnerStatusForAgentRunStatus(runnerStatus) } : {}),
           ...(runnerArtifacts.length > 0
             ? { artifacts: mergeAgentRunArtifacts(status.artifacts, runnerArtifacts) }
@@ -1415,10 +1538,11 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             runtimeRef,
             conditions: updated,
             vcs: asRecord(status.vcs) ?? undefined,
+            ...(adoptedSpecHash ? { specHash: adoptedSpecHash } : {}),
           })
           return
         }
-        if (phase !== 'Running' || recoveredJob || !jobObservedAt) {
+        if (phase !== 'Running' || recoveredJob || !jobObservedAt || (!storedSpecHash && adoptedSpecHash)) {
           await setStatus(kube, agentRun, {
             observedGeneration,
             phase: 'Running',
@@ -1431,6 +1555,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             },
             conditions,
             vcs: asRecord(status.vcs) ?? undefined,
+            ...(adoptedSpecHash ? { specHash: adoptedSpecHash } : {}),
           })
         }
       }

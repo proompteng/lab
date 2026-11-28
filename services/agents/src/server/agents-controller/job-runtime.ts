@@ -9,6 +9,7 @@ import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH
 import { providerUsesControllerAuthSecret, resolveProviderSecretEnv } from './policy'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
+import { hashAgentRunImmutableSpec } from './immutable-spec'
 import { createImplementationContractTools } from './implementation-contract'
 import { resolveParam, resolveParameters, resolveRunGoal } from './run-utils'
 import { buildRuntimeRef } from './runtime-resources'
@@ -637,6 +638,11 @@ export const applyJobTtlAfterStatus = async (
   await kube.patch('job', name, namespace, { spec: { ttlSecondsAfterFinished: ttlSeconds } })
 }
 
+export const AGENT_RUN_SPEC_HASH_ANNOTATION = 'agents.proompteng.ai/spec-hash'
+
+export const getJobAcceptanceSpecHash = (job: Record<string, unknown>) =>
+  asString(readNested(job, ['metadata', 'annotations', AGENT_RUN_SPEC_HASH_ANNOTATION]))
+
 export type SubmitJobRunOptions = {
   nameSuffix?: string
   labels?: Record<string, string>
@@ -647,6 +653,7 @@ export type SubmitJobRunOptions = {
   systemPrompt?: string | null
   systemPromptHash?: string | null
   systemPromptRef?: SystemPromptRef | null
+  specHash?: string | null
 }
 
 export const isJobOwnedByAgentRun = (job: Record<string, unknown>, agentRun: Record<string, unknown>) => {
@@ -1206,6 +1213,7 @@ export const submitJobRun = async (
     jobPodSpec.schedulerName = schedulerName
   }
 
+  const acceptanceSpecHash = asString(options.specHash) ?? hashAgentRunImmutableSpec(agentRun)
   const jobResource = {
     apiVersion: 'batch/v1',
     kind: 'Job',
@@ -1213,6 +1221,9 @@ export const submitJobRun = async (
       name: jobName,
       namespace,
       labels: mergedLabels,
+      annotations: {
+        [AGENT_RUN_SPEC_HASH_ANNOTATION]: acceptanceSpecHash,
+      },
       ...(runUid
         ? {
             ownerReferences: [

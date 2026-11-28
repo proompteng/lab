@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  AGENT_RUN_SPEC_HASH_ANNOTATION,
   buildRunSpecContext,
   buildRunSpec,
+  getJobAcceptanceSpecHash,
   getMountedConfigMapNames,
   makeName,
   normalizeLabelValue,
@@ -10,6 +12,7 @@ import {
   submitJobRun,
   verifyJobConfigMaps,
 } from '~/server/agents-controller/job-runtime'
+import { hashAgentRunImmutableSpec } from '~/server/agents-controller/immutable-spec'
 
 const readJobPodSpec = (job: Record<string, unknown> | undefined) => {
   const jobSpec = (job?.spec as Record<string, unknown> | undefined) ?? {}
@@ -886,5 +889,45 @@ describe('agents controller job-runtime module', () => {
     expect(container.volumeMounts.find((mount) => mount.mountPath === '/root/.codex/auth.json')).toBeUndefined()
     expect(container.volumeMounts.find((mount) => mount.mountPath === '/root/.gemini')).toBeDefined()
     expect(job.spec.template.spec.volumes.find((vol) => vol.secret?.secretName === 'codex-auth')).toBeUndefined()
+  })
+
+  it('annotates submitted Jobs with the AgentRun acceptance specHash', async () => {
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+    }
+    const agentRun = {
+      metadata: { name: 'hash-run', uid: 'hash-uid-1', namespace: 'agents' },
+      spec: {
+        agentRef: { name: 'codex-agent' },
+        runtime: { type: 'job' },
+        implementation: { inline: { text: 'Capture acceptance hash' } },
+        secrets: ['secret-1'],
+      },
+    }
+    const expectedHash = hashAgentRunImmutableSpec(agentRun)
+
+    await submitJobRun(
+      kube as never,
+      agentRun,
+      { metadata: { name: 'codex-agent' }, spec: {} },
+      { metadata: { name: 'codex' }, spec: {} },
+      { text: 'Capture acceptance hash' },
+      null,
+      'agents',
+      'registry.example/runner:latest',
+      'job',
+    )
+
+    const job = applied.find((resource) => resource.kind === 'Job')
+    expect(job).toBeDefined()
+    expect((job?.metadata as { annotations?: Record<string, string> } | undefined)?.annotations).toMatchObject({
+      [AGENT_RUN_SPEC_HASH_ANNOTATION]: expectedHash,
+    })
+    expect(getJobAcceptanceSpecHash(job ?? {})).toBe(expectedHash)
   })
 })
