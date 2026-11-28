@@ -45,8 +45,9 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 ## Agents collective knowledge
 
-`src/agents/curate-ontology-deltas.ts` validates AgentRun proposals against an in-memory copy of the Agents schema and
-updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
+`src/agents/emit-knowledge-delta.ts` emits or checks a canonical proposal pinned to the verified checkout's Git SHA.
+`src/agents/curate-ontology-deltas.ts` validates the selected proposals against an in-memory copy of the Agents schema
+and updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
 
 ## Registry maintenance
 
@@ -69,18 +70,28 @@ syncs that branch; no script, SHA bump, deployment PR, release branch, Image Upd
 of the normal path. See
 [`docs/release-automation.md`](../../docs/release-automation.md) for enrollment, evidence, and recovery.
 
-## PR input selection
+## CI input selection
 
 `src/ci/affected-inputs.ts` runs through `.github/actions/affected-inputs` before expensive Bun service and image jobs.
 Each target declares its installed workspaces and source paths. The planner compares PR merge-base and head lockfiles,
 following dependencies, optional dependencies, peers, and linked workspaces. An unrelated workspace manifest or lockfile
 change skips the target. Changes to its resolved packages, integrity, shared source, or build configuration still run it.
 Unsupported lockfiles and unresolved required dependencies fail the planner instead of silently skipping validation.
+An optional `only-paths` list requires a nonempty PR diff in which every path matches, including both sides of
+moves. It checks the raw paths before dependency or workspace filtering and is false for non-PR events.
 
-Push events retain path-based selection because Kargo requires groups of published images at one source revision.
-Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
-and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
-use the root Bun lockfile.
+The [root PR workflow](../../.github/workflows/pull-request.yml) evaluates Bumba, Froussard, Jangar, Ofz, Oirat,
+and Signal Publisher together on its existing planner runner. It calls only affected services, and `ci-pr`
+rejects missing decisions or unsuccessful selected checks. Merge groups still run their full validation set.
+The separate product image workflow starts on PRs only for candidate App dependency-closure inputs; source-only
+changes stay with the owning application validators.
+
+Main push workflows that watch the root lockfile use `dependency-aware-push` to compare the before and head revisions.
+GitHub's path filters still wake the planner for `bun.lock`, but unrelated changes do not schedule tests, native builds,
+or publishes. Co-built images use the same source paths and Bun workspace union even when only one member
+uses Bun: Landing drives the Ofz/Tengri/Nanoagent/Proompteng cohort, and Signal Publisher drives the Torghut cohort.
+Publication slots are shared only after selection so unrelated pushes cannot displace a pending publish.
+Bayn retains its comparison against the last verified cohort. Manual selection retains each workflow's existing controls.
 
 The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
 commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted
@@ -89,18 +100,19 @@ digests. The baseline values on `main` can reference images removed by registry 
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
-Bayn also publishes images only from `main`. Its PRs retain source builds, type checks, PostgreSQL, archive, ledger,
-replay and production metadata validation. Standalone deployment manifests, Bayn validation scripts, and service
-documentation that is linted run the PR contract checks without starting runtime suites. Manifests read by runtime
-tests, such as `postgres-monitoring.yaml` and the ClickHouse schema, still select runtime validation. Python checks
-run for GEPA inputs; ordinary service test edits skip the independent proof pipeline unless they change its
-PostgreSQL conformance cases. Merge groups and release callers still validate every suite. Replay image and execution
-acceptance share one hosted job and Nix environment, including dependency source boundary checks.
+Bayn also publishes images only from `main`. PRs limited to offline Bayn tools or documentation use the fast tier:
+lint, type checks, and tools unit tests without disposable services. Full-tier inputs include Bayn source (including
+tests), migrations, Bayn GitOps, workflow definitions, and the integration drivers and runtime inputs stored under
+tools and docs. Mixed PRs are not eligible for the fast tier. Standalone contract, formal, and GEPA changes still
+select their owned checks when they don't touch full-tier inputs. The same `Bayn release gate` requires success for
+every selected job and a skip for every unselected job. Merge groups, dispatches, and release callers always run
+every suite. See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
+Replay image and execution acceptance share one hosted job and Nix environment, including dependency boundaries.
 The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
 the controller. Runtime compiler tools retain main-branch publication.
-Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
-GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
+Ofz, Tengri, and Nanoagent source validation uses GitHub-hosted runners; native image and KVM jobs retain the cluster
+runners.
 
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.

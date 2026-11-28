@@ -9,10 +9,11 @@ metadata:
 spec:
   schedule: "17 9 * * *"
   concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 1800
       backoffLimit: 1
       template:
         metadata:

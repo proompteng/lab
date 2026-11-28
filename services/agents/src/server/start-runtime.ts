@@ -1,15 +1,9 @@
 import { createAgentsControlPlaneRuntime } from './control-plane'
 
-type AgentsStartRuntime = Awaited<ReturnType<typeof createAgentsControlPlaneRuntime>>
-
-let runtimePromise: Promise<AgentsStartRuntime> | null = null
-
-export const getAgentsStartRuntime = () => {
-  runtimePromise ??= createAgentsControlPlaneRuntime({ enableWebSocket: false })
-  return runtimePromise
-}
+let runtimePromise: ReturnType<typeof createAgentsControlPlaneRuntime> | undefined
 
 export const delegateAgentsRuntimeRequest = async (request: Request) => {
-  const runtime = await getAgentsStartRuntime()
+  runtimePromise ??= createAgentsControlPlaneRuntime({ enableWebSocket: false })
+  const runtime = await runtimePromise
   return runtime.handleHttpRequest(request)
 }

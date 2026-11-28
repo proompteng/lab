@@ -8,7 +8,10 @@ metadata:
 spec:
   postgresql:
     parameters:
-      shared_buffers: 512MB
+      max_connections: "250"
+      shared_buffers: 1GB
+      effective_cache_size: 3GB
+      work_mem: 16MB
       wal_buffers: 16MB
   instances: 1
   managed:
@@ -23,10 +26,10 @@ spec:
           name: agents-audit-ro-db
   resources:
     requests:
-      cpu: "1"
-      memory: "2Gi"
-    limits:
+      cpu: "2"
       memory: "4Gi"
+    limits:
+      memory: "8Gi"
   imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
   primaryUpdateStrategy: unsupervised
   storage:

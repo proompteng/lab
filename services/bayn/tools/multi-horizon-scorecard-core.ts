@@ -51,7 +51,6 @@ const Input = Schema.Struct({
   qualification: Schema.optionalKey(QualificationFile),
 })
 type Session = typeof SessionCalendar.Type
-type Proof = (typeof QualificationFile.Type)['proofs'][number]
 type Macro = CoreReceipt | CanaryReceipt
 
 const decode = Schema.decodeUnknownResult(Input, strictParseOptions)
@@ -219,7 +218,7 @@ const summary = (values: readonly number[]) => {
   }
 }
 
-const verifyAudit = (audit: AuditSession, proof: Proof | undefined, calendar: Session | undefined) => {
+export const inspectIntradayAudit = (audit: AuditSession, calendar?: Session) => {
   const { evidence, metrics, slippageGate: slips, positions } = audit
   const atClose = audit.calendar?.closeAt
   const critical: string[] = [...new Set(audit.alerts)]
@@ -323,13 +322,10 @@ const verifyAudit = (audit: AuditSession, proof: Proof | undefined, calendar: Se
   )
     critical.push('Net realized P&L does not reconcile to realized P&L and fees')
 
-  if (proof === undefined) missing.push('Receipt-bound PAPER v3 scope, peak gross and risk/cost proof is missing')
-  else if (!proof.stopEvidenceComplete) missing.push('Stop-limit gap-through observation coverage is incomplete')
-
   return { critical, missing, gap, stranded, net, samples: samples ?? [] }
 }
 
-const summarizeSip = (sip: SipReceipt, calendar?: Session) => {
+export const summarizeSip = (sip: SipReceipt, calendar?: Session) => {
   if (calendar !== undefined && !matchesCalendar(sip.session, calendar))
     return { gate: Gate.Fail, blockingChecks: ['SIP session calendar mismatch'] }
   const { checks, pass } = sip.gate
@@ -466,12 +462,14 @@ export const buildScorecard = (input: unknown, daily?: DailyScope) =>
       const paperDate = session !== undefined || audit !== undefined || core !== undefined || canary !== undefined
       if (daily === undefined && paperDate && session === undefined)
         missing.push('No registered PAPER session calendar binding')
-      const intraday = audit === undefined ? null : verifyAudit(audit, proof, session)
+      const intraday = audit === undefined ? null : inspectIntradayAudit(audit, session)
       if (intraday === null) {
         if (daily === undefined ? paperDate : date === daily.date) missing.push('Missing intraday audit')
       } else {
         critical.push(...intraday.critical)
         missing.push(...intraday.missing)
+        if (proof === undefined) missing.push('Receipt-bound PAPER v3 scope, peak gross and risk/cost proof is missing')
+        else if (!proof.stopEvidenceComplete) missing.push('Stop-limit gap-through observation coverage is incomplete')
       }
       for (const [receipt, label] of [
         [core, 'Macro ETF core'],

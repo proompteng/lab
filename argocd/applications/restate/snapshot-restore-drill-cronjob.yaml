@@ -9,6 +9,8 @@ spec:
   failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
+      # A failed daily drill needs to remain inspectable past the 30-hour freshness alert and its one-hour hold.
+      ttlSecondsAfterFinished: 43200
       backoffLimit: 1
       activeDeadlineSeconds: 1800
       template:

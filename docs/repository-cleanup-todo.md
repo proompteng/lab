@@ -93,18 +93,12 @@ removed.
 
 ## Broken image builders
 
-- [ ] Verify no external or manual registry workflow still depends on the images built by:
-  - `scripts/build-ecran.sh`
-  - `scripts/build-ecran-worker.sh`
-  - `scripts/build-ecran-migrator.sh`
-  - `scripts/build-juge.sh`
-  - `scripts/build-riposte.sh`
-- [ ] Confirm `services/ecran`, `services/juge`, and `services/riposte` remain absent and reconcile any related disabled
-      GitOps entries before removing the scripts.
-- [ ] Delete the five builders and their remaining documentation or workflow references in one focused change.
+The [Wave 19K audit](cleanup/codebase-and-cluster-pruning-audit-2026-11-27.md#deleted-files) records removal of the
+five broken Ecran, Juge, and Riposte builders: their sources are absent, CI does not call them, and no live Galactic
+workload uses their images. No registry artifacts were removed.
 
-Completion evidence: absent source trees, no repository or external consumer, no live workload image dependency, and
-shell/reference validation for retained builders.
+- [ ] Obtain owner sign-off on the disabled Ecran/Juge overlay, its recovery dependencies, and any external image readers
+      before a separate [retirement PR](cleanup/codebase-and-cluster-pruning-audit-2026-11-27.md#owner-sign-off-candidates).
 
 ## Bayn compatibility layers
 

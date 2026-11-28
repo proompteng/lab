@@ -46,8 +46,6 @@ export const AccountProtectionInputsSchema = Schema.Union([
   CurrentAccountProtectionInputsSchema,
 ])
 
-export type AccountProtectionInputs = typeof AccountProtectionInputsSchema.Type
-
 export type AccountProtectionFacts = (
   | Omit<typeof LegacyAccountProtectionInputsSchema.Type, 'portfolio'>
   | Omit<typeof CurrentAccountProtectionInputsSchema.Type, 'portfolio'>

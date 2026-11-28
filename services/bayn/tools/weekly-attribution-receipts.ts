@@ -166,7 +166,7 @@ const Outcome = Schema.Struct({
 })
 export type PortfolioOutcome = typeof Outcome.Type
 
-const PortfolioReceipt = Schema.Struct({
+export const PortfolioReceipt = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.multi-account-daily-sleeves-receipt.v1'),
   isolation: Schema.Struct({
     intradayAccountId: AccountId,

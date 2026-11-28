@@ -11,7 +11,7 @@ ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
 ARG UV_VERSION=0.11.14
 ARG PSTACK_REPOSITORY=https://github.com/michael-denyer/pstack-claude.git
-ARG PSTACK_COMMIT=0986f344496c9c8468003465261711f6bb2c5ec1
+ARG PSTACK_COMMIT=6d25df69f0baf6600807d82975d75139f3b1ab92
 
 FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools
 ARG BUILDARCH
@@ -158,8 +158,7 @@ RUN set -eux; \
   test "$(git -C /opt/agents-shell/pstack-source rev-parse HEAD)" = "${PSTACK_COMMIT}"; \
   test -f /opt/agents-shell/pstack-source/plugins/pstack/skills/poteto-mode/SKILL.md; \
   test -f /opt/agents-shell/pstack-source/plugins/pstack/skills/poteto-mode/references/codex-tools.md; \
-  test "$(find /opt/agents-shell/pstack-source/plugins/pstack/skills -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54; \
-  test "$(find /opt/agents-shell/pstack-source/plugins/pstack/.codex-plugin/prompts -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
+  test "$(find /opt/agents-shell/pstack-source/plugins/pstack/skills -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 68
 
 FROM agents-build-tools AS agents-workspace-deps
 WORKDIR /app

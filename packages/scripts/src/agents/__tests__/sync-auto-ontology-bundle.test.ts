@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { syncBundle } from '../sync-auto-ontology-bundle'
-import { prepareBundle } from '../sync-auto-ontology-bundle-core'
+import { maxRuleTagLength, prepareBundle } from '../sync-auto-ontology-bundle-core'
 
 const externalOrigin = 'https://auto-ontology.ide-newton.ts.net'
 const internalOrigin = 'http://frontend.auto-ontology.svc.cluster.local:3000'
@@ -125,7 +125,37 @@ describe('ontology bundle preflight', () => {
     expect(result).toMatchObject({ mode: 'dry-run', writes: 0 })
     expect(result.customAnalyses).toBeGreaterThan(0)
     const input: unknown = await Bun.file(path).json()
-    expect((await prepareBundle(input, true)).database).toBe('agents')
+    const prepared = await prepareBundle(input, true)
+    expect(prepared.database).toBe('agents')
+    expect(prepared.ruleTag).toBe('agents canonical rule')
+    expect(prepared.ruleTag.length).toBeLessThanOrEqual(maxRuleTagLength)
+  })
+
+  test('enforces the 25-character canonical rule tag ceiling for derived and explicit tags', async () => {
+    const derivedAtLimit = fixture('a234567890')
+    expect((await prepareBundle(derivedAtLimit, false)).ruleTag).toBe('a234567890 canonical rule')
+
+    const agentsWithSql = () => {
+      const data = fixture('agents-db-next')
+      data.customAnalyses[0].sql = 'SELECT COUNT(*) FROM agents_audit.events'
+      return data
+    }
+
+    const explicitAtLimit = { ...agentsWithSql(), ruleTag: 'a'.repeat(maxRuleTagLength) }
+    expect((await prepareBundle(explicitAtLimit, false)).ruleTag).toBe('a'.repeat(maxRuleTagLength))
+
+    for (const oversized of [
+      agentsWithSql(),
+      fixture('a2345678901'),
+      { ...agentsWithSql(), ruleTag: 'a'.repeat(maxRuleTagLength + 1) },
+    ]) {
+      const mock = mockCatalog()
+      const args = await writeBundle(oversized)
+      await rejects(syncBundle([...args, '--mode', 'apply'], env, mock.fetch), {
+        message: 'Invalid bundle at ruleTag: unexpected field, invalid value or possible credential',
+      })
+      expect(mock.calls).toEqual([])
+    }
   })
 
   test('matches CTE sources in their scope and accepts read-only subqueries and a trailing semicolon', async () => {
@@ -277,19 +307,29 @@ describe('Auto Ontology apply', () => {
     expect((await syncBundle(args, env, mock.fetch)).writes).toBe(0)
   })
 
-  test('keeps provenance local and supports an explicit catalog database name', async () => {
+  test('keeps provenance local and supports an explicit catalog database name and ruleTag', async () => {
     const mock = mockCatalog()
-    const data = fixture()
-    mock.databases[0].name = 'actual'
-    data.customAnalyses[0].sql = 'SELECT COUNT(*) FROM example_audit.events'
+    const data = fixture('agents-db-next')
+    mock.databases[0].name = 'agents'
+    mock.tags[0].name = 'agents canonical rule'
+    mock.schemas['db-1'][0].schema_name = 'agents_audit'
+    data.customAnalyses[0].sql = 'SELECT COUNT(*) FROM agents_audit.events'
     const input = {
       ...data,
-      database: 'actual',
+      database: 'agents',
+      ruleTag: 'agents canonical rule',
       acronyms: [{ ...data.acronyms[0], provenance: { sourceCommit: 'abcdef1', verificationNote: 'Checked source' } }],
     }
     const args = [...(await writeBundle(input)), '--mode', 'apply']
     expect((await syncBundle(args, env, mock.fetch)).writes).toBe(3)
     expect(mock.catalog.acronyms).toEqual([{ ...data.acronyms[0], id: 'acronyms-1' }])
+    expect(mock.catalog.rules).toEqual([
+      expect.objectContaining({
+        name: 'agents-db-next ["Review"]: Review changes',
+        tags: [{ id: 'tag-1', name: 'agents canonical rule' }],
+      }),
+    ])
+    expect((await syncBundle(args, env, mock.fetch)).writes).toBe(0)
   })
 
   test.each(['reject', 'changed sql', 'non-JSON', 'HTTP 422'])(

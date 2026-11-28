@@ -7,7 +7,7 @@ import { JevContractError, jevModel } from '../../jev/contract'
 import { retainedEquityMarketProfile } from '../../jev/markets'
 import { JevProtocolSchema, type JevProtocolMaterial } from '../../jev/protocol'
 import { IntradayBenchmarkEvidencePolicy } from '../../market-data/intraday/model'
-import { noiseAreaCheckpointMinutes } from '../../market-data/intraday/trailing-baseline'
+import { noiseAreaCheckpointMinutes, pureEtfCheckpointMinutes } from '../../market-data/intraday/trailing-baseline'
 import { strictParseOptions } from '../../schemas'
 import { currentEquityUniverse } from '../intraday-market'
 import {
@@ -123,7 +123,7 @@ export const intradayAlphaPromptPolicy = Object.freeze({
 
 export const intradayAlphaPromptsHash = () => canonicalHashV1Result(intradayAlphaPromptPolicy)
 
-export const IntradayAlphaPolicySchema = Schema.Struct({
+export const IntradayAlphaV2PolicySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.intraday-alpha-policy.v2'),
   sharedProtocol: JevProtocolSchema,
   candidateSymbols: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(24)),
@@ -220,16 +220,102 @@ export const IntradayAlphaPolicySchema = Schema.Struct({
     return issues
   }),
 )
-export type IntradayAlphaPolicy = typeof IntradayAlphaPolicySchema.Type
-export type IntradayAlphaPolicyMaterial = Omit<IntradayAlphaPolicy, 'sharedProtocol'> & {
-  readonly sharedProtocol: JevProtocolMaterial
-}
+export const pureEtfEntryCollarBps = 25 as const
 
-export const intradayAlphaBehaviorHash = sha256('bayn.intraday-alpha.behavior.v3')
+const pureEtfDefinition = Object.freeze({
+  entryLimitSlippageBps: pureEtfEntryCollarBps,
+  maximumPositions: 2,
+  maximumGrossWeight: 1,
+  maximumSymbolWeight: 0.65,
+  maximumHoldingMinutes: 390,
+  trailingBaseline: Object.freeze({ lookbackSessions: 14, minimumSessions: 14 }),
+  noiseArea: Object.freeze({
+    checkpointMinutesFromOpen: pureEtfCheckpointMinutes,
+    bandMultiplier: 1.4,
+    minimumRecent15MinBars: 13,
+    volatilityFloor: 0.001,
+    stopAtrMultiple: 1.5,
+    minimumStopBps: 150,
+    maximumStopBps: 600,
+    stopLimitAtrMultiple: 0.25,
+    minimumStopLimitBps: 50,
+    maximumStopLimitBps: 150,
+    profitTargetBps: 1500,
+    flattenBeforeCloseMinutes: 2,
+    lastEntryMinutesBeforeClose: 30,
+    maxEntriesPerSymbolPerSession: 1,
+  }),
+})
+
+export const PureEtfPolicySchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-policy.v3'),
+  sharedProtocol: JevProtocolSchema,
+  candidateSymbols: Schema.Tuple([Schema.Literal('QQQ'), Schema.Literal('SMH')]),
+  noiseAreaSymbols: Schema.Tuple([Schema.Literal('QQQ'), Schema.Literal('SMH')]),
+  benchmarkSymbol: Schema.Literal(intradayAlphaBenchmarkSymbol),
+  entryLimitSlippageBps: Schema.Literal(pureEtfDefinition.entryLimitSlippageBps),
+  maximumPositions: Schema.Literal(pureEtfDefinition.maximumPositions),
+  maximumGrossWeight: Schema.Literal(pureEtfDefinition.maximumGrossWeight),
+  maximumSymbolWeight: Schema.Literal(pureEtfDefinition.maximumSymbolWeight),
+  maximumHoldingMinutes: Schema.Literal(pureEtfDefinition.maximumHoldingMinutes),
+  trailingBaseline: Schema.Struct({
+    lookbackSessions: Schema.Literal(pureEtfDefinition.trailingBaseline.lookbackSessions),
+    minimumSessions: Schema.Literal(pureEtfDefinition.trailingBaseline.minimumSessions),
+  }),
+  noiseArea: Schema.Struct({
+    checkpointMinutesFromOpen: Schema.Array(Schema.Int),
+    bandMultiplier: Schema.Literal(pureEtfDefinition.noiseArea.bandMultiplier),
+    minimumRecent15MinBars: Schema.Literal(pureEtfDefinition.noiseArea.minimumRecent15MinBars),
+    volatilityFloor: Schema.Literal(pureEtfDefinition.noiseArea.volatilityFloor),
+    stopAtrMultiple: Schema.Literal(pureEtfDefinition.noiseArea.stopAtrMultiple),
+    minimumStopBps: Schema.Literal(pureEtfDefinition.noiseArea.minimumStopBps),
+    maximumStopBps: Schema.Literal(pureEtfDefinition.noiseArea.maximumStopBps),
+    stopLimitAtrMultiple: Schema.Literal(pureEtfDefinition.noiseArea.stopLimitAtrMultiple),
+    minimumStopLimitBps: Schema.Literal(pureEtfDefinition.noiseArea.minimumStopLimitBps),
+    maximumStopLimitBps: Schema.Literal(pureEtfDefinition.noiseArea.maximumStopLimitBps),
+    profitTargetBps: Schema.Literal(pureEtfDefinition.noiseArea.profitTargetBps),
+    flattenBeforeCloseMinutes: Schema.Literal(pureEtfDefinition.noiseArea.flattenBeforeCloseMinutes),
+    lastEntryMinutesBeforeClose: Schema.Literal(pureEtfDefinition.noiseArea.lastEntryMinutesBeforeClose),
+    maxEntriesPerSymbolPerSession: Schema.Literal(pureEtfDefinition.noiseArea.maxEntriesPerSymbolPerSession),
+  }).check(
+    Schema.makeFilter(
+      ({ checkpointMinutesFromOpen }) =>
+        checkpointMinutesFromOpen.join(',') === pureEtfCheckpointMinutes.join(',') ||
+        'must bind the exact ETF checkpoint grid',
+    ),
+  ),
+})
+
+export const IntradayAlphaPolicySchema = Schema.Union([IntradayAlphaV2PolicySchema, PureEtfPolicySchema])
+export type IntradayAlphaPolicy = typeof IntradayAlphaPolicySchema.Type
+type PolicyMaterial<Policy, P = JevProtocolMaterial> = Omit<Policy, 'sharedProtocol'> & { readonly sharedProtocol: P }
+export type IntradayAlphaV2PolicyMaterial = PolicyMaterial<typeof IntradayAlphaV2PolicySchema.Type>
+export type PureEtfPolicyMaterial = PolicyMaterial<typeof PureEtfPolicySchema.Type>
+export type IntradayAlphaPolicyMaterial = IntradayAlphaV2PolicyMaterial | PureEtfPolicyMaterial
+
+export const makePureEtfPolicy = <P extends JevProtocolMaterial>(
+  sharedProtocol: P,
+): PolicyMaterial<typeof PureEtfPolicySchema.Type, P> => ({
+  schemaVersion: 'bayn.intraday-alpha-policy.v3',
+  sharedProtocol,
+  candidateSymbols: intradayAlphaNoiseAreaSymbols,
+  noiseAreaSymbols: intradayAlphaNoiseAreaSymbols,
+  benchmarkSymbol: intradayAlphaBenchmarkSymbol,
+  ...pureEtfDefinition,
+})
+
+export const isPureEtfPolicy = (policy: { readonly schemaVersion: string }): policy is PureEtfPolicyMaterial =>
+  policy.schemaVersion === 'bayn.intraday-alpha-policy.v3'
+
+export const alphaObservationVersion = (policy: IntradayAlphaPolicyMaterial) =>
+  isPureEtfPolicy(policy) ? 'bayn.intraday-alpha-observation.v3' : 'bayn.intraday-alpha-observation.v2'
+
+export const intradayAlphaV2BehaviorHash = sha256('bayn.intraday-alpha.behavior.v3')
+export const intradayAlphaBehaviorHash = sha256('bayn.intraday-alpha.behavior.v4')
 
 export const makeIntradayAlphaPolicy = <P extends JevProtocolMaterial>(
   sharedProtocol: P,
-): Omit<IntradayAlphaPolicy, 'sharedProtocol'> & { readonly sharedProtocol: P } => ({
+): PolicyMaterial<typeof IntradayAlphaV2PolicySchema.Type, P> => ({
   schemaVersion: 'bayn.intraday-alpha-policy.v2',
   sharedProtocol,
   candidateSymbols: [...intradayAlphaCandidateSymbols],
@@ -251,19 +337,25 @@ export const makeIntradayAlphaPolicy = <P extends JevProtocolMaterial>(
   catalystVeto: { ...intradayAlphaDefinition.catalystVeto },
 })
 
-export const decodeIntradayAlphaPolicy = (input: unknown) =>
+const decodeAlpha = <S extends typeof IntradayAlphaPolicySchema | typeof PureEtfPolicySchema>(
+  schema: S,
+  input: unknown,
+) =>
   Schema.decodeUnknownResult(
-    IntradayAlphaPolicySchema,
+    schema,
     strictParseOptions,
   )(input).pipe(
     Result.mapError((cause) => new JevContractError({ message: 'Intraday alpha policy is invalid', cause })),
   )
 
+export const decodeIntradayAlphaPolicy = (input: unknown) => decodeAlpha(IntradayAlphaPolicySchema, input)
+export const decodePureEtfPolicy = (input: unknown) => decodeAlpha(PureEtfPolicySchema, input)
+
 export const intradayAlphaStrategyIdentity = (policy: IntradayAlphaPolicyMaterial) =>
   Result.gen(function* () {
     const strategy = {
       name: 'jev' as const,
-      behaviorHash: intradayAlphaBehaviorHash,
+      behaviorHash: isPureEtfPolicy(policy) ? intradayAlphaBehaviorHash : intradayAlphaV2BehaviorHash,
       parameterHash: yield* canonicalHashV1Result(policy),
       parameterSchemaVersion: policy.schemaVersion,
     }

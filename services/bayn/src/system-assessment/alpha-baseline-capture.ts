@@ -10,7 +10,7 @@ import { UtcInstantSchema, strictParseOptions } from '../schemas'
 import { registeredAlphaObservationSessions } from './calendar'
 import { SystemAssessmentError } from './economics'
 import type { SystemRegistration } from './policy'
-import { ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
+import { isAlphaBinding, validateResearchStrategyBinding } from './strategy-binding'
 
 const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
 
@@ -41,7 +41,7 @@ export const verifyRegisteredAlphaBaselinePreparations = (
   Result.gen(function* () {
     const cut = yield* Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(asOf)
     const scope = yield* registeredAlphaBaselineCaptureScope(registration)
-    if (scope.binding.engine !== ResearchStrategyEngine.IntradayAlpha) {
+    if (!isAlphaBinding(scope.binding)) {
       if (records.length !== 0)
         return yield* invalid('Another candidate engine cannot supply an alpha preparation inventory')
       return [] as readonly RecordedAlphaBaselinePreparation[]

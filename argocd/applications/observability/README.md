@@ -13,6 +13,9 @@ use the internal TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecu
 and existing BoltDB Shipper schema. The compatibility gateway Service preserves the original client address.
 Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for the verified drain, cutover and recovery
 procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
+Loki bounds push bodies at 8 MiB on the wire and 16 MiB decoded, and rejects lines over 2 MiB without truncating
+records. The [cluster performance runbook](../../../docs/runbooks/cluster-performance-audit-2026-11-27.md#lgtm)
+covers these limits, the Mimir and Tempo capacity changes, and mixed-load acceptance.
 Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
 [Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
 and live acceptance. Mimir uses the shared Strimzi Kafka cluster at
@@ -205,6 +208,12 @@ The Jobs collector uses the chart's read-only Job list/watch grant; Alloy forwar
 two name prefixes and the rules verify owner references. `AutoOntologyDeploymentUnavailable` warns after five
 minutes below the desired replica count. It is advisory (no email route) and is not a trading-readiness check.
 
+The Agents catalog sync has separate platform warnings for zero available MCP gateway replicas for five minutes,
+terminal failures of Jobs owned by `auto-ontology-sync`, and no successful run in 36 hours. Alloy forwards Job
+metrics only for the scheduled sync Job name prefix and the failure rule checks the actual controller owner.
+See the [sync runbook](../../../docs/agents/ontology/README.md#nightly-sync-and-alerts) and
+[promtool scenarios](tests/agents-auto-ontology-alerts.yaml).
+
 Run the [multi-sleeve scenarios](tests/bayn-multi-sleeve-alerts.yaml) against the loaded Mimir rule file:
 
 ```sh
@@ -254,9 +263,8 @@ Raw block-device capacity does not establish free space inside a VM; that requir
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
-and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
-`torghut`. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
-Other Torghut containers remain excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn`, including its shared `torghut-ws` producer. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
+Containers in the `torghut` namespace are excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
 than zero throttling. See [producer stall diagnostics](../../../services/dorvud/README.md#producer-stall-diagnostics)
 for JVM, Kafka, probe, and restart correlation.
 The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic

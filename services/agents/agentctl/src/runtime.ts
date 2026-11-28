@@ -20,27 +20,6 @@ const EXIT_UNKNOWN = 5
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_ADDRESS = 'agents-grpc.agents.svc.cluster.local:50051'
 const DEFAULT_WATCH_INTERVAL_MS = 5000
-const REQUIRED_CRDS = [
-  'agents.agents.proompteng.ai',
-  'agentruns.agents.proompteng.ai',
-  'agentproviders.agents.proompteng.ai',
-  'implementationspecs.agents.proompteng.ai',
-  'implementationsources.agents.proompteng.ai',
-  'memories.agents.proompteng.ai',
-  'orchestrations.orchestration.proompteng.ai',
-  'orchestrationruns.orchestration.proompteng.ai',
-  'approvalpolicies.approvals.proompteng.ai',
-  'budgets.budgets.proompteng.ai',
-  'secretbindings.security.proompteng.ai',
-  'signals.signals.proompteng.ai',
-  'signaldeliveries.signals.proompteng.ai',
-  'tools.tools.proompteng.ai',
-  'toolruns.tools.proompteng.ai',
-  'schedules.schedules.proompteng.ai',
-  'artifacts.artifacts.proompteng.ai',
-  'workspaces.workspaces.proompteng.ai',
-]
-
 type ResourceSpec = {
   kind: string
   group: string
@@ -48,7 +27,6 @@ type ResourceSpec = {
   plural: string
 }
 
-type RuntimeEntry = { key: string; value: string }
 type ControlPlaneStatus = {
   service?: string
   generated_at?: string
@@ -604,66 +582,6 @@ const readNestedValue = (value: unknown, path: Array<string | number>) => {
   return cursor ?? null
 }
 
-const resolveAgentRunRuntime = (resource: Record<string, unknown>) => {
-  const runtimeRef = readNestedValue(resource, ['status', 'runtimeRef'])
-  const runtimeType =
-    (readNestedValue(runtimeRef, ['type']) as string | null) ??
-    (readNestedValue(resource, ['spec', 'runtime', 'type']) as string | null)
-  const runtimeName = readNestedValue(runtimeRef, ['name']) as string | null
-  return { runtimeType, runtimeName }
-}
-
-const isJobRuntime = (runtimeType: string | null) => runtimeType === 'job' || runtimeType === 'workflow'
-
-const runLabelSelector = (runName: string) => `agents.proompteng.ai/agent-run=${runName}`
-
-const listPodsForSelector = async (backend: KubeBackend, namespace: string, selector: string) => {
-  const body = (await backend.listPods(namespace, selector)) as { items?: Record<string, unknown>[] }
-  return Array.isArray(body.items) ? body.items : []
-}
-
-const pickPodForRun = async (
-  backend: KubeBackend,
-  namespace: string,
-  selector: string,
-): Promise<Record<string, unknown> | null> => {
-  const items = await listPodsForSelector(backend, namespace, selector)
-  if (items.length === 0) return null
-  const running = items.find((pod) => readNestedValue(pod, ['status', 'phase']) === 'Running')
-  return running ?? items[0] ?? null
-}
-
-const resolvePodContainerName = (pod: Record<string, unknown>) => {
-  const containers = readNestedValue(pod, ['spec', 'containers'])
-  if (!Array.isArray(containers) || containers.length === 0) return undefined
-  const first = containers[0] as Record<string, unknown>
-  return typeof first?.name === 'string' ? first.name : undefined
-}
-
-const streamPodLogs = async (
-  backend: KubeBackend,
-  namespace: string,
-  podName: string,
-  container: string | undefined,
-  follow: boolean,
-) => {
-  await backend.streamPodLogs(namespace, podName, container, follow)
-}
-
-const deleteJobByName = async (backend: KubeBackend, namespace: string, name: string) => {
-  try {
-    await backend.deleteJob(namespace, name)
-    return true
-  } catch (error) {
-    if (isNotFoundError(error)) return false
-    throw error
-  }
-}
-
-const deleteJobsBySelector = async (backend: KubeBackend, namespace: string, selector: string) => {
-  await backend.deleteJobsBySelector(namespace, selector)
-}
-
 const normalizeOutput = (value: string | undefined) => {
   if (!value) return 'table'
   const normalized = value.trim().toLowerCase()
@@ -711,15 +629,13 @@ const renderTable = <T>(rows: T[], columns: TableColumn<T>[]) => {
 
   const pad = (value: string, width: number) => value.padEnd(width, ' ')
   const header = columns.map((column, index) => pad(column.label, widths[index] ?? 0)).join('  ')
-  console.log(header)
+  console.log(header.trimEnd())
 
   for (const row of values) {
     const line = row.map((cell, index) => pad(cell, widths[index] ?? 0)).join('  ')
-    console.log(line)
+    console.log(line.trimEnd())
   }
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const clearScreen = () => {
   if (process.stdout.isTTY) {
@@ -890,28 +806,6 @@ const outputResources = (resources: Record<string, unknown>[], output: string) =
   renderRows(rows, output)
 }
 
-const parseKeyValueList = (values: readonly string[]) => {
-  const output: RuntimeEntry[] = []
-  for (const item of values) {
-    const [key, ...rest] = item.split('=')
-    if (!key) continue
-    output.push({ key, value: rest.join('=') })
-  }
-  return output
-}
-
-const toKeyValueMap = (entries: RuntimeEntry[]) => {
-  const output: Record<string, string> = {}
-  for (const entry of entries) {
-    if (!entry.key) continue
-    output[entry.key] = entry.value
-  }
-  return output
-}
-
-const toKeyValueEntries = (entries: RuntimeEntry[]) =>
-  entries.filter((entry) => entry.key).map((entry) => ({ key: entry.key, value: entry.value }))
-
 const parseSource = (raw?: string) => {
   if (!raw) return undefined
   const fields = raw.split(',').map((entry) => entry.trim())
@@ -926,42 +820,6 @@ const parseSource = (raw?: string) => {
     source.externalId = source.external_id
   }
   return source
-}
-
-const waitForRunCompletion = async (
-  client: grpc.Client,
-  metadata: grpc.Metadata,
-  name: string,
-  namespace: string,
-  output: string,
-) => {
-  const stream = (client as unknown as Record<string, (...args: unknown[]) => grpc.ClientReadableStream<unknown>>)
-    .StreamAgentRunStatus
-  if (!stream) {
-    throw new Error('StreamAgentRunStatus not available')
-  }
-  let latest: Record<string, unknown> | null = null
-
-  return await new Promise<number>((resolve, reject) => {
-    const call = stream.call(client, { name, namespace }, metadata)
-    call.on('data', (entry: { json?: string }) => {
-      if (!entry?.json) return
-      const resource = parseJson(entry.json)
-      if (resource) {
-        latest = resource
-      }
-    })
-    call.on('end', () => {
-      if (latest) {
-        outputResource(latest, output)
-        resolve(0)
-      } else {
-        console.error('AgentRun status stream closed without updates')
-        resolve(EXIT_RUNTIME)
-      }
-    })
-    call.on('error', (error) => reject(error))
-  })
 }
 
 const outputStatus = (status: ControlPlaneStatus, output: string, namespace: string) => {
@@ -1032,170 +890,6 @@ const outputStatus = (status: ControlPlaneStatus, output: string, namespace: str
   ])
 }
 
-const resolveAgentRunPhase = (resource: Record<string, unknown>) => {
-  const phase = readNestedValue(resource, ['status', 'phase'])
-  if (typeof phase === 'string' && phase.trim()) return phase
-  const conditions = readNestedValue(resource, ['status', 'conditions'])
-  if (Array.isArray(conditions)) {
-    const ready = conditions.find((entry) => readNestedValue(entry, ['type']) === 'Ready')
-    const readyStatus = readNestedValue(ready, ['status'])
-    if (typeof readyStatus === 'string') return readyStatus
-  }
-  return ''
-}
-
-const isTerminalPhase = (phase: string) => {
-  const normalized = phase.trim().toLowerCase()
-  return (
-    normalized === 'succeeded' || normalized === 'failed' || normalized === 'cancelled' || normalized === 'canceled'
-  )
-}
-
-const matchesAgentRunFilters = (resource: Record<string, unknown>, phase?: string, runtime?: string) => {
-  if (phase) {
-    const itemPhase = resolveAgentRunPhase(resource)
-    if (itemPhase !== phase) return false
-  }
-  if (runtime) {
-    const runtimeType = readNestedValue(resource, ['spec', 'runtime', 'type'])
-    if (runtimeType !== runtime) return false
-  }
-  return true
-}
-
-const filterAgentRunsList = (list: Record<string, unknown>, phase?: string, runtime?: string) => {
-  if (!phase && !runtime) return list
-  const items = Array.isArray(list.items) ? list.items : []
-  const filtered = items.filter((item) => matchesAgentRunFilters(item as Record<string, unknown>, phase, runtime))
-  return { ...list, items: filtered }
-}
-
-const waitForRunCompletionKube = async (backend: KubeBackend, name: string, namespace: string, output: string) => {
-  while (true) {
-    const resource = await getCustomObjectOptional(backend, AGENT_RUN_SPEC, name, namespace)
-    if (!resource) {
-      throw new Error('AgentRun not found')
-    }
-    const phase = resolveAgentRunPhase(resource)
-    if (phase && isTerminalPhase(phase)) {
-      outputResource(resource, output)
-      return 0
-    }
-    await sleep(2000)
-  }
-}
-
-const outputStatusKube = async (backend: KubeBackend, namespace: string, output: string) => {
-  const generatedAt = new Date().toISOString()
-  let namespaceStatus = 'unknown'
-  let namespaceMessage = ''
-  try {
-    await backend.readNamespace(namespace)
-    namespaceStatus = 'healthy'
-  } catch (_error) {
-    namespaceStatus = 'missing'
-    namespaceMessage = _error instanceof Error ? _error.message : String(_error)
-  }
-
-  let deploymentStatus = 'unknown'
-  let deploymentMessage = ''
-  let deploymentName = 'agents'
-  try {
-    const body = (await backend.listDeployments(namespace, 'app.kubernetes.io/name=agents')) as {
-      items?: Record<string, unknown>[]
-    }
-    const items = Array.isArray(body.items) ? body.items : []
-    const deployment = (items[0] ?? null) as Record<string, unknown> | null
-    if (!deployment) {
-      deploymentStatus = 'missing'
-    } else {
-      deploymentName = (readNestedValue(deployment, ['metadata', 'name']) as string) || deploymentName
-      const desired = Number(readNestedValue(deployment, ['spec', 'replicas']) ?? 0)
-      const ready = Number(readNestedValue(deployment, ['status', 'readyReplicas']) ?? 0)
-      const available = Number(readNestedValue(deployment, ['status', 'availableReplicas']) ?? 0)
-      const image = readNestedValue(deployment, ['spec', 'template', 'spec', 'containers', 0, 'image'])
-      const healthy = desired > 0 ? ready >= desired : ready > 0
-      deploymentStatus = healthy ? 'healthy' : 'degraded'
-      deploymentMessage = `ready ${ready}/${desired}`
-      if (available) deploymentMessage = `${deploymentMessage} available ${available}`
-      if (typeof image === 'string' && image) deploymentMessage = `${deploymentMessage} image ${image}`
-    }
-  } catch (_error) {
-    deploymentStatus = 'unknown'
-    deploymentMessage = _error instanceof Error ? _error.message : String(_error)
-  }
-
-  let missingCrds: string[] = []
-  try {
-    const body = (await backend.listCrds()) as { items?: Record<string, unknown>[] }
-    const items = Array.isArray(body.items) ? body.items : []
-    const found = new Set(
-      items
-        .map((item) => readNestedValue(item, ['metadata', 'name']))
-        .filter((value): value is string => typeof value === 'string'),
-    )
-    missingCrds = REQUIRED_CRDS.filter((name) => !found.has(name))
-  } catch {
-    missingCrds = [...REQUIRED_CRDS]
-  }
-
-  const statusPayload = {
-    mode: 'kube',
-    generated_at: generatedAt,
-    namespace,
-    deployment: {
-      name: deploymentName,
-      status: deploymentStatus,
-      message: deploymentMessage,
-    },
-    crds: {
-      status: missingCrds.length === 0 ? 'healthy' : 'degraded',
-      missing: missingCrds,
-    },
-    namespace_status: {
-      status: namespaceStatus,
-      message: namespaceMessage,
-    },
-  }
-
-  if (output === 'json') {
-    console.log(JSON.stringify(statusPayload, null, 2))
-    return
-  }
-  if (output === 'yaml') {
-    console.log(YAML.stringify(statusPayload))
-    return
-  }
-
-  const rows = [
-    {
-      component: 'namespace',
-      namespace,
-      status: namespaceStatus,
-      message: namespaceMessage,
-    },
-    {
-      component: `deployment/${deploymentName}`,
-      namespace,
-      status: deploymentStatus,
-      message: deploymentMessage,
-    },
-    {
-      component: 'crds',
-      namespace,
-      status: missingCrds.length === 0 ? 'healthy' : 'degraded',
-      message: missingCrds.length === 0 ? 'all present' : `missing: ${missingCrds.join(', ')}`,
-    },
-  ]
-
-  renderTable(rows, [
-    { label: 'COMPONENT', value: (entry) => entry.component },
-    { label: 'NAMESPACE', value: (entry) => entry.namespace },
-    { label: 'STATUS', value: (entry) => entry.status },
-    { label: 'MESSAGE', value: (entry) => entry.message },
-  ])
-}
-
 const readFileContent = async (file: string) => {
   if (file === '-') {
     const content = await readStdinContent()
@@ -1244,12 +938,10 @@ export {
   createCustomObject,
   createMetadata,
   deleteCustomObject,
-  deleteJobByName,
-  deleteJobsBySelector,
-  filterAgentRunsList,
   getCustomObjectOptional,
   getVersion,
-  isJobRuntime,
+  formatAge,
+  isNotFoundError,
   listCustomObjects,
   maskSecret,
   normalizeOutput,
@@ -1257,21 +949,11 @@ export {
   outputResource,
   outputResources,
   outputStatus,
-  outputStatusKube,
   parseJson,
-  parseKeyValueList,
   parseSource,
   parseYamlDocuments,
-  pickPodForRun,
   readFileContent,
   readNestedValue,
   readTextInput,
-  resolveAgentRunRuntime,
-  resolvePodContainerName,
-  runLabelSelector,
-  streamPodLogs,
-  toKeyValueMap,
-  toKeyValueEntries,
-  waitForRunCompletion,
-  waitForRunCompletionKube,
+  renderTable,
 }

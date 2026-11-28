@@ -2,16 +2,6 @@ name: signal-publisher
 
 on:
   workflow_call:
-  pull_request:
-    paths:
-      - 'services/signal-publisher/**'
-      - 'packages/scripts/src/signal/**'
-      - 'argocd/applications/torghut/clickhouse/**'
-      - 'nix/images/signal-publisher.nix'
-      - 'flake.nix'
-      - 'bun.lock'
-      - 'package.json'
-      - '.github/workflows/signal-publisher-*.yml'
   workflow_dispatch:
 
 permissions:

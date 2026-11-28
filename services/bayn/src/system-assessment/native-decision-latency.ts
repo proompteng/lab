@@ -1,3 +1,4 @@
+import { isIntradayAlphaTarget } from '../strategy/runtime-decision'
 import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
@@ -16,7 +17,7 @@ import { SystemAssessmentError } from './economics'
 import { measureFullBatchLatency } from './full-batch-latency'
 import { isStrategyBoundSystemRegistration, type ScheduledEvaluation } from './policy'
 import type { SystemSourceCut } from './source-cut'
-import { ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
+import { isAlphaBinding, ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
 
 const submissionResolved = (event: MutationEvent) =>
   event.eventType === MutationEventType.SubmitAccepted ||
@@ -48,7 +49,7 @@ export const measureAlphaDecisionLatency = (
         }),
       )
     const binding = yield* validateResearchStrategyBinding(candidate.strategyBinding)
-    if (binding.engine !== ResearchStrategyEngine.IntradayAlpha)
+    if (!isAlphaBinding(binding))
       return yield* Result.fail(
         new SystemAssessmentError({ message: 'Alpha calibration cannot evaluate another engine' }),
       )
@@ -80,7 +81,7 @@ export const measureAlphaDecisionLatency = (
     const decisionsByObservation = new Map<string, SystemSourceCut['decisions'][number][]>()
     for (const decision of cut.decisions) {
       const target = decision.document.strategyDecision
-      if (target?.schemaVersion !== 'bayn.intraday-alpha-target.v2') continue
+      if (!isIntradayAlphaTarget(target)) continue
       const hash = yield* canonicalHashV1Result(target.evidence.observation)
       const related = decisionsByObservation.get(hash)
       if (related === undefined) decisionsByObservation.set(hash, [decision])
@@ -156,7 +157,7 @@ export const measureAlphaDecisionLatency = (
         violations.push(`MULTIPLE_ALPHA_DECISIONS:${observationHash}`)
       const abstentions = related.flatMap((pass) => {
         const target = pass.observation.result === 'SUCCESS' ? pass.observation.entryAbstention : undefined
-        return target?.schemaVersion === 'bayn.intraday-alpha-target.v2' ? [{ pass, target }] : []
+        return isIntradayAlphaTarget(target) ? [{ pass, target }] : []
       })
       for (const { pass, target } of abstentions) {
         const decoded = Schema.decodeUnknownResult(IntradayAlphaTargetSchema, strictParseOptions)(target)
@@ -191,7 +192,7 @@ export const measureAlphaDecisionLatency = (
           document.bindings.accountId !== identity.accountId ||
           document.bindings.authorityGenerationHash !== candidate.authorityGenerationHash ||
           document.bindings.strategyProtocolHash !== binding.protocolHash ||
-          target?.schemaVersion !== 'bayn.intraday-alpha-target.v2' ||
+          !isIntradayAlphaTarget(target) ||
           (yield* canonicalHashV1Result(target.policy)) !== binding.strategy.parameterHash ||
           (yield* canonicalHashV1Result(target.evidence.observation)) !== observationHash ||
           Result.isFailure(Schema.decodeUnknownResult(IntradayAlphaTargetSchema, strictParseOptions)(target)) ||
@@ -344,8 +345,7 @@ export const measureRegisteredDecisionLatency = (
           new SystemAssessmentError({ message: 'Engine-bound calibration requires its candidate binding' }),
         )
       const binding = yield* validateResearchStrategyBinding(candidate.strategyBinding)
-      if (binding.engine === ResearchStrategyEngine.IntradayAlpha)
-        return yield* measureAlphaDecisionLatency(registration, cut, identity)
+      if (isAlphaBinding(binding)) return yield* measureAlphaDecisionLatency(registration, cut, identity)
       if (binding.engine !== ResearchStrategyEngine.Jev)
         return yield* Result.fail(new SystemAssessmentError({ message: 'Unsupported candidate calibration engine' }))
     }
