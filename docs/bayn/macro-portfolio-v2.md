@@ -1,6 +1,6 @@
 # Coordinated F4 and O1 v2
 
-**Opt-in planning only. Historical profitability is not yet verified.** The current F4 and O1 Paper runner,
+**Opt-in planning only. V2 did not qualify in the historical replay.** The current F4 and O1 Paper runner,
 frozen policies, and B0 are unchanged. This proposal controls #2 and #3 together; it does not target volatility
 for the three-account portfolio or authorize submissions, margin, or capital changes.
 
@@ -69,18 +69,16 @@ decision uses fixed parameters and only the past close prefix, including the clo
 This is causal walk-forward on a previously used historical tape, not independently held-out or prospectively
 registered evidence. No parameters are fitted or selected from the scored period.
 
-The simulation pays 2/5/10 bp per side and 0.21 bp on post-slippage sale proceeds. V2 models next-session
-settlement throughout; margin is charged an assumed 600 bp annual debit rate on an actual/365 basis. Adjusted
-OHLC prices stand in for opening/closing marks and adjusted-share lots. The model does not prove historical
-point-in-time availability, auction fills, eligibility, house margin, taxes, or operating costs. It reports exact
+The simulation pays 2/5/10 bp per side and 0.21 bp on post-slippage sale proceeds. V2 cash models next-session
+settlement throughout. Adjusted OHLC prices stand in for opening/closing marks and adjusted-share lots. The model
+does not prove historical point-in-time availability, auction fills, eligibility, taxes, or operating costs. It reports
 CAGR, annualized volatility, zero-hurdle Sharpe and Sortino, close-to-close MaxDD, annualized one-way turnover
 (two-way notional divided by twice preceding equity, times 252), and Pearson correlation of #2 and #3 net daily
-returns. Each cost/mode must improve CAGR and Sharpe, reduce correlation, keep MaxDD below 12%, and obey its
-opening gross cap. A failed gate reports the measured rows and returns a nonzero exit; it does not qualify either
-policy for Paper or live use.
+returns. At each cost, cash must improve CAGR and Sharpe, reduce correlation, keep MaxDD below 12%, and obey its
+1.0× opening gross cap. A failed gate reports the measured rows and returns a nonzero exit; it does not qualify
+the policy for Paper or live use.
 
-**Evidence status:** The frozen replay is blocked in the generic runner:
-`ConfigError: SchemaError(Expected string at ["AWS_ACCESS_KEY_ID"])`. The archive gives HTTP 403 without
-credentials. The deterministic tests cover causal sizing, fee/settlement paths, caps, gaps, and all three cost
-tiers, but their synthetic results do not establish profitability. Run with the existing read-only archive
-binding or the six verified objects above before making any claim about the economic or drawdown gates.
+The margin research candidate was retired after the receipt-verified archive replay. At 5 and 10 bp, its Sharpe
+was 0.6892 and 0.2975, below the baseline's 1.1747 and 1.1649 and cash's 0.8716 and 0.6237. Margin also had
+higher drawdown and turnover than cash at both costs. The report now compares only baseline and cash. Cash
+still fails the CAGR and Sharpe gates at every cost. The separate margin planner contract is unchanged.
