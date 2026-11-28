@@ -990,19 +990,27 @@ const resyncAgentRunsForNamespace = async (
       const name = asString(readNested(run, ['metadata', 'name']))
       if (name) byName.set(name, run)
     }
+    const changedNonTerminalRuns = new Set<string>()
     const terminalReceipts: Array<{ name: string; receipt: Record<string, unknown> }> = []
     for (const [name, run] of byName) {
-      const receipt = getTerminalIdempotencyReceipt(run)
-      if (!receipt) continue
       const previous = state.runs.get(namespace, name)
       const previousUid = asString(readNested(previous, ['metadata', 'uid']))
       const currentUid = asString(readNested(run, ['metadata', 'uid']))
-      const wasTerminal =
-        previous !== undefined &&
-        previousUid === currentUid &&
-        isAgentRunTerminalPhase(asString(readNested(previous, ['status', 'phase'])))
-      if (!wasTerminal) {
-        terminalReceipts.push({ name, receipt })
+      const sameObject = previous !== undefined && previousUid === currentUid
+      const currentPhase = asString(readNested(run, ['status', 'phase']))
+      const receipt = getTerminalIdempotencyReceipt(run)
+      if (receipt) {
+        const wasTerminal = sameObject && isAgentRunTerminalPhase(asString(readNested(previous, ['status', 'phase'])))
+        if (!wasTerminal) {
+          terminalReceipts.push({ name, receipt })
+        }
+      } else if (
+        currentPhase !== 'Template' &&
+        !isAgentRunTerminalPhase(currentPhase) &&
+        (!sameObject || getResourceVersion(previous) !== getResourceVersion(run))
+      ) {
+        // Relist observed a new or mutated non-terminal revision whose watch event will be covered by listVersion.
+        changedNonTerminalRuns.add(name)
       }
     }
     // Only listed resources are eligible for this sweep. Defer any whose watch observation changed.
@@ -1018,10 +1026,10 @@ const resyncAgentRunsForNamespace = async (
     }
     ensureNamespaceState(state, namespace).runListVersion = listVersion
     state.runs.replaceNamespace(namespace, byName)
-    return { refreshedRuns: byName, terminalReceipts }
+    return { refreshedRuns: byName, changedNonTerminalRuns, terminalReceipts }
   })
   if (!syncResult || lifecycleToken !== runtimeMutableState.lifecycleToken) return
-  const { refreshedRuns, terminalReceipts } = syncResult
+  const { refreshedRuns, changedNonTerminalRuns, terminalReceipts } = syncResult
   const candidateRuns: Array<{ name: string; reasons: string[] }> = []
   const retryRuns: string[] = []
   let untouchedRunCount = 0
@@ -1045,13 +1053,24 @@ const resyncAgentRunsForNamespace = async (
     }
     const finalizers = readNested(run, ['metadata', 'finalizers'])
     const hasRuntimeFinalizer = Array.isArray(finalizers) && finalizers.includes('agents.proompteng.ai/runtime-cleanup')
+    const workflowSteps = readNested(run, ['status', 'workflow', 'steps'])
+    const hasPendingWorkflowStep =
+      readNested(run, ['status', 'phase']) === 'Running' &&
+      Array.isArray(workflowSteps) &&
+      workflowSteps.some((step) => {
+        const stepPhase = asString(readNested(step, ['phase']))
+        return stepPhase === 'Pending' || stepPhase === 'Retrying'
+      })
     if (reasons.length > 0) {
       candidateRuns.push({ name, reasons })
-    } else if (readNested(run, ['metadata', 'deletionTimestamp']) && hasRuntimeFinalizer) {
-      // Relists may observe deletionTimestamp before its covered MODIFIED watch event arrives.
-      retryRuns.push(name)
-    } else if (isQueuedRun(run) && !readNested(run, ['status', 'runtimeRef'])) {
-      // Rate windows and free slots do not emit watch events for a blocked run.
+    } else if (
+      changedNonTerminalRuns.has(name) ||
+      (readNested(run, ['metadata', 'deletionTimestamp']) && hasRuntimeFinalizer) ||
+      hasPendingWorkflowStep ||
+      (isQueuedRun(run) && !readNested(run, ['status', 'runtimeRef']))
+    ) {
+      // Relists may advance runListVersion past watch events for updated non-terminal runs,
+      // deletions, pending/retrying workflow steps, or unblocked queued runs.
       retryRuns.push(name)
     }
   }

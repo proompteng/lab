@@ -360,6 +360,114 @@ describe('agents controller startup resync', () => {
     }
   })
 
+  it('reconciles Running workflow continuations observed by periodic relist even when the MODIFIED watch event is covered', async () => {
+    vi.stubEnv('AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED', 'true')
+    const namespace = 'agents'
+    const configMaps = new Map<string, Record<string, unknown>>()
+    const baseWorkflow = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        namespace,
+        name: 'loop-wf',
+        uid: 'wf-uid',
+        resourceVersion: '200',
+        generation: 1,
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'agent' },
+        implementation: { inline: { text: 'run loop step' } },
+        runtime: { type: 'workflow', config: { ttlSecondsAfterFinished: 0 } },
+        workload: { image: 'registry.example/runner:test' },
+        workflow: {
+          steps: [
+            {
+              name: 'step-1',
+              implementation: { inline: { text: 'run loop step' } },
+              loop: { maxIterations: 3 },
+            },
+          ],
+        },
+      },
+      status: {
+        phase: 'Running',
+        observedGeneration: 1,
+        runtimeRef: { type: 'workflow', name: 'loop-wf', runName: 'loop-wf', namespace },
+        workflow: {
+          phase: 'Running',
+          steps: [
+            {
+              name: 'step-1',
+              phase: 'Running',
+              attempt: 1,
+              jobRef: { name: 'loop-wf-step-1-job-1', namespace },
+            },
+          ],
+        },
+      },
+    }
+    const continuingWorkflow = {
+      ...baseWorkflow,
+      metadata: { ...baseWorkflow.metadata, resourceVersion: '205' },
+      status: {
+        ...baseWorkflow.status,
+        workflow: {
+          phase: 'Running',
+          steps: [
+            {
+              name: 'step-1',
+              phase: 'Pending',
+              attempt: 0,
+              message: 'Loop continuing',
+              loop: { currentIteration: 2, completedIterations: 1, maxIterations: 3 },
+            },
+          ],
+        },
+      },
+    }
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ metadata: { resourceVersion: '200' }, items: [baseWorkflow] })
+      .mockResolvedValueOnce({ metadata: { resourceVersion: '205' }, items: [continuingWorkflow] })
+    const get = vi.fn(async (kind: string, name: string) => {
+      if (kind === RESOURCE_MAP.Agent) {
+        return {
+          metadata: { name },
+          spec: { providerRef: { name: 'provider' }, defaults: { systemPrompt: 'fixture' } },
+        }
+      }
+      if (kind === RESOURCE_MAP.AgentProvider) return { metadata: { name }, spec: { binary: '/runner' } }
+      if (kind === 'configmap') return configMaps.get(name) ?? null
+      return null
+    })
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const name = asString(readNested(resource, ['metadata', 'name']))
+      if (resource.kind === 'ConfigMap' && name) configMaps.set(name, resource)
+      return resource
+    })
+    const kube = buildKube({ list, get, apply })
+    const state = createControllerState()
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, namespace, state, defaultConcurrency, handles)
+      await awaitNamespaceIdle(namespace)
+      apply.mockClear()
+      kube.applyStatus.mockClear()
+      const watch = getWatch(RESOURCE_MAP.AgentRun)
+
+      await __test.resyncAgentRunsForNamespace(kube as never, namespace, state, defaultConcurrency, 'periodic')
+      // Watch delivers the MODIFIED event already covered by listVersion=205.
+      void watch.onEvent({ type: 'MODIFIED', object: continuingWorkflow })
+      await awaitNamespaceIdle(namespace)
+
+      const appliedJobs = apply.mock.calls.filter(([resource]) => resource.kind === 'Job')
+      expect(appliedJobs).toHaveLength(1)
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
   it('dispatches and completes a 200-run watch burst without replaying stale observations', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:00Z'))
