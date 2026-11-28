@@ -20,6 +20,7 @@ import {
   type CommandRunner,
   type ReportStartupPhase,
 } from './codex-app-server'
+import { RUNNER_PROCESS_TERM_GRACE_MS } from './process-command'
 import {
   asNumber,
   asString,
@@ -37,7 +38,6 @@ export const DEFAULT_AGY_CREDENTIALS_ENV_VAR = 'GOOGLE_APPLICATION_CREDENTIALS_J
 
 const MAX_RESULT_RESPONSE_CHARS = 64_000
 const MAX_STDERR_CHARS = 8_192
-const SIGKILL_GRACE_MS = 5_000
 
 type AgentRunPayload = Record<string, unknown>
 
@@ -347,13 +347,14 @@ export const runAgyCliAdapter = async (
     })
 
     const rawPrompt = resolvePrompt(adapter, runPayload)
-    const systemPrompt = await readRunnerSystemPrompt(adapter, spec, runPayload)
+    const systemPrompt = await readRunnerSystemPrompt(adapter, spec, runPayload, options.abortSignal)
     const effectivePrompt = composeAgyPrompt(rawPrompt, systemPrompt)
 
+    const runCommand = options.runCommand ?? runDefaultCommand
     await prepareRunnerWorkspace(
       { cwd: adapter.cwd },
       runPayload,
-      options.runCommand ?? runDefaultCommand,
+      (command, args, commandOptions) => runCommand(command, args, { ...commandOptions, signal: options.abortSignal }),
       options.sharedCachePath ?? SHARED_WORKSPACE_CACHE_MOUNT_PATH,
       reportStartupPhase,
     )
@@ -401,7 +402,7 @@ export const runAgyCliAdapter = async (
     let stdoutBuffer = ''
     let stderrBuffer = ''
     const startedSteps = new Set<string>()
-    const sigkillGraceMs = options.sigkillGraceMs ?? SIGKILL_GRACE_MS
+    const sigkillGraceMs = options.sigkillGraceMs ?? RUNNER_PROCESS_TERM_GRACE_MS
 
     const appendResponse = (chunk: string) => {
       if (!chunk) return

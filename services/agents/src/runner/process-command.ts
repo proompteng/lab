@@ -10,7 +10,7 @@ export type CommandResult = { exitCode: number; stdout: string; stderr: string }
 export type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>
 
 export const detachRunnerProcess = process.platform !== 'win32'
-const TERM_GRACE_MS = 1_000
+export const RUNNER_PROCESS_TERM_GRACE_MS = 1_000
 
 export const waitForRunnerProcess = (
   child: ChildProcess,
@@ -58,9 +58,9 @@ export const waitForRunnerProcess = (
             child.stderr?.destroy()
             cleanup()
             reject(reason)
-          }, TERM_GRACE_MS)
+          }, RUNNER_PROCESS_TERM_GRACE_MS)
         }
-      }, TERM_GRACE_MS)
+      }, RUNNER_PROCESS_TERM_GRACE_MS)
     }
     const onAbort = () => cancel(signal?.reason)
 

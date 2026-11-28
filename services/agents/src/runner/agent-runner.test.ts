@@ -10,6 +10,82 @@ import { expect, it, onTestFinished } from 'vitest'
 
 const entrypoint = fileURLToPath(new URL('../../scripts/codex/agent-runner.ts', import.meta.url))
 
+it('reaps an agy-cli child that ignores SIGTERM before the runner shutdown deadline', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'runner-agy-signal-'))
+  const binaryPath = join(dir, 'hanging-agy')
+  const pidPath = join(dir, 'agy.pid')
+  const statusPath = join(dir, 'status.json')
+  const specPath = join(dir, 'agent-runner.json')
+  const runPath = join(dir, 'run.json')
+  onTestFinished(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(runPath, '{}')
+  await writeFile(
+    binaryPath,
+    `#!/usr/bin/env bun
+import { writeFileSync } from 'node:fs'
+process.on('SIGTERM', () => {})
+writeFileSync(${JSON.stringify(pidPath)}, String(process.pid))
+process.stdout.write('{"event":"init","conversation_id":"agy-signal"}\\n')
+setInterval(() => {}, 1000)
+`,
+    { mode: 0o700 },
+  )
+  await writeFile(
+    specPath,
+    JSON.stringify({
+      provider: 'google',
+      payloads: { eventFilePath: runPath },
+      artifacts: { statusPath },
+      adapter: { type: 'agy-cli', agy: { binaryPath, prompt: 'block until cancelled' } },
+    }),
+  )
+
+  const runner = spawn('bun', [entrypoint, specPath], {
+    env: { HOME: dir, PATH: process.env.PATH },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const closed = once(runner, 'close')
+  let reaped = false
+  onTestFinished(async () => {
+    if (runner.exitCode === null && runner.signalCode === null) runner.kill('SIGKILL')
+    await closed
+    if (!reaped) {
+      const pid = Number(await readFile(pidPath, 'utf8').catch(() => ''))
+      if (pid) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* already reaped */
+        }
+      }
+    }
+  })
+  const turnStarted = Promise.withResolvers<void>()
+  let stdout = ''
+  let stderr = ''
+  runner.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString()
+    if (stdout.includes('"phase":"first_turn_started"')) turnStarted.resolve()
+  })
+  runner.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString()
+  })
+  await Promise.race([turnStarted.promise, closed, delay(3_000, undefined, { ref: false })])
+  expect(stdout, stderr).toContain('"phase":"first_turn_started"')
+  expect(runner.kill('SIGTERM')).toBe(true)
+  expect(await closed).toEqual([143, null])
+  expect(stderr).not.toContain('shutdown exceeded')
+  expect(JSON.parse(await readFile(statusPath, 'utf8'))).toMatchObject({
+    adapter: 'agy-cli',
+    status: 'cancelled',
+    signal: 'SIGKILL',
+    telemetry: { state: 'finished' },
+  })
+  const pid = Number(await readFile(pidPath, 'utf8'))
+  expect(() => process.kill(pid, 0)).toThrow()
+  reaped = true
+})
+
 it.each([
   { signal: 'SIGTERM' as const, code: 143, stalled: true },
   { signal: 'SIGINT' as const, code: 130, stalled: false },
