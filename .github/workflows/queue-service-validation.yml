@@ -10,6 +10,9 @@ jobs:
   agentctl:
     uses: ./.github/workflows/agentctl-ci.yml
 
+  bumba:
+    uses: ./.github/workflows/bumba-ci.yml
+
   codex:
     uses: ./.github/workflows/codex-ci.yml
 
@@ -30,6 +33,9 @@ jobs:
 
   flamingo:
     uses: ./.github/workflows/flamingo-ci.yml
+
+  froussard:
+    uses: ./.github/workflows/froussard-ci.yml
 
   galette:
     uses: ./.github/workflows/galette-ci.yml
@@ -57,6 +63,9 @@ jobs:
 
   nuc-omni-serve:
     uses: ./.github/workflows/nuc-omni-serve.yaml
+
+  oirat:
+    uses: ./.github/workflows/oirat-ci.yml
 
   opencode:
     uses: ./.github/workflows/opencode-ci.yml

@@ -1,6 +1,7 @@
 name: froussard
 
 on:
+  workflow_call:
   push:
     branches:
       - main
@@ -38,12 +39,16 @@ on:
       - 'argocd/applications/froussard/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: froussard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   changes:
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
@@ -60,7 +65,7 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.changed == 'true'
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true')) }}
     uses: ./.github/workflows/common-monorepo.yml
     with:
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard && bun run --filter @proompteng/agent-contracts build
@@ -68,15 +73,13 @@ jobs:
       oxlint-command: bun run --cwd apps/froussard lint:oxlint
       oxlint-type-command: bun run --cwd apps/froussard lint:oxlint:type
       test-command: bun run --filter froussard test -- --coverage && bun run --filter froussard test:restate && node scripts/report-coverage.mjs
-    secrets: inherit
 
   dependency-closure:
     needs: changes
-    if: needs.changes.outputs.changed == 'true'
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true')) }}
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: froussard
-    secrets: inherit
 
   nix-image:
     needs: [dependency-closure, test]
@@ -89,4 +92,5 @@ jobs:
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-    secrets: inherit
+    secrets:
+      ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
