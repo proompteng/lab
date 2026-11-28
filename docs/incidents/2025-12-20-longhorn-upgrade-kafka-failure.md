@@ -208,7 +208,7 @@ kubectl -n longhorn-system delete replicas.longhorn.io pvc-e438ed00-eae4-456c-89
   - `concurrent-backing-image-replenish-per-node-limit=5`
 - Set default replica count for new volumes to `1` (StorageClass default + Longhorn UI default).
 - Patched existing Longhorn volume CRs to `spec.numberOfReplicas=1` to apply the replica change to all current volumes.
-- Persisted these defaults in GitOps (`argocd/applications/longhorn/longhorn-values.yaml`).
+- Persisted these defaults in the [then-current Longhorn GitOps values](https://github.com/proompteng/lab/blob/aa0a2d91f1f20dca27e59634655311676f26d102/argocd/applications/longhorn/longhorn-values.yaml).
 - Redis (jangar/openwebui) crash recovery:
   - `jangar-openwebui-redis-0` was crash-looping on `Fatal error: can't open the AOF manifest ... I/O error`.
   - Temporarily scaled the StatefulSet to 0 and back to 1; Redis came up cleanly and reloaded AOF.
