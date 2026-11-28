@@ -6,12 +6,19 @@ import { Data, Effect, Result } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../../src/hash'
 import { decodeMacroEtfCorePolicy, Profile } from '../../src/strategy/macro-etf-core/policy'
 import { closeSnapshotSchema, replayMacroEtfCoreSignals } from '../../src/strategy/macro-etf-core/signals'
-import { bootstrap } from '../vol-regime-carry-metrics'
+import { foldBounds, requireAlignedSessions } from '../research-lib/calendar'
+import { stationaryBootstrap, type StationaryPlan, sum } from '../research-lib/statistics'
 import { costs, initialUsd, mixes, noiseIdentity, replayAccount, toMarks } from './macro-etf-core-dual-horizon-account'
 import { receipts } from '../pure-etf-dual-horizon-data'
 import { noiseOrders } from '../pure-etf-dual-horizon-noise'
 import { type DailyFrame, loadFrozenFrames } from './macro-etf-core-dual-horizon-data'
-import { type Day, drawdownDays, pairedCorrelation, summarize } from './macro-etf-core-dual-horizon-statistics'
+import {
+  bootstrap,
+  type Day,
+  drawdownDays,
+  pairedCorrelation,
+  summarize,
+} from './macro-etf-core-dual-horizon-statistics'
 import { wave5dTargets } from './macro-etf-core-wave5d'
 
 const frozen = {
@@ -87,12 +94,13 @@ const benchmarks = (daily: readonly DailyFrame[], symbol: 'SPY' | 'SHY'): Day[] 
     return { date, net, overnight: net, intraday: 0, oneWayTurnover: turnover, overnightOneWayTurnover: turnover }
   })
 
-const sum = (series: readonly number[]) => series.reduce((a, b) => a + b, 0)
 const near = (actual: number, expect: number, label: string) => {
   if (!(Math.abs(actual - expect) < 0.005)) throw new Error(`Frozen ${label} mismatch: ${actual} vs ${expect}`)
 }
 
 const study = ({ daily, intraday, coverage }: Effect.Success<typeof loadFrozenFrames>) => {
+  requireAlignedSessions(daily, intraday)
+  const dates = daily.map(({ date }) => date)
   const evidence = closeEvidence(daily)
   const f2 = prepareMacro(evidence, Profile.F2)
   const f4 = prepareMacro(evidence, Profile.F4)
@@ -112,18 +120,25 @@ const study = ({ daily, intraday, coverage }: Effect.Success<typeof loadFrozenFr
   const B0 = benchmarks(daily, 'SHY')
   const B1 = benchmarks(daily, 'SPY')
   const drawdown = drawdownDays(B1.map(({ net }) => net))
+  const plans = new Map<number, StationaryPlan>()
+  const planFor = (count: number) => {
+    const cached = plans.get(count)
+    if (cached !== undefined) return cached
+    const plan = stationaryBootstrap(count, bootstrap)
+    plans.set(count, plan)
+    return plan
+  }
   const report = (rows: readonly Day[]) =>
     Object.fromEntries(
       Object.entries(windows).map(([id, [from, through, count]]) => {
-        const first = daily.findIndex(({ date }) => date === from)
-        const end = daily.findIndex(({ date }) => date === through) + 1
-        if (first < 0 || end - first !== count) throw new Error(`Frozen split mismatch: ${id}`)
+        const { first, end } = foldBounds(dates, from, through, count)
         return [
           id,
           summarize(
             rows.slice(first, end),
             B0.slice(first, end).map(({ net }) => net),
             drawdown.slice(first, end),
+            planFor(count),
           ),
         ]
       }),

@@ -123,6 +123,7 @@ dashboardsConfigMaps:
   arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
   bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
   bayn-cache-performance-dashboard: bayn-cache-performance-dashboard
+  bayn-multi-sleeve-operations-dashboard: bayn-multi-sleeve-operations-dashboard
 
 dashboardProviders:
   dashboardproviders.yaml:
@@ -170,3 +171,12 @@ dashboardProviders:
         updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/bayn-cache-performance-dashboard
+      - name: bayn-multi-sleeve-operations-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/bayn-multi-sleeve-operations-dashboard

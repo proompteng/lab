@@ -1027,7 +1027,18 @@ prometheus.scrape "kube_state_metrics" {
 	]
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
-	forward_to      = [prometheus.relabel.arc_resource_metrics.receiver]
+	forward_to      = [prometheus.relabel.arc_resource_metrics.receiver, prometheus.relabel.bayn_daily_job_metrics.receiver]
+}
+
+prometheus.relabel "bayn_daily_job_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	// Bound Job history to these CronJob name prefixes. The rules verify controller ownership.
+	rule {
+		action        = "keep"
+		source_labels = ["__name__", "namespace", "cronjob", "job_name"]
+		regex         = "kube_job_(created|failed|owner|status_failed);bayn;;bayn-(macro-daily-sleeves|daily-scorecard)-.+|kube_cronjob_(next_schedule_time|spec_suspend);bayn;bayn-(macro-daily-sleeves|daily-scorecard);"
+	}
 }
 
 prometheus.scrape "flink" {

@@ -392,6 +392,10 @@ if ! command -v kubeconform >/dev/null 2>&1; then
   exit 1
 fi
 
+run_with_helm3 helm template agents "${CHART_DIR}" --namespace agents --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --set autoOntologyMcpGateway.enabled=true --show-only templates/auto-ontology-mcp-gateway.yaml |
+  kubeconform --strict --summary
+
 CRD_SCHEMA_VERSION="${KUBECONFORM_K8S_VERSION:-1.27.0}"
 crd_schema_dir="$(mktemp -d)"
 trap 'rm -rf "${crd_schema_dir}"' EXIT
