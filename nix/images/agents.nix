@@ -325,6 +325,8 @@ let
     "services/agents/scripts/apply_patch.py"
     "services/agents/src/auto-ontology-mcp/config.ts"
     "services/agents/src/auto-ontology-mcp/contract.ts"
+    "services/agents/src/colab-mcp/bridge.ts"
+    "services/agents/src/colab-mcp/config.ts"
     "services/agents/src/linear-mcp/bridge-auth.ts"
     "services/agents/src/linear-mcp/config.ts"
     "services/agents/src/linear-mcp/contract.ts"
@@ -374,6 +376,7 @@ let
     ''mkdir -p "$TMPDIR/agents-runner"''
     ''bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile "$TMPDIR/agents-runner/agent-runner.js"''
     ''bun build services/agents/scripts/codex/auto-ontology-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/auto-ontology-mcp-bridge.js"''
+    ''bun build services/agents/scripts/codex/colab-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/colab-mcp-bridge.js"''
     ''bun build services/agents/scripts/codex/linear-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/linear-mcp-bridge.js"''
     ''bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile "$TMPDIR/agents-runner/fake-app-server.js"''
   ];
@@ -614,6 +617,7 @@ let
     cp -R "$TMPDIR/work/packages/codex/dist" "$out/app/node_modules/@proompteng/codex/dist"
     cp "$TMPDIR/agents-runner/agent-runner.js" "$out/app/services/agents/scripts/codex/agent-runner.js"
     cp "$TMPDIR/agents-runner/auto-ontology-mcp-bridge.js" "$out/app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js"
+    cp "$TMPDIR/agents-runner/colab-mcp-bridge.js" "$out/app/services/agents/scripts/codex/colab-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/linear-mcp-bridge.js" "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
     cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
@@ -637,6 +641,10 @@ let
     #!${pkgs.bash}/bin/bash
     exec ${bun}/bin/bun /app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js "$@"
     EOF
+    cat > "$out/usr/local/bin/colab-mcp-bridge" <<'EOF'
+    #!${pkgs.bash}/bin/bash
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/colab-mcp-bridge.js "$@"
+    EOF
     ln -s ${antigravityCli}/bin/agy "$out/usr/local/bin/agy"
     ln -s ${antigravityCli}/bin/agy "$out/usr/bin/agy"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
@@ -645,10 +653,12 @@ let
     chmod +x \
       "$out/usr/local/bin/agent-runner" \
       "$out/usr/local/bin/auto-ontology-mcp-bridge" \
+      "$out/usr/local/bin/colab-mcp-bridge" \
       "$out/usr/local/bin/linear-mcp-bridge" \
       "$out/usr/local/bin/agents-fake-codex-app-server" \
       "$out/app/services/agents/scripts/codex/agent-runner.js" \
       "$out/app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js" \
+      "$out/app/services/agents/scripts/codex/colab-mcp-bridge.js" \
       "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js" \
       "$out/app/services/agents/scripts/codex/fake-app-server.js"
 

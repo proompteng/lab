@@ -1,9 +1,9 @@
-# Auto Ontology MCP for Codex AgentRuns
+# Auto Ontology MCP for AgentRuns
 
-The optional Agents gateway exposes 12 read-only tools over Streamable HTTP. The Codex runner starts
+The optional Agents gateway exposes 12 read-only tools over Streamable HTTP. The Codex and Google runners start
 `/usr/local/bin/auto-ontology-mcp-bridge` over stdio. The bridge sends a rotating projected Kubernetes
 token; the gateway checks the token's audience, service account, Pod/Job/AgentRun ownership and
-active phase, and the Agent's `codex` provider. Non-Codex providers and other namespaces are not
+active phase, and the Agent's `codex` or `google` provider. Other providers and namespaces are not
 authorized. The runner never receives the Auto Ontology API key.
 
 ## API boundary
@@ -67,7 +67,7 @@ gateway API key with them. Bayn execution policy and identities are unchanged.
    the Deployment reads `AUTO_ONTOLOGY_API_TOKEN` only from the SealedSecret's resulting Secret.
    Once this revision is synced, verify both gateway Pods are Ready. The pod probe checks API access;
    compilation or ingestion status is reported only by the tool.
-4. Add `spec.workload` and replace the empty `threadConfig.mcp_servers` in
+4. Configure `spec.workload` and the `auto_ontology` entry in `threadConfig.mcp_servers` in
    [the standard Codex AgentProvider](../../argocd/applications/agents/codex-agentprovider.yaml) as
    shown below. Merge these fields into the existing manifest; keep the existing model, `effort: max`,
    and remaining settings. Keep the separate Kubernetes API token opt-in for [read-only triage](runbooks.md#agentrun-triage-access).
@@ -97,15 +97,19 @@ gateway API key with them. Bayn execution policy and identities are unchanged.
                  AUTO_ONTOLOGY_MCP_GATEWAY_URL: http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp
    ```
 
+   The [Google AgentProvider](../../argocd/applications/agents/google-agentprovider.yaml) uses
+   `google-triage-runner` and mounts the equivalent stdio configuration at
+   `/root/.gemini/config/mcp_config.json`.
+
 ## Verify and roll back
 
-Launch a new [canary AgentRun](agentrun-creation-guide.md) using `codex-agent`. Confirm its Job has
+Launch a new [canary AgentRun](agentrun-creation-guide.md) for each enabled provider. Confirm its Job has
 the projected token with the expected audience but not the Auto Ontology token. In the run, list
 the tools, call `check_readiness` and `search_terms`, and use `check_answerable` then `ask_question`
 for one known fixture when the catalog is ready. Confirm the expected answer and no saved
 conversation. The HTTP gateway must reject anonymous requests and requests with a different token
 audience. Preserve the MCP gateway egress rules when updating the separate AgentRun triage policy.
 
-To roll back, first revert the Codex provider changes so new runs do not start the bridge. Then
+To roll back, first remove the Auto Ontology bridge from both providers so new runs do not start it. Then
 disable the Helm gateway. Rotate a compromised API token at the issuer and recreate the SealedSecret;
 the gateway reads the Secret at startup, so roll the Deployment through GitOps after rotation.

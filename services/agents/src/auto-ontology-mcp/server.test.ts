@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AutoOntologyIdentityError } from './identity'
+import { McpRunIdentityError } from '../server/mcp-run-identity'
 import { createAutoOntologyGatewayHandler } from './server'
 import { createAutoOntologyUpstream } from './upstream'
 
@@ -45,7 +45,7 @@ const fixture = (overrides: Partial<Parameters<typeof createAutoOntologyUpstream
     return Response.json({ data: [], count: 0 })
   })
   const verify = vi.fn(async (token: string) => {
-    if (token !== 'runner-token') throw new AutoOntologyIdentityError(403, 'identity_denied')
+    if (token !== 'runner-token') throw new McpRunIdentityError(403, 'identity_denied')
   })
   const upstream = createAutoOntologyUpstream({
     url: apiUrl,

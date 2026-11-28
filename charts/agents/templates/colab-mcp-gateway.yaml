@@ -1,0 +1,204 @@
+{{- if .Values.colabMcpGateway.enabled -}}
+{{- $config := .Values.colabMcpGateway -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $name := printf "%s-colab-mcp-gateway" (include "agents.fullname" .) -}}
+{{- $selectorLabels := dict "app.kubernetes.io/name" "agents-colab-mcp-gateway" "app.kubernetes.io/instance" .Release.Name -}}
+{{- $image := .Values.controllers.image -}}
+{{- $repository := $image.repository | default .Values.image.repository -}}
+{{- $tag := $image.tag | default .Values.image.tag -}}
+{{- $digest := $image.digest | default .Values.image.digest -}}
+{{- if and .Values.imagePolicy.requireDigest (not $digest) -}}
+{{- fail "controllers.image.digest is required for the Colab MCP gateway when imagePolicy.requireDigest is true" -}}
+{{- end -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
+  - apiGroups: ["agents.proompteng.ai"]
+    resources: ["agentruns", "agents"]
+    verbs: ["get"]
+  - apiGroups: ["agents.proompteng.ai"]
+    resources: ["agentproviders"]
+    resourceNames: ["codex", "google"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  replicas: 1
+  # Two gateway processes would not share runtime reservations.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- toYaml $selectorLabels | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- toYaml $selectorLabels | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 660
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with ($image.pullSecrets | default .Values.image.pullSecrets) }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: gateway
+          image: "{{ $repository }}:{{ $tag }}{{- if $digest }}@{{ $digest }}{{ end }}"
+          imagePullPolicy: {{ $image.pullPolicy | default .Values.image.pullPolicy }}
+          command: ["bun", "run", "src/colab-mcp/index.ts"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: COLAB_MCP_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: COLAB_MCP_CODEX_SERVICE_ACCOUNT
+              value: {{ .Values.autoOntologyMcpGateway.runnerServiceAccountName | quote }}
+            - name: COLAB_QUOTA_PROJECT
+              value: {{ $config.quotaProject | quote }}
+            - name: COLAB_MAX_CONCURRENT_RUNTIMES
+              value: {{ $config.maxConcurrentRuntimes | quote }}
+          resources:
+            {{- toYaml $config.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          # Keep the fail-closed endpoint reachable for callers while ADC is absent.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          volumeMounts:
+            - name: colab-adc
+              mountPath: /var/run/secrets/colab-mcp-adc
+              readOnly: true
+      volumes:
+        - name: colab-adc
+          secret:
+            secretName: colab-mcp-adc
+            optional: true
+            defaultMode: 0440
+            items:
+              - key: credentials.json
+                path: credentials.json
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- toYaml $selectorLabels | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  selector:
+    {{- toYaml $selectorLabels | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $selectorLabels | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: agents.proompteng.ai/provider
+                operator: In
+                values: [codex, google]
+      ports:
+        - port: 8080
+          protocol: TCP
+{{- end }}

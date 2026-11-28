@@ -3,9 +3,9 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
+import { McpRunIdentityError } from '../server/mcp-run-identity'
 import { BodyTooLargeError, readBoundedText } from './body'
 import { AUTO_ONTOLOGY_TOOLS, getAutoOntologyTool } from './contract'
-import { AutoOntologyIdentityError } from './identity'
 import { AutoOntologyUpstreamError, type AutoOntologyUpstream } from './upstream'
 
 export const GATEWAY_NAME = 'agents-auto-ontology-mcp-gateway'
@@ -20,7 +20,7 @@ const toolError = (code: string, message: string): CallToolResult => ({
 })
 
 export const createAutoOntologyGatewayHandler =
-  (options: { verify: (token: string) => Promise<void>; upstream: AutoOntologyUpstream; maxRequestBytes: number }) =>
+  (options: { verify: (token: string) => Promise<unknown>; upstream: AutoOntologyUpstream; maxRequestBytes: number }) =>
   async (request: Request) => {
     const path = new URL(request.url).pathname
     if (request.method === 'GET' && path === '/healthz') return json(200, { status: 'ok' })
@@ -47,7 +47,7 @@ export const createAutoOntologyGatewayHandler =
     try {
       await options.verify(token)
     } catch (error) {
-      if (error instanceof AutoOntologyIdentityError) {
+      if (error instanceof McpRunIdentityError) {
         return json(error.status, { error: error.code }, error.status === 401 ? authenticate : {})
       }
       return json(503, { error: 'identity_unavailable' })

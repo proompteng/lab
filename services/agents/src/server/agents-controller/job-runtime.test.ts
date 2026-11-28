@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parse } from 'yaml'
 
 import {
   buildRunSpecContext,
@@ -808,7 +811,7 @@ describe('agents controller job-runtime module', () => {
     })
   })
 
-  it('builds agy-cli jobs without codex-auth while mounting /root/.gemini and provider secretEnv', async () => {
+  it('mounts the real Google provider MCP config and both audience-bound tokens without Colab ADC', async () => {
     setEnv('AGENTS_CONTROLLER_AUTH_SECRET_NAME', 'codex-auth')
     setEnv('AGENTS_CONTROLLER_AUTH_SECRET_KEY', 'auth.json')
     setEnv('AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH', '/root/.codex')
@@ -822,33 +825,17 @@ describe('agents controller job-runtime module', () => {
       }),
     }
 
+    const google = parse(
+      readFileSync(
+        new URL('../../../../../argocd/applications/agents/google-agentprovider.yaml', import.meta.url),
+        'utf8',
+      ),
+    ) as Record<string, unknown>
     await submitJobRun(
       kube as never,
       { metadata: { name: 'google-run-1', uid: 'google-uid-1', namespace: 'agents' }, spec: {} },
       { metadata: { name: 'google-agent' }, spec: {} },
-      {
-        metadata: { name: 'google' },
-        spec: {
-          binary: '/usr/local/bin/agent-runner',
-          adapter: {
-            type: 'agy-cli',
-            agy: {
-              model: 'gemini-4-neon',
-              effort: 'high',
-              cwd: '/workspace/lab',
-              quotaProject: 'proompteng',
-              location: 'global',
-            },
-          },
-          secretEnv: [
-            {
-              name: 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-              secretName: 'google-adc-auth',
-              key: 'credentials.json',
-            },
-          ],
-        },
-      },
+      google,
       { text: 'Verify Gemini 4 Neon runner' },
       null,
       'agents',
@@ -856,9 +843,9 @@ describe('agents controller job-runtime module', () => {
       'job',
     )
 
-    const specConfigMap = applied.find((resource) => resource.kind === 'ConfigMap') as
-      | { data?: Record<string, string> }
-      | undefined
+    const specConfigMap = applied.find(
+      (resource) => resource.kind === 'ConfigMap' && 'agent-runner.json' in (resource.data as object),
+    ) as { data?: Record<string, string> } | undefined
     const runnerSpec = JSON.parse(specConfigMap?.data?.['agent-runner.json'] ?? '{}') as Record<string, unknown>
     expect(runnerSpec.adapter).toEqual({
       type: 'agy-cli',
@@ -878,16 +865,21 @@ describe('agents controller job-runtime module', () => {
       spec: {
         template: {
           spec: {
+            automountServiceAccountToken: boolean
+            serviceAccountName: string
             containers: Array<{
               env: Array<{ name: string; value?: string; valueFrom?: Record<string, unknown> }>
-              volumeMounts: Array<{ name: string; mountPath: string }>
+              volumeMounts: Array<{ name: string; mountPath: string; readOnly?: boolean }>
             }>
-            volumes: Array<{ name: string; secret?: { secretName?: string } }>
+            volumes: Array<{ name: string; secret?: { secretName?: string }; projected?: unknown }>
           }
         }
       }
     }
-    const container = job.spec.template.spec.containers[0]
+    const pod = job.spec.template.spec
+    const container = pod.containers[0]
+    expect(pod.serviceAccountName).toBe('google-triage-runner')
+    expect(pod.automountServiceAccountToken).toBe(true)
     expect(container.env.find((entry) => entry.name === 'CODEX_HOME')).toBeUndefined()
     expect(container.env.find((entry) => entry.name === 'CODEX_AUTH')).toBeUndefined()
     expect(container.env).toContainEqual({ name: 'AGENT_RUN_NAMESPACE', value: 'agents' })
@@ -898,6 +890,39 @@ describe('agents controller job-runtime module', () => {
     })
     expect(container.volumeMounts.find((mount) => mount.mountPath === '/root/.codex/auth.json')).toBeUndefined()
     expect(container.volumeMounts.find((mount) => mount.mountPath === '/root/.gemini')).toBeDefined()
-    expect(job.spec.template.spec.volumes.find((vol) => vol.secret?.secretName === 'codex-auth')).toBeUndefined()
+    expect(
+      container.volumeMounts.find((mount) => mount.mountPath === '/root/.gemini/config/mcp_config.json'),
+    ).toBeDefined()
+    for (const name of ['auto-ontology', 'colab']) {
+      const mount = container.volumeMounts.find((entry) => entry.mountPath === `/var/run/secrets/agents-${name}-mcp`)
+      expect(mount?.readOnly).toBe(true)
+      expect(pod.volumes.find((volume) => volume.name === mount?.name)?.projected).toMatchObject({
+        sources: [{ serviceAccountToken: { audience: `agents.proompteng.ai/${name}-mcp`, path: 'token' } }],
+      })
+    }
+    expect(JSON.stringify(pod)).not.toMatch(/colab-mcp-adc|codex-auth/)
+  })
+
+  it('rejects attempts to mount the gateway ADC as a runner workload volume or environment', async () => {
+    const kube = { get: vi.fn(), apply: vi.fn() }
+    for (const spec of [
+      { secrets: ['colab-mcp-adc'] },
+      { workload: { volumes: [{ type: 'secret', name: 'adc', secretName: 'colab-mcp-adc', mountPath: '/adc' }] } },
+    ]) {
+      await expect(
+        submitJobRun(
+          kube as never,
+          { metadata: { name: 'run', uid: 'run-uid' }, spec },
+          { metadata: { name: 'codex-agent' }, spec: {} },
+          { metadata: { name: 'codex' }, spec: {} },
+          { text: 'Test' },
+          null,
+          'agents',
+          'runner:test',
+          'job',
+        ),
+      ).rejects.toThrow('secrets blocked by controller policy: colab-mcp-adc')
+    }
+    expect(kube.apply).not.toHaveBeenCalled()
   })
 })

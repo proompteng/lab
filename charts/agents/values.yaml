@@ -141,6 +141,19 @@ autoOntologyMcpGateway:
       cpu: '1'
       memory: 512Mi
 
+# One writer per Colab identity. The gateway enforces the runtime cap in process.
+colabMcpGateway:
+  enabled: false
+  quotaProject: proompteng
+  maxConcurrentRuntimes: 5
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+
 agentsShell:
   enabled: false
   replicaCount: 1
