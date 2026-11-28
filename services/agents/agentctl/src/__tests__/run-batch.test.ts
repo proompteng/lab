@@ -32,13 +32,26 @@ describe('AgentRun batch preflight', () => {
     }
   })
 
-  it('rejects duplicate effective branches, including aliases and workflow step overrides', () => {
+  it('allows the same head branch in different repositories', () => {
     const entries = parseRunBatch(
       JSON.stringify([
-        manifest('first', { parameters: { headBranch: ' codex/shared ' } }),
+        manifest('frontend', { parameters: { repository: 'owner/frontend', head: 'codex/update' } }),
+        manifest('backend', { parameters: { repository: 'owner/backend', head: 'codex/update' } }),
+      ]),
+      'fixture',
+      false,
+    )
+    expect(prepareRunBatch(entries, new Map())).toHaveLength(2)
+  })
+
+  it('rejects duplicate effective branches in the same repository, including aliases and workflow step overrides', () => {
+    const entries = parseRunBatch(
+      JSON.stringify([
+        manifest('first', { parameters: { repository: ' Owner/Repo ', headBranch: ' codex/shared ' } }),
         manifest('second', {
           runtime: { type: 'workflow' },
-          workflow: { steps: [{ name: 'implement', parameters: { head: 'codex/shared' } }] },
+          parameters: { repo: 'owner/other' },
+          workflow: { steps: [{ name: 'implement', parameters: { repo: 'owner/repo', head: 'codex/shared' } }] },
         }),
       ]),
       'fixture',

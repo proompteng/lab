@@ -230,7 +230,7 @@ spec:
       text: Check that the installation examples match the current CLI.
 ```
 
-The CLI rejects head branch collisions across runs (including the effective heads of workflow steps),
+The CLI rejects head branch collisions across runs targeting the same repository (including workflow steps),
 `serviceAccount` and `serviceAccountName` overrides, and missing task text. It then uses Kubernetes server-side dry runs
 to validate every manifest before creating any run. `--concurrency` bounds each stage (default 8). `--verify` checks
 the mounted prompt and inherited identity on each submitted run’s runner Pod. The table shows the node if the Pod

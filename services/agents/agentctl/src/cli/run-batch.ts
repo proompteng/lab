@@ -1,7 +1,7 @@
 import { Command, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import YAML from 'yaml'
-import { resolveRunHeadBranch } from '../../../src/server/agents-controller/run-utils'
+import { normalizeRepository, resolveRunHeadBranch } from '../../../src/server/agents-controller/run-utils'
 import { asRecord, asString } from '../../../src/server/primitives'
 import type { KubeBackend } from '../kube/backend'
 import { isJobRuntime, observeRuns, RUN_LABEL } from '../kube/runs'
@@ -169,10 +169,12 @@ export const prepareRunBatch = (
       if (!executable) return []
       const head = asString(payload.head) ?? resolveRunHeadBranch({ spec: { parameters } })
       if (head) {
-        const owner = branchOwners.get(head)
+        const repository = normalizeRepository(asString(payload.repository) ?? '')
+        const branchKey = JSON.stringify([repository, head])
+        const owner = branchOwners.get(branchKey)
         if (owner !== undefined && owner !== entry.index)
           throw validationError(`Batch entry ${entry.index}: duplicate head branch (also used by entry ${owner}).`)
-        branchOwners.set(head, entry.index)
+        branchOwners.set(branchKey, entry.index)
       }
       return [{ implementation: spec, parameters, prompt }]
     })
