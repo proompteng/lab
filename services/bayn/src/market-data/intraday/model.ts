@@ -66,6 +66,22 @@ export interface IntradayArchiveWatermark {
   readonly inclusiveLastOffset: string
 }
 
+type IntradaySource = Pick<
+  IntradaySnapshotQuery,
+  'universeId' | 'universeSymbolHash' | 'universe' | 'feed' | 'delayClass' | 'sourceTopics'
+>
+
+export const sameIntradaySource = (left: IntradaySource, right: IntradaySource): boolean =>
+  left.universeId === right.universeId &&
+  left.universeSymbolHash === right.universeSymbolHash &&
+  left.universe.length === right.universe.length &&
+  left.universe.every((symbol, index) => symbol === right.universe[index]) &&
+  left.feed === right.feed &&
+  left.delayClass === right.delayClass &&
+  left.sourceTopics.bars === right.sourceTopics.bars &&
+  left.sourceTopics.quotes === right.sourceTopics.quotes &&
+  left.sourceTopics.trades === right.sourceTopics.trades
+
 export const usesWindowTradeEvidence = (
   request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy' | 'candidateSymbols'>,
   symbol: string,

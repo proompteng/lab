@@ -3,11 +3,12 @@ import { Result } from 'effect'
 
 import { sha256 } from '../../hash'
 import { streamingFixture, streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
-import { IntradayCandidateEvidencePolicy, type IntradaySnapshotQuery } from '../intraday/model'
+import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../intraday/model'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import type { KafkaProjectionCut } from './kafka'
 import { incorporateMarketRecord } from './projection'
 import { compactStreamingProjection } from './query-cut'
+import { reproduceStreamingSnapshot } from './replay'
 import { constructStreamingSnapshot } from './snapshot'
 import { emptyWebullProjection } from './webull-projection'
 
@@ -58,6 +59,36 @@ test('query compaction preserves snapshot bytes with histories at their existing
   expect(compact.sequence).toBe(source.sequence)
   expect(compact.minimumObservationMs).toBe(source.minimumObservationMs)
 })
+
+test.each([IntradaySnapshotPurpose.EntryPricing, IntradaySnapshotPurpose.Liquidation])(
+  '%s retains only the original executable quotes despite full signal history and later quotes',
+  (purpose) => {
+    const { cut, query } = streamingFixture()
+    const { candidateSymbols: _candidates, candidateEvidencePolicy: _policy, ...base } = query
+    const symbols = ['QQQ', 'SMH']
+    const request = { ...base, purpose, symbols, rangeStartAt: '2026-09-04T14:29:00.000Z' }
+    const expected = Result.getOrThrow(constructStreamingSnapshot(cut, request))
+    const quoteHistory = new Map(cut.projection.quoteHistory)
+    for (const symbol of symbols) {
+      const history = quoteHistory.get(symbol)
+      const last = history?.at(-1)
+      if (history === undefined || last === undefined) throw new Error(`Missing ${symbol} quote fixture`)
+      quoteHistory.set(symbol, [...history, { ...last, availableAtMs: Date.parse(query.observedAt) + 1 }])
+    }
+    const compact = Result.getOrThrow(equivalent({ ...cut, projection: { ...cut.projection, quoteHistory } }, request))
+    expect(compact.bars.size).toBe(0)
+    expect(compact.trades.size).toBe(0)
+    expect(compact.features.size).toBe(0)
+    const actual = Result.getOrThrow(constructStreamingSnapshot({ ...cut, projection: compact }, request))
+    expect(actual).toEqual(expected)
+    expect(actual.manifest.streaming.records).toHaveLength(2)
+    expect(
+      Result.getOrThrow(
+        reproduceStreamingSnapshot(actual.manifest, Result.getOrThrow(persistIntradayRecordRows(actual))),
+      ),
+    ).toEqual(actual)
+  },
+)
 
 test('compaction retains candidate exclusions and rejected, incomplete or unobserved cut failures', () => {
   const fixture = streamingFixture()
