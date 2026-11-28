@@ -1,0 +1,20 @@
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyClass
+metadata:
+  name: default
+spec:
+  statefulSet:
+    pod:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              # Count proxies across StatefulSets, not only replicas of one proxy.
+              tailscale.com/managed: 'true'
+      tailscaleContainer:
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi

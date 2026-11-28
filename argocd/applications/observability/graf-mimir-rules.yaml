@@ -984,6 +984,38 @@ data:
               description: |
                 Requested CPU on the arm64 runner node is above 90% of allocatable CPU for 15 minutes.
                 ARC arm64 runner scale-out may be blocked even if live CPU usage is low.
+      - name: flannel-cbr0-ipam.rules
+        interval: 30s
+        rules:
+          - alert: FlannelCbr0IPAMCapacityHigh
+            # Both target nodes have /23s: 512 addresses minus network, gateway and broadcast.
+            expr: |
+              max by (node) (kubelet_running_pods{job="kubelet",node=~"turin|talos-192-168-1-85"}) / 509 >= 0.8
+            for: 5m
+            labels:
+              severity: warning
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            annotations:
+              summary: Flannel cbr0 address pressure on {{ $labels.node }}
+              description: Running pod sandboxes are at least 80% of usable PodCIDR capacity. Check actual cbr0 leases for IPAM pressure.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
+          - alert: FlannelCbr0SandboxFailures
+            # Kubelet increments this counter in the FailedCreatePodSandBox event path.
+            expr: |
+              max by (node) (
+                increase(kubelet_started_pods_errors_total{job="kubelet",node=~"turin|talos-192-168-1-85"}[5m])
+              ) >= 5
+            labels:
+              severity: critical
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            annotations:
+              summary: Pod sandbox creation failures on {{ $labels.node }}
+              description: At least five sandbox creation failures are estimated in five minutes. Confirm IPAM exhaustion in FailedCreatePodSandBox events before touching leases.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
       - name: torghut-storage-baseline.rules
         interval: 30s
         rules:

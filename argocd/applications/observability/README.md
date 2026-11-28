@@ -13,6 +13,9 @@ use the internal TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecu
 and existing BoltDB Shipper schema. The compatibility gateway Service preserves the original client address.
 Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for the verified drain, cutover and recovery
 procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
+Loki bounds push bodies at 8 MiB on the wire and 16 MiB decoded, and rejects lines over 2 MiB without truncating
+records. The [cluster performance runbook](../../../docs/runbooks/cluster-performance-audit-2026-11-27.md#lgtm)
+covers these limits, the Mimir and Tempo capacity changes, and mixed-load acceptance.
 Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
 [Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
 and live acceptance. Mimir uses the shared Strimzi Kafka cluster at

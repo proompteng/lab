@@ -29,6 +29,7 @@ See the [Bayn documentation index](../../docs/bayn/README.md) for production run
 | Evaluate economics or a proposed strategy     | [Profitability goal](#profitability-goal), [replay and backtesting](#replay-and-backtesting), [research](#independent-jev-instruction-research) |
 | Configure independent Alpaca Paper sleeves    | [Multi-account sleeve runbook](../../docs/bayn/multi-account-sleeve-architecture.md)                                                            |
 | Qualify daily multi-horizon PAPER evidence    | [Profitability master playbook](../../docs/bayn/profitability-master-playbook.md)                                                               |
+| Review readiness for live capital             | [Paper-to-live graduation gate](../../docs/bayn/paper-to-live-graduation-gate.md)                                                               |
 | Attribute weekly three-account PAPER results  | [Weekly attribution](#weekly-attribution)                                                                                                       |
 | Maintain the research knowledge catalog       | [Auto Ontology seed and standby onboarding](../../docs/bayn/ontology/README.md)                                                                 |
 | Build and validate a change                   | [Package scripts](package.json), [validation](#validation), [service guide](AGENTS.md)                                                          |
@@ -317,6 +318,10 @@ selected symbol. Current and retained protocols use the same projection. Changed
 verification, and funding, pricing, authority and deadline checks remain unchanged. The
 [native quote-projection benchmark](tools/benchmark-decision-quote-projection.md) records fixture measurements,
 exact-output comparisons and their limits; it does not establish live latency or a complete report's runtime.
+
+The [intraday execution audit](tools/benchmark-intraday-pricing.md) measures quote-only reads and the PostgreSQL
+submit-containment check. A retained signal and its execution pricing must bind the same feed and topics; a
+separately verified SIP cut cannot reprice an in-flight IEX signal.
 
 ## Runtime and research images
 

@@ -31,8 +31,8 @@ The repository centers on:
 - `packages/scripts`: typed Bun deploy/build/reseal automation used across services
 - `packages/temporal-bun-sdk`: Temporal SDK and examples for Bun-based workers
 - `packages/codex`: Codex client/runtime package
-- `packages/design`, `packages/atelier`, `packages/cloutt`, `packages/cx-tools`, `packages/discord`,
-  `packages/otel`, `packages/schematic`: shared libraries and tooling
+- `packages/design`, `packages/cx-tools`, `packages/discord`, `packages/otel`, `packages/schematic`: shared libraries
+  and tooling
 
 ### Services
 

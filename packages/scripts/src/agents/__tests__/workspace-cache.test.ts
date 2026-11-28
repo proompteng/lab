@@ -60,9 +60,11 @@ describe('Agents workspace cache', () => {
         },
       ],
     })
-    expect(readYaml('values.yaml').controllers.env.vars.AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH).toBe(
+    const values = readYaml('values.yaml')
+    expect(values.controllers.env.vars.AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH).toBe(
       '/var/lib/agents-workspace-cache',
     )
+    expect(values.controllers.env.vars.AGENTS_DB_POOL_MAX).toBe('24')
   })
 
   it('publishes fetched and pruned refs, and keeps the previous snapshots on refresh failures', () => {
