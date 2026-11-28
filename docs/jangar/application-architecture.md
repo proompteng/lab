@@ -6,7 +6,6 @@ Use this document together with:
 
 - `services/jangar/README.md` for local development and operator commands
 - `docs/jangar/build-contract.md` for CI/CD, image, and rollout expectations
-- `docs/jangar/architecture-inventory.md` for generated runtime/profile/route/module inventory
 
 ## Runtime model
 
@@ -41,7 +40,6 @@ The cleanup program moved the highest-risk application boundaries behind explici
   - `services/jangar/src/server/github-review-config.ts`
   - `services/jangar/src/server/metrics-config.ts`
 - Memory embeddings
-  - `services/jangar/src/server/memory-provider.ts`
   - `services/jangar/src/server/memory-provider-health.ts`
 - Terminal infrastructure
   - `services/jangar/src/server/terminals.ts`
@@ -187,7 +185,6 @@ Current operational docs:
 - `services/jangar/README.md`
 - `docs/jangar/application-architecture.md`
 - `docs/jangar/build-contract.md`
-- `docs/jangar/architecture-inventory.md`
 
 Historical or design context docs:
 

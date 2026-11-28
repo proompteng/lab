@@ -377,7 +377,9 @@ test('gets the mandate lineage from the account Secret during promotion', () => 
   expect(lineageUpdates).toHaveLength(3)
   for (const [index, step] of lineageUpdates.entries()) {
     const owner = ['baynDeployment', 'baynController', 'baynActivation'][index]
-    expect(step.if).toBe(`\${{ outputs.baynLineage.mandate != '' && outputs.${owner}.lineageIndex != '-1' }}`)
+    expect(step.if).toBe(
+      `\${{ outputs.baynLineage.mandate != '' && outputs.${owner}.lineageIndex != nil && outputs.${owner}.lineageIndex != '' && outputs.${owner}.lineageIndex != '-1' && outputs.${owner}.lineageIndex != '<nil>' }}`,
+    )
     expect(step.config.updates).toHaveLength(1)
     expect(step.config.updates[0].value).toContain('fromJSON(outputs.baynLineage.mandate).requestHash')
     expect(step.config.updates[0].value).toContain('fromJSON(outputs.baynLineage.mandate).authoredActivation')

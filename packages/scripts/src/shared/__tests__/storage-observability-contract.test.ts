@@ -320,13 +320,20 @@ test('warnings require explicit email opt-in and use the existing receiver with 
   ])
 })
 
-test('Mimir tenant limits use the Helm chart runtime configuration rather than ignored server values', () => {
+test('Mimir applies tenant limits and the CI histogram bucket filter through the Helm runtime configuration', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
   expect(values.mimir.runtimeConfig).toBeUndefined()
   expect(values.runtimeConfig.overrides.anonymous).toEqual({
     ingestion_rate: 20_000,
     ingestion_burst_size: 400_000,
-    max_global_series_per_user: 300_000,
+    max_global_series_per_user: 600_000,
+    metric_relabel_configs: [
+      {
+        source_labels: ['job', '__name__'],
+        regex: 'ci-observability;ci_job_collection_delay_seconds_bucket',
+        action: 'drop',
+      },
+    ],
   })
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const allow = metricAllowlist(config, 'mimir_ingester_metrics')

@@ -710,7 +710,6 @@ test('Jangar CI selects runtime and dependency changes without taking Agents or 
     'charts/agents/templates/deployment.yaml',
     'argocd/applications/observability/graf-mimir-rules.yaml',
     'services/agents/src/server/control-plane.ts',
-    'docs/jangar/architecture-inventory.md',
     'packages/codex/src/app-server-client.test.ts',
     'packages/temporal-bun-sdk/tests/client.test.ts',
     'packages/temporal-bun-sdk/README.md',

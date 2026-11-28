@@ -19,13 +19,7 @@ import {
   validateProviderSecretEnvPolicy,
 } from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
-import {
-  buildQueueCounts,
-  type ControllerState,
-  normalizeRepositoryKey,
-  type RepoConcurrencyConfig,
-  resolveRepoConcurrencyLimit,
-} from './queue-state'
+import { type AgentRunIndex, type RepoConcurrencyConfig, resolveRepoConcurrencyLimit } from './queue-state'
 import {
   type ControllerRateState,
   checkControllerRateLimits as evaluateControllerRateLimits,
@@ -33,6 +27,7 @@ import {
 } from './rate-limits'
 import {
   applyVcsMetadataToParameters,
+  isAgentRunTerminalPhase,
   normalizeRepository,
   resolveImplementation,
   resolveParameters,
@@ -59,12 +54,6 @@ type ConcurrencyConfig = {
   perAgent: number
   cluster: number
   repoConcurrency: RepoConcurrencyConfig
-}
-
-type InFlightCounts = {
-  total: number
-  perAgent: Map<string, number>
-  perRepository: Map<string, number>
 }
 
 type QueueLimits = {
@@ -132,7 +121,6 @@ type AgentRunReconcilerDependencies = {
   isAgentRunIdempotencyEnabled: () => boolean
   parseQueueLimits: () => QueueLimits
   parseRateLimits: () => RateLimits
-  getControllerSnapshot: () => ControllerState | null
   getControllerRateState: () => ControllerRateState
   validateImplementationContract: (
     implementation: Record<string, unknown>,
@@ -194,7 +182,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     isAgentRunIdempotencyEnabled,
     parseQueueLimits,
     parseRateLimits,
-    getControllerSnapshot,
     getControllerRateState,
     validateImplementationContract,
     buildContractStatus,
@@ -206,15 +193,35 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     recordAgentQueueDepth = () => {},
     recordAgentRateLimitRejection = () => {},
   } = deps
+  const recordTerminalIdempotency = async (namespace: string, run: Record<string, unknown>) => {
+    const idempotencyKey = asString(readNested(run, ['spec', 'idempotencyKey']))
+    const agentName = asString(readNested(run, ['spec', 'agentRef', 'name']))
+    const phase = asString(readNested(run, ['status', 'phase']))
+    if (!idempotencyKey || !agentName || !isAgentRunTerminalPhase(phase) || !isAgentRunIdempotencyEnabled()) return
+    const metadata = asRecord(run.metadata) ?? {}
+    if (metadata.deletionTimestamp || isAgentRunTemplate(metadata)) return
+    const store = await getPrimitivesStore()
+    if (!store) return
+    try {
+      await store.markAgentRunIdempotencyKeyTerminal({
+        namespace,
+        agentName,
+        idempotencyKey,
+        terminalPhase: phase,
+        terminalAt: asString(readNested(run, ['status', 'finishedAt'])),
+      })
+    } catch (error) {
+      console.warn('[agents] failed to mark AgentRun idempotency terminal state', error)
+    }
+  }
+
   const reconcileAgentRun = async (
     kube: ReturnType<typeof createKubernetesClient>,
     agentRun: Record<string, unknown>,
     namespace: string,
     memories: Record<string, unknown>[],
-    existingRuns: Record<string, unknown>[],
+    runs: AgentRunIndex,
     concurrency: ConcurrencyConfig,
-    inFlight: InFlightCounts,
-    globalInFlight: number,
   ) => {
     const reconcileStartedAt = Date.now()
     const metadata = asRecord(agentRun.metadata) ?? {}
@@ -222,7 +229,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const spec = asRecord(agentRun.spec) ?? {}
     const status = asRecord(agentRun.status) ?? {}
     const phase = asString(status.phase) ?? 'Pending'
-    const finishedAt = asString(status.finishedAt)
     const agentName = asString(readNested(spec, ['agentRef', 'name']))
     const finalizer = 'agents.proompteng.ai/runtime-cleanup'
     const finalizers = Array.isArray(metadata.finalizers)
@@ -398,24 +404,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       if (isWorkflowRun) return
     }
 
-    if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
-      const idempotencyKey = asString(readNested(spec, ['idempotencyKey']))
-      if (isAgentRunIdempotencyEnabled() && idempotencyKey && agentName) {
-        const store = await getPrimitivesStore()
-        if (store) {
-          try {
-            await store.markAgentRunIdempotencyKeyTerminal({
-              namespace,
-              agentName,
-              idempotencyKey,
-              terminalPhase: phase,
-              terminalAt: finishedAt ?? null,
-            })
-          } catch (error) {
-            console.warn('[agents] failed to mark AgentRun idempotency terminal state', error)
-          }
-        }
-      }
+    if (isAgentRunTerminalPhase(phase)) {
+      await recordTerminalIdempotency(namespace, agentRun)
 
       const retention = getAgentRunRetentionDecision(agentRun)
       if (retention.eligible) {
@@ -505,7 +495,9 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
     }
 
-    if (shouldSubmit && agentName && (inFlight.perAgent.get(agentName) ?? 0) >= concurrency.perAgent) {
+    const normalizedRepo = normalizeRepository(repository)
+    const admission = runs.admission(namespace, name, agentName, normalizedRepo)
+    if (shouldSubmit && agentName && admission.runningAgent >= concurrency.perAgent) {
       const message = `Agent ${agentName} reached concurrency limit`
       const updated = upsertCondition(conditions, {
         type: 'Blocked',
@@ -520,8 +512,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     const repoLimit = resolveRepoConcurrencyLimit(repository, concurrency.repoConcurrency)
     if (shouldSubmit && repoLimit !== null) {
-      const repoKey = normalizeRepositoryKey(repository)
-      if ((inFlight.perRepository.get(repoKey) ?? 0) >= repoLimit) {
+      if (admission.runningRepo >= repoLimit) {
         const message = `Repository ${repository} reached concurrency limit`
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
@@ -535,7 +526,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
     }
 
-    if (shouldSubmit && inFlight.total >= concurrency.perNamespace) {
+    if (shouldSubmit && admission.runningNamespace >= concurrency.perNamespace) {
       const message = `Namespace ${namespace} reached concurrency limit`
       const updated = upsertCondition(conditions, {
         type: 'Blocked',
@@ -548,7 +539,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       return
     }
 
-    if (shouldSubmit && globalInFlight >= concurrency.cluster) {
+    if (shouldSubmit && admission.runningCluster >= concurrency.cluster) {
       const message = 'Cluster concurrency limit reached'
       const updated = upsertCondition(conditions, {
         type: 'Blocked',
@@ -563,23 +554,13 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     if (shouldSubmit) {
       const queueLimits = parseQueueLimits()
-      const repository = resolveRunRepository(agentRun)
-      const normalizedRepo = repository ? normalizeRepository(repository) : ''
-      const queueCounts = buildQueueCounts({
-        namespace,
-        runName: name,
-        normalizedRepo,
-        namespaceRuns: existingRuns,
-        controllerSnapshot: getControllerSnapshot(),
-      })
-
-      recordAgentQueueDepth(queueCounts.queuedNamespace, { scope: 'namespace', namespace })
-      recordAgentQueueDepth(queueCounts.queuedCluster, { scope: 'cluster' })
+      recordAgentQueueDepth(admission.queuedNamespace, { scope: 'namespace', namespace })
+      recordAgentQueueDepth(admission.queuedCluster, { scope: 'cluster' })
       if (normalizedRepo) {
-        recordAgentQueueDepth(queueCounts.queuedRepo, { scope: 'repo', repository: normalizedRepo, namespace })
+        recordAgentQueueDepth(admission.queuedRepo, { scope: 'repo', repository: normalizedRepo, namespace })
       }
 
-      if (queueLimits.perNamespace > 0 && queueCounts.queuedNamespace >= queueLimits.perNamespace) {
+      if (queueLimits.perNamespace > 0 && admission.queuedNamespace >= queueLimits.perNamespace) {
         const message = `Namespace ${namespace} reached queue limit`
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
@@ -592,7 +573,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
 
-      if (queueLimits.cluster > 0 && queueCounts.queuedCluster >= queueLimits.cluster) {
+      if (queueLimits.cluster > 0 && admission.queuedCluster >= queueLimits.cluster) {
         const message = 'Cluster queue limit reached'
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
@@ -605,7 +586,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
 
-      if (normalizedRepo && queueLimits.perRepo > 0 && queueCounts.queuedRepo >= queueLimits.perRepo) {
+      if (normalizedRepo && queueLimits.perRepo > 0 && admission.queuedRepo >= queueLimits.perRepo) {
         const message = `Repository ${repository} reached queue limit`
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
@@ -624,7 +605,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         state: getControllerRateState(),
         limits: parseRateLimits(),
         now: Date.now(),
-        normalizeRepository,
       })
       if (!rateDecision.ok) {
         const rateAttributes: Record<string, string> = { namespace }
@@ -1094,7 +1074,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         implementation: implResource,
         parameters,
         allowedSecrets,
-        existingRuns,
+        runs,
       })
       if (!vcsResolution.ok) {
         const reason = vcsResolution.reason ?? 'VcsUnavailable'
@@ -1442,5 +1422,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
   return {
     reconcileAgentRun,
+    recordTerminalIdempotency,
   }
 }

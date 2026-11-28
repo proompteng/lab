@@ -27,6 +27,7 @@ export const uploadOutputArtifacts = async (
   const now = options.now ?? (() => new Date())
   const uploaded: AgentProviderOutputArtifact[] = []
   for (const artifact of artifacts) {
+    options.signal?.throwIfAborted()
     const key = normalizeNonEmpty(artifact.key)
     if (!key) {
       uploaded.push(artifact)
@@ -36,8 +37,8 @@ export const uploadOutputArtifacts = async (
     if (!path) {
       throw new Error(`outputArtifact ${artifact.name} declares key ${key} but no path`)
     }
-    const body = await readFile(path)
-    await putS3Object({ config, key, body, fetch: fetchImpl, now: now() })
+    const body = await readFile(path, { signal: options.signal })
+    await putS3Object({ config, key, body, fetch: fetchImpl, now: now(), signal: options.signal })
     uploaded.push({
       ...artifact,
       key: normalizeArtifactKey(key),

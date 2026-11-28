@@ -6,6 +6,7 @@ metadata:
   name: analysis
   namespace: analysis
 spec:
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app: analysis
