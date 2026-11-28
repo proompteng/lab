@@ -119,16 +119,16 @@ export type RunCodexAppServerAdapterOptions = {
   publishTelemetry?: (snapshot: RunnerTelemetry) => Promise<void>
 }
 
-type CommandResult = {
+export type CommandResult = {
   exitCode: number
   stdout: string
   stderr: string
 }
 
-type CommandOptions = { cwd?: string; env?: Record<string, string> }
-type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>
-type StartupPhase = 'git_checkout' | 'bun_bootstrap' | 'app_server_ready' | 'first_turn_started'
-type ReportStartupPhase = (phase: StartupPhase, started: number, outcome?: string) => void
+export type CommandOptions = { cwd?: string; env?: Record<string, string> }
+export type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>
+export type StartupPhase = 'git_checkout' | 'bun_bootstrap' | 'app_server_ready' | 'first_turn_started'
+export type ReportStartupPhase = (phase: StartupPhase, started: number, outcome?: string) => void
 
 export class CodexRunnerInputError extends Data.TaggedError('CodexRunnerInputError')<{
   readonly operation: 'load-payload' | 'resolve-prompt' | 'validate-adapter' | 'load-system-prompt'
@@ -450,7 +450,7 @@ export const CodexAppServerClientFactoryLive = Layer.succeed(CodexAppServerClien
 
 const runnerRuntime = ManagedRuntime.make(Layer.merge(RunnerCommandLive, CodexAppServerClientFactoryLive))
 
-const runDefaultCommand: CommandRunner = (command, args, options) =>
+export const runDefaultCommand: CommandRunner = (command, args, options) =>
   runnerRuntime.runPromise(Effect.flatMap(RunnerCommand, (service) => service.run(command, args, options)))
 
 const createDefaultClient = (options: CodexAppServerOptions) =>
@@ -771,8 +771,8 @@ const installWorkspaceContextDependencies = async (cwd: string, cacheRoot: strin
   return 'failed'
 }
 
-const prepareCodexCwd = async (
-  adapter: CodexAppServerAdapterConfig,
+export const prepareRunnerWorkspace = async (
+  adapter: Pick<CodexAppServerAdapterConfig, 'cwd'>,
   runPayload: AgentRunPayload,
   runner: CommandRunner,
   cacheRoot: string,
@@ -808,7 +808,7 @@ const prepareCodexCwdEffect = (
   reportStartupPhase: ReportStartupPhase,
 ) =>
   Effect.tryPromise({
-    try: () => prepareCodexCwd(adapter, runPayload, runner, cacheRoot, reportStartupPhase),
+    try: () => prepareRunnerWorkspace(adapter, runPayload, runner, cacheRoot, reportStartupPhase),
     catch: (cause) =>
       cause instanceof CodexRunnerWorkspaceError
         ? cause
@@ -921,8 +921,8 @@ const assertSystemPromptHash = (contents: string, adapter: CodexAppServerAdapter
   }
 }
 
-const readSystemPromptInstructions = async (
-  adapter: CodexAppServerAdapterConfig,
+export const readRunnerSystemPrompt = async (
+  adapter: Pick<CodexAppServerAdapterConfig, 'baseInstructions' | 'systemPromptPath' | 'systemPromptExpectedHash'>,
   spec: AgentRunnerSpec,
   runPayload: AgentRunPayload,
 ): Promise<string | null> => {
@@ -968,7 +968,7 @@ const readSystemPromptInstructionsEffect = (
   runPayload: AgentRunPayload,
 ) =>
   Effect.tryPromise({
-    try: () => readSystemPromptInstructions(adapter, spec, runPayload),
+    try: () => readRunnerSystemPrompt(adapter, spec, runPayload),
     catch: (cause) =>
       cause instanceof CodexRunnerInputError
         ? cause

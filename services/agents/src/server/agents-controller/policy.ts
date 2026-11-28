@@ -61,6 +61,21 @@ export const isAutonomousCodexProvider = (provider: Record<string, unknown>) => 
   })
 }
 
+export const providerUsesControllerAuthSecret = (provider: Record<string, unknown>) => {
+  const spec = asRecord(provider.spec) ?? provider
+  const adapterType = asString(readNested(spec, ['adapter', 'type']))
+  if (adapterType === 'agy-cli') return false
+  if (adapterType === 'exec') return isAutonomousCodexProvider(provider)
+  if (adapterType === 'codex-app-server') return true
+  const binary = asString(spec.binary)
+  return (
+    isAutonomousCodexProvider(provider) ||
+    !binary ||
+    binary === '/usr/local/bin/agent-runner' ||
+    binary.endsWith('/agent-runner')
+  )
+}
+
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const matchesPattern = (value: string, pattern: string) => {

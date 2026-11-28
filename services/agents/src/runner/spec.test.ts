@@ -43,6 +43,33 @@ describe('agent-runner spec', () => {
     expect(args).toEqual(['-c', 'echo verify'])
   })
 
+  it('resolves the agy-cli adapter with normalized configuration', () => {
+    const adapter = resolveAdapter({
+      provider: 'gemini-neon',
+      adapter: {
+        type: 'agy-cli',
+        agy: {
+          model: 'gemini-4-neon',
+          effort: 'high',
+          adcAuth: true,
+          quotaProject: 'proompteng',
+          location: 'global',
+        },
+      },
+    })
+
+    expect(adapter).toEqual({
+      type: 'agy-cli',
+      agy: {
+        model: 'gemini-4-neon',
+        effort: 'high',
+        adcAuth: true,
+        quotaProject: 'proompteng',
+        location: 'global',
+      },
+    })
+  })
+
   it('rejects providerSpec-only specs instead of silently falling back to exec', () => {
     expect(() =>
       resolveAdapter({

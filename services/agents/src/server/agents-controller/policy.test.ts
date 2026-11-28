@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   matchesAnyPattern,
   normalizeLabelMap,
+  providerUsesControllerAuthSecret,
   validateAuthSecretPolicy,
   validateImagePolicy,
   validateLabelPolicy,
@@ -92,5 +93,24 @@ describe('agents controller policy module', () => {
       message: 'auth secret denied is not allowlisted by the Agent',
     })
     expect(validateAuthSecretPolicy(['allowed'], { name: 'allowed' })).toEqual({ ok: true })
+  })
+
+  it('scopes controller authSecret usage to Codex providers only', () => {
+    expect(
+      providerUsesControllerAuthSecret({
+        spec: { binary: '/usr/local/bin/agent-runner', adapter: { type: 'codex-app-server' } },
+      }),
+    ).toBe(true)
+    expect(providerUsesControllerAuthSecret({ spec: { binary: '/usr/local/bin/agent-runner' } })).toBe(true)
+    expect(
+      providerUsesControllerAuthSecret({
+        spec: { binary: '/usr/local/bin/agent-runner', adapter: { type: 'agy-cli' } },
+      }),
+    ).toBe(false)
+    expect(
+      providerUsesControllerAuthSecret({
+        spec: { binary: '/usr/local/bin/anypi-runner', adapter: { type: 'exec' } },
+      }),
+    ).toBe(false)
   })
 })

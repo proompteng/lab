@@ -9,7 +9,13 @@ import { buildRunSpecContext, renderProviderOutputArtifacts, verifyJobConfigMaps
 import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
-import { normalizeLabelMap, validateAuthSecretPolicy, validateImagePolicy, validateLabelPolicy } from './policy'
+import {
+  normalizeLabelMap,
+  providerUsesControllerAuthSecret,
+  validateAuthSecretPolicy,
+  validateImagePolicy,
+  validateLabelPolicy,
+} from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
 import {
   buildQueueCounts,
@@ -841,7 +847,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const allowedSecrets = parseStringList(security.allowedSecrets)
       const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
       const runSecrets = parseStringList(spec.secrets)
-      const authSecret = resolveAuthSecretConfig()
+      const authSecret = providerUsesControllerAuthSecret(resolvedProvider) ? resolveAuthSecretConfig() : null
 
       if (allowedSecrets.length > 0) {
         const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))

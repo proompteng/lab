@@ -1,0 +1,19 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: gemini-neon-agent
+spec:
+  providerRef:
+    name: gemini-neon
+  defaults:
+    systemPrompt: |
+      Implement the requested task end to end following repository instructions in AGENTS.md.
+      Keep changes minimal, validate affected code with the required checks, and report concise results.
+  vcsRef:
+    name: github
+  security:
+    allowedSecrets:
+      - github-token
+      - google-adc-auth
+      - agents-artifacts
+      - nats-agents-credentials
