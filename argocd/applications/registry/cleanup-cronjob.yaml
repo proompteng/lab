@@ -9,12 +9,13 @@ spec:
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 86400
   successfulJobsHistoryLimit: 1
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
       backoffLimit: 0
       activeDeadlineSeconds: 7200
-      ttlSecondsAfterFinished: 604800
+      # Keep Job logs available when the missed-cleanup alert fires after the two-hour deadline.
+      ttlSecondsAfterFinished: 14400
       template:
         metadata:
           labels:

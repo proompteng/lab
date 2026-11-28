@@ -119,7 +119,6 @@ const productBuildScripts = [
   readRepoFile('packages/scripts/src/synthesis/build-image.ts'),
 ]
 const productDeployScripts = [
-  readRepoFile('packages/scripts/src/app/deploy-service.ts'),
   readRepoFile('packages/scripts/src/docs/deploy-service.ts'),
   readRepoFile('packages/scripts/src/proompteng/deploy-service.ts'),
   readRepoFile('packages/scripts/src/olden/deploy-service.ts'),
