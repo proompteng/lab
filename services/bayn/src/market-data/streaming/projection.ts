@@ -1,5 +1,5 @@
 import { MarketKind } from '../../instruments'
-import { marketHistoryMinutes } from '../history'
+import { equityRetainedBarMinutes, marketHistoryMinutes } from '../history'
 import {
   cryptoFeatureDefinitionMaterial,
   decodeCryptoMarketFeature,
@@ -329,7 +329,8 @@ const incorporateDecodedRecord = (
         } else break
         // Recorded timestamps may have three fractional digits; raw rows have nine.
         if (previousMinute === undefined || compareIntradayInstants(entry.value.eventAt, previousMinute) !== 0) {
-          if (++minutes > (bar.feed === 'us' ? marketHistoryMinutes[MarketKind.Crypto] + 1 : 61)) break
+          if (++minutes > (bar.feed === 'us' ? marketHistoryMinutes[MarketKind.Crypto] + 1 : equityRetainedBarMinutes))
+            break
           previousMinute = entry.value.eventAt
           revisions = 0
         }

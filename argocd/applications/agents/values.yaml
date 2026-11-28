@@ -79,6 +79,9 @@ agentsShell:
       AGENTS_SHELL_GIT_USER_NAME: Greg Konush
       AGENTS_SHELL_GIT_USER_EMAIL: 12027037+gregkonush@users.noreply.github.com
       AGENTS_SHELL_REPO_BASE_BRANCH: main
+      AGENTS_SHELL_PAPERLESS_URL: http://paperless.paperless.svc.cluster.local:8000
+      AGENTS_SHELL_PAPERLESS_TOKEN_FILE: /var/run/secrets/agents-shell-paperless/token
+      AGENTS_SHELL_PAPERLESS_MAX_FILE_BYTES: "268435456"
       OMNI_ENDPOINT: https://nuc.ide-newton.ts.net:443
       TALOSCONFIG: /var/run/secrets/agents-shell-omni/talosconfig
     secrets:
@@ -143,12 +146,12 @@ argocdHooks:
       apiVersion: agents.proompteng.ai/v1alpha1
       kind: AgentRun
       metadata:
-        name: codex-spark-smoke
+        name: codex-smoke
       spec:
         agentRef:
-          name: codex-spark-smoke-agent
+          name: codex-smoke-agent
         implementationSpecRef:
-          name: codex-spark-smoke-implspec
+          name: codex-smoke-implspec
         goal:
           objective: Verify Codex app-server runner protocol, status, artifact collection, and the promoted runner image without
             external side effects.
@@ -170,7 +173,7 @@ argocdHooks:
           base: main
           head: codex/agents-smoke
           issueNumber: swarm-codex-smoke
-          issueTitle: Codex Spark smoke validation
+          issueTitle: Codex app-server smoke validation
           objective: verify deterministic app-server runner protocol and the promoted runner image without VCS or external model
             calls
         secrets:

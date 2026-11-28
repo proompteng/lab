@@ -37,6 +37,12 @@
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "arc-tmpfs-acceptance.yml": [
+    {
+      "id": "verify",
+      "pattern": "^Verify .*(?: \\(.*\\))?$"
+    }
+  ],
   "attic-build-push.yaml": [
     {
       "id": "validate",
@@ -421,6 +427,18 @@
     {
       "id": "torghut",
       "pattern": "^Torghut CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-schema",
+      "pattern": "^Torghut ClickHouse schema(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-notebooks",
+      "pattern": "^Torghut notebooks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "queue-services",
+      "pattern": "^Queue service validation(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "ci-pr",

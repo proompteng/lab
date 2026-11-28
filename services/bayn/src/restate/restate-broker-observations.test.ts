@@ -208,11 +208,11 @@ const receipt = { eventId: 'd'.repeat(64) }
 const pollResult = (poll: BrokerObservationPoll) => ({ poll, startedAtMs: initialNow, completedAtMs: initialNow })
 
 describe('event-driven Restate broker observation owner', () => {
-  test('reserves and wakes the exact protective cycle before releasing the ordinary capture', async () => {
+  test('probes immediately and wakes the exact protective cycle before scheduling the ordinary capture', async () => {
     const proof = {
       proofId: '1'.repeat(64),
       cycleId: '2'.repeat(64),
-      checkedAt: new Date(initialNow + 250).toISOString(),
+      checkedAt: new Date(initialNow).toISOString(),
     }
     const probes: string[] = []
     const h = harness({
@@ -227,7 +227,7 @@ describe('event-driven Restate broker observation owner', () => {
     await h.handlers.refresh(h.context, { sourceRevision: 'f'.repeat(40), cycleId: proof.cycleId })
     expect(probes).toEqual([])
     await h.handlers.refresh(h.context, { sourceRevision, cycleId: proof.cycleId })
-    expect(h.sleeps).toEqual([200])
+    expect(h.sleeps).toEqual([])
     expect(probes).toEqual([proof.cycleId])
     expect(h.deliveries).toMatchObject([
       {
@@ -235,25 +235,29 @@ describe('event-driven Restate broker observation owner', () => {
         method: 'wake',
         parameter: { _tag: 'ProtectionRelease', sourceRevision, eventId: proof.proofId, ...proof },
       },
-      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 0 } },
+      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 100 } },
     ])
     expect(h.calls().polls).toBe(0)
   })
 
-  test('a failed protective probe still schedules the account capture', async () => {
-    const h = harness({
-      state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
-      runtime: {
-        probeProtection: async () => {
-          throw new Error('injected unavailable read')
+  test.each(['unproven', 'failed'])(
+    '%s protection readback schedules capture without waking execution',
+    async (outcome) => {
+      const h = harness({
+        state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
+        runtime: {
+          probeProtection: async () => {
+            if (outcome === 'failed') throw new Error('injected unavailable read')
+            return undefined
+          },
         },
-      },
-    })
-    await h.handlers.refresh(h.context, { sourceRevision, cycleId: '2'.repeat(64) })
-    expect(h.deliveries).toMatchObject([
-      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 29_800 } },
-    ])
-  })
+      })
+      await h.handlers.refresh(h.context, { sourceRevision, cycleId: '2'.repeat(64) })
+      expect(h.deliveries).toMatchObject([
+        { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 30_000 } },
+      ])
+    },
+  )
 
   test('activation publishes one canonical cut, wakes the account and arms only its completeness deadline', async () => {
     const h = harness()
@@ -371,6 +375,134 @@ describe('event-driven Restate broker observation owner', () => {
     })
     expect(h.commands).toEqual(['project durable broker source event'])
     expect(h.deliveries).toEqual([])
+  })
+  test.each(['CanonicallyCovered', 'Projected'] as const)(
+    'an early child dispatches independent recovery and resolves as %s',
+    async (outcome) => {
+      let calls = 0
+      const h = harness({
+        runtime: {
+          project: async (_signal, eventId) => {
+            calls++
+            if (calls === 1)
+              return {
+                _tag: 'AwaitingProtection',
+                eventId,
+                observedAt: new Date(initialNow).toISOString(),
+                deadlineAt: new Date(initialNow + config.operationTimeoutMs).toISOString(),
+              }
+            expect(h.timers()[0]).toMatchObject({
+              method: 'reconcile',
+              idempotencyKey: `broker-source-reconcile:${eventId}`,
+            })
+            return outcome === 'CanonicallyCovered'
+              ? { _tag: outcome, eventId, observedAt: new Date(initialNow).toISOString() }
+              : {
+                  _tag: outcome,
+                  eventId,
+                  observedAt: new Date(initialNow).toISOString(),
+                  orderEventId: 'e'.repeat(64),
+                }
+          },
+          isNotificationCovered: async () => true,
+        },
+      })
+      expect(await h.projectorHandlers.project(h.context, receipt)).toMatchObject({ _tag: outcome })
+      expect(h.sleeps).toEqual([1000])
+      expect(h.calls().polls).toBe(0)
+      expect(h.deliveries.filter((delivery) => delivery.method === 'wake')).toHaveLength(
+        outcome === 'Projected' ? 1 : 0,
+      )
+      expect(h.commands).toContain('resolve broker protection binding 1')
+    },
+  )
+  test('a missing protection identity exhausts only its original remaining deadline and keeps fail-closed reconciliation', async () => {
+    const permissions: boolean[] = []
+    const h = harness({
+      runtime: {
+        project: async (_signal, eventId, allowProtectionWait = true) => {
+          permissions.push(allowProtectionWait)
+          return allowProtectionWait
+            ? {
+                _tag: 'AwaitingProtection',
+                eventId,
+                observedAt: new Date(initialNow - 28000).toISOString(),
+                deadlineAt: new Date(initialNow + 2000).toISOString(),
+              }
+            : {
+                _tag: 'ReconcileRequired',
+                eventId,
+                observedAt: new Date(initialNow - 28000).toISOString(),
+                reason: BrokerStreamReconciliationReason.MissingIntent,
+              }
+        },
+      },
+    })
+    expect(await h.projectorHandlers.project(h.context, receipt)).toMatchObject({
+      _tag: 'ReconcileRequired',
+      reason: BrokerStreamReconciliationReason.MissingIntent,
+    })
+    expect(h.sleeps).toEqual([1000, 1000])
+    expect(permissions).toEqual([true, true, false])
+    expect(h.deliveries.every((delivery) => delivery.method === 'reconcile')).toBe(true)
+  })
+  test('replayed protection recovery reuses each journaled attempt and preserves delivery identity', async () => {
+    const runResults = new Map<string, unknown>()
+    let calls = 0
+    const initial = harness({
+      runResults,
+      runtime: {
+        project: async (_signal, eventId) => {
+          calls++
+          return calls === 1
+            ? {
+                _tag: 'AwaitingProtection',
+                eventId,
+                observedAt: new Date(initialNow).toISOString(),
+                deadlineAt: new Date(initialNow + 30000).toISOString(),
+              }
+            : { _tag: 'CanonicallyCovered', eventId, observedAt: new Date(initialNow).toISOString() }
+        },
+      },
+    })
+    const expected = await initial.projectorHandlers.project(initial.context, receipt)
+    const replay = harness({
+      runResults,
+      runtime: {
+        project: async () => {
+          throw new Error('must reuse journaled projection')
+        },
+      },
+    })
+    expect(await replay.projectorHandlers.project(replay.context, receipt)).toEqual(expected)
+    expect(replay.deliveries).toEqual(initial.deliveries)
+    expect(calls).toBe(2)
+  })
+  test('a database failure during protection recovery cannot publish a projection or execution wake', async () => {
+    let calls = 0
+    const h = harness({
+      runtime: {
+        project: async (_signal, eventId) => {
+          if (++calls > 1) throw new Error('database unavailable')
+          return {
+            _tag: 'AwaitingProtection',
+            eventId,
+            observedAt: new Date(initialNow).toISOString(),
+            deadlineAt: new Date(initialNow + 30000).toISOString(),
+          }
+        },
+      },
+    })
+    const failure = await h.projectorHandlers.project(h.context, receipt).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+    expect(failure).toMatchObject({ message: 'database unavailable' })
+    expect(h.deliveries.map((delivery) => delivery.method)).toEqual(['reconcile'])
+    expect(h.runOptions.get('resolve broker protection binding 1')).toEqual({
+      initialRetryInterval: 50,
+      maxRetryInterval: 1000,
+    })
   })
   test('a projected source event wakes execution immediately without waiting for the reconciliation capture', async () => {
     const h = harness({

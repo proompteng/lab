@@ -236,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--domain', choices=['fundamentals', 'news'])
     parser.add_argument('--run-name')
     parser.add_argument('--reason')
-    parser.add_argument('--provider', default='codex-spark')
+    parser.add_argument('--provider', default='codex')
     parser.add_argument('--seq', type=int)
     parser.add_argument('--status', default='running')
     parser.add_argument('--message')

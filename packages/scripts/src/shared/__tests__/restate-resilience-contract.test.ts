@@ -11,7 +11,6 @@ test('Restate image promotion requires native build proofs and uploaded release 
   const workflow = YAML.parse(readRepoFile('.github/workflows/restate-images.yml'))
   const build = workflow.jobs.build
   const publish = workflow.jobs.publish
-  const mainOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
   expect(workflow.on.push.branches).toEqual(['main'])
   expect(workflow.on.pull_request.paths).toEqual([
     '.github/actions/affected-inputs/**',
@@ -19,7 +18,8 @@ test('Restate image promotion requires native build proofs and uploaded release 
     ...workflow.on.push.paths,
   ])
   expect(build.needs).toBe('changes')
-  expect(build.if).toBe("needs.changes.outputs.changed == 'true' && needs.changes.outputs.reuse != 'true'")
+  expect(build.if).toContain("needs.changes.outputs.changed == 'true'")
+  expect(build.if).toContain("needs.changes.outputs.reuse != 'true'")
   expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
     'amd64',
     'arm64',
@@ -29,19 +29,24 @@ test('Restate image promotion requires native build proofs and uploaded release 
   expect(runtime.with.load).toBeUndefined()
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/docker.ts')
-  expect(publish.if).toContain(mainOnly)
+  expect(publish.if).toContain("github.ref == 'refs/heads/main'")
   expect(publish.if).toContain('!cancelled()')
   expect(publish.if).toContain("needs.changes.result == 'success'")
   expect(publish.if).toContain("needs.build.result == 'success'")
   expect(publish.if).toContain("needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'")
   expect(publish.needs).toEqual(['changes', 'build', 'cache-proof'])
-  const releaseSteps = publish.steps as { name?: string; uses?: string }[]
+  const releaseSteps = publish.steps as { name?: string; uses?: string; if?: string }[]
   const uploaded = releaseSteps.findIndex((step) => step.uses === 'actions/upload-artifact@v4')
   expect(uploaded).toBeGreaterThan(0)
   expect(releaseSteps.findIndex((step) => step.name === 'Expose the validated digest to Kargo')).toBeGreaterThan(
     uploaded,
   )
   expect(publish.steps.at(-1).run).toContain('test "$existing" = "$DIGEST"')
+  expect(releaseSteps.slice(uploaded - 1).map((step) => step.if)).toEqual([
+    "github.event_name == 'push'",
+    "github.event_name == 'push'",
+    "github.event_name == 'push'",
+  ])
 
   const warehouses = YAML.parseAllDocuments(readRepoFile('argocd/applications/kargo/warehouses.yaml')).map((document) =>
     document.toJSON(),

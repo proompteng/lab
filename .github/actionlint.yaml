@@ -2,7 +2,11 @@ self-hosted-runner:
   # Labels of self-hosted runner in array of strings.
   labels:
     - arc-amd64
+    - arc-amd64-tmpfs
+    - arc-amd64-tmpfs-large
     - arc-arm64
+    - arc-arm64-tmpfs
+    - arc-arm64-tmpfs-large
 
 # Configuration variables in array of strings defined in your repository or
 # organization. `null` means disabling configuration variables check.
@@ -23,6 +27,10 @@ paths:
     # affected-inputs.test.ts binds the exact queue policy to the dependency-only skip boundary.
     ignore:
       - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
+  .github/workflows/bayn-formal.yml:
+    # Actionlint v1.7.12 records the deprecated jdkFile alias. setup-java@v5 declares jdk-file.
+    ignore:
+      - '^input "jdk-file" is not defined in action "actions/setup-java@v5"\. available inputs are .+$'
   .github/workflows/temporal-bun-sdk.yml:
     # GitHub supports queue: max; actionlint has not implemented it yet.
     # https://github.com/rhysd/actionlint/issues/657

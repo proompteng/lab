@@ -1,5 +1,42 @@
+import { Schema } from 'effect'
 import type { AccountingTransaction } from '../accounting/schema'
 import type { StoredCashSettlement } from '../accounting/cash-settlement'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  Sha256Schema,
+  SignedMicrosSchema,
+  StrictNonEmptyStringSchema,
+  UtcDatabaseInstantSchema,
+} from '../schemas'
+
+export const FeeSettlementAnchorsSchema = Schema.Array(
+  Schema.Struct({
+    sessionDate: IsoDateSchema,
+    phase: Schema.Literals(['OPENING', 'RECOVERY', 'RECONCILED']),
+    cutAt: Schema.NullOr(UtcDatabaseInstantSchema),
+    observation: Schema.NullOr(
+      Schema.Struct({
+        sourceHash: Sha256Schema,
+        at: UtcDatabaseInstantSchema,
+        availableAt: UtcDatabaseInstantSchema,
+        cashMicros: SignedMicrosSchema,
+        positions: Schema.NullOr(
+          Schema.Struct({ sourceHash: Sha256Schema, at: UtcDatabaseInstantSchema, count: NonNegativeIntegerSchema }),
+        ),
+      }),
+    ),
+    reconciliationHash: Schema.NullOr(Sha256Schema),
+    fees: Schema.Array(
+      Schema.Struct({
+        activityId: StrictNonEmptyStringSchema,
+        sourceHash: Sha256Schema,
+        postedAt: Schema.NullOr(UtcDatabaseInstantSchema),
+        availableAt: UtcDatabaseInstantSchema,
+      }),
+    ),
+  }),
+)
 
 /** Every supported broker quantum divides one cent. Exact-cent movements need no rounding receipt. */
 export const cashSettlementMatches = (

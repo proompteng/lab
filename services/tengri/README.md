@@ -210,12 +210,15 @@ Loss of an active runner, Pod, or node retains the owner and home for explicit f
 Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
 unchanged runtime and disk identities. An exited VMM fences traffic and reports failure.
 If a lifecycle command was withdrawn or the guest timed out, the workspace can cold boot from its retained disks
-after the runner confirms termination and authorization returns. While authority is paused, the desktop waits to
+after the runner confirms termination and authorization returns. During a runner upgrade, the controller waits for
+the running container's image ID to match the desired immutable image before dispatching the cold boot.
+While authority is paused, the desktop waits to
 reconnect automatically. An intentional sleep keeps the same disks and presents Resume.
 
-On cold boot the runner installs the Nanoagent binary packaged in its current image. It updates and validates a copy
-of the private root before atomically replacing it. The root's other files and the independently attached home stay
-in place. A memory resume still uses its original guest process.
+On cold boot the runner installs the Nanoagent binary and Codex bootstrap packaged in its current image. It updates
+and validates a copy of the private root before atomically replacing it. Nanoagent then installs the pinned Codex CLI
+in the retained home before starting the app-server. The other root and home files stay in place. A memory resume
+still uses its original guest process.
 
 Lifecycle commands monitor database leadership throughout execution. Withdrawn authority closes the private command's
 write side; the runner cancels that operation, terminates and reaps its VMM, and durably retains a failed claim before
@@ -328,7 +331,7 @@ failed or interrupted page fails the restore instead of displaying incomplete hi
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 History retains `control_codex` authorization and fresh policy checks, while reusing bounded observation audit receipts.
 
-The guest pins Codex 0.171.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+The guest pins Codex 0.172.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
 `gpt-6.2-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
@@ -661,7 +664,7 @@ The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks e
 Run the native correlation and interruption contract with an isolated pinned binary:
 
 ```sh
-TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.171.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
+TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.172.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
 ```
 
 The test creates an isolated Codex home with an unauthenticated loopback fixture provider. It does not use a user's

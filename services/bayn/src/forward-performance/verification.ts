@@ -8,6 +8,7 @@ import {
 } from '../inference-costs'
 import type { InferenceExpenseQuote, verifyInferenceExpenseCoverage } from '../inference-expense'
 import type { CycleDecisionJsonRow } from './postgres/model'
+import type { AlphaDecisionJsonRow, AlphaDecisionProjection } from './postgres/alpha-decisions'
 import type { indexExecutionEvidence } from './postgres/projection'
 import type { ForwardPerformanceExecutionEvidence } from './model'
 import { IntradaySnapshotFailure, type IntradaySnapshotRequest } from '../market-data/intraday/model'
@@ -25,6 +26,7 @@ export type ReportDecisionIndex = ReturnType<typeof indexExecutionEvidence>
 
 export enum ReportVerificationTask {
   Decision = 'DECISION',
+  AlphaDecision = 'ALPHA_DECISION',
   Inference = 'INFERENCE',
   Coverage = 'COVERAGE',
   Volume = 'VOLUME',
@@ -47,6 +49,7 @@ export type ReportVerificationInput =
       readonly row: typeof CycleDecisionJsonRow.Type
       readonly index?: ReportDecisionIndex
     }
+  | { readonly task: ReportVerificationTask.AlphaDecision; readonly row: typeof AlphaDecisionJsonRow.Type }
   | { readonly task: ReportVerificationTask.Inference; readonly input: unknown; readonly asOf: string }
   | { readonly task: ReportVerificationTask.Coverage; readonly input: ReportExpenseCoverageInput }
   | {
@@ -67,6 +70,7 @@ export interface ReportVerificationJob {
 
 export type ReportVerificationReply = { readonly id: number } & (
   | { readonly outcome: 'DECISION'; readonly value: ReportDecisionProjection }
+  | { readonly outcome: 'ALPHA_DECISION'; readonly value: AlphaDecisionProjection }
   | { readonly outcome: 'INFERENCE'; readonly value: DecodedInferenceCostRequest }
   | { readonly outcome: 'COVERAGE'; readonly value: ReportExpenseCoverage }
   | { readonly outcome: 'VOLUME'; readonly value: ReportVolumeEvidence }
@@ -208,6 +212,7 @@ export const makeReportVerification = (
                 reply.outcome === 'DEFECT'
                   ? Effect.die(reply.cause)
                   : (input.task === ReportVerificationTask.Decision && reply.outcome === 'DECISION') ||
+                      (input.task === ReportVerificationTask.AlphaDecision && reply.outcome === 'ALPHA_DECISION') ||
                       (input.task === ReportVerificationTask.Volume &&
                         (reply.outcome === 'VOLUME' || reply.outcome === 'INVALID_VOLUME')) ||
                       (input.task === ReportVerificationTask.VolumeRequest &&
@@ -257,6 +262,14 @@ export const makeReportVerification = (
             reply.outcome === 'DECISION'
               ? Effect.succeed(reply.value)
               : Effect.fail(failed('Report verification omitted its decision projection')),
+          ),
+        ),
+      alphaDecision: (row: typeof AlphaDecisionJsonRow.Type) =>
+        run({ task: ReportVerificationTask.AlphaDecision, row }).pipe(
+          Effect.flatMap((reply) =>
+            reply.outcome === 'ALPHA_DECISION'
+              ? Effect.succeed(reply.value)
+              : Effect.fail(failed('Report verification omitted its alpha decision projection')),
           ),
         ),
       inference: (input: unknown, asOf: string) =>

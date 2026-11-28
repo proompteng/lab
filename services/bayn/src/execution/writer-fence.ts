@@ -31,6 +31,9 @@ export class WriterFence extends Context.Service<WriterFence, WriterFenceService
   '@proompteng/bayn/execution/writer-fence/WriterFence',
 ) {}
 
+export const acquireExecutionWriterFence = (sql: PgClient.PgClient) =>
+  sql`SELECT pg_advisory_xact_lock(${LOCK_NAMESPACE},${WRITER_LEASE})`.pipe(Effect.asVoid)
+
 /**
  * Explicitly crosses the WriterFence interpreter boundary for callers that do not already hold the service value.
  */

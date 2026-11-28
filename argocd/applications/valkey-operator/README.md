@@ -37,7 +37,7 @@ require live compatibility validation rather than assuming upstream coverage.
 
 ## Upgrade and recovery
 
-The manager's `valkeyVersionMap` maps the `9.1` API version to the exact `9.1.4`
+The manager's `valkeyVersionMap` maps the `9.2` API version to the exact `9.2.0`
 tag. The operator parses the generated image reference as a semantic version,
 so the mapping requires a bare version. Verify the running digest, replication,
 and application acceptance after changes to the mapping roll the data pods.

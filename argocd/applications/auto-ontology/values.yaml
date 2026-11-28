@@ -1,0 +1,20 @@
+bundledSecret:
+  enabled: false
+pgadmin:
+  enabled: false
+appUrl: https://auto-ontology.ide-newton.ts.net
+mcpPublicUrl: https://auto-ontology-mcp.ide-newton.ts.net
+postgres:
+  image:
+    tag: 0.8.7-pg19@sha256:89879f41d564f67b0c1462a491d16fcbc6de39ac10db17e7a4bba2138a5e0ba5
+  persistence:
+    storageClassName: rook-ceph-block
+backend:
+  image:
+    digest: sha256:20e1a20758b99aa51901aefb64e48191368d3d263ec067e5021c8ba5ff907c65
+ingestion:
+  image:
+    digest: sha256:20e1a20758b99aa51901aefb64e48191368d3d263ec067e5021c8ba5ff907c65
+frontend:
+  image:
+    digest: sha256:9ccfccdcc52d8b20c2e6b27ec5af481d40efef4938f79de505705e2c8ee42247

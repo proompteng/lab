@@ -1,6 +1,9 @@
 import { Result } from 'effect'
-import { continuousExecutionPolicy } from '../market-hours'
-import type { MarketHours } from '../market-hours'
+import type { AutonomousCycle } from '../cycle/model'
+import type { JevProtocol } from '../jev/protocol'
+import { continuousExecutionPolicy, isContinuousMarket, regularEquitySessions, type MarketHours } from '../market-hours'
+import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
+import { IntradayAlphaPhase } from '../strategy/intraday-alpha/constants'
 
 import { utcInstantFromEpochMillis, utcInstantFromEpochMillisResult } from '../time'
 
@@ -42,6 +45,46 @@ const decodeLead = (value: number, field: string): Result.Result<number, Executi
         _tag: 'ExecutionCycleCloseWindowInvalid',
         reason: `${field} must be a nonnegative safe integer`,
       })
+}
+
+/** The same RTH deadline gates both native protection release and the position-mark fallback. */
+export const executionCycleCloseSchedule = (
+  cycle: AutonomousCycle,
+  document: ExecutionDecisionDocument,
+  protocol: Pick<JevProtocol, 'flattenBeforeCloseMinutes' | 'hardFlatBeforeCloseMinutes'>,
+) => {
+  const calendar = document.executionSession?.calendar
+  const regular =
+    calendar === undefined || isContinuousMarket(calendar)
+      ? undefined
+      : regularEquitySessions(calendar).find(({ date }) => date === cycle.identity.executionSessionDate)
+  const executionCloseAt =
+    regular !== undefined && regular.closeAt < cycle.window.executionCloseAt
+      ? regular.closeAt
+      : cycle.window.executionCloseAt
+  const target = document.strategyDecision
+  const sessionCloseSubmitLeadMs = protocol.hardFlatBeforeCloseMinutes * 60_000
+  let sessionCloseStartLeadMs = protocol.flattenBeforeCloseMinutes * 60_000
+  if (target?.schemaVersion === 'bayn.intraday-alpha-target.v2' && regular !== undefined) {
+    const flattenMinute =
+      target.phase === IntradayAlphaPhase.NoiseAreaTrend
+        ? target.policy.noiseArea.flattenMinuteFromOpen
+        : target.phase === IntradayAlphaPhase.MorningOrb
+          ? target.policy.morningOrb.hardExitMinuteFromOpen
+          : target.policy.middayReversion.flattenMinuteFromOpen
+    const flattenAt = Date.parse(regular.openAt) + flattenMinute * 60_000
+    const minimumLeadMs =
+      target.phase === IntradayAlphaPhase.NoiseAreaTrend
+        ? Math.max(1, 390 - target.policy.noiseArea.flattenMinuteFromOpen) * 60_000
+        : sessionCloseStartLeadMs
+    sessionCloseStartLeadMs = Math.max(minimumLeadMs, Date.parse(executionCloseAt) - flattenAt)
+  }
+  return {
+    executionCalendarSchemaVersion: cycle.window.executionCalendarSchemaVersion,
+    executionCloseAt,
+    sessionCloseStartLeadMs,
+    sessionCloseSubmitLeadMs,
+  }
 }
 
 export const resolveExecutionCycleCloseWindow = (

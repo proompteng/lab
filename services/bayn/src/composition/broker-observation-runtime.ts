@@ -21,7 +21,6 @@ import {
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlan } from '../app'
-import { startAccountActivityStream } from '../broker/alpaca/activity-stream'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer, make as makeAlpacaRead } from '../broker/alpaca/http'
 import {
@@ -48,13 +47,15 @@ import { readProtectionRelease } from '../execution/protection-release'
 import { BrokerEnvironment } from '../broker/identity'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
 import { verifyBrokerNotification } from '../broker/notifications'
+import { projectBrokerActivity, verifyBrokerActivity } from '../broker/activities'
 import {
   BrokerStreamReconciliationReason,
   projectBrokerTradeUpdate,
   type BrokerSourceProjectionReceipt,
 } from '../broker/trade-update-projection'
 import { withObservedStage } from '../telemetry'
-import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
+import { utcInstantFromEpochMillis } from '../time'
+import { ValkeyCache, ValkeyCacheError, ValkeyCacheInputError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import { OrderStatus } from '../broker/alpaca/model'
 import {
@@ -62,6 +63,7 @@ import {
   FillMismatchOrderRole,
   ReconciliationError,
 } from '../simulation-reconciliation/broker-reconciler-model'
+import type { BrokerActivityRuntime } from '../restate/restate-broker-activities'
 
 const brokerSourceProjectionTotal = Metric.counter('bayn_broker_source_projection_total', { incremental: true })
 const brokerSourceProjectionLag = Metric.histogram('bayn_broker_source_projection_lag_seconds', {
@@ -153,7 +155,21 @@ export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): R
   try {
     // The persistence wrapper retains the original cache error as its direct cause.
     const cause: unknown = Object.getOwnPropertyDescriptor(failure, 'cause')?.value
-    if (!isNativeError(cause) || Object.getPrototypeOf(cause) !== ValkeyCacheError.prototype) return unknown
+    if (!isNativeError(cause)) return unknown
+    const prototype = Object.getPrototypeOf(cause)
+    if (prototype === ValkeyCacheInputError.prototype) {
+      const operation: unknown = Object.getOwnPropertyDescriptor(cause, 'operation')?.value
+      return {
+        'broker.publication_dependency': 'valkey',
+        'broker.publication_operation':
+          typeof operation === 'string' && ['get', 'put', 'remove', 'configure', 'connect'].includes(operation)
+            ? operation
+            : 'unknown',
+        'broker.publication_failure_category': 'input_validation',
+        'broker.publication_cause_category': 'input_validation',
+      }
+    }
+    if (prototype !== ValkeyCacheError.prototype) return unknown
     const operation: unknown = Object.getOwnPropertyDescriptor(cause, 'operation')?.value
     const category: unknown = Object.getOwnPropertyDescriptor(cause, 'category')?.value
     const causeCategory: unknown = Object.getOwnPropertyDescriptor(cause, 'causeCategory')?.value
@@ -198,6 +214,7 @@ export const acquireBrokerObservationRuntime = (
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime
+    readonly activityRuntime: BrokerActivityRuntime
     readonly maxAgeMs: number
     readonly freshnessLeadMs: number
   },
@@ -233,19 +250,6 @@ export const acquireBrokerObservationRuntime = (
       Effect.sync(() => ManagedRuntime.make(projectionResources)),
       (value) => value.disposeEffect,
     )
-    const accountActivity =
-      plan.config.alpaca.environment === BrokerEnvironment.Sandbox
-        ? yield* Effect.gen(function* () {
-            const read = yield* makeAlpacaRead(plan.config.alpaca)
-            return yield* startAccountActivityStream(plan.config.alpaca, read.account)
-          }).pipe(
-            Effect.provideContext(
-              yield* Layer.build(alpacaHttpLayer(plan.config.alpaca).pipe(Layer.provideMerge(telemetry))).pipe(
-                Effect.orDie,
-              ),
-            ),
-          )
-        : undefined
     const budget = yield* makeBrokerObservationBudget
     const pollingHttp = Layer.effect(HttpClient.HttpClient, Effect.map(HttpClient.HttpClient, budget.decorate)).pipe(
       Layer.provide(alpacaHttpLayer(plan.config.alpaca)),
@@ -268,15 +272,35 @@ export const acquireBrokerObservationRuntime = (
     )
     const config = yield* brokerSnapshotCacheConfig.pipe(Effect.orDie)
     const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, Math.floor(config.maxAgeMs / 2))
-    const store = Effect.map(PgClient.PgClient, (sql) =>
-      makeBrokerObservationStore(
-        sql,
-        plan.config.alpaca.expectedAccountId,
-        plan.config.build.sourceRevision,
-        config.maxAgeMs,
-        cache,
+    const store = yield* Effect.cached(
+      Effect.map(PgClient.PgClient, (sql) =>
+        makeBrokerObservationStore(
+          sql,
+          plan.config.alpaca.expectedAccountId,
+          plan.config.build.sourceRevision,
+          config.maxAgeMs,
+          cache,
+        ),
       ),
     )
+    const accountActivity =
+      plan.config.alpaca.environment === BrokerEnvironment.Sandbox
+        ? Effect.promise((signal) =>
+            managed.runPromiseExit(
+              Effect.flatMap(store, (value) => value.readAccountActivity),
+              { signal },
+            ),
+          ).pipe(
+            Effect.flatMap((exit) =>
+              Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause),
+            ),
+            Effect.mapError((cause) =>
+              cause instanceof BrokerReadError
+                ? cause
+                : observationUnavailable('Durable Activity SSE storage is unavailable', cause),
+            ),
+          )
+        : undefined
     const observeProjectionBacklog = Effect.promise((signal) =>
       managed.runPromise(
         Effect.flatMap(store, (value) => value.readProjectionBacklog),
@@ -312,6 +336,29 @@ export const acquireBrokerObservationRuntime = (
     return {
       maxAgeMs: config.maxAgeMs,
       freshnessLeadMs: captureTimeoutMs,
+      activityRuntime: {
+        verify: (candidate, nowMs) => verifyBrokerActivity(candidate, plan.config.alpaca, nowMs),
+        cursor: (signal) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.readActivityCursor),
+            { signal },
+          ),
+        record: (signal, event) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.recordActivity(event, projectBrokerActivity(event))),
+            { signal },
+          ),
+        completeCatchup: (signal, event) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.recordActivityCatchup(event)),
+            { signal },
+          ),
+        heartbeat: (signal, event) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.recordActivityHeartbeat(event)),
+            { signal },
+          ),
+      },
       runtime: {
         verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, plan.config.alpaca, nowMs),
         recordNotification: (signal, notification) =>
@@ -324,7 +371,7 @@ export const acquireBrokerObservationRuntime = (
             Effect.flatMap(store, (value) => value.isNotificationCovered(eventId)),
             { signal },
           ),
-        project: (signal, eventId) =>
+        project: (signal, eventId, allowProtectionWait = true) =>
           projection.runPromise(
             Effect.gen(function* () {
               const source = yield* store
@@ -377,7 +424,37 @@ export const acquireBrokerObservationRuntime = (
                         }),
                       }
                     const bindings = yield* (yield* IntentBindingStore).bindings(plan.config.alpaca.expectedAccountId)
-                    const decision = projectBrokerTradeUpdate(notification, bindings)
+                    let decision = projectBrokerTradeUpdate(notification, bindings)
+                    if (decision._tag === 'ProtectionBindingRequired') {
+                      const protectionOrder = yield* source.readProtectionOrder(
+                        decision.brokerOrderId,
+                        decision.clientOrderId,
+                      )
+                      if (protectionOrder !== undefined)
+                        decision = projectBrokerTradeUpdate(notification, bindings, protectionOrder)
+                    }
+                    if (decision._tag === 'ProtectionBindingRequired') {
+                      const deadlineMs = Date.parse(notification.receivedAt) + plan.config.operationTimeoutMs
+                      if (decision.canWait && allowProtectionWait && (yield* Clock.currentTimeMillis) < deadlineMs)
+                        return {
+                          _tag: 'Pending' as const,
+                          pending: {
+                            _tag: 'AwaitingProtection' as const,
+                            eventId: notification.eventId,
+                            observedAt: notification.receivedAt,
+                            deadlineAt: utcInstantFromEpochMillis(deadlineMs),
+                          },
+                        }
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'ReconcileRequired',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                          reason: BrokerStreamReconciliationReason.MissingIntent,
+                        }),
+                      }
+                    }
                     if (decision._tag === 'ReconcileRequired')
                       return { _tag: 'Receipt' as const, receipt: yield* retain(decision) }
                     const events = yield* BrokerEventStore
@@ -412,6 +489,7 @@ export const acquireBrokerObservationRuntime = (
                 }
                 return yield* failure
               }
+              if (prepared.success._tag === 'Pending') return prepared.success.pending
               yield* observeBrokerSourceProjection(prepared.success.receipt, false)
               return prepared.success.receipt
             }).pipe(
@@ -535,10 +613,11 @@ export const acquireBrokerObservationRuntime = (
                       Effect.gen(function* () {
                         const session = yield* BrokerSession
                         sessionVerified = true
+                        if (accountActivity === undefined)
+                          return yield* broker.capture(session.read, ticket, captureTimeoutMs)
+                        const durableActivity = yield* accountActivity.pipe(Effect.option)
                         return yield* broker.capture(
-                          accountActivity === undefined
-                            ? session.read
-                            : { ...session.read, accountActivity: accountActivity.read },
+                          Option.isNone(durableActivity) ? session.read : { ...session.read, accountActivity },
                           ticket,
                           captureTimeoutMs,
                         )

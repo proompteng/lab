@@ -52,7 +52,8 @@ export const makeBrokerEventInterpreter = (
       ? Effect.succeed([])
       : sql<Record<string, unknown>>`
           SELECT DISTINCT ON (observed_order.broker_order_id)
-            event.event_id, observed_order.broker_order_id, event.source_event_id,
+            event.event_id, event.normalized_content_hash AS content_hash,
+            observed_order.broker_order_id, event.source_event_id,
             event.source_sequence::text AS source_sequence, observed_order.broker_updated_at
           FROM broker_events AS event
           JOIN orders AS observed_order USING (event_id)
@@ -213,7 +214,7 @@ export const makeBrokerEventInterpreter = (
         if (input._tag === 'Order') {
           const [current] = yield* readCurrentOrderVersions(input.broker, input.accountId, [input.order.brokerOrderId])
           const version = yield* liftStoreDecision('ingest', decideOrderVersion(input, current))
-          if (version._tag === 'SupersedeOrderVersion') return version.receipt
+          if (version._tag !== 'AcceptOrderVersion') return version.receipt
         }
         const existing = yield* sql<Record<string, unknown>>`
           SELECT event_id, event_kind, normalized_content_hash AS content_hash, source_sequence::text AS source_sequence

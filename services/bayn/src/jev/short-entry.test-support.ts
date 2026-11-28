@@ -9,12 +9,27 @@ import { makeJevEvaluationReceipt, JevOutcome } from './evidence'
 import { nativeJevBatchResult, nativeJevFixture } from './native.test-support'
 import { makeJevObservation } from './observation'
 import { JevPurpose } from './portfolio'
+import { defaultJevProtocolDocument } from './protocol'
 import { makeJevTradingSignalBatch } from './trading-signals'
 
 /** Synthetic provider responses exercise the actual native receipt, selection and execution contracts. */
-export const shortNativeEntryFixture = (accountId = 'jev-native-short-test') =>
+export const shortNativeEntryFixture = (
+  accountId = 'jev-native-short-test',
+  protocolDocument: unknown = defaultJevProtocolDocument,
+) =>
   Result.gen(function* () {
-    const native = nativeJevFixture(JevPurpose.Entry, undefined, accountId)
+    const native = nativeJevFixture(
+      JevPurpose.Entry,
+      undefined,
+      accountId,
+      protocolDocument,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      true,
+      true,
+    )
     const observedAt = native.observation.payload.observedAt
     const observation = (yield* makeJevObservation({
       ...native.input,

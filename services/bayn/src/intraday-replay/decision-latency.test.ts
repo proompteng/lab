@@ -38,6 +38,30 @@ test('release arithmetic preserves slower completion and rejects unusable clocks
     expect(replayDecisionReleaseAt(issuedAt, completedAt, p95)).toBeUndefined()
 })
 
+test('alpha original command timing is retained without stress and cleared after a failed pass', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const latency = makeReplayDecisionLatency(currentUtcInstant, null, true)
+      expect(Result.isFailure(yield* Effect.result(latency.currentCommandIssuedAt))).toBe(true)
+      const failed = yield* Effect.result(
+        latency.runPass(
+          Effect.gen(function* () {
+            expect(yield* latency.currentCommandIssuedAt).toBe('1970-01-01T00:00:00.100Z')
+            yield* TestClock.adjust('22 millis')
+            expect(yield* latency.currentCommandIssuedAt).toBe('1970-01-01T00:00:00.100Z')
+            return yield* new ReplayBrokerFailure({ message: 'test-only failure after observation' })
+          }),
+        ),
+      )
+      expect(Result.isFailure(failed)).toBe(true)
+      expect(Result.isFailure(yield* Effect.result(latency.currentCommandIssuedAt))).toBe(true)
+      expect(yield* latency.runPass(latency.currentCommandIssuedAt)).toBe('1970-01-01T00:00:00.122Z')
+      expect((yield* latency.evidence).observationReceipts).toEqual([])
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+})
+
 const fixture = () => {
   const evidence = nativeJevDecisionEvidence(nativeJevFixture())
   const stored = { plan: evidence.batchPlan, result: evidence.batchResult }

@@ -1,6 +1,6 @@
 # Torghut notebooks
 
-This overlay renders upstream `jupyterhub/jupyterhub` chart `4.4.2` (Hub `5.5.2`, configurable HTTP proxy `5.3.0`) into the existing `torghut` namespace. The public
+This overlay renders upstream `jupyterhub/jupyterhub` chart `4.4.5` (Hub `5.5.5`, configurable HTTP proxy `5.4.0`) into the existing `torghut` namespace. The public
 proxy remains `ClusterIP`; `torghut-notebooks.ide-newton.ts.net` is reachable only through the Tailscale ingress.
 The runtime is standard JupyterLab on the cluster; it does not use a Colab VM or local-runtime bridge.
 
@@ -34,7 +34,7 @@ Rollback is a Git revert of the chart or notebook image digest pin. Both PVCs an
 ## Hub and proxy upgrade
 
 Hub and proxy images use immutable multi-architecture digests. The notebook runtime
-uses JupyterHub 5.5.2 as well, keeping the Hub and single-user packages aligned.
+uses JupyterHub 5.5.5 as well, keeping the Hub and single-user packages aligned.
 The existing Kargo Torghut release publishes all required runtime images from the
 same source commit and promotes their exact digests before Argo reconciles.
 

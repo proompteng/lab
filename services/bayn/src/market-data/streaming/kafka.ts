@@ -1,6 +1,6 @@
 import { MarketKind } from '../../instruments'
 import { currentEntryMarketEnabled } from '../../execution/trading-scope'
-import { marketHistoryMinutes, marketQuoteMaximumAgeMs } from '../history'
+import { equitySessionHistoryMinutes, marketHistoryMinutes, marketQuoteMaximumAgeMs } from '../history'
 import { marketFeatureClockSkewAllowanceMs } from '../features/feature-core'
 import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
@@ -475,13 +475,16 @@ export const makeKafkaMarketProjection = (
           const rawClockPaddingMs = marketFeatureClockSkewAllowanceMs + kafkaProducerClockSkewAllowanceMs
           if (equity && topic === source.topics.quotes)
             return observedAtMs - marketQuoteMaximumAgeMs - rawClockPaddingMs
+          const lookbackMinutes =
+            topic === source.topics.webullBars || !currentEntryMarketEnabled(marketSourceKind(source))
+              ? 2
+              : equity && topic === source.topics.bars
+                ? equitySessionHistoryMinutes
+                : marketHistoryMinutes[marketSourceKind(source)]
           return (
             Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
-            // Pricing uses a completed minute and fresh quotes. Full charts belong to enabled entry markets.
-            (topic === source.topics.webullBars || !currentEntryMarketEnabled(marketSourceKind(source))
-              ? 2
-              : marketHistoryMinutes[marketSourceKind(source)]) *
-              60_000 -
+            // Pricing uses a completed minute and fresh quotes. Full session bars support ORB/VWAP alpha.
+            lookbackMinutes * 60_000 -
             (equity && topic === source.topics.trades ? rawClockPaddingMs : marketFeatureClockSkewAllowanceMs)
           )
         }

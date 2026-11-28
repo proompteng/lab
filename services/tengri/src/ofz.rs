@@ -21,7 +21,10 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::{net::TcpStream, time::timeout};
+use tokio::{
+    net::TcpStream,
+    time::{Instant, timeout},
+};
 use tokio_rustls::TlsConnector;
 use tonic::{
     Request, Status,
@@ -34,6 +37,14 @@ const DECISION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const AUDITED_REQUEST_BUDGET_MS: u64 = 25_000;
 const DURABLE_TIMEOUT: Duration = Duration::from_secs(30);
 mod receipts;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AuditScope {
+    #[default]
+    Submission,
+    Observation,
+    RunStart(uuid::Uuid),
+}
 
 #[derive(Clone)]
 pub struct Client {
@@ -72,6 +83,7 @@ impl Client {
                             stream_receipt_id: String::new(),
                         },
                         recovery,
+                        AuditScope::Observation,
                     )
                     .await?,
             )
@@ -199,6 +211,7 @@ impl Client {
                     stream_receipt_id: String::new(),
                 },
                 recovery,
+                AuditScope::Observation,
             )
             .await?;
         let mut rpc = self.rpc.clone();
@@ -284,11 +297,11 @@ impl Client {
         &self,
         mut check: CheckRequest,
         recovery_generation: u64,
-        observation: bool,
+        scope: AuditScope,
     ) -> Result<CheckResponse, Status> {
-        // Repeated observations retain one durable receipt. Control operations still
-        // audit each submission and renew human activity through that transaction.
-        let reusable = observation
+        // Reuse receipts for repeated observations and the same run start. Each
+        // distinct control submission still commits its own audit before access.
+        let reusable = scope != AuditScope::Submission
             || matches!(
                 Action::try_from(check.action),
                 Ok(Action::WorkspaceMetadataRead
@@ -298,11 +311,22 @@ impl Client {
                     | Action::BrowserObserve)
             );
         if !check.stream_receipt_id.is_empty() || !reusable {
-            return self.check_request(check, recovery_generation).await;
+            return self
+                .check_request(check, recovery_generation, !reusable)
+                .await;
         }
-        let binding = self.receipts.bind(&check, recovery_generation).await?;
+        let binding = self
+            .receipts
+            .bind(&check, recovery_generation, scope)
+            .await?;
         check.stream_receipt_id = binding.id().into();
-        let decision = self.check_request(check, recovery_generation).await?;
+        let decision = self
+            .check_request(
+                check,
+                recovery_generation,
+                matches!(scope, AuditScope::RunStart(_)),
+            )
+            .await?;
         binding.record(decision.audit_receipt_id.clone());
         Ok(decision)
     }
@@ -311,6 +335,7 @@ impl Client {
         &self,
         check: CheckRequest,
         recovery_generation: u64,
+        submission: bool,
     ) -> Result<CheckResponse, Status> {
         let mut rpc = self.rpc.clone();
         let duration = if check.stream_receipt_id.is_empty() {
@@ -319,7 +344,25 @@ impl Client {
             DECISION_TIMEOUT
         }
         .min(remaining_deadline(&check)?);
-        let decision = bounded(duration, rpc.check(request(check, duration))).await?;
+        let retry = (submission
+            && check.action == Action::CodexControl as i32
+            && check.stream_receipt_id.is_empty())
+        .then(|| check.clone());
+        let deadline = Instant::now() + duration;
+        let first = bounded(duration, rpc.check(request(check, duration))).await;
+        let decision = match (first, retry) {
+            (Err(status), Some(check)) if status.code() == tonic::Code::Aborted => {
+                // Ofz discarded a decision during a policy change. Recheck before admitting work.
+                let remaining = deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(remaining_deadline(&check)?);
+                if remaining.is_zero() {
+                    return Err(status);
+                }
+                bounded(remaining, rpc.check(request(check, remaining))).await?
+            }
+            (result, _) => result?,
+        };
         if decision.recovery_generation != recovery_generation {
             return Err(Status::unauthenticated(
                 "authorization recovery generation changed",

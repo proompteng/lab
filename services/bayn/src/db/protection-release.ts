@@ -359,6 +359,10 @@ export const readProtectionSubmit = (
       (submitExpiresAt !== undefined && row.databaseAt >= submitExpiresAt)
     )
       return undefined
+    if (phase === 'admission') {
+      // Serialize the scoped start with capture reservation until the intent becomes durably IO_STARTED.
+      yield* sql`SELECT account_id FROM broker_observations WHERE account_id = ${row.accountId} FOR UPDATE`
+    }
     return yield* withCurrentProtectionReleaseProof(
       {
         proofId,

@@ -1,6 +1,16 @@
 import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
+import riskSymmetryAdmission from '../../migrations/0213_risk_symmetry_admission'
+import stopFloorRewardRiskAdmission from '../../migrations/0217_stop_floor_reward_risk_admission'
+import positiveNetTargetAdmission from '../../migrations/0219_positive_net_target_admission'
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
-import { retainedJevProtocolV39Document, retainedJevProtocolV40Document } from '../jev/protocol'
+import {
+  defaultJevProtocolDocument,
+  retainedJevProtocolV39Document,
+  retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
+} from '../jev/protocol'
 import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
@@ -39,7 +49,7 @@ import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
 import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
 import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { PgMigrator } from '@effect/sql-pg'
@@ -62,6 +72,7 @@ import {
   makeFundedEvaluationReceipt,
 } from '../jev/funded-entry.test-support'
 import {
+  entryEvaluationRequestFixture,
   nativeChartInference,
   entryCompletionFixture,
   stagedCheckpointFixture,
@@ -98,6 +109,11 @@ import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { reconstructRetainedJevTradingSignalBatch } from '../jev/retained-jev-trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
 import { JevBatchStoreLive } from './jev-batch-postgres'
@@ -184,17 +200,20 @@ const conditionalReceipt = Result.getOrThrow(
     outcome: { status: 'COMPLETED', completion: conditionalCompletion },
   }),
 )
-const runtimeLayer = Layer.mergeAll(
+const replayStores = Layer.mergeAll(
   CycleStoreLive,
   CandidateObservationStoreLive,
   JevBatchStoreLive,
   JevEvaluationStoreLive,
   EntryInferenceJournalLive,
-).pipe(
-  Layer.provideMerge(PgClient.layer({ url: Redacted.make(url), maxConnections: 4 })),
-  Layer.provideMerge(NodeServices.layer),
 )
-const makeRuntime = () => ManagedRuntime.make(runtimeLayer)
+const makeRuntime = (databaseUrl: string) =>
+  ManagedRuntime.make(
+    replayStores.pipe(
+      Layer.provideMerge(PgClient.layer({ url: Redacted.make(databaseUrl), maxConnections: 4 })),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  )
 const defaultRequest = request
 const replayFixture = fixture
 const replayBatch = batch
@@ -257,15 +276,53 @@ const retainReplayDispatch = Effect.gen(function* () {
 const retainReplayRequest = retainReplayDispatch.pipe(Effect.map((dispatch) => dispatch.request))
 
 integration('committed sequential provider handoff', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
   let initialDispatch: JevDispatch | undefined
-  beforeAll(() => {
-    const parsed = new URL(url)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('Provider handoff tests require an isolated local _test database')
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(url, async (templateUrl) => {
+      const schema = makeRuntime(templateUrl)
+      try {
+        await schema.runPromise(postgresMigrations)
+      } finally {
+        await schema.dispose()
+      }
+    })
   })
-  afterAll(async () => runtime?.dispose())
+
+  const seedReplayGraph = (
+    withRequestVersion = true,
+    fixture = replayFixture,
+    request = defaultRequest,
+    batch = replayBatch,
+  ) =>
+    Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      const accountId = fixture.portfolio.brokerState.account.accountId
+      if (accountId.startsWith('replay-'))
+        yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
+            VALUES (${accountId},${accountId.slice('replay-'.length)},${request.observedAt})`
+      yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+      yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+      VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
+      const r = fixture.portfolio.brokerState.reconciliation
+      yield* sql`INSERT INTO reconciliations (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+      VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${r.expectedHash},${r.observedHash},${r.contentHash},${r.status},'[]'::jsonb,${r.reconciledAt})`
+      if (!withRequestVersion) {
+        yield* sql`INSERT INTO jev_evaluation_requests (request_id,cycle_id,authority_generation_hash,payload)
+            VALUES (${conditionalRequest.requestId},${conditionalRequest.cycleId},${conditionalRequest.authorityGenerationHash},${sql.json(conditionalRequest)})`
+        return
+      }
+      yield* (yield* CandidateObservationStore).record(fixture.observation)
+      return yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
+        Effect.andThen(
+          Effect.flatMap(JevBatchStore, (store) => beginRecordedJevBatch(store, batch, fixture.observation.payload)),
+        ),
+        Effect.provide(TestClock.layer()),
+      )
+    })
+
   const resetDatabase = async (
     withRequestVersion = true,
     fixture = replayFixture,
@@ -278,43 +335,34 @@ integration('committed sequential provider handoff', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         if (withRequestVersion) yield* postgresMigrations
-        else
+        else {
           yield* PgMigrator.run({
             loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 150))),
             table: 'schema_migrations',
           })
-        if (!withRequestVersion) yield* chartDispatchCheckpoints
-        const accountId = fixture.portfolio.brokerState.account.accountId
-        if (accountId.startsWith('replay-'))
-          yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
-            VALUES (${accountId},${accountId.slice('replay-'.length)},${request.observedAt})`
-        yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
-        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
-      VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
-        const r = fixture.portfolio.brokerState.reconciliation
-        yield* sql`INSERT INTO reconciliations (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
-      VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${r.expectedHash},${r.observedHash},${r.contentHash},${r.status},'[]'::jsonb,${r.reconciledAt})`
-        if (!withRequestVersion) {
-          yield* sql`INSERT INTO jev_evaluation_requests (request_id,cycle_id,authority_generation_hash,payload)
-            VALUES (${conditionalRequest.requestId},${conditionalRequest.cycleId},${conditionalRequest.authorityGenerationHash},${sql.json(conditionalRequest)})`
-          return
+          yield* chartDispatchCheckpoints
         }
-        yield* (yield* CandidateObservationStore).record(fixture.observation)
-        return yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
-          Effect.andThen(
-            Effect.flatMap(JevBatchStore, (store) => beginRecordedJevBatch(store, batch, fixture.observation.payload)),
-          ),
-          Effect.provide(TestClock.layer()),
-        )
+        return yield* seedReplayGraph(withRequestVersion, fixture, request, batch)
       }),
     )
+
   beforeEach(async () => {
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
     initialDispatch = undefined
-    const admission = await resetDatabase()
+    const admission = await runtime.runPromise(seedReplayGraph())
     if (admission === undefined) return
     if (admission.dispatches === null) throw new Error('Expected in-process fixture dispatch rights')
     initialDispatch = admission.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
   }, 30_000)
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
+  afterAll(async () => template?.dispose())
 
   test.each([
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],
@@ -2396,4 +2444,186 @@ integration('committed sequential provider handoff', () => {
       }),
     ),
   )
+
+  for (const { migrationId, label, admission, priorProtocol, nextProtocol, cutoverErrorPrefix } of [
+    {
+      migrationId: 213,
+      label:
+        'risk symmetry migration 213 enforces OBSERVE cutover guard, admits v42 equity (5,5) and crypto (0,0), and rejects v41 claims',
+      admission: riskSymmetryAdmission,
+      priorProtocol: retainedJevProtocolV41Document,
+      nextProtocol: retainedJevProtocolV42Document,
+      cutoverErrorPrefix: 'risk symmetry cutover requires',
+    },
+    {
+      migrationId: 217,
+      label:
+        'stop-floor reward-risk migration 217 enforces OBSERVE cutover guard, admits v43 equity (5,5) and crypto (0,0), and rejects v42 claims',
+      admission: stopFloorRewardRiskAdmission,
+      priorProtocol: retainedJevProtocolV42Document,
+      nextProtocol: retainedJevProtocolV43Document,
+      cutoverErrorPrefix: 'stop-floor reward-risk cutover requires',
+    },
+    {
+      migrationId: 219,
+      label:
+        'positive net target migration 219 enforces OBSERVE cutover guard, admits v44 equity (5,5) and crypto (0,0), and rejects v43 claims',
+      admission: positiveNetTargetAdmission,
+      priorProtocol: retainedJevProtocolV43Document,
+      nextProtocol: defaultJevProtocolDocument,
+      cutoverErrorPrefix: 'positive-net-target cutover requires',
+    },
+  ])
+    test(label, async () =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DROP SCHEMA public CASCADE`
+          yield* sql`CREATE SCHEMA public`
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < migrationId))),
+            table: 'schema_migrations',
+          })
+          const bindCycle = <T extends typeof request>(value: T, snapshotId: string): T => ({
+            ...value,
+            cycleId: request.cycleId,
+            authorityGenerationHash: request.authorityGenerationHash,
+            snapshotId,
+          })
+          const priorEquity = bindCycle(
+            entryEvaluationRequestFixture(request.observedAt, 'AAPL', undefined, priorProtocol),
+            '1'.repeat(64),
+          )
+          const nextEquity = bindCycle(
+            entryEvaluationRequestFixture(request.observedAt, 'AAPL', undefined, nextProtocol),
+            '2'.repeat(64),
+          )
+          const nextCrypto = bindCycle(
+            entryEvaluationRequestFixture(request.observedAt, 'BTC/USD', undefined, nextProtocol),
+            '3'.repeat(64),
+          )
+          const priorClaim = stagedCheckpointFixture(priorEquity).claims[0]
+          if (priorClaim === undefined) throw new Error(`Expected ${priorProtocol.schemaVersion} CHART dispatch claim`)
+          yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
+            VALUES (${replayAccountId},${replaySourceHash},${priorEquity.observedAt})`
+          yield* (yield* CycleStore).acquire(fixture.draft, priorEquity.observedAt)
+          const broker = Result.getOrThrow(
+            makeBrokerIdentity({
+              schemaVersion: 'bayn.broker-identity.v2',
+              provider: BrokerProvider.Alpaca,
+              environment: BrokerEnvironment.Sandbox,
+              accountId: replayAccountId,
+            }),
+          )
+          const authority = makeObserveAuthorityInterpreter(
+            sql,
+            makeAuthorityPostgres(sql, { now: sql`${priorEquity.observedAt}::timestamptz` }),
+            broker,
+          )
+          yield* authority.ensureAuthorityGeneration({
+            generationHash: priorEquity.authorityGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+            VALUES (${'f'.repeat(64)},'bayn.paper-reconciliation.v1',${replayAccountId},${'1'.repeat(64)},${'1'.repeat(64)},${'2'.repeat(64)},'EXACT','[]'::jsonb,clock_timestamp())`
+          yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+            VALUES (${priorEquity.requestId},${priorEquity.cycleId},${priorEquity.authorityGenerationHash},${sql.json(priorEquity)})`
+          yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+            VALUES (${priorEquity.requestId},'CHART',${priorClaim.claimHash},${sql.json(priorClaim)})`
+          const activeRejected = yield* sql.withTransaction(admission).pipe(Effect.result)
+          expect(Result.isFailure(activeRejected)).toBe(true)
+          if (Result.isFailure(activeRejected))
+            expect(activeRejected.failure).toMatchObject({
+              reason: { cause: { code: '55000', message: expect.stringContaining(cutoverErrorPrefix) } },
+            })
+          yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+            UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+              updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${fixture.draft.identity.cycleId}`
+          const priorStoredBefore =
+            yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${priorEquity.requestId}`
+          const priorClaimBefore =
+            yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims WHERE request_id=${priorEquity.requestId}`
+          yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
+            VALUES (${'7'.repeat(64)},'bayn.paper-position-snapshot.v1',${replayAccountId},${'8'.repeat(64)},${'9'.repeat(64)},1,${priorEquity.observedAt})`
+          const openPositionRejected = yield* sql.withTransaction(admission).pipe(Effect.result)
+          expect(Result.isFailure(openPositionRejected)).toBe(true)
+          if (Result.isFailure(openPositionRejected))
+            expect(openPositionRejected.failure).toMatchObject({ reason: { cause: { code: '55000' } } })
+          yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
+            VALUES (${'6'.repeat(64)},'bayn.paper-position-snapshot.v1',${replayAccountId},${'5'.repeat(64)},${'4'.repeat(64)},0,clock_timestamp())`
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`UPDATE authority_state SET kill_state='ACTIVE',reason='operator hold',version=2,updated_at=clock_timestamp() WHERE singleton`
+                const heldRejected = yield* admission.pipe(Effect.result)
+                expect(Result.isFailure(heldRejected)).toBe(true)
+                if (Result.isFailure(heldRejected))
+                  expect(heldRejected.failure).toMatchObject({ reason: { cause: { code: '55000' } } })
+                return yield* Effect.fail('revert-hold')
+              }),
+            )
+            .pipe(Effect.ignore)
+          yield* sql.withTransaction(admission)
+          expect(
+            yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${priorEquity.requestId}`,
+          ).toEqual(priorStoredBefore)
+          expect(
+            yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims WHERE request_id=${priorEquity.requestId}`,
+          ).toEqual(priorClaimBefore)
+          for (const admitted of [nextEquity, nextCrypto])
+            yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+              VALUES (${admitted.requestId},${admitted.cycleId},${admitted.authorityGenerationHash},${sql.json(admitted)})`
+          const wrongNextEquity = {
+            ...nextEquity,
+            requestId: 'e'.repeat(64),
+            request: {
+              ...nextEquity.request,
+              numericalState: {
+                ...nextEquity.request.numericalState,
+                entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
+              },
+            },
+          }
+          const wrongNextCrypto = {
+            ...nextCrypto,
+            requestId: 'd'.repeat(64),
+            request: {
+              ...nextCrypto.request,
+              numericalState: {
+                ...nextCrypto.request.numericalState,
+                entryEconomics: { maximumEntryQuoteDriftBps: 5, maximumEntryLimitSlippageBps: 5 },
+              },
+            },
+          }
+          const retiredPrior = { ...priorEquity, requestId: 'c'.repeat(64), snapshotId: '4'.repeat(64) }
+          for (const bad of [wrongNextEquity, wrongNextCrypto, retiredPrior]) {
+            const rejected =
+              yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+              VALUES (${bad.requestId},${bad.cycleId},${bad.authorityGenerationHash},${sql.json(bad)})`.pipe(
+                Effect.result,
+              )
+            if (Result.isSuccess(rejected)) throw new Error(`Expected 23514 constraint rejection for ${bad.requestId}`)
+            yield* Schema.decodeUnknownEffect(
+              Schema.Struct({
+                code: Schema.Literal('23514'),
+                constraint: Schema.Literal('jev_evaluation_requests_check'),
+              }),
+            )(rejected.failure.reason.cause)
+          }
+          const rejectedPriorClaim =
+            yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+            VALUES (${priorEquity.requestId},'CHART',${'9'.repeat(64)},${sql.json({ ...priorClaim, claimHash: '9'.repeat(64) })})`.pipe(
+              Effect.result,
+            )
+          if (Result.isSuccess(rejectedPriorClaim))
+            throw new Error(`Expected retired ${priorProtocol.schemaVersion} dispatch claim rejection`)
+          yield* Schema.decodeUnknownEffect(
+            Schema.Struct({
+              code: Schema.Literal('23514'),
+              message: Schema.Literal('Box dispatch requires one unexpired unresolved current CHART request'),
+            }),
+          )(rejectedPriorClaim.failure.reason.cause)
+        }),
+      ),
+    )
 })

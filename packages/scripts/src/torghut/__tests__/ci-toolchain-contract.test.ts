@@ -49,6 +49,48 @@ describe('Torghut CI toolchain contract', () => {
     }
   })
 
+  it('requires the existing schema and notebook validators to succeed on the queued revision', () => {
+    const router = Bun.YAML.parse(readFileSync('.github/workflows/pull-request.yml', 'utf8')) as Workflow
+    const gate = router.jobs['ci-pr'].steps?.find((step) => step.name === 'Enforce selected validation results')
+    if (!gate?.run) throw new Error('Missing queue gate command')
+    const command = gate.run
+
+    const run = (name: string, result: string) =>
+      Bun.spawnSync(['bash', '-c', command], {
+        env: {
+          ...Object.fromEntries(Object.keys(gate.env ?? {}).map((key) => [key, 'success'])),
+          PATH: process.env.PATH ?? '',
+          FULL_VALIDATION: 'true',
+          DELEGATED: '[]',
+          [name]: result,
+        },
+      })
+
+    for (const [job, file, result] of [
+      ['torghut-schema', 'torghut-schema.yml', 'TORGHUT_SCHEMA_RESULT'],
+      ['torghut-notebooks', 'torghut-notebooks-ci.yml', 'TORGHUT_NOTEBOOKS_RESULT'],
+    ]) {
+      const validator = Bun.YAML.parse(readFileSync(`.github/workflows/${file}`, 'utf8')) as Workflow
+      expect(validator.on).toHaveProperty('workflow_call')
+      expect(validator.on).toHaveProperty('pull_request')
+      expect(validator.on).toHaveProperty('push')
+      expect(validator.on).not.toHaveProperty('merge_group')
+      expect(router.jobs[job]).toEqual({
+        name: expect.any(String),
+        if: "github.event_name == 'merge_group'",
+        uses: `./.github/workflows/${file}`,
+      })
+      expect(router.jobs['ci-pr'].needs).toContain(job)
+      expect(gate.env?.[result]).toBe(`\${{ needs.${job}.result }}`)
+      expect(run(result, 'success').exitCode).toBe(0)
+      for (const failure of ['failure', 'cancelled', 'skipped']) {
+        const check = run(result, failure)
+        expect(check.exitCode).toBe(1)
+        expect(check.stderr.toString()).toContain('Torghut validation failed')
+      }
+    }
+  })
+
   it('uses the supplied queue base and rejects a missing base instead of using the previous commit', () => {
     const torghut = Bun.YAML.parse(workflow) as Workflow
     const step = torghut.jobs['static-guards'].steps?.find((entry) => entry.name === 'Resolve Torghut diff base')

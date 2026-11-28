@@ -1,6 +1,7 @@
 import { isStopProtection, isEquityShortProtection } from '../execution/contracts'
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
+import { brokerActivitySourceContentIsConsistent } from './broker-activity-conflicts'
 import { Data, Effect, Option, Result, Schema } from 'effect'
 import {
   CryptoFeeTierSchema,
@@ -84,7 +85,7 @@ import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } fr
 import { cashAccrualReportingOffsetMicros, prepareObservedCoinFees, prepareObservedCashFees } from './fee-accruals'
 import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { FeeActivity } from '../broker/alpaca/model'
-import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
+import { compareText, type Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import type { BrokerStateVersion } from '../execution/broker-state-cache'
 import { withObservedStage } from '../telemetry'
 import { readIntentBindings } from './intent-bindings'
@@ -195,7 +196,8 @@ const ProjectedPositionRow = Schema.Struct({
 const PreviousReconciliationRows = Schema.Array(
   Schema.Struct({ discrepancies: Schema.Array(DiscrepancySchema) }),
 ).check(Schema.isMaxLength(1))
-const ReconciliationContentRow = Schema.Tuple([Schema.Struct({ content_hash: Sha256 })])
+const ReconciliationContentRow = Schema.Tuple([Schema.Struct({ content_hash: Sha256, same_source: Schema.Boolean })])
+const PositionSourceRow = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
 const FinalExecutionRiskContextRow = Schema.Tuple([
   Schema.Struct({
     daily_traded_notional_micros: UnsignedMicrosSchema,
@@ -519,6 +521,13 @@ export const verifyBrokerStateVersion = (
       AND (${currentAccountPostingBasis(sql, accountId, version.reconciledAt)})
       AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
         AND observed_at > ${version.reconciledAt}::timestamptz)
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_events WHERE account_id = ${accountId}
+        AND recorded_at > ${version.reconciledAt}::timestamptz)
+      AND (${brokerActivitySourceContentIsConsistent(sql, accountId)})
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId}
+        AND recorded_at > ${version.reconciledAt}::timestamptz)
+      AND NOT EXISTS (SELECT 1 FROM broker_activity_coverage_receipts WHERE account_id = ${accountId}
+        AND status = 'POISONED')
     ) AS valid
   `.pipe(
         Effect.flatMap(
@@ -548,13 +557,19 @@ export const verifyBrokerStateVersion = (
           AND d.document #>> '{bindings,accountId}' = ${accountId}
           AND (
             (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.entry-ablation-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.entry-ablation-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.intraday-alpha-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.intraday-alpha-target.v2'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.intraday-alpha-policy.v2'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41', 'bayn.jev.protocol.v42', 'bayn.jev.protocol.v43', 'bayn.jev.protocol.v44'))
           )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}
@@ -622,6 +637,34 @@ export const readReconciliationRiskContext = (
       return yield* fromDecision('risk-context', riskContextFromRow(riskContextRow, unknownMutationCount))
     }),
   )
+
+const verifyPositionSource = (sql: PgClient.PgClient, snapshot: BrokerSnapshot) =>
+  Effect.gen(function* () {
+    const positions = snapshot.positions.toSorted((left, right) => compareText(left.symbol, right.symbol))
+    const [source] = yield* Schema.decodeUnknownEffect(
+      PositionSourceRow,
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT EXISTS (
+        SELECT 1 FROM position_snapshots s
+        WHERE s.snapshot_id=${snapshot.positionSnapshotId} AND s.account_id=${snapshot.account.accountId}
+          AND s.observed_at=${snapshot.positionsObservedAt}::timestamptz AND s.position_count=${positions.length}::integer
+          AND ${sql.json(positions)}::jsonb = coalesce((
+            SELECT jsonb_agg(jsonb_build_object(
+              'schemaVersion',p.schema_version,'accountId',p.account_id,'symbol',p.symbol,
+              'quantityAtoms',p.quantity_atoms::text,'averageEntryPriceMicros',p.average_entry_price_micros::text,
+              'costBasisMicros',p.cost_basis_micros::text,'marketPriceMicros',p.market_price_micros::text,
+              'marketValueMicros',p.market_value_micros::text,'unrealizedPnlMicros',p.unrealized_pnl_micros::text,
+              'observedAt',to_char(e.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            ) ORDER BY p.symbol COLLATE "C")
+            FROM positions p JOIN broker_events e USING(event_id,account_id) WHERE p.snapshot_id=s.snapshot_id
+          ),'[]'::jsonb)
+      ) AS matches`,
+    )
+    if (!source.matches)
+      return yield* storeError('reconcile', 'invariant', 'Positions differ from their retained broker snapshot')
+  })
 
 export const makeReconciliation = (
   sql: PgClient.PgClient,
@@ -856,13 +899,14 @@ export const makeReconciliation = (
     )
 
   const writeReconciliationPhase = (
-    accountId: string,
+    snapshot: BrokerSnapshot,
     comparison: ReconciliationComparison,
-    reconciledAt: string,
   ): Effect.Effect<Reconciliation, ReconciliationStoreError> =>
     runStore(
       'reconcile',
       Effect.gen(function* () {
+        const { account, accountEventId, positionSnapshotId, reconciledAt } = snapshot
+        const { accountId } = account
         const [previous] = yield* sql<Record<string, unknown>>`
           SELECT discrepancies
           FROM reconciliations
@@ -885,19 +929,25 @@ export const makeReconciliation = (
         yield* sql`
           INSERT INTO reconciliations (
             reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
-            content_hash, status, discrepancies, reconciled_at
+            content_hash, status, discrepancies, reconciled_at, account_event_id, position_snapshot_id
           ) VALUES (
             ${reconciliation.reconciliationId}, ${reconciliation.schemaVersion}, ${reconciliation.accountId},
             ${reconciliation.expectedHash}, ${reconciliation.observedHash}, ${reconciliation.contentHash},
             ${reconciliation.status}, ${sql.json(encodedDiscrepancies)},
-            ${reconciliation.reconciledAt}
+            ${reconciliation.reconciledAt}, ${accountEventId}, ${positionSnapshotId}
           )
           ON CONFLICT (reconciliation_id) DO NOTHING
           `
         const [stored] = yield* sql<Record<string, unknown>>`
-          SELECT content_hash FROM reconciliations WHERE reconciliation_id = ${reconciliation.reconciliationId}
+          SELECT content_hash, (
+            account_event_id IS NOT DISTINCT FROM ${accountEventId}::text
+            AND position_snapshot_id IS NOT DISTINCT FROM ${positionSnapshotId}::text
+          ) AS same_source
+          FROM reconciliations WHERE reconciliation_id = ${reconciliation.reconciliationId}
         `.pipe(Effect.flatMap(decodeContent))
         yield* fromDecision('reconcile', validateReconciliationReadback(reconciliation, stored.content_hash))
+        if (!stored.same_source)
+          return yield* storeError('reconcile', 'invariant', 'Stored reconciliation has different source snapshots')
 
         if (reconciliation.discrepancies.length > 0) {
           yield* restrictAuthority(sql, `reconciliation discrepancy ${reconciliation.reconciliationId}`, reconciledAt)
@@ -928,7 +978,7 @@ export const makeReconciliation = (
         const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting).pipe(
           withObservedStage('bayn.reconciliation.compare'),
         )
-        const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt).pipe(
+        const reconciliation = yield* writeReconciliationPhase(snapshot, comparison).pipe(
           withObservedStage('bayn.reconciliation.record', { dependency: 'postgresql' }),
         )
         const riskContext = yield* readReconciliationRiskContext(
@@ -1005,6 +1055,7 @@ export const makeReconciliation = (
           'reconcile',
           Effect.gen(function* () {
             yield* retainAccountCashReporting(sql, snapshot)
+            yield* verifyPositionSource(sql, snapshot)
             yield* prepareCashSettlements(sql, snapshot, config.tigerBeetle)
             yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
             yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)

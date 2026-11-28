@@ -1,12 +1,15 @@
 import { EventEmitter } from 'node:events'
 import type { Worker } from 'node:worker_threads'
 import { expect, test } from 'bun:test'
-import { Cause, Effect, Exit, Fiber, Result } from 'effect'
+import { Cause, Effect, Exit, Fiber, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { verifyReportJob } from '../forward-performance-verification-worker'
 import { executionEvidenceFromRows, indexExecutionEvidence, verifyPerformanceDecisions } from './postgres/projection'
 import type { CycleDecisionJsonRow } from './postgres/model'
+import { CycleState } from '../cycle/model'
+import type { AlphaDecisionJsonRow } from './postgres/alpha-decisions'
+import { IsoDateSchema } from '../schemas'
 import { retainedV38ExecutionFixture } from '../jev/retained-v38-execution.test-support'
 import {
   makeIntradayPerformanceFixture,
@@ -141,6 +144,45 @@ test('replaces each worker index when a new report cut is supplied', async () =>
       }),
     ),
   )
+})
+
+test('native alpha worker jobs preserve rejected decision denominators without an execution index', async () => {
+  const fixture = fixtures()
+  const inputs: (typeof AlphaDecisionJsonRow.Type)[] = [0, 1, 2].map((ordinal) => ({
+    ...row(ordinal),
+    account_id: 'alpha-fixture',
+    authority_generation_hash: 'b'.repeat(64),
+    qualification_run_id: 'c'.repeat(64),
+    strategy_protocol_hash: 'd'.repeat(64),
+    risk_policy_hash: 'e'.repeat(64),
+    session_date: Schema.decodeUnknownSync(IsoDateSchema)('2026-11-15'),
+    cycle_state: CycleState.Active,
+    terminal_at: null,
+    generation_activated_at: new Date('2026-11-14T00:00:00.000Z'),
+    reconciled_at: new Date('2026-11-15T01:00:00.000Z'),
+    execution_evidence_in_scope: false,
+    qualification_build: null,
+    activation_build: null,
+  }))
+  const projections = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const verifier = yield* makeReportVerification(fixture.spawn)
+        return yield* Effect.forEach(inputs, (input) => verifier.alphaDecision(input), {
+          concurrency: reportVerificationConcurrency,
+        })
+      }),
+    ),
+  )
+  expect(projections).toEqual(
+    inputs.map((input) => ({ alphaDecisions: [], unverifiedAlphaDecisionHashes: [input.decision_hash] })),
+  )
+  expect(
+    fixture.workers
+      .flatMap((worker) => worker.received)
+      .every((job) => job.input.task === ReportVerificationTask.AlphaDecision && !('index' in job.input)),
+  ).toBe(true)
+  expect(fixture.workers.every((worker) => worker.terminations === 1)).toBe(true)
 })
 
 test.each(['job identity', 'task identity'] as const)(

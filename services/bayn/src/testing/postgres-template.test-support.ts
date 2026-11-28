@@ -3,6 +3,7 @@ import { Effect, ManagedRuntime, Redacted } from 'effect'
 
 export type PostgresTestDatabase = {
   readonly url: string
+  readonly clone: () => Promise<PostgresTestDatabase>
   readonly dispose: () => Promise<void>
 }
 
@@ -63,12 +64,17 @@ export const prepareClonedPostgres = async (
     throw error
   }
   let next = 0
+  const clone = async (source: string): Promise<PostgresTestDatabase> => {
+    const database = `${prefix}_${next++}_test`
+    await create(database, source)
+    return {
+      url: databaseUrl(database),
+      clone: () => clone(database),
+      dispose: () => drop(database),
+    }
+  }
   return {
-    clone: async () => {
-      const database = `${prefix}_${next++}_test`
-      await create(database, template)
-      return { url: databaseUrl(database), dispose: () => drop(database) }
-    },
+    clone: () => clone(template),
     dispose,
   }
 }

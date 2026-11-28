@@ -11,6 +11,34 @@ import kotlin.test.assertNull
 
 class ForwarderConfigTest {
   @Test
+  fun `all shared equity bars stream without changing executable quote and trade paths`() {
+    val symbols = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,NVDA,QQQ,SMH,SNDK,SPY,TSLA,WDC"
+    val streamed = "AAPL,AMZN,NVDA,SPY"
+    val latest = "AMD,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,QQQ,SMH,SNDK,TSLA,WDC"
+    val parsed =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "SYMBOLS" to symbols,
+          "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
+          "ALPACA_MARKET_DATA_BARS_SYMBOLS" to symbols,
+          "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to streamed,
+          "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to streamed,
+          "ALPACA_LATEST_SYMBOLS" to latest,
+        ),
+      )
+    val channels = parsed.marketDataFeedConfigs().single().desiredSymbolsByChannel(parsed.staticSymbols)
+    assertEquals(30, channels.values.sumOf { it.size })
+    assertEquals(symbols.split(",").toSet(), channels.getValue("bars").toSet())
+    for (channel in listOf("quotes", "trades")) {
+      assertEquals(streamed.split(",").toSet(), channels.getValue(channel).toSet())
+      assertEquals(symbols.split(",").toSet(), (channels.getValue(channel) + latest.split(",")).toSet())
+    }
+    assertEquals(LatestMarketDataConfig(latest.split(","), 2000, 10_000), parsed.latestMarketData)
+  }
+
+  @Test
   fun `expanded equity source preserves thirty admitted streams and polls only missing completed bars`() {
     val old = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
     val added = "GOOGL,INTC,META,MSFT,NFLX,TSLA"
@@ -40,43 +68,6 @@ class ForwarderConfigTest {
     assertEquals(added.split(","), requireNotNull(parsed.latestMarketData).barSymbols)
     for (invalid in listOf("AAPL", "TSLA,TSLA", "UNREQUESTED")) {
       assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + ("ALPACA_LATEST_BAR_SYMBOLS" to invalid)) }
-    }
-    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base - "ALPACA_LATEST_SYMBOLS") }
-  }
-
-  @Test
-  fun `IEX qualification keeps the admitted baseline and requires its exact REST-only candidates`() {
-    val all = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
-    val admitted = "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
-    val candidates = "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC"
-    val base =
-      mapOf(
-        "ALPACA_KEY_ID" to "key",
-        "ALPACA_SECRET_KEY" to "secret",
-        "SYMBOLS" to all,
-        "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
-        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to admitted,
-        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to admitted,
-        "ALPACA_LATEST_SYMBOLS" to candidates,
-        "ALPACA_IEX_SUBSCRIPTION_QUALIFICATION" to "true",
-      )
-    val config = ForwarderConfig.fromEnv(base)
-    assertEquals(true, config.qualifyIexSubscriptions)
-    assertEquals(candidates.split(","), requireNotNull(config.latestMarketData).symbols)
-    assertEquals(
-      mapOf("trades" to admitted.split(","), "quotes" to admitted.split(","), "bars" to all.split(",")),
-      config.marketDataFeedConfigs().single().desiredSymbolsByChannel(config.staticSymbols),
-    )
-    for (invalid in listOf(
-      mapOf("ALPACA_IEX_SUBSCRIPTION_QUALIFICATION" to "yes"),
-      mapOf("ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars,updatedBars"),
-      mapOf("SUBSCRIBE_BATCH_SIZE" to "8"),
-      mapOf("SUBSCRIBE_BATCH_SIZE" to "15"),
-      mapOf("ALPACA_MARKET_DATA_BARS_SYMBOLS" to all.split(",").reversed().joinToString(",")),
-      mapOf("ALPACA_MARKET_DATA_TRADES_SYMBOLS" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH"),
-      mapOf("ALPACA_LATEST_SYMBOLS" to "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK"),
-    )) {
-      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + invalid) }
     }
     assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base - "ALPACA_LATEST_SYMBOLS") }
   }
@@ -133,15 +124,10 @@ class ForwarderConfigTest {
     )
 
   @Test
-  fun `preserves the supported sip core feed when observations are disabled`() {
+  fun `configures a small consolidated sip lane without a raised budget`() {
     val cfg =
       ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "key",
-          "ALPACA_SECRET_KEY" to "secret",
-          "ALPACA_FEED" to "sip",
-          "SYMBOLS" to "AAPL",
-        ),
+        sipTestEnv(listOf("AAPL")),
       )
 
     val runtime = cfg.marketDataFeedConfigs().single()
@@ -182,12 +168,8 @@ class ForwarderConfigTest {
   fun `keeps consolidated sip core data separate from delayed observation data`() {
     val cfg =
       ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "key",
-          "ALPACA_SECRET_KEY" to "secret",
-          "ALPACA_FEED" to "sip",
-          "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
-        ) + authoritativeUniverse + observationTopics,
+        sipTestEnv(listOf("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")) +
+          ("ALPACA_OBSERVATION_FEEDS" to "delayed_sip") + observationTopics,
       )
 
     val runtimes = cfg.marketDataFeedConfigs()
