@@ -34,6 +34,7 @@ resources:
   - observability-mimir-rule-loader.yaml
   - graf-bumba-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
+  - agents-fleet-operations-dashboard-configmap.yaml
   - bayn-cycle-operations-dashboard-configmap.yaml
   - bayn-cache-performance-dashboard-configmap.yaml
   - bayn-multi-sleeve-operations-dashboard-configmap.yaml

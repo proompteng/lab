@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { BrokerEnvironment } from '../src/broker/identity'
 import { MarketCalendarObservationSchema } from '../src/broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../src/broker/alpaca/normalizers'
 import { DecisionConstruction } from '../src/decision-construction'
@@ -13,7 +14,31 @@ import { reconciledStateHash } from '../src/simulation-reconciliation/broker-mod
 import { nativeAlphaDecisionFixture } from '../src/strategy/intraday-alpha/alpha-decision.test-support'
 import { postgresQueryFixture } from '../src/testing/postgres-fixture.test-support'
 import { analyzeProfitability, decodeAuditInput } from './live-profitability-audit-core'
-import { readLiveProfitability } from './live-profitability-audit-postgres'
+import { readProfitability } from './live-profitability-audit-postgres'
+
+test('sandbox audit uses only retained sandbox bindings inside a read-only transaction', async () => {
+  const date = '2026-11-27'
+  const queries: string[] = []
+  const sql = postgresQueryFixture(
+    Object.assign(
+      (parts: TemplateStringsArray, ...values: readonly unknown[]) => {
+        const statement = parts.join('?').trimStart()
+        queries.push(statement)
+        if (statement.includes('FROM authority_generations')) {
+          expect(values).toEqual(['paper-account', BrokerEnvironment.Sandbox])
+          return Effect.succeed([{ key: 'paper-fixture' }])
+        }
+        if (statement.startsWith('SET ') || statement.startsWith('WITH bounds')) return Effect.succeed([])
+        return Effect.die('Unexpected sandbox audit query')
+      },
+      { withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect },
+    ),
+  )
+  const result = await Effect.runPromise(readProfitability(sql, 'paper-account', [date], BrokerEnvironment.Sandbox))
+  expect(queries[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+  expect(queries.some((query) => query.includes('live_capital_grants'))).toBe(false)
+  expect(result.sessions).toEqual([])
+})
 
 test('measures timed and regular-close fills against separate benchmarks when a replan reuses the strategy hash', async () => {
   const date = '2026-11-27'
@@ -199,6 +224,7 @@ test('measures timed and regular-close fills against separate benchmarks when a 
       (parts: TemplateStringsArray) => {
         const statement = parts.join('?').trimStart()
         if (statement.startsWith('SET ')) return Effect.succeed([])
+        if (statement.includes('FROM authority_generations')) return Effect.succeed([])
         if (statement.includes('FROM live_capital_grants')) return Effect.succeed([{ key: 'live-fixture' }])
         if (statement.startsWith('WITH bounds'))
           return Effect.succeed([
@@ -228,7 +254,7 @@ test('measures timed and regular-close fills against separate benchmarks when a 
     ),
   )
   const evidence = Result.getOrThrow(
-    decodeAuditInput(await Effect.runPromise(readLiveProfitability(sql, accountId, [date]))),
+    decodeAuditInput(await Effect.runPromise(readProfitability(sql, accountId, [date], BrokerEnvironment.Live))),
   )
   expect(evidence.sessions[0]?.unverifiedDecisions).toBe(0)
   expect(evidence.sessions[0]?.market.quotes).toEqual([quote])

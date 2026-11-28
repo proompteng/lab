@@ -65,6 +65,65 @@ prometheus.scrape "mimir_ingesters" {
 	forward_to      = [prometheus.relabel.mimir_ingester_metrics.receiver]
 }
 
+discovery.kubernetes "agents" {
+	role = "pod"
+
+	namespaces {
+		names = ["agents"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name in (agents,agents-controllers,agents-alloy)"
+	}
+}
+
+discovery.relabel "agents_metrics" {
+	targets = discovery.kubernetes.agents.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "(agents|agents-controllers);http|alloy;http-metrics"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+}
+
+prometheus.relabel "agents_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|agents_.*"
+	}
+}
+
+prometheus.scrape "agents" {
+	job_name        = "agents"
+	targets         = discovery.relabel.agents_metrics.output
+	metrics_path    = "/metrics"
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	// Controller gauges describe the watched namespace, not necessarily the target namespace.
+	honor_labels = true
+	forward_to   = [prometheus.relabel.agents_metrics.receiver]
+}
+
 prometheus.scrape "ci_observability" {
 	job_name = "ci-observability"
 	targets  = [{

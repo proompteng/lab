@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+import { quantityToScalar } from '@kubernetes/client-node/dist/util.js'
+
 import { asRecord, asString, readNested } from '../primitives'
 import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
@@ -142,6 +144,12 @@ const normalizeResourceQuantityMap = (value: unknown) => {
       })
       .filter((entry): entry is [string, string] => entry !== null),
   )
+}
+
+const memoryQuantityBytes = (quantity: string) => {
+  // The client only accepts integer magnitudes with a suffix (e.g. 1Gi, not 1.5Gi).
+  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-zA-Z]+)$/.exec(quantity)
+  return match ? Number(match[1]) * Number(quantityToScalar(`1${match[2]}`)) : Number(quantityToScalar(quantity))
 }
 
 const buildJobResources = (
@@ -851,6 +859,15 @@ export const submitJobRun = async (
   )
   if (existingJobRef) return existingJobRef
 
+  const resources = buildJobResources(workload, provider, runtimeConfig)
+  const memoryLimit = resources.limits?.memory
+  const memoryLimitBytes = usesStandardRunner && memoryLimit ? memoryQuantityBytes(memoryLimit) : 0
+  const tmpfs = (sizeGiB: number) => ({
+    medium: 'Memory',
+    sizeLimit:
+      memoryLimit && memoryLimitBytes > 0 && memoryLimitBytes < sizeGiB * 1024 ** 3 ? memoryLimit : `${sizeGiB}Gi`,
+  })
+
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
   const configVolumeMounts = [] as Record<string, unknown>[]
@@ -858,10 +875,10 @@ export const submitJobRun = async (
 
   if (usesStandardRunner) {
     const declaredMounts = [...volumeMounts, ...(vcsRuntime?.volumeMounts ?? [])]
-    for (const [suffix, mountPath] of [
-      ['scratch-workspace', '/workspace'],
-      ['scratch-tmp', '/tmp'],
-      ['scratch-bun-cache', '/opt/bun/install/cache'],
+    for (const [suffix, mountPath, sizeGiB] of [
+      ['scratch-workspace', '/workspace', 16],
+      ['scratch-tmp', '/tmp', 6],
+      ['scratch-bun-cache', '/opt/bun/install/cache', 8],
     ] as const) {
       const name = makeName(runName, suffix)
       if (
@@ -873,7 +890,7 @@ export const submitJobRun = async (
       ) {
         continue
       }
-      volumes.push({ name, spec: { emptyDir: { medium: 'Memory' } } })
+      volumes.push({ name, spec: { emptyDir: tmpfs(sizeGiB) } })
       volumeMounts.push({ name, mountPath })
     }
   }
@@ -945,7 +962,7 @@ export const submitJobRun = async (
     )
     volumes.push({
       name: codexHomeVolumeName,
-      spec: { emptyDir: usesStandardRunner ? { medium: 'Memory' } : {} },
+      spec: { emptyDir: usesStandardRunner ? tmpfs(1) : {} },
     })
     configVolumeMounts.push({
       name: codexHomeVolumeName,
@@ -1054,7 +1071,7 @@ export const submitJobRun = async (
             : []),
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
-        resources: buildJobResources(workload, provider, runtimeConfig),
+        resources,
         volumeMounts: [...volumeMounts, ...configVolumeMounts],
         terminationMessagePath: '/workspace/.agent/status.json',
         terminationMessagePolicy: 'File',

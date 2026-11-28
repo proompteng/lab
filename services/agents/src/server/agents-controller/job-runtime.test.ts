@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildRunSpecContext,
@@ -18,9 +18,23 @@ const readJobPodSpec = (job: Record<string, unknown> | undefined) => {
 }
 
 describe('agents controller job-runtime module', () => {
+  let previousEnv: Record<string, string | undefined>
+
+  beforeEach(() => {
+    previousEnv = {
+      AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT: process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT,
+      AGENTS_AGENT_RUNNER_IMAGE: process.env.AGENTS_AGENT_RUNNER_IMAGE,
+      AGENTS_AGENT_RUNNER_RESOURCES: process.env.AGENTS_AGENT_RUNNER_RESOURCES,
+      AGENTS_CONTROLLER_AUTH_SECRET_NAME: process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME,
+      AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH: process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH,
+    }
+  })
+
   afterEach(() => {
-    delete process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT
-    vi.unstubAllEnvs()
+    for (const [name, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
   })
 
   it('creates DNS-safe names and appends stable hash when needed', () => {
@@ -295,41 +309,47 @@ describe('agents controller job-runtime module', () => {
   it.each([
     {
       name: 'standard runner',
-      customImage: false,
-      persistentWorkspace: false,
-      mounts: ['/workspace', '/tmp', '/opt/bun/install/cache', '/root/.codex'],
+      sizeLimits: { '/workspace': '16Gi', '/tmp': '6Gi', '/opt/bun/install/cache': '8Gi', '/root/.codex': '1Gi' },
+    },
+    {
+      name: 'standard runner with a smaller workload memory limit',
+      memoryLimit: '1.5Gi',
+      sizeLimits: { '/workspace': '1.5Gi', '/tmp': '1.5Gi', '/opt/bun/install/cache': '1.5Gi', '/root/.codex': '1Gi' },
+    },
+    {
+      name: 'standard runner with a sub-GiB workload memory limit',
+      memoryLimit: '500M',
+      sizeLimits: { '/workspace': '500M', '/tmp': '500M', '/opt/bun/install/cache': '500M', '/root/.codex': '500M' },
     },
     {
       name: 'declared workspace and Bun install mounts',
-      customImage: false,
       persistentWorkspace: true,
-      mounts: ['/tmp', '/root/.codex'],
+      sizeLimits: { '/tmp': '6Gi', '/root/.codex': '1Gi' },
     },
-    { name: 'custom runner image', customImage: true, persistentWorkspace: false, mounts: [] },
-  ])('mounts the expected tmpfs paths for $name', async ({ customImage, persistentWorkspace, mounts }) => {
+    { name: 'custom runner image', customImage: true, sizeLimits: {} },
+  ])('bounds the generated tmpfs volumes for $name', async (testCase) => {
+    const { customImage, persistentWorkspace, memoryLimit, sizeLimits } = testCase
     const standardImage = 'registry.example/agents-codex-runner:standard'
-    vi.stubEnv('AGENTS_AGENT_RUNNER_IMAGE', standardImage)
-    vi.stubEnv('AGENTS_CONTROLLER_AUTH_SECRET_NAME', 'codex-auth')
+    process.env.AGENTS_AGENT_RUNNER_IMAGE = standardImage
+    process.env.AGENTS_AGENT_RUNNER_RESOURCES = JSON.stringify({ limits: { memory: '32Gi' } })
+    process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
+    process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
     const kube = {
       get: vi.fn(async () => null),
       apply: vi.fn(async (resource: Record<string, unknown>) => resource),
     }
+    const workload: Record<string, unknown> = {}
+    if (memoryLimit) workload.resources = { limits: { memory: memoryLimit } }
+    if (persistentWorkspace) {
+      workload.volumes = [
+        { type: 'pvc', name: 'worktree', claimName: 'worktree-pvc', mountPath: '/workspace' },
+        { type: 'pvc', name: 'bun-install', claimName: 'bun-install-pvc', mountPath: '/opt/bun/install' },
+      ]
+    }
 
     await submitJobRun(
       kube as never,
-      {
-        metadata: { name: 'run-1', namespace: 'agents' },
-        spec: {
-          workload: persistentWorkspace
-            ? {
-                volumes: [
-                  { type: 'pvc', name: 'worktree', claimName: 'worktree-pvc', mountPath: '/workspace' },
-                  { type: 'pvc', name: 'bun-install', claimName: 'bun-install-pvc', mountPath: '/opt/bun/install' },
-                ],
-              }
-            : {},
-        },
-      },
+      { metadata: { name: 'run-1', namespace: 'agents' }, spec: { workload } },
       { metadata: { name: 'agent-a' }, spec: {} },
       { metadata: { name: 'codex' }, spec: {} },
       { summary: 'Run summary' },
@@ -340,14 +360,24 @@ describe('agents controller job-runtime module', () => {
     )
 
     const podSpec = readJobPodSpec(kube.apply.mock.calls.find(([resource]) => resource.kind === 'Job')?.[0])
-    const volumes = podSpec.volumes as { name: string; emptyDir?: { medium?: string } }[]
-    const [container] = podSpec.containers as { volumeMounts: { name: string; mountPath: string }[] }[]
-    const memoryNames = new Set(
-      volumes.filter((volume) => volume.emptyDir?.medium === 'Memory').map((volume) => volume.name),
+    const volumes = podSpec.volumes as { name: string; emptyDir?: { medium?: string; sizeLimit?: string } }[]
+    const [container] = podSpec.containers as {
+      volumeMounts: { name: string; mountPath: string }[]
+      resources: { limits: { memory: string } }
+    }[]
+    const memoryLimits = new Map(
+      volumes
+        .filter((volume) => volume.emptyDir?.medium === 'Memory')
+        .map((volume) => [volume.name, volume.emptyDir?.sizeLimit]),
     )
+    expect(container.resources.limits.memory).toBe(memoryLimit ?? '32Gi')
     expect(
-      container.volumeMounts.filter((mount) => memoryNames.has(mount.name)).map((mount) => mount.mountPath),
-    ).toEqual(mounts)
+      Object.fromEntries(
+        container.volumeMounts
+          .filter((mount) => memoryLimits.has(mount.name))
+          .map((mount) => [mount.mountPath, memoryLimits.get(mount.name)]),
+      ),
+    ).toStrictEqual(sizeLimits)
     if (persistentWorkspace) {
       expect(container.volumeMounts.filter((mount) => mount.mountPath === '/workspace')).toEqual([
         { name: 'worktree', mountPath: '/workspace', readOnly: false },

@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: agents
 resources:
   - postgres-upgrade-backup.yaml
+  - agents-audit-ro-db-sealedsecret.yaml
   - postgres-cluster.yaml
   - codex-auth-master-externalsecret.yaml
   - codex-auth-externalsecret.yaml
@@ -50,6 +51,7 @@ resources:
   - tailscale-networkpolicy.yaml
   - auto-ontology-mcp-token-sealedsecret.yaml
   - auto-ontology-networkpolicy.yaml
+  - auto-ontology-db-networkpolicy.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml

@@ -11,7 +11,9 @@
   "dependencies": {
     "@proompteng/bumba": "workspace:*",
     "@proompteng/temporal-bun-sdk": "workspace:*",
-    "yaml": "^2.8.4"
+    "libpg-query": "18.3.0",
+    "yaml": "^2.8.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "bun-types": "^1.4.2",

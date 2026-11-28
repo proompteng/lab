@@ -604,7 +604,9 @@
       "dependencies": {
         "@proompteng/bumba": "workspace:*",
         "@proompteng/temporal-bun-sdk": "workspace:*",
+        "libpg-query": "18.3.0",
         "yaml": "^2.8.4",
+        "zod": "^4.4.3",
       },
       "devDependencies": {
         "bun-types": "^1.4.2",
@@ -2270,6 +2272,8 @@
     "@payloadcms/translations": ["@payloadcms/translations@3.84.1", "", { "dependencies": { "date-fns": "4.1.0" } }, "sha512-1g4IsXvRfeQCn8YmPweaj8MMAFK9oSxYWKJG15j+Ah9Nra+f35/ZdOt/k80+vfoJmdKsOK/AnuzVdSTWy2GQpg=="],
 
     "@payloadcms/ui": ["@payloadcms/ui@3.84.1", "", { "dependencies": { "@date-fns/tz": "1.2.0", "@dnd-kit/core": "6.3.1", "@dnd-kit/sortable": "10.0.0", "@dnd-kit/utilities": "3.2.2", "@faceless-ui/modal": "3.0.0", "@faceless-ui/scroll-info": "2.0.0", "@faceless-ui/window-info": "3.0.1", "@monaco-editor/react": "4.7.0", "@payloadcms/translations": "3.84.1", "bson-objectid": "2.0.4", "date-fns": "4.1.0", "dequal": "2.0.3", "md5": "2.3.0", "object-to-formdata": "4.5.1", "qs-esm": "8.0.1", "react-datepicker": "7.6.0", "react-image-crop": "10.1.8", "react-select": "5.9.0", "scheduler": "0.25.0", "sonner": "^1.7.2", "ts-essentials": "10.0.3", "use-context-selector": "2.0.0", "uuid": "11.1.0" }, "peerDependencies": { "next": ">=15.2.9 <15.3.0 || >=15.3.9 <15.4.0 || >=15.4.11 <15.5.0 || >=16.2.2 <17.0.0", "payload": "3.84.1", "react": "^19.0.1 || ^19.1.2 || ^19.2.1", "react-dom": "^19.0.1 || ^19.1.2 || ^19.2.1" } }, "sha512-L9trD3/LcK1fiGg4AFexy9AQm4upMzRbicZFTNU/ac+x5o6Pwyr7FzrvbtfCr0l2t6QhawLBZmBCZJA8oBF2uA=="],
+
+    "@pgsql/types": ["@pgsql/types@18.0.0", "", {}, "sha512-jtAY4JU7jdVYZ/Vv3zlZqVP+FRWZokyCLKPPCnAApiaJAElpyyiMC3HRiquBu29kSrVs+rkqZD50SUIb/zyEGw=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
@@ -4600,6 +4604,8 @@
     "lexical": ["lexical@0.41.0", "", {}, "sha512-pNIm5+n+hVnJHB9gYPDYsIO5Y59dNaDU9rJmPPsfqQhP2ojKFnUoPbcRnrI9FJLXB14sSumcY8LUw7Sq70TZqA=="],
 
     "lib0": ["lib0@0.2.117", "", { "dependencies": { "isomorphic.js": "^0.2.4" }, "bin": { "0serve": "bin/0serve.js", "0gentesthtml": "bin/gentesthtml.js", "0ecdsa-generate-keypair": "bin/0ecdsa-generate-keypair.js" } }, "sha512-DeXj9X5xDCjgKLU/7RR+/HQEVzuuEUiwldwOGsHK/sfAfELGWEyTcf0x+uOvCvK3O2zPmZePXWL85vtia6GyZw=="],
+
+    "libpg-query": ["libpg-query@18.3.0", "", { "dependencies": { "@pgsql/types": "^18.0.0" } }, "sha512-JHoTTsuDC85VBQj74iUo61+k74dNU/ef/s3nTPnld7wX+jPUq8oNrAPi1g+CNtj0TK8YoRTQn9ROPGN4/RGVsQ=="],
 
     "lightningcss": ["lightningcss@1.32.0", "", { "dependencies": { "detect-libc": "^2.0.3" }, "optionalDependencies": { "lightningcss-android-arm64": "1.32.0", "lightningcss-darwin-arm64": "1.32.0", "lightningcss-darwin-x64": "1.32.0", "lightningcss-freebsd-x64": "1.32.0", "lightningcss-linux-arm-gnueabihf": "1.32.0", "lightningcss-linux-arm64-gnu": "1.32.0", "lightningcss-linux-arm64-musl": "1.32.0", "lightningcss-linux-x64-gnu": "1.32.0", "lightningcss-linux-x64-musl": "1.32.0", "lightningcss-win32-arm64-msvc": "1.32.0", "lightningcss-win32-x64-msvc": "1.32.0" } }, "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ=="],
 
