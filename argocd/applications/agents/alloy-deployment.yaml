@@ -24,7 +24,11 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - run
+            - --server.http.listen-addr=0.0.0.0:12345
             - /etc/alloy/config.river
+          env:
+            - name: AGENTS_LOKI_STRUCTURED_METADATA
+              value: 'false' # Enable only once Loki accepts structured metadata with its TSDB index.
           ports:
             - name: http-metrics
               containerPort: 12345
@@ -39,11 +43,11 @@ spec:
               type: RuntimeDefault
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 200m
+              memory: 256Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              memory: 512Mi
           volumeMounts:
             - name: config
               mountPath: /etc/alloy

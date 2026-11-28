@@ -127,7 +127,7 @@ metadata:
   namespace: agents
 spec:
   agentRef:
-    name: codex-spark-agent
+    name: codex-agent
   implementation:
     inline:
       text: |
@@ -184,7 +184,7 @@ metadata:
   namespace: agents
 spec:
   agentRef:
-    name: codex-spark-agent
+    name: codex-agent
   implementation:
     inline:
       text: |
@@ -334,6 +334,10 @@ Resource resolution order for Job containers (lowest to highest precedence):
 
 Use `spec.workload.resources` for normal per-run sizing. `spec.runtime.config.resources` is accepted for runtime-level
 submissions and is overridden by explicit workload resources.
+
+Jobs using the standard runner image use memory-backed scratch for `/workspace`, `/tmp`, the Bun cache, and any
+controller-created Codex home. Written data counts toward the Job container's memory limit. Use an explicit
+`spec.workload.volumes` mount for workspace data that must persist across Jobs.
 
 ## Verify The Run Is Using The Spec Text
 

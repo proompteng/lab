@@ -230,6 +230,30 @@ Bayn's guarded disposable ClickHouse CI verifies the production JDBC writer and 
 rows, sub-millisecond boundaries, duplicate revisions, and cursor progression. The actual JDBC rows then pass through Bayn's production reader, including subnormals, finite
 extremes, signed volume zeros, adjacent ULPs, and NULL VWAP. Native tests do not run against production.
 
+## Parallel Consolidated SIP shadow archive
+
+`MarketDataArchiveJob` can retain [Wave 7B](https://github.com/proompteng/lab/pull/16384) Consolidated SIP bars,
+quotes, and trades alongside the existing IEX, delayed SIP, and overnight routes. Leave all six settings unset
+to keep the existing routes only. To opt in, set all six together:
+
+| Setting                                   | Value for the Wave 4H shadow lane                                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ARCHIVE_SIP_SHADOW_UNIVERSE_ID`          | `torghut-core-equity-sip-v1`                                                                                                                  |
+| `ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS`     | The same 73 symbols as the forwarder's `SYMBOLS` and `SYMBOLS_ALLOWLIST`, in sorted, unique uppercase CSV without whitespace or empty entries |
+| `ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOL_HASH` | `89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b` (SHA-256 of that exact CSV)                                                |
+| `ARCHIVE_SIP_SHADOW_BARS_TOPIC`           | `bayn.market-data.sip.bars.1m.v1`                                                                                                             |
+| `ARCHIVE_SIP_SHADOW_QUOTES_TOPIC`         | `bayn.market-data.sip.quotes.v1`                                                                                                              |
+| `ARCHIVE_SIP_SHADOW_TRADES_TOPIC`         | `bayn.market-data.sip.trades.v1`                                                                                                              |
+
+Missing or blank settings, invalid universe configuration, `ARCHIVE_CORE_FEED=sip`, and topics that duplicate
+one another or overlap another archive input fail startup. Records must carry `feed=sip`,
+`delay_class=real_time_consolidated`, and matching `universe_id` and `universe_symbol_hash`; their symbols must
+belong to the configured roster. Rejected records are not archived. Accepted records use the existing ClickHouse
+bar, quote, and trade sinks and retain SIP feed and universe identity alongside their Kafka coordinates.
+
+This change does not enable the shadow lane in live Argo CD manifests or alter Flink operator UIDs or checkpoint
+schemas. It does not change the TA feature source or what Bayn consumes.
+
 ## Webull raw archive
 
 Set `ARCHIVE_WEBULL_TOPIC=dorvud.webull.raw.v1` to enable the independent native Webull source and

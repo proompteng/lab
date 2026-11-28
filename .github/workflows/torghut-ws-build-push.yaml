@@ -57,6 +57,7 @@ jobs:
     with:
       image_name: torghut-ws
       package_attr: torghut-ws-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}

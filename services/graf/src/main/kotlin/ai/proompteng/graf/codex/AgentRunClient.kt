@@ -27,6 +27,9 @@ class AgentRunClient(
   private val json: Json,
   serviceAccountToken: String?,
 ) {
+  private val agentName: String
+    get() = checkNotNull(config.agentName) { "Graf research requires AGENTS_GRAF_AGENT_NAME" }
+
   private val authorizationHeader =
     (config.bearerToken ?: serviceAccountToken)
       ?.takeIf(String::isNotBlank)
@@ -37,7 +40,7 @@ class AgentRunClient(
   suspend fun submitRun(request: SubmitAgentRunRequest): SubmitAgentRunResult {
     val payload =
       AgentRunSubmitPayload(
-        agentRef = AgentRunRef(name = config.agentName),
+        agentRef = AgentRunRef(name = agentName),
         namespace = config.namespace,
         idempotencyKey = request.runName,
         implementation =
@@ -157,7 +160,7 @@ class AgentRunClient(
   }
 
   private suspend fun findAgentRunRecord(runName: String): AgentRunRecordResponse {
-    val query = "/v1/agent-runs?agentName=${urlEncode(config.agentName)}&limit=500"
+    val query = "/v1/agent-runs?agentName=${urlEncode(agentName)}&limit=500"
     val httpRequest = requestBuilder(query).GET().build()
     val response = httpClient.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofString()).await()
     val body = response.body()

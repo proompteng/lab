@@ -86,3 +86,40 @@ Evaluate new sessions under the unchanged policy identity before claiming an exe
 Record committed attempts versus fills, sleeve overlaps, complete/partial/fallback baskets, signed and gross notional through the holding period, and the account's actual margin/reservation/protection state. Preserve contemporaneous IEX arrival, baseline, eligibility, decision and broker order/fill evidence. Freeze evaluation rules before observing a new cohort; do not retune on these sessions and call later slices holdout validation.
 
 The v2 cutover uses migration `0222_intraday_alpha_v2_admission.ts` and settled-v1 migration `0223_intraday_alpha_v1_paper_settlement.ts`. The latter requires flat inventory, terminal execution, complete accounting and fresh reconciliation before restricting v1. Deployment follows immutable CI images, Kargo `bayn` promotion and Argo CD synchronization. An account-bound PAPER activation request must bind the exact v2 source revision, image, policy and risk identity. A replay result does not provide activation authority.
+
+## Wave 1D L1 replay and post-session audit
+
+The [frozen IEX L1 spread run](evidence/2026-11-27-v2-l1-spread-baseline/README.md) adds an optional
+`--quotes <minute_l1.tsv>` scenario. Its `l1` result is separate from the existing `results` array of
+2/5/10 bp scenarios. The TSV must have
+`symbol, minute_utc, quote_count, first_bid, first_ask, last_bid, last_ask, median_spread_bps, p75_spread_bps`
+columns, tab-separated. `diagnostics` describes supported closed legs, including reselected leave-one-symbol-out
+paths and the bounded co-held-mark sensitivity. No diagnostic changes the strict completeness gate.
+
+For multi-year runs, supply the provider calendar spanning the inputs and set `--evaluation-start` and
+`--evaluation-end` to the desired inclusive session dates. Earlier files remain warmup history. For raw
+as-traded bars crossing a verified split, pass `--splits <file.json>` with rows of the form
+`{"symbol":"XYZ","effectiveDate":"YYYY-MM-DD","newShares":10,"oldShares":1}`. Historical baseline prices
+(including checkpoint closes) are restated into the evaluated session's share units only for splits effective
+by that session. Prices, volume, quotes, and executed quantities for that session stay as traded. Supply
+only independently verified splits for the raw bars; do not apply a split twice to already adjusted data.
+
+Run the read-only PostgreSQL audit for the configured v2 PAPER account after the provider's regular close.
+For the November 27 early close (13:00 ET / 10:00 PT), use:
+
+```sh
+# Use the existing BAYN_POSTGRES_URL credential for the approved read-only Bayn target.
+bun services/bayn/tools/audit-intraday-alpha-session.ts \
+  --session 2026-11-27 --account <account-id> --regular-close 13:00
+```
+
+The report uses the New York calendar date, a repeatable-read snapshot, verified v2 decision and entry intent
+identities, and canonical fills, accounting receipts, protection orders, cancel receipts and release proofs.
+It reports per-engine realized gross and net **after direct fill fees** when the attribution and post-close
+reconciliation are complete, and separately labels supported subtotals. The audit shows entry-fill slippage
+against both the intended planner reference and exact signal bar close, Midday filled vs fully filled legs,
+and the final signed entry notional. Session-dated posted equity fees are reported at account level and are
+not prorated to engines: their canonical activities do not identify the owning fill or strategy. Rerun after
+late fee postings; an empty fee set does not prove zero or final fees. Flatness requires both canonical
+inventory and a post-close exact reconciliation with a fresh, bound broker position snapshot, no working
+orders and no currently nonterminal intents created before the end of the selected date. The report is operational evidence, not a capital, deployment, or profitability gate.

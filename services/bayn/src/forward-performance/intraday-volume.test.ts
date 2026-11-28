@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
+import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { canonicalHashV1Result } from '../hash'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
@@ -93,6 +94,31 @@ test('reads a complete native session with exact microshares and an explicit IEX
     priceMicros: '218690000',
     sourceEvidenceHash: evidence.contentHash,
   })
+})
+
+test('accepts a regular execution window backed by an extended IEX data calendar', () => {
+  const { request } = makeStreamingPerformanceFixture()
+  const date = request.executionSessionDate
+  const calendar = Result.getOrThrow(
+    normalizeMarketCalendarResult(
+      [{ date, open: '09:30', close: '16:00', session_open: '0800', session_close: '1700' }],
+      { start: date, end: date },
+    ),
+  )
+  const { contentHash: _hash, snapshotId: _id, ...original } = request.decisionManifest
+  const material = { ...original, calendar }
+  const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const decisionManifest = { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) }
+  const regular = { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId }
+  expect(Result.isSuccess(intradayPerformanceDecisionRequest(regular))).toBe(true)
+  expect(
+    Result.isFailure(
+      intradayPerformanceDecisionRequest({
+        ...regular,
+        windowOpenedAt: `${date}T12:00:00.000Z`,
+      }),
+    ),
+  ).toBe(true)
 })
 
 test('binds a streaming partial fill to a verified session close without changing the decision manifest', () => {

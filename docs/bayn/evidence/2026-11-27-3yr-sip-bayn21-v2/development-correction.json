@@ -1,0 +1,1858 @@
+{
+  "schemaVersion": "bayn.research.wave-2b.v1.development-correction",
+  "correction": "Take the next ranked eligible leg per side, not the first legs returned in symbol order.",
+  "sourceCommit": "2ccdeb4ff",
+  "sourceHash": "7615122d6bca1063039edf69e8a0a270ebd894e951a55ae2b51e425e54ebffd4",
+  "originalFreezeSha256": "bc1952ef51521f2c71ca609fdf7e43a22ec89e1b956b3a42b0608d91d3187ee7",
+  "inputHash": "1a6f21cc552e9099d7070db259f0c5dfc99f48938e224a05d75dbaff43b0f6b1",
+  "rawCorrectedDevelopmentSha256": "d7b2b272edbf696b9925cf2f207a1887b8d4bc1d6ddaa4e3cd8acc6a2abe719e",
+  "developmentSessions": 563,
+  "designCount": 116,
+  "designsChanged": 16,
+  "designsUnchanged": 100,
+  "originalNominee": "MIDDAY+NOISE-fixed-2pair-eod",
+  "correctedNominee": "MIDDAY+NOISE-fixed-2pair-eod",
+  "developmentPassed": false,
+  "affectedDesigns": {
+    "ORB+MIDDAY+NOISE-fixed-3pair-live": {
+      "rank": 77,
+      "design": {
+        "id": "ORB+MIDDAY+NOISE-fixed-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "fixed",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 17106.71195052199,
+            "sharpe": 1.157245231122971,
+            "exTop5NetUsd": 4583.7706278891765,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 243.58891612113325,
+            "sharpe": 0.028712761269875122,
+            "exTop5NetUsd": -8263.01301548356,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 3112.246234031367,
+            "sharpe": 0.21053481435326,
+            "exTop5NetUsd": -9215.793595363764,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6827.831871004855,
+            "sharpe": -0.8048428206737542,
+            "exTop5NetUsd": -15120.713327162179,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -19480.85153385391,
+            "sharpe": -1.3186417735613527,
+            "exTop5NetUsd": -31484.508455186497,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -18702.255114024934,
+            "sharpe": -2.2044956808178213,
+            "exTop5NetUsd": -26638.93577777025,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 21513.81950315593,
+            "sharpe": 1.461688328539707,
+            "exTop5NetUsd": 8098.638596917235,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 3705.808879985627,
+            "sharpe": 0.47107222568033685,
+            "exTop5NetUsd": -4692.647496264841,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 5675.238291305928,
+            "sharpe": 0.38652314258779913,
+            "exTop5NetUsd": -7808.042955242626,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -4781.274163265937,
+            "sharpe": -0.6302747523295451,
+            "exTop5NetUsd": -11566.241366622566,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -13846.79701827429,
+            "sharpe": -0.9212335935390958,
+            "exTop5NetUsd": -27731.10490948059,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -13870.038575466944,
+            "sharpe": -1.838676645714822,
+            "exTop5NetUsd": -20614.85556312312,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.6302747523295451,
+      "validationExTop5": -11566.241366622566
+    },
+    "MIDDAY+NOISE-fixed-3pair-live": {
+      "rank": 78,
+      "design": {
+        "id": "MIDDAY+NOISE-fixed-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "fixed",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 16070.44506362509,
+            "sharpe": 1.233526604858839,
+            "exTop5NetUsd": 3785.0859625900775,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 63.40355393115328,
+            "sharpe": 0.009169973522232332,
+            "exTop5NetUsd": -6960.661393048372,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 5547.074665146415,
+            "sharpe": 0.425662726105551,
+            "exTop5NetUsd": -6598.326907040677,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -5303.225509176716,
+            "sharpe": -0.7668142136233884,
+            "exTop5NetUsd": -12161.996159254457,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -12051.157158481856,
+            "sharpe": -0.9242830195486649,
+            "exTop5NetUsd": -23963.749096589127,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -14336.329212168208,
+            "sharpe": -2.0728505286554264,
+            "exTop5NetUsd": -20939.764575716115,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 17155.941816588325,
+            "sharpe": 1.2906711825562656,
+            "exTop5NetUsd": 4082.256443304158,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 2679.311174694382,
+            "sharpe": 0.4000277181383758,
+            "exTop5NetUsd": -4665.001024406496,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 6769.126749468712,
+            "sharpe": 0.5074140422088582,
+            "exTop5NetUsd": -6168.2681792950525,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -4103.826187438906,
+            "sharpe": -0.6442565612660174,
+            "exTop5NetUsd": -9986.475328841992,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -7687.471198671412,
+            "sharpe": -0.5555258320721168,
+            "exTop5NetUsd": -21119.659774581713,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -11163.436917186531,
+            "sharpe": -1.7683836510348145,
+            "exTop5NetUsd": -16981.334233878715,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.6442565612660174,
+      "validationExTop5": -9986.475328841992
+    },
+    "ORB+MIDDAY+NOISE-both-3pair-live": {
+      "rank": 80,
+      "design": {
+        "id": "ORB+MIDDAY+NOISE-both-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "both",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 18276.088010987747,
+            "sharpe": 1.5879937914770916,
+            "exTop5NetUsd": 9000.234220045357,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -893.5665134975375,
+            "sharpe": -0.10472418270308669,
+            "exTop5NetUsd": -9730.308504184586,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 7136.936445002928,
+            "sharpe": 0.6211926144129779,
+            "exTop5NetUsd": -1979.2675163988908,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7691.793891659173,
+            "sharpe": -0.901176096360156,
+            "exTop5NetUsd": -16296.614109290193,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -10784.096623574505,
+            "sharpe": -0.9410814861563767,
+            "exTop5NetUsd": -19634.435599742472,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -19115.20752115982,
+            "sharpe": -2.2374430099996108,
+            "exTop5NetUsd": -27333.49145036449,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 21983.381232033393,
+            "sharpe": 1.9343908594078159,
+            "exTop5NetUsd": 12062.116677188062,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 2582.3687996366853,
+            "sharpe": 0.3236726610995992,
+            "exTop5NetUsd": -6335.236540067685,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 9288.018682001908,
+            "sharpe": 0.8227927914070566,
+            "exTop5NetUsd": -728.9155763097626,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -4955.072334787818,
+            "sharpe": -0.6484120822928723,
+            "exTop5NetUsd": -12413.127073867136,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -7090.87828294819,
+            "sharpe": -0.6328674144802539,
+            "exTop5NetUsd": -17169.547605813583,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -13161.19965023234,
+            "sharpe": -1.725467420925981,
+            "exTop5NetUsd": -20588.659873623823,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.6484120822928723,
+      "validationExTop5": -12413.127073867136
+    },
+    "MIDDAY-fixed-3pair-live": {
+      "rank": 86,
+      "design": {
+        "id": "MIDDAY-fixed-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION"],
+          "sizing": "fixed",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 6055.502425902942,
+            "sharpe": 0.7328917979389141,
+            "exTop5NetUsd": 408.93239561727,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -2357.0998053478834,
+            "sharpe": -0.38057959451696965,
+            "exTop5NetUsd": -9005.922972961163,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": -1657.682511769936,
+            "sharpe": -0.20059252364030375,
+            "exTop5NetUsd": -7202.498196862116,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6336.369266121194,
+            "sharpe": -1.0230415890632292,
+            "exTop5NetUsd": -12880.178067329001,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -14572.271900724718,
+            "sharpe": -1.7635457439714224,
+            "exTop5NetUsd": -19947.497010494615,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -13057.206965223288,
+            "sharpe": -2.1088462049822816,
+            "exTop5NetUsd": -19425.991822422067,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 7300.436963695874,
+            "sharpe": 0.8684159956798453,
+            "exTop5NetUsd": 773.0184221903346,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 656.1250580793911,
+            "sharpe": 0.1117588845858499,
+            "exTop5NetUsd": -5182.813438240142,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": -544.8493743471654,
+            "sharpe": -0.0645478179542077,
+            "exTop5NetUsd": -6980.448759947534,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -3989.525809978665,
+            "sharpe": -0.7020172423450861,
+            "exTop5NetUsd": -9565.541394712236,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -9971.33109674795,
+            "sharpe": -1.1595640884081249,
+            "exTop5NetUsd": -16960.548710886345,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -9133.470303577731,
+            "sharpe": -1.6385139767657197,
+            "exTop5NetUsd": -14531.682393041357,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.7020172423450861,
+      "validationExTop5": -9565.541394712236
+    },
+    "MIDDAY-both-3pair-live": {
+      "rank": 91,
+      "design": {
+        "id": "MIDDAY-both-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION"],
+          "sizing": "both",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 5391.196339938791,
+            "sharpe": 0.8950810710572357,
+            "exTop5NetUsd": 941.7168086396241,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -3217.7928454576872,
+            "sharpe": -0.5562179298609226,
+            "exTop5NetUsd": -10282.033532171714,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 297.75782380276416,
+            "sharpe": 0.04946172667094062,
+            "exTop5NetUsd": -4058.932043622954,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6686.062524744002,
+            "sharpe": -1.1538695432885189,
+            "exTop5NetUsd": -13619.795842317108,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -8214.436141590319,
+            "sharpe": -1.3643716826279373,
+            "exTop5NetUsd": -12416.476569227149,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -12559.54665612253,
+            "sharpe": -2.161336181192946,
+            "exTop5NetUsd": -19275.767691794237,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 6151.3997921347145,
+            "sharpe": 1.015468534210663,
+            "exTop5NetUsd": 1196.8560472737715,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -709.6094372475395,
+            "sharpe": -0.13063291636222057,
+            "exTop5NetUsd": -6997.7183286761665,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 1178.2687218060494,
+            "sharpe": 0.19464279472158805,
+            "exTop5NetUsd": -3697.100615283967,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -3816.7436011959453,
+            "sharpe": -0.7349529996758817,
+            "exTop5NetUsd": -9987.30640248184,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -5407.783884064428,
+            "sharpe": -0.889749395268126,
+            "exTop5NetUsd": -10496.229146811524,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7795.64889737382,
+            "sharpe": -1.5281327087958343,
+            "exTop5NetUsd": -13770.301548421898,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.7349529996758817,
+      "validationExTop5": -9987.30640248184
+    },
+    "MIDDAY+NOISE-both-3pair-live": {
+      "rank": 94,
+      "design": {
+        "id": "MIDDAY+NOISE-both-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "both",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 16228.6691821095,
+            "sharpe": 1.7835424811069818,
+            "exTop5NetUsd": 7866.001487967778,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -923.809935638174,
+            "sharpe": -0.13800882238512016,
+            "exTop5NetUsd": -8106.102276919858,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 8338.18119322145,
+            "sharpe": 0.9175139772543586,
+            "exTop5NetUsd": 90.68665128788348,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -5931.584134803443,
+            "sharpe": -0.885104241471184,
+            "exTop5NetUsd": -12942.771009427219,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -4835.761893422205,
+            "sharpe": -0.5325144699882179,
+            "exTop5NetUsd": -12891.519245675572,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -14370.909132645169,
+            "sharpe": -2.140152297929145,
+            "exTop5NetUsd": -21096.92022950592,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 16567.473910867808,
+            "sharpe": 1.8136258257208413,
+            "exTop5NetUsd": 7709.1314082238405,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 1131.3604856653715,
+            "sharpe": 0.1734552906875202,
+            "exTop5NetUsd": -6405.055304282376,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 9169.736953739426,
+            "sharpe": 0.9982992253600509,
+            "exTop5NetUsd": 424.7943478593477,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -4632.4772493639575,
+            "sharpe": -0.7567549403155447,
+            "exTop5NetUsd": -10744.483841827183,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -2474.521842186256,
+            "sharpe": -0.26713119759622317,
+            "exTop5NetUsd": -11322.70461818211,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -10693.354685227037,
+            "sharpe": -1.7565479087826223,
+            "exTop5NetUsd": -16709.117919144603,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.7567549403155447,
+      "validationExTop5": -10744.483841827183
+    },
+    "ORB+MIDDAY+NOISE-dispersion-3pair-live": {
+      "rank": 98,
+      "design": {
+        "id": "ORB+MIDDAY+NOISE-dispersion-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "dispersion",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 13891.188732098779,
+            "sharpe": 1.0108644696004234,
+            "exTop5NetUsd": 1687.4925120295684,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -1658.0054420315184,
+            "sharpe": -0.22036820206691943,
+            "exTop5NetUsd": -9557.962103985868,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 2978.61452458691,
+            "sharpe": 0.21691569144147324,
+            "exTop5NetUsd": -9064.433367584206,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7641.307597157112,
+            "sharpe": -1.0151865580949357,
+            "exTop5NetUsd": -15343.7829928014,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -14448.905036867816,
+            "sharpe": -1.05409597095263,
+            "exTop5NetUsd": -26224.641997875435,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -17689.318858608818,
+            "sharpe": -2.347642888264769,
+            "exTop5NetUsd": -25062.65881040328,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 18146.40242605221,
+            "sharpe": 1.3262576659698873,
+            "exTop5NetUsd": 5368.162042848023,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 1123.9937597198677,
+            "sharpe": 0.1588616227699571,
+            "exTop5NetUsd": -6638.740225612099,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 5441.4292916046925,
+            "sharpe": 0.39944350421550295,
+            "exTop5NetUsd": -7278.717308647367,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -5800.7158241845755,
+            "sharpe": -0.84954101684301,
+            "exTop5NetUsd": -12218.482374632917,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -10073.437925873703,
+            "sharpe": -0.7183116217701518,
+            "exTop5NetUsd": -23208.995393472607,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -13315.873605841287,
+            "sharpe": -1.958967629552959,
+            "exTop5NetUsd": -19671.616717064026,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.84954101684301,
+      "validationExTop5": -12218.482374632917
+    },
+    "MIDDAY+NOISE-dispersion-3pair-live": {
+      "rank": 100,
+      "design": {
+        "id": "MIDDAY+NOISE-dispersion-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "dispersion",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 12854.921845201901,
+            "sharpe": 1.0890008195448506,
+            "exTop5NetUsd": 1454.4535913159407,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -1838.190804221501,
+            "sharpe": -0.30815156907729274,
+            "exTop5NetUsd": -8166.735290982492,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 5413.442955701951,
+            "sharpe": 0.4585518079052109,
+            "exTop5NetUsd": -5863.023903074078,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6116.701235328971,
+            "sharpe": -1.0238428478369275,
+            "exTop5NetUsd": -12307.605998614545,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -7019.210661495772,
+            "sharpe": -0.594222973222814,
+            "exTop5NetUsd": -18089.44481042204,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -13323.392956752117,
+            "sharpe": -2.2243114747804653,
+            "exTop5NetUsd": -19284.898180912172,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 13788.524739484601,
+            "sharpe": 1.1401878901683355,
+            "exTop5NetUsd": 1697.2301013634742,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": 97.49605442862025,
+            "sharpe": 0.016719387394573473,
+            "exTop5NetUsd": -6144.95532553792,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 6535.317749767476,
+            "sharpe": 0.539341847952188,
+            "exTop5NetUsd": -5435.54088853563,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -5123.267848357543,
+            "sharpe": -0.9264015614848613,
+            "exTop5NetUsd": -10177.917117230654,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -3914.1121062708276,
+            "sharpe": -0.3079686514518844,
+            "exTop5NetUsd": -16334.631427422952,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -10609.271947560868,
+            "sharpe": -1.9330554728337987,
+            "exTop5NetUsd": -15579.540456924782,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.9264015614848613,
+      "validationExTop5": -10177.917117230654
+    },
+    "ORB+MIDDAY-both-3pair-live": {
+      "rank": 102,
+      "design": {
+        "id": "ORB+MIDDAY-both-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
+          "sizing": "both",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 8158.053885634427,
+            "sharpe": 0.8747255494886026,
+            "exTop5NetUsd": 1642.432468770568,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -2077.876570352194,
+            "sharpe": -0.28574122464529284,
+            "exTop5NetUsd": -9833.906734923443,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": -160.4564083884097,
+            "sharpe": -0.017199213846415106,
+            "exTop5NetUsd": -6537.482825845494,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7366.697291215435,
+            "sharpe": -1.0127695130849779,
+            "exTop5NetUsd": -14961.761958371271,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -13380.420690365507,
+            "sharpe": -1.4348360641226272,
+            "exTop5NetUsd": -19526.45544214487,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -16274.43315855376,
+            "sharpe": -2.2349531364849873,
+            "exTop5NetUsd": -23601.221996684028,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 11864.194528605063,
+            "sharpe": 1.2965527439536177,
+            "exTop5NetUsd": 4942.259374981757,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -1424.75418960378,
+            "sharpe": -0.21493096565244804,
+            "exTop5NetUsd": -8003.640204083073,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 2344.176607189712,
+            "sharpe": 0.2598083055121705,
+            "exTop5NetUsd": -4404.979007381928,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6302.107443292787,
+            "sharpe": -0.9761848174927208,
+            "exTop5NetUsd": -12708.8336071848,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -7561.370094605258,
+            "sharpe": -0.85030364197738,
+            "exTop5NetUsd": -14089.299186485527,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -12933.78356250855,
+            "sharpe": -2.0204316428902827,
+            "exTop5NetUsd": -19053.576642088596,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -0.9761848174927208,
+      "validationExTop5": -12708.8336071848
+    },
+    "ORB+MIDDAY-fixed-3pair-live": {
+      "rank": 105,
+      "design": {
+        "id": "ORB+MIDDAY-fixed-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
+          "sizing": "fixed",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 7987.519361085205,
+            "sharpe": 0.7365636774161195,
+            "exTop5NetUsd": 1066.7929980565405,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -1615.0817574231792,
+            "sharpe": -0.21414301475234981,
+            "exTop5NetUsd": -9446.933821420655,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": -3171.371281195913,
+            "sharpe": -0.2921835820819669,
+            "exTop5NetUsd": -9945.74657533987,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7329.933042563453,
+            "sharpe": -0.9721135710561755,
+            "exTop5NetUsd": -15013.802868733883,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -21038.51059206825,
+            "sharpe": -1.9392517561730784,
+            "exTop5NetUsd": -27568.967438071402,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -16943.407115608825,
+            "sharpe": -2.247636485412298,
+            "exTop5NetUsd": -24380.63987873427,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 12020.385316834056,
+            "sharpe": 1.1275123111634855,
+            "exTop5NetUsd": 4522.544879382444,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -444.4189806698216,
+            "sharpe": -0.0645166562297444,
+            "exTop5NetUsd": -6411.068151777488,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": -561.8119124274717,
+            "sharpe": -0.05298518184351141,
+            "exTop5NetUsd": -7924.449797255783,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6796.297084976013,
+            "sharpe": -1.005653533344441,
+            "exTop5NetUsd": -12605.575290291405,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -13781.52472243691,
+            "sharpe": -1.2961587832943848,
+            "exTop5NetUsd": -21625.475174606487,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -14486.359312458926,
+            "sharpe": -2.1632595136996384,
+            "exTop5NetUsd": -20033.352574787332,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -1.005653533344441,
+      "validationExTop5": -12605.575290291405
+    },
+    "MIDDAY-dispersion-3pair-live": {
+      "rank": 106,
+      "design": {
+        "id": "MIDDAY-dispersion-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION"],
+          "sizing": "dispersion",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 2839.9792074797474,
+            "sharpe": 0.4803089357235128,
+            "exTop5NetUsd": -1727.9913922544793,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -4258.69416350054,
+            "sharpe": -0.8323016611923242,
+            "exTop5NetUsd": -10071.256674428858,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": -1791.3142212143957,
+            "sharpe": -0.30238723219367725,
+            "exTop5NetUsd": -6278.442199510435,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7149.844992273449,
+            "sharpe": -1.3945245281354477,
+            "exTop5NetUsd": -12862.310698076104,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -9540.32540373864,
+            "sharpe": -1.6050656819387932,
+            "exTop5NetUsd": -13893.15196163786,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -12044.270709807188,
+            "sharpe": -2.340992142718971,
+            "exTop5NetUsd": -17589.908407067178,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 3933.0198865921657,
+            "sharpe": 0.6550317134942164,
+            "exTop5NetUsd": -1556.1654300787018,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -1925.6900621863692,
+            "sharpe": -0.39404065469415195,
+            "exTop5NetUsd": -6941.549560559146,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": -778.6583740484025,
+            "sharpe": -0.12914183714231062,
+            "exTop5NetUsd": -6193.044289245587,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -5008.9674708973025,
+            "sharpe": -1.0631000572687752,
+            "exTop5NetUsd": -9922.171632861646,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -6197.9720043473535,
+            "sharpe": -0.9762279121734831,
+            "exTop5NetUsd": -12168.392654790003,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -8579.30533395207,
+            "sharpe": -1.8541150368238504,
+            "exTop5NetUsd": -13321.417268569145,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -1.0631000572687752,
+      "validationExTop5": -9922.171632861646
+    },
+    "ORB+MIDDAY+NOISE-volatility-3pair-live": {
+      "rank": 107,
+      "design": {
+        "id": "ORB+MIDDAY+NOISE-volatility-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "volatility",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 14475.541007262726,
+            "sharpe": 1.1886364889899188,
+            "exTop5NetUsd": 4611.714178264484,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -933.1933980122647,
+            "sharpe": -0.10640786015126515,
+            "exTop5NetUsd": -11207.166377821759,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 3241.46278534151,
+            "sharpe": 0.266415016525074,
+            "exTop5NetUsd": -6440.298287527392,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6786.517871191964,
+            "sharpe": -0.7734333889987179,
+            "exTop5NetUsd": -16862.593539783287,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -14860.21124035921,
+            "sharpe": -1.2226465982868813,
+            "exTop5NetUsd": -24269.69697308681,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -16648.598953227476,
+            "sharpe": -1.8943471052918643,
+            "exTop5NetUsd": -26394.845769788757,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 16845.965663569572,
+            "sharpe": 1.3990255899933595,
+            "exTop5NetUsd": 6287.177246733789,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -559.5660378013899,
+            "sharpe": -0.07064575235823511,
+            "exTop5NetUsd": -9935.63532738079,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 3935.2695643388765,
+            "sharpe": 0.33141096287268745,
+            "exTop5NetUsd": -6461.860157688943,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -8115.918072131561,
+            "sharpe": -1.0732323104794292,
+            "exTop5NetUsd": -16028.583706358784,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -11947.973584069327,
+            "sharpe": -1.0130619777553338,
+            "exTop5NetUsd": -22428.87708787278,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -15305.098610399558,
+            "sharpe": -2.0457037268337492,
+            "exTop5NetUsd": -22960.532434124492,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -1.0732323104794292,
+      "validationExTop5": -16028.583706358784
+    },
+    "MIDDAY+NOISE-volatility-3pair-live": {
+      "rank": 111,
+      "design": {
+        "id": "MIDDAY+NOISE-volatility-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION", "NOISE_AREA_TREND"],
+          "sizing": "volatility",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 12428.122178384483,
+            "sharpe": 1.2509388122092762,
+            "exTop5NetUsd": 3276.899347652058,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -963.4368201529012,
+            "sharpe": -0.1412157967231468,
+            "exTop5NetUsd": -9176.117486367155,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": 4442.707533560014,
+            "sharpe": 0.4476598880966415,
+            "exTop5NetUsd": -4592.821225374714,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -5026.308114336238,
+            "sharpe": -0.7365935518588738,
+            "exTop5NetUsd": -13057.674606116701,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -8911.87651020692,
+            "sharpe": -0.8980947030693975,
+            "exTop5NetUsd": -17754.808196145597,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -11904.300564712832,
+            "sharpe": -1.7431226973270217,
+            "exTop5NetUsd": -19633.476765770487,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 11430.058342403987,
+            "sharpe": 1.1390199015306814,
+            "exTop5NetUsd": 1748.0703456438378,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -2010.5743517726955,
+            "sharpe": -0.31411639641656225,
+            "exTop5NetUsd": -9472.317575978606,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": 3816.9878360764114,
+            "sharpe": 0.38163264589101104,
+            "exTop5NetUsd": -5742.443790564999,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7793.3229867077025,
+            "sharpe": -1.3103912645544922,
+            "exTop5NetUsd": -13260.948980687817,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -7331.61714330739,
+            "sharpe": -0.7320880573110194,
+            "exTop5NetUsd": -17052.469753949274,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -12837.253645394252,
+            "sharpe": -2.195416462617735,
+            "exTop5NetUsd": -18080.686987813053,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -1.3103912645544922,
+      "validationExTop5": -13260.948980687817
+    },
+    "ORB+MIDDAY-dispersion-3pair-live": {
+      "rank": 112,
+      "design": {
+        "id": "ORB+MIDDAY-dispersion-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
+          "sizing": "dispersion",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 4771.996142662002,
+            "sharpe": 0.5214988216962535,
+            "exTop5NetUsd": -910.7039601248987,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -3516.6761155758295,
+            "sharpe": -0.5430068257424967,
+            "exTop5NetUsd": -10096.493049014596,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": -3305.0029906403724,
+            "sharpe": -0.36096286174092373,
+            "exTop5NetUsd": -8874.091078195168,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -8143.408768715708,
+            "sharpe": -1.256678870827814,
+            "exTop5NetUsd": -14585.732491504885,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -16006.564095082185,
+            "sharpe": -1.7507350126822583,
+            "exTop5NetUsd": -21386.298823916717,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -15930.470860192729,
+            "sharpe": -2.4547110263076606,
+            "exTop5NetUsd": -22143.639231899368,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 8652.968239730331,
+            "sharpe": 0.9742009594259223,
+            "exTop5NetUsd": 2289.548190628938,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -3026.234100935582,
+            "sharpe": -0.5053226536975851,
+            "exTop5NetUsd": -8513.403605769665,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": -795.6209121287067,
+            "sharpe": -0.09043977495131798,
+            "exTop5NetUsd": -7053.776077319997,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -7815.738745894651,
+            "sharpe": -1.3304698172130471,
+            "exTop5NetUsd": -13166.19918911681,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -10008.165630036323,
+            "sharpe": -1.1285237871042908,
+            "exTop5NetUsd": -16771.579726412703,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -13932.194342833258,
+            "sharpe": -2.391335013689858,
+            "exTop5NetUsd": -19054.80635003569,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -1.3304698172130471,
+      "validationExTop5": -13166.19918911681
+    },
+    "MIDDAY-volatility-3pair-live": {
+      "rank": 114,
+      "design": {
+        "id": "MIDDAY-volatility-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MIDDAY_REVERSION"],
+          "sizing": "volatility",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 1732.0722485628507,
+            "sharpe": 0.24247393544526283,
+            "exTop5NetUsd": -3722.3308608394327,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -3257.419729972419,
+            "sharpe": -0.5616216712347165,
+            "exTop5NetUsd": -10329.00812523234,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": -3456.239443598427,
+            "sharpe": -0.483663685287707,
+            "exTop5NetUsd": -8805.3682324932,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -5780.786504276797,
+            "sharpe": -0.9953336979842969,
+            "exTop5NetUsd": -12730.40282196327,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -12148.985232929579,
+            "sharpe": -1.6950411445214142,
+            "exTop5NetUsd": -17322.656820978587,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -10092.938088190198,
+            "sharpe": -1.7326681829866626,
+            "exTop5NetUsd": -16839.267609921048,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 1145.443341764057,
+            "sharpe": 0.1603529531925912,
+            "exTop5NetUsd": -4462.365482591408,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -3851.5442746856143,
+            "sharpe": -0.7279083629788136,
+            "exTop5NetUsd": -9293.804882217031,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": -4174.480395856972,
+            "sharpe": -0.5836792456494855,
+            "exTop5NetUsd": -9677.038554293176,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6977.5893385396985,
+            "sharpe": -1.383963192474568,
+            "exTop5NetUsd": -12075.870542180364,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -10264.87918518556,
+            "sharpe": -1.4430335227038888,
+            "exTop5NetUsd": -15870.913428722613,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -9939.547857541032,
+            "sharpe": -2.0218844071537103,
+            "exTop5NetUsd": -14853.627845576957,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -1.383963192474568,
+      "validationExTop5": -12075.870542180364
+    },
+    "ORB+MIDDAY-volatility-3pair-live": {
+      "rank": 115,
+      "design": {
+        "id": "ORB+MIDDAY-volatility-3pair-live",
+        "collar": 25,
+        "stopBuffer": 50,
+        "architecture": {
+          "sleeves": ["MORNING_ORB", "MIDDAY_REVERSION"],
+          "sizing": "volatility",
+          "pairs": 3,
+          "bracket": "live"
+        }
+      },
+      "byCase": {
+        "t+1/2bp": {
+          "train": {
+            "netUsd": 4498.929794258506,
+            "sharpe": 0.4477148193819749,
+            "exTop5NetUsd": -2528.4164372511714,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -2117.5034548669246,
+            "sharpe": -0.28239514669632493,
+            "exTop5NetUsd": -11236.062565607132,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/5bp": {
+          "train": {
+            "netUsd": -3914.4536757896017,
+            "sharpe": -0.38951602962757736,
+            "exTop5NetUsd": -10777.627372398481,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -6461.421270748229,
+            "sharpe": -0.8608036840948435,
+            "exTop5NetUsd": -15431.141130720323,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+1/10bp": {
+          "train": {
+            "netUsd": -17314.96978170475,
+            "sharpe": -1.7229469578326662,
+            "exTop5NetUsd": -23904.522586812636,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -13807.824590621423,
+            "sharpe": -1.834381472217794,
+            "exTop5NetUsd": -22529.47903264685,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/2bp": {
+          "train": {
+            "netUsd": 6858.238078234385,
+            "sharpe": 0.6974957106170487,
+            "exTop5NetUsd": -387.6602429945344,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -4566.68902704185,
+            "sharpe": -0.7003521669675955,
+            "exTop5NetUsd": -10674.631204948071,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/5bp": {
+          "train": {
+            "netUsd": -3008.5725104733065,
+            "sharpe": -0.31046373186965864,
+            "exTop5NetUsd": -9877.115035817664,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -9462.953180636534,
+            "sharpe": -1.4869416869574923,
+            "exTop5NetUsd": -15428.39333659495,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        },
+        "t+2/10bp": {
+          "train": {
+            "netUsd": -12418.465395726384,
+            "sharpe": -1.2967896731345554,
+            "exTop5NetUsd": -19068.59921370855,
+            "sessions": 374,
+            "unresolvedExits": 0
+          },
+          "validation": {
+            "netUsd": -15077.682522675765,
+            "sharpe": -2.4001916158445367,
+            "exTop5NetUsd": -20894.229645941898,
+            "sessions": 189,
+            "unresolvedExits": 0
+          }
+        }
+      },
+      "pass": false,
+      "worstPrimarySharpe": -1.4869416869574923,
+      "validationExTop5": -15428.39333659495
+    }
+  }
+}

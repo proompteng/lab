@@ -1,3 +1,4 @@
+import auditReaderGrants from '../../migrations/0226_audit_reader_grants'
 import alphaBaselinePreparation from '../../migrations/0225_alpha_baseline_preparation'
 import strategyBoundQualification from '../../migrations/0224_strategy_bound_qualification'
 import intradayAlphaV1PaperSettlement from '../../migrations/0223_intraday_alpha_v1_paper_settlement'
@@ -227,6 +228,7 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '224_strategy_bound_qualification': strategyBoundQualification,
+  '226_audit_reader_grants': auditReaderGrants,
   '225_alpha_baseline_preparation': alphaBaselinePreparation,
   '223_intraday_alpha_v1_paper_settlement': intradayAlphaV1PaperSettlement,
   '222_intraday_alpha_v2_admission': intradayAlphaV2Admission,
