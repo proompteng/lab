@@ -1,14 +1,16 @@
 import { chmod, copyFile, mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveHostTarget, resolveTargets } from './targets'
+import { resolveHostTarget, resolveTargets, type TargetInfo } from './targets'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '..')
 const entry = resolve(root, 'src/index.ts')
 const distDir = resolve(root, 'dist')
 
-const signBinary = async (codesign: string, path: string) => {
+export const resolveCodesign = () => (process.platform === 'darwin' ? Bun.which('codesign') : null)
+
+export const signBinary = async (codesign: string, path: string) => {
   const proc = Bun.spawn([codesign, '-s', '-', '--force', path], {
     stderr: 'inherit',
     stdout: 'inherit',
@@ -19,10 +21,49 @@ const signBinary = async (codesign: string, path: string) => {
   }
 }
 
+export const compileBinary = async (
+  target: TargetInfo,
+  output: string,
+  codesign: string | null = resolveCodesign(),
+) => {
+  const proc = Bun.spawn(
+    [
+      'bun',
+      'build',
+      entry,
+      '--compile',
+      '--compile-autoload-package-json',
+      '--format=esm',
+      // Protobuf's dynamic require needs a binding to use Buffer in the ESM bundle.
+      '--banner',
+      'const require = import.meta.require;',
+      '--target',
+      target.bunTarget,
+      '--outfile',
+      output,
+    ],
+    {
+      cwd: root,
+      stderr: 'inherit',
+      stdout: 'inherit',
+    },
+  )
+
+  const exitCode = await proc.exited
+  if (exitCode !== 0) {
+    throw new Error(`bun build failed for ${target.bunTarget} with exit code ${exitCode}`)
+  }
+
+  await chmod(output, 0o755)
+  const signer = target.platform === 'darwin' ? codesign : null
+  if (signer) await signBinary(signer, output)
+  return signer
+}
+
 export const buildBinaries = async (argv: string[]) => {
   const targets = resolveTargets(argv, process.env.AGENTCTL_TARGETS)
   const hostLabel = resolveHostTarget().label
-  const codesign = process.platform === 'darwin' ? Bun.which('codesign') : null
+  const codesign = resolveCodesign()
 
   await mkdir(distDir, { recursive: true })
 
@@ -30,37 +71,7 @@ export const buildBinaries = async (argv: string[]) => {
     const output = resolve(distDir, `agentctl-${target.label}`)
     console.log(`Building ${target.bunTarget} → ${output}`)
 
-    const proc = Bun.spawn(
-      [
-        'bun',
-        'build',
-        entry,
-        '--compile',
-        '--compile-autoload-package-json',
-        '--format=esm',
-        // Protobuf's dynamic require needs a binding to use Buffer in the ESM bundle.
-        '--banner',
-        'const require = import.meta.require;',
-        '--target',
-        target.bunTarget,
-        '--outfile',
-        output,
-      ],
-      {
-        cwd: root,
-        stderr: 'inherit',
-        stdout: 'inherit',
-      },
-    )
-
-    const exitCode = await proc.exited
-    if (exitCode !== 0) {
-      throw new Error(`bun build failed for ${target.bunTarget} with exit code ${exitCode}`)
-    }
-
-    await chmod(output, 0o755)
-    const signer = target.platform === 'darwin' ? codesign : null
-    if (signer) await signBinary(signer, output)
+    const signer = await compileBinary(target, output, codesign)
 
     if (target.label === hostLabel) {
       const hostBinary = resolve(distDir, 'agentctl')

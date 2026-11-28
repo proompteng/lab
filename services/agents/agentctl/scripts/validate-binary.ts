@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import * as grpc from '@grpc/grpc-js'
@@ -6,11 +8,14 @@ import { fromJSON } from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
 
 import { EMBEDDED_AGENTCTL_PROTO } from '../src/embedded-proto'
+import { resolveHostTarget } from './targets'
 
 const DEFAULT_TIMEOUT_MS = 10_000
 
 type Options = {
+  archivePath?: string
   binaryPath?: string
+  release?: boolean
   server?: string
   timeoutMs: number
   useMock: boolean
@@ -23,6 +28,8 @@ Options:
   --server <addr>   gRPC server address (defaults to AGENTCTL_VALIDATE_SERVER or a mock server)
   --mock            start a local mock gRPC server instead of using --server
   --binary <path>   agentctl binary path (default: dist/agentctl or AGENTCTL_BINARY)
+  --archive <path>  agentctl release .tar.gz archive to extract and validate
+  --release         validate the host release archive under dist/release
   --timeout <ms>    timeout in milliseconds (default: ${DEFAULT_TIMEOUT_MS})
 `)
 }
@@ -43,6 +50,14 @@ const parseArgs = (argv: string[]): Options => {
     }
     if (arg === '--binary') {
       options.binaryPath = argv[++i]
+      continue
+    }
+    if (arg === '--archive') {
+      options.archivePath = argv[++i]
+      continue
+    }
+    if (arg === '--release') {
+      options.release = true
       continue
     }
     if (arg === '--timeout') {
@@ -68,6 +83,36 @@ const resolveBinary = (override?: string) => {
   const env = process.env.AGENTCTL_BINARY?.trim()
   if (env) return env
   return resolve(process.cwd(), 'dist', 'agentctl')
+}
+
+const resolveHostReleaseArchive = async (releaseDir: string) => {
+  const hostLabel = resolveHostTarget().label
+  const suffix = `-${hostLabel}.tar.gz`
+  const entries = (await readdir(releaseDir)).filter((name) => name.startsWith('agentctl-') && name.endsWith(suffix))
+  if (entries.length !== 1) {
+    throw new Error(`Expected 1 host release archive matching *${suffix} in ${releaseDir}, found ${entries.length}`)
+  }
+  return resolve(releaseDir, entries[0]!)
+}
+
+const extractArchiveBinary = async (archivePath: string) => {
+  if (!existsSync(archivePath)) {
+    throw new Error(`agentctl release archive not found at ${archivePath}`)
+  }
+  const tempDir = await mkdtemp(resolve(tmpdir(), 'agentctl-validate-archive-'))
+  const tarProc = Bun.spawn(['tar', '-xzf', archivePath, '-C', tempDir], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stderr, exitCode] = await Promise.all([new Response(tarProc.stderr).text(), tarProc.exited])
+  if (exitCode !== 0) {
+    await rm(tempDir, { recursive: true, force: true })
+    throw new Error(`Failed to extract ${archivePath} (exit ${exitCode}): ${stderr.trim()}`)
+  }
+  return {
+    binaryPath: resolve(tempDir, 'agentctl'),
+    cleanup: () => rm(tempDir, { recursive: true, force: true }),
+  }
 }
 
 type AgentctlServiceDefinition = grpc.ServiceClientConstructor & { service?: grpc.ServiceDefinition }
@@ -157,36 +202,50 @@ const main = async () => {
   if (options.useMock && options.server) {
     throw new Error('--mock cannot be combined with --server')
   }
-
-  const binaryPath = resolveBinary(options.binaryPath)
-  if (!existsSync(binaryPath)) {
-    throw new Error(`agentctl binary not found at ${binaryPath}; run bun run build:bin first`)
+  const sourceCount =
+    Number(Boolean(options.binaryPath)) + Number(Boolean(options.archivePath)) + Number(Boolean(options.release))
+  if (sourceCount > 1) {
+    throw new Error('--binary, --archive, and --release are mutually exclusive')
   }
 
-  const { stdout: clientVersion } = await runVersionCheck(binaryPath, ['--version'], options.timeoutMs)
-  if (!/^agentctl v\S+/.test(clientVersion.trim())) {
-    throw new Error('agentctl --version output missing client version')
-  }
+  const archivePath = options.release
+    ? await resolveHostReleaseArchive(resolve(process.cwd(), 'dist', 'release'))
+    : options.archivePath
+  const extracted = archivePath ? await extractArchiveBinary(archivePath) : null
 
-  const useMock = options.useMock || (!options.server && !envServer)
-  const mockServer = useMock ? await startMockServer() : null
   try {
-    const server = mockServer?.address ?? options.server ?? envServer
-    if (!server) {
-      throw new Error('No gRPC server address resolved')
+    const binaryPath = extracted?.binaryPath ?? resolveBinary(options.binaryPath)
+    if (!existsSync(binaryPath)) {
+      throw new Error(`agentctl binary not found at ${binaryPath}; run bun run build:bin first`)
     }
 
-    const { stdout, stderr } = await runVersionCheck(
-      binaryPath,
-      ['version', '--grpc', '--server', server],
-      options.timeoutMs,
-    )
-    const output = `${stdout}${stderr}`.trim()
-    if (!output.toLowerCase().includes('agentctl') || !output.toLowerCase().includes('server')) {
-      throw new Error(`agentctl version output missing server info:\n${output}`)
+    const { stdout: clientVersion } = await runVersionCheck(binaryPath, ['--version'], options.timeoutMs)
+    if (!/^agentctl v\S+/.test(clientVersion.trim())) {
+      throw new Error('agentctl --version output missing client version')
+    }
+
+    const useMock = options.useMock || (!options.server && !envServer)
+    const mockServer = useMock ? await startMockServer() : null
+    try {
+      const server = mockServer?.address ?? options.server ?? envServer
+      if (!server) {
+        throw new Error('No gRPC server address resolved')
+      }
+
+      const { stdout, stderr } = await runVersionCheck(
+        binaryPath,
+        ['version', '--grpc', '--server', server],
+        options.timeoutMs,
+      )
+      const output = `${stdout}${stderr}`.trim()
+      if (!output.toLowerCase().includes('agentctl') || !output.toLowerCase().includes('server')) {
+        throw new Error(`agentctl version output missing server info:\n${output}`)
+      }
+    } finally {
+      await mockServer?.close()
     }
   } finally {
-    await mockServer?.close()
+    await extracted?.cleanup()
   }
 
   console.log('agentctl compiled binary validated')
