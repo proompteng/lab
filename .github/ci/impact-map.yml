@@ -216,10 +216,22 @@ targets:
   agents:
     kind: delegated
     workflow: agents-ci
+    paths:
+      - .github/workflows/agents-ci.yml
+      - docs/agents/**
+      - nix/images/**
+      - packages/scripts/src/agents/**
+      - services/agents/**
+      - charts/agents/**
+      - argocd/applications/agents/**
+      - scripts/agents/**
+
+  agents-shared:
+    kind: delegated
+    workflow: agents-ci
     exclude:
       - '**/*.md'
       - '**/*.mdx'
-      - services/agents/agentctl/**
       - packages/codex/**/__tests__/**
       - packages/codex/**/__snapshots__/**
       - packages/codex/**/*.test.ts
@@ -245,28 +257,17 @@ targets:
       - packages/temporal-bun-sdk/**/*.spec.ts
       - packages/temporal-bun-sdk/**/*.spec.tsx
     paths:
-      - .github/workflows/agents-ci.yml
       - flake.lock
       - flake.nix
-      - nix/images/agents.nix
-      - nix/images/bun-workspace-service.nix
-      - nix/images/relativize-bun-cache.sh
       - patches/effect@4.1.4.patch
-      - nix/images/openai-codex-cli.nix
-      - nix/images/agentrun-tools.nix
       - nix/packages.nix
       - packages/agent-contracts/**
       - packages/codex/**
       - packages/cx-tools/**
       - packages/otel/**
-      - packages/scripts/src/agents/**
       - packages/scripts/src/shared/nix-oci-deploy.ts
       - packages/temporal-bun-sdk/**
-      - services/agents/**
-      - charts/agents/**
-      - argocd/applications/agents/**
       - argocd/applications/argo-workflows/**
-      - scripts/agents/**
       - scripts/download_crd_schema.py
 
   agentctl:

@@ -41,11 +41,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          changed_files="${RUNNER_TEMP}/changed-files.txt"
+          changed_files="${RUNNER_TEMP}/changed-files"
           changed_manifests="${RUNNER_TEMP}/changed-manifests.txt"
           git rev-parse --verify 'HEAD^1' >/dev/null
           git rev-parse --verify 'HEAD^2' >/dev/null
-          git diff --merge-base --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_files}"
+          # Route both sides of a move, including files moved out of a runtime directory.
+          git diff --merge-base --no-renames --name-only -z 'HEAD^1' 'HEAD^2' > "${changed_files}"
           git diff --merge-base --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_manifests}"
           printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
           printf 'changed_manifests=%s\n' "${changed_manifests}" >> "${GITHUB_OUTPUT}"
@@ -331,8 +332,8 @@ jobs:
               bun install --frozen-lockfile
               input=(--full)
               if [[ "${FULL_VALIDATION}" == false ]]; then
-                jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${RUNNER_TEMP}/root-script-files.txt"
-                input=(--files "${RUNNER_TEMP}/root-script-files.txt")
+                jq -j '.[] | ., "\u0000"' <<< "${CHANGED_FILES_JSON}" > "${RUNNER_TEMP}/root-script-files"
+                input=(--files "${RUNNER_TEMP}/root-script-files")
               fi
               plan=$(bun run packages/scripts/src/ci/impact-router.ts \
                 "${input[@]}" --map .github/ci/root-script-map.yml)
@@ -618,9 +619,13 @@ jobs:
             echo "Landing validation failed: landing=${LANDING_RESULT}, expected=${LANDING_EXPECTED}" >&2
             exit 1
           fi
-          if [[ "${AGENTS_RESULT}" != success && ( "${FULL_VALIDATION}" == true || "${AGENTS_RESULT}" != skipped ) ]]; then
-            echo "Agents validation failed: agents=${AGENTS_RESULT}" >&2
-            exit 1
+          if [ "${AGENTS_RESULT}" != success ]; then
+            # A skipped reusable workflow is only valid when Agents was not selected.
+            if [[ "${AGENTS_RESULT}" != skipped || "${FULL_VALIDATION}" != false ]] ||
+                ! jq -e 'type == "array" and index("agents-ci") == null' <<< "${DELEGATED}" >/dev/null; then
+              echo "Agents validation failed: agents=${AGENTS_RESULT}" >&2
+              exit 1
+            fi
           fi
           if [[ "${FULL_VALIDATION}" == true && "${BAYN_RESULT}" != success ]]; then
             echo "Bayn validation failed: bayn=${BAYN_RESULT}" >&2

@@ -108,11 +108,13 @@ GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
 
-Agents CI runs the selected unit, chart/CRD, and Kind jobs in parallel once planning succeeds. Changes limited to the
-chart/CRD verifier or schema extractor need only the chart/CRD job; changes to charts and Kind inputs still run smoke.
-The central gate still requires the called workflow to pass, and merge groups select all suites. Kind forces a rebuild
-of its shared dependency closure only when its Nix dependency inputs, installed workspace manifests or the installed
-Effect patch change. Ordinary runtime edits reuse the cache; test-only edits retain the unit tier.
+Agents CI runs lint, ontology type checks, and script unit and contract tests in the planner job when a PR changes
+only `docs/agents/` or the allowlisted offline ontology scripts and their tests. The central router sends both sides
+of renames, so moving a runtime file into an offline path still requires Kind. Any other PR routed to Agents CI runs
+Kind plus the selected unit and chart/CRD jobs. The `ci-pr` gate requires the called workflow to succeed, and merge
+groups still select all suites. On main, changes limited to the chart/CRD verifier or schema extractor need only
+the chart/CRD job. Kind forces a rebuild of its shared dependency closure only when its Nix dependency inputs,
+installed workspace manifests or the installed Effect patch change. Ordinary runtime edits reuse the cache.
 All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
 semaphore used by Bayn; Agents' publication and Kargo discovery include that installed dependency input.
 A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.

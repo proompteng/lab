@@ -295,7 +295,7 @@ describe('torghut build-push workflow', () => {
     const firstParent = pullRequestWorkflow.indexOf("git rev-parse --verify 'HEAD^1'", deriveFilesStep)
     const secondParent = pullRequestWorkflow.indexOf("git rev-parse --verify 'HEAD^2'", firstParent)
     const diffCall = pullRequestWorkflow.indexOf(
-      "git diff --merge-base --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2'",
+      "git diff --merge-base --no-renames --name-only -z 'HEAD^1' 'HEAD^2'",
       secondParent,
     )
 

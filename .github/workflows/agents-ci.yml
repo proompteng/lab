@@ -20,17 +20,11 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/agents-ci.yml'
       - 'argocd/applications/argo-workflows/**'
-      - 'argocd/applications/agents/**'
-      - 'charts/agents/**'
       - 'flake.lock'
       - 'flake.nix'
-      - 'nix/images/agents.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/images/relativize-bun-cache.sh'
       - 'patches/effect@4.1.4.patch'
-      - 'nix/images/openai-codex-cli.nix'
-      - 'nix/images/agentrun-tools.nix'
       - 'nix/packages.nix'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
@@ -39,8 +33,6 @@ on:
       - 'packages/scripts/src/agents/**'
       - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'packages/temporal-bun-sdk/**'
-      - 'services/agents/**'
-      - '!services/agents/agentctl/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '!**/__tests__/**'
@@ -52,6 +44,10 @@ on:
       - '!**/*.spec.tsx'
       - '!**/*.md'
       - '!**/*.mdx'
+      - 'argocd/applications/agents/**'
+      - 'charts/agents/**'
+      - 'nix/images/**'
+      - 'services/agents/**'
   workflow_dispatch:
 
 concurrency:
@@ -60,7 +56,7 @@ concurrency:
 
 jobs:
   plan:
-    name: Plan Agents validation tier
+    name: Plan Agents validation and run fast checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -95,23 +91,27 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          changed_files="${RUNNER_TEMP}/agents-changed-files.txt"
+          changed_files="${RUNNER_TEMP}/agents-changed-files.json"
+
+          paths_to_json() {
+            jq -Rsc 'split("\u0000") | map(select(length > 0))'
+          }
 
           if [ "${EVENT_NAME}" = merge_group ]; then
-            git ls-files > "${changed_files}"
+            git ls-files -z | paths_to_json > "${changed_files}"
           elif [ -n "${CHANGED_FILES_JSON}" ]; then
-            jq -e 'type == "array" and all(.[]; type == "string")' <<< "${CHANGED_FILES_JSON}" >/dev/null
-            jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${changed_files}"
+            printf '%s\n' "${CHANGED_FILES_JSON}" > "${changed_files}"
+          elif [ "${EVENT_NAME}" = pull_request ]; then
+            echo 'Agents CI requires the complete changed-file array for a pull request.' >&2
+            exit 1
           elif [ "${EVENT_NAME}" = workflow_dispatch ]; then
-            printf '%s\n' 'nix/images/agents.nix' > "${changed_files}"
+            printf '%s\n' '["nix/images/agents.nix"]' > "${changed_files}"
           elif [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = 0000000000000000000000000000000000000000 ]; then
-            git ls-files > "${changed_files}"
+            git ls-files -z | paths_to_json > "${changed_files}"
           else
-            git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > "${changed_files}"
+            git diff --no-renames --name-only -z "${BASE_SHA}" "${HEAD_SHA}" | paths_to_json > "${changed_files}"
           fi
 
-          echo 'Changed files considered by Agents CI:'
-          cat "${changed_files}"
           printf 'path=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
 
       - name: Classify Agents validation
@@ -120,9 +120,7 @@ jobs:
           CHANGED_FILES: ${{ steps.files.outputs.path }}
         run: |
           set -euo pipefail
-          bun run packages/scripts/src/agents/resolve-agents-image-mode.ts \
-            --github-output "${GITHUB_OUTPUT}" \
-            < "${CHANGED_FILES}" \
+          bun run packages/scripts/src/agents/resolve-agents-image-mode.ts < "${CHANGED_FILES}" \
             | tee "${RUNNER_TEMP}/agents-ci-plan.txt"
 
       - name: Require the complete queued Agents plan
@@ -163,6 +161,23 @@ jobs:
             echo "- Local images: \`${IMAGE_TARGETS}\`"
             echo "- Runtime inputs: \`${MATCHED_PATHS}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      # Reuse the planner checkout and Bun setup. No Postgres, Helm, Docker or Kind.
+      - name: Install fast-tier dependencies
+        if: steps.classify.outputs.tier == 'fast'
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/scripts
+          --filter @proompteng/agents
+
+      - name: Run Agents fast checks
+        if: steps.classify.outputs.tier == 'fast'
+        run: |
+          bunx oxfmt --check docs/agents packages/scripts/src/agents
+          bunx oxlint --config .oxlintrc.json packages/scripts/src/agents
+          bun run --filter @proompteng/scripts typecheck:ontology
+          bun test packages/scripts/src/agents/ packages/scripts/src/ci/
 
   unit:
     name: Agents typecheck and unit tests
@@ -303,9 +318,9 @@ jobs:
 
   integration:
     name: Agents Kind smoke (${{ needs.plan.outputs.tier }})
-    # The smoke job owns its fixtures. ci-pr still requires the entire called workflow to pass.
+    # Skip smoke only when the successful plan explicitly opts out.
     needs: plan
-    if: ${{ needs.plan.outputs.run_integration == 'true' }}
+    if: ${{ needs.plan.outputs.run_integration != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:

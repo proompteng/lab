@@ -280,7 +280,7 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['codex-ci'])
   })
 
-  test('routes Agents tests to the reusable unit tier', () => {
+  test('routes Agents tests through the reusable Agents workflow', () => {
     const plan = selectImpactPlan(['services/agents/src/server/health.test.ts'], map)
     expect(plan.validationTargets).toEqual(['planner'])
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
@@ -310,10 +310,10 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('keeps Agents documentation off the ARC workflow', () => {
+  test('routes Agents documentation to the reusable Agents workflow', () => {
     const plan = selectImpactPlan(['docs/agents/agentrun-creation-guide.md', 'services/agents/README.md'], map)
     expect(plan.validationTargets).toEqual(['planner'])
-    expect(plan.delegatedWorkflows).toEqual([])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
   test('runs workflow lint and the reusable Agents contract for Agents workflow changes', () => {
@@ -330,10 +330,10 @@ describe('impact router', () => {
     ])
   })
 
-  test('does not fan agentctl changes into the broader agents workflow', () => {
+  test('routes agentctl changes through Agents Kind smoke and agentctl validation', () => {
     const plan = selectImpactPlan(['services/agents/agentctl/src/cli.ts'], map)
     expect(plan.validationTargets).toEqual(['planner'])
-    expect(plan.delegatedWorkflows).toEqual(['agentctl-ci'])
+    expect(plan.delegatedWorkflows).toEqual(['agentctl-ci', 'agents-ci'])
   })
 
   test('routes shared lockfiles once', () => {
@@ -348,10 +348,10 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes per-service Nix image changes to compatibility and manifest validation', () => {
+  test('routes per-service Nix image changes to compatibility, manifest, and Agents validation', () => {
     const plan = selectImpactPlan(['nix/images/jangar.nix'], map)
     expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
-    expect(plan.delegatedWorkflows).toEqual([])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
   test('routes Agents-owned Nix image changes through compatibility and Agents smoke validation', () => {

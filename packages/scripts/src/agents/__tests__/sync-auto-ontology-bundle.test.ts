@@ -32,7 +32,7 @@ const pathOf = (resource: string) => `/api/${resource}`
 
 const mockCatalog = () => {
   const catalog: Record<string, Row[]> = { acronyms: [], rules: [], 'custom-analyses': [] }
-  const databases: Row[] = [
+  const databases = [
     { name: 'example', id: 'db-1' },
     { name: 'second', id: 'db-2' },
   ]

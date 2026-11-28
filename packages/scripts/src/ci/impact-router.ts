@@ -56,7 +56,7 @@ export const globToRegExp = (glob: string): RegExp => {
     pattern += escapeRegExp(character)
   }
 
-  return new RegExp(`^${pattern}${ownsDirectory ? '(?:/.*)?' : ''}$`)
+  return new RegExp(`^${pattern}${ownsDirectory ? '(?:/.*)?' : ''}$`, 's')
 }
 
 export const matchesGlob = (file: string, glob: string): boolean => globToRegExp(glob).test(file)
@@ -88,7 +88,7 @@ export const loadImpactMap = (mapPath: string): ImpactMap => {
 }
 
 export const selectImpactPlan = (changedFiles: Iterable<string>, map: ImpactMap, full = false): ImpactPlan => {
-  const files = sortUnique([...changedFiles].map((file) => file.trim()).filter(Boolean))
+  const files = sortUnique([...changedFiles].filter(Boolean))
   const validationTargets = new Set<string>()
   const delegatedWorkflows = new Set<string>()
 
@@ -139,7 +139,7 @@ const main = (): void => {
     throw new Error('Usage: impact-router.ts (--files <path> | --full) [--map <path>] [--github-output <path>]')
 
   const plan = selectImpactPlan(
-    filesPath === undefined ? [] : readFileSync(resolve(filesPath), 'utf8').split(/\r?\n/),
+    filesPath === undefined ? [] : readFileSync(resolve(filesPath), 'utf8').split('\0'),
     loadImpactMap(resolve(mapPath)),
     full,
   )

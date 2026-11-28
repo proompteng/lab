@@ -853,7 +853,7 @@ describe('native OCI build workflows', () => {
     for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow, torghutCiWorkflow]) {
       expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
     }
-    expect(agentsCiWorkflow).not.toContain("- '.github/workflows/")
+    expect(agentsCiWorkflow.match(/- '\.github\/workflows\/[^']+'/g)).toEqual(["- '.github/workflows/agents-ci.yml'"])
     expect(symphonyCiWorkflow).not.toContain("- '.github/workflows/")
     expect(torghutCiWorkflow.match(/- '\.github\/workflows\/[^']+'/g)).toEqual(["- '.github/workflows/torghut-ci.yml'"])
     expect(agentsCiWorkflow).toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")

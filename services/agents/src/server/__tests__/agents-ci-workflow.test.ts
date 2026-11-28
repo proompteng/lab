@@ -81,7 +81,7 @@ describe('agents-ci workflow', () => {
     expect(workflow).not.toContain('runs-on: arc-amd64')
     expect(parse(workflow).jobs.integration).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.run_integration == 'true' }}",
+      if: "${{ needs.plan.outputs.run_integration != 'false' }}",
     })
   })
 
@@ -148,9 +148,7 @@ describe('agents-ci workflow', () => {
     for (const path of [
       'flake.lock',
       'flake.nix',
-      'nix/images/agents.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/openai-codex-cli.nix',
+      'nix/images/**',
       'nix/packages.nix',
       'packages/scripts/src/shared/nix-oci-deploy.ts',
     ]) {
