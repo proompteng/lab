@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.whitepaper_autoresearch_artifacts.support import (
-    Decimal,
     HYPOTHESIS_CARD_SCHEMA_VERSION,
+    Decimal,
     HypothesisCard,
     MlxTrainingRow,
     _FakeTorchCpuModule,
     _FakeTorchModule,
-    _TestWhitepaperAutoresearchArtifactsBase,
     _profile_ids_for_family,
+    _TestWhitepaperAutoresearchArtifactsBase,
     bool_value,
     build_hypothesis_cards,
     build_mlx_training_rows,
@@ -25,6 +27,8 @@ from tests.whitepaper_autoresearch_artifacts.support import (
     rank_training_rows,
     train_mlx_ranker,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestEvidenceBundleBoolParserHandlesNumericAndUnknownValues(

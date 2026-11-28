@@ -1,26 +1,30 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import import_hypothesis_runtime_windows as runtime_import_cli
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
     POST_COST_BASIS_RUNTIME_LEDGER,
-    Path,
-    RuntimeWindowImportTestCaseBase,
-    TemporaryDirectory,
-    _FakeConnection,
-    _FakeCursor,
     _parse_dt_or_none,
     _query_timestamps,
     _runtime_ledger_event_type,
     _runtime_ledger_tca_rows_from_artifacts,
-    datetime,
-    json,
-    patch,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.runtime_window_import_support import (
+    _FakeConnection,
+    _FakeCursor,
 )
 
 
-class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportArtifacts(TestCase):
     def test_query_timestamps_requires_source_lineage_for_candidate_import(
         self,
     ) -> None:
@@ -30,7 +34,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
         cursor._results = [
             [
                 (
-                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    march_6_market_hour(35),
                     "AAPL",
                     "TORGHUT_SIM",
                     "microbar-cross-sectional-pairs-v1",
@@ -38,7 +42,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                     matched_json,
                 ),
                 (
-                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    march_6_market_hour(36),
                     "AAPL",
                     "TORGHUT_SIM",
                     "microbar-cross-sectional-pairs-v1",
@@ -48,9 +52,9 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
             ],
             [
                 (
-                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                    datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc),
-                    datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(35),
+                    march_6_market_hour(35, 30),
+                    march_6_market_hour(35, 30),
                     "AAPL",
                     "buy",
                     Decimal("1"),
@@ -70,9 +74,9 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                     "filled",
                 ),
                 (
-                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
-                    datetime(2026, 3, 6, 14, 36, 30, tzinfo=timezone.utc),
-                    datetime(2026, 3, 6, 14, 36, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(36),
+                    march_6_market_hour(36, 30),
+                    march_6_market_hour(36, 30),
                     "AAPL",
                     "buy",
                     Decimal("1"),
@@ -91,7 +95,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
             ],
             [
                 (
-                    datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    march_6_market_hour(35, 1),
                     "AAPL",
                     "TORGHUT_SIM",
                     "microbar-cross-sectional-pairs-v1",
@@ -120,7 +124,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                     },
                 ),
                 (
-                    datetime(2026, 3, 6, 14, 36, 1, tzinfo=timezone.utc),
+                    march_6_market_hour(36, 1),
                     "AAPL",
                     "TORGHUT_SIM",
                     "microbar-cross-sectional-pairs-v1",
@@ -141,7 +145,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
             ],
             [
                 (
-                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    march_6_market_hour(35),
                     datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
                     Decimal("1.25"),
                     Decimal("0.50"),
@@ -149,7 +153,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                     matched_json,
                 ),
                 (
-                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    march_6_market_hour(36),
                     datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     Decimal("9.99"),
                     Decimal("-9.99"),
@@ -159,12 +163,11 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
             ],
         ]
         connection = _FakeConnection(cursor)
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
 
-        with patch(
-            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
-            return_value=connection,
+        with patch.object(
+            runtime_import_cli.psycopg, "connect", return_value=connection
         ):
             decisions, executions, tca_rows = _query_timestamps(
                 dsn="postgresql://example",
@@ -177,10 +180,8 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                 require_source_lineage=True,
             )
 
-        self.assertEqual(decisions, [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)])
-        self.assertEqual(
-            executions, [datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc)]
-        )
+        self.assertEqual(decisions, [march_6_market_hour(35)])
+        self.assertEqual(executions, [march_6_market_hour(35, 30)])
         self.assertTrue(tca_rows)
         self.assertTrue(
             all(
@@ -194,7 +195,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
         )
 
     def test_query_timestamps_requires_strategy_name_candidates(self) -> None:
-        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_start = march_6_market_hour(30)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
 
         with self.assertRaisesRegex(RuntimeError, "strategy_name_not_configured"):
@@ -281,7 +282,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                     artifact_refs=[str(artifact_path)],
                     bucket_ranges=[
                         (
-                            datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                            march_6_market_hour(30),
                             datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                             6,
                         )
@@ -292,8 +293,8 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
         self.assertEqual(
             decisions,
             [
-                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                march_6_market_hour(35),
+                march_6_market_hour(40),
             ],
         )
         self.assertEqual(len(executions), 2)
@@ -433,7 +434,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                 artifact_refs=[str(artifact_path)],
                 bucket_ranges=[
                     (
-                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        march_6_market_hour(30),
                         datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                         6,
                     )
@@ -452,7 +453,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
         )
 
     def test_runtime_ledger_artifact_helpers_fail_closed_on_loose_rows(self) -> None:
-        aware_time = datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)
+        aware_time = march_6_market_hour(35)
         naive_time = datetime(2026, 3, 6, 14, 35)
 
         self.assertEqual(_parse_dt_or_none(aware_time), aware_time)
@@ -508,7 +509,7 @@ class TestRuntimeWindowImportArtifacts(RuntimeWindowImportTestCaseBase):
                     ],
                     bucket_ranges=[
                         (
-                            datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                            march_6_market_hour(30),
                             datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                             6,
                         )

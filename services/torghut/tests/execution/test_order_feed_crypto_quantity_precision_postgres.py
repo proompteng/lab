@@ -8,6 +8,7 @@ from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import inspect, text
 
+from app.config import settings
 from tests.execution.decision_submission_claims_postgres_support import (
     POSTGRES_DSN,
     SERVICE_ROOT,
@@ -23,11 +24,14 @@ from tests.execution.infrastructure_validation_postgres_support import (
     not POSTGRES_DSN,
     reason="set TORGHUT_TEST_POSTGRES_DSN for crypto quantity precision",
 )
-def test_postgres_preserves_nine_decimal_order_feed_quantities() -> None:
-    schema, admin_engine, schema_engine, _schema_dsn = create_schema_engines(
+def test_postgres_preserves_nine_decimal_order_feed_quantities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema, admin_engine, schema_engine, schema_dsn = create_schema_engines(
         "crypto_quantity_precision"
     )
     try:
+        monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
         upgrade_reduction_schema(
             alembic,

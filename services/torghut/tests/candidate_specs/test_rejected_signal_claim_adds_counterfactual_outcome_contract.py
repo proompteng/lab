@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.candidate_specs.support import (
     Decimal,
     StrategyCatalogConfig,
-    _TestCandidateSpecsBase,
     _capital_profile,
+    _TestCandidateSpecsBase,
     build_hypothesis_cards,
     candidate_spec_capital_features,
     candidate_specs_module,
     compile_candidate_specs,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestRejectedSignalClaimAddsCounterfactualOutcomeContract(_TestCandidateSpecsBase):
