@@ -1,9 +1,8 @@
 version: 1
 
-# This file is the path ownership contract for pull-request.yml. Keep service
-# workflows for expensive, service-specific validation; list those workflows as
-# delegated targets so the router can explain why they run without duplicating
-# their jobs.
+# Path ownership for the router matrix and path-only delegation. Reusable PR
+# services that need Bun dependency selection use the affected-inputs batch in
+# pull-request.yml instead of duplicating their paths here.
 targets:
   planner:
     kind: planner
@@ -278,12 +277,6 @@ targets:
       - docs/agents/agentctl-cli-design.md
       - docs/agents/agentctl-release.md
 
-  bumba:
-    kind: delegated
-    workflow: bumba-ci
-    paths:
-      - services/bumba/**
-
   jangar-inventory:
     kind: validation
     exclude:
@@ -313,12 +306,6 @@ targets:
       - services/agents/src/server/orchestration-controller.ts
       - services/agents/src/server/supporting-primitives-controller.ts
       - docs/jangar/architecture-inventory.md
-
-  froussard:
-    kind: delegated
-    workflow: froussard-ci
-    paths:
-      - apps/froussard/**
 
   orbit-salvage:
     kind: delegated
@@ -350,12 +337,6 @@ targets:
     paths:
       - services/khoshut/**
       - argocd/applications/khoshut/**
-
-  oirat:
-    kind: delegated
-    workflow: oirat-ci
-    paths:
-      - services/oirat/**
 
   reestr:
     kind: delegated

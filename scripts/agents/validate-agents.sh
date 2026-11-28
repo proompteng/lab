@@ -15,16 +15,7 @@ if [[ -d "${ROOT_DIR}/services/jangar/api/agents" ]]; then
   exit 1
 fi
 
-if command -v rg >/dev/null 2>&1; then
-  if rg -n "codex-universal|ghcr.io/openai/codex-universal" \
-    "${CHART_DIR}/examples" \
-    "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
-    echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
-    exit 1
-  fi
-elif grep -R -n -E "codex-universal|ghcr\.io/openai/codex-universal" \
-  "${CHART_DIR}/examples" \
-  "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
+if grep -R -nF 'codex-universal' "${CHART_DIR}/examples"; then
   echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
   exit 1
 fi

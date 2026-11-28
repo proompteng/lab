@@ -1385,27 +1385,6 @@ export const deferPostMutationReconciliation = (pending: PostMutationReconciliat
     : { protectionReleaseCycleId: pending.protectionReleaseCycleId }),
 })
 
-export const readUnfinishedMutationCycle = (
-  context: Pick<CycleRunContext<ObserveDecisionRuntime>, 'cycleBindingId' | 'accountId'>,
-): Effect.Effect<AutonomousCycle | undefined, CycleRunnerError, CycleStore> =>
-  CycleStore.pipe(
-    Effect.flatMap((store) =>
-      store.readOldestUnfinished({
-        qualificationRunId: context.cycleBindingId,
-        accountId: context.accountId,
-      }),
-    ),
-    Effect.mapError((cause) =>
-      mutationRunnerError({
-        operation: 'read-oldest-unfinished',
-        message: 'oldest unfinished mutation cycle read failed',
-        cause,
-        failure: 'store',
-      }),
-    ),
-    Effect.map(Option.getOrUndefined),
-  )
-
 export const readUnfinishedMutationCycles = (
   context: Pick<CycleRunContext<ObserveDecisionRuntime>, 'cycleBindingId' | 'accountId'>,
 ): Effect.Effect<readonly AutonomousCycle[], CycleRunnerError, CycleStore> =>

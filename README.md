@@ -111,7 +111,7 @@ bun run dev:convex
 
 Service-specific local workflows live in the nearest README. Two important examples:
 
-- `services/jangar/README.md`: local Jangar development, Tilt port-forwards, worker split, and gRPC notes
+- `services/jangar/README.md`: local Jangar development, worker split, and gRPC notes
 - `services/torghut/README.md`: `uv`-based Python setup, migration checks, whitepaper workflow, and rollout automation
 
 ## Common Commands
