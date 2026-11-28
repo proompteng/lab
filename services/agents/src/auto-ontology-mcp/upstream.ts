@@ -16,6 +16,7 @@ const invalidResponse = () =>
   new AutoOntologyUpstreamError('upstream_invalid_response', 'Auto Ontology returned an incompatible response')
 
 const object = z.record(z.string(), z.unknown())
+const healthPayload = z.object({ status: z.string() })
 const statusPayload = z.object({ calculated: z.boolean() })
 const catalogPayload = z.object({
   data: z.array(z.object({ id: z.string(), name: z.string().nullish() })),
@@ -87,7 +88,13 @@ export const createAutoOntologyUpstream = (options: UpstreamOptions) => {
   const request = async <T>(
     path: `/api/${string}`,
     decode: (text: string) => T,
-    requestOptions: { signal?: AbortSignal; query?: Query; body?: Question | ChatQuestion; chat?: true },
+    requestOptions: {
+      signal?: AbortSignal
+      query?: Query
+      body?: Question | ChatQuestion
+      chat?: true
+      authenticated?: boolean
+    },
   ) => {
     const url = new URL(options.url)
     url.pathname = path
@@ -97,7 +104,8 @@ export const createAutoOntologyUpstream = (options: UpstreamOptions) => {
     const deadline = AbortSignal.timeout(requestOptions.chat ? options.chatTimeoutMs : options.timeoutMs)
     const signal = requestOptions.signal ? AbortSignal.any([deadline, requestOptions.signal]) : deadline
     const accept = requestOptions.chat ? 'text/event-stream' : 'application/json'
-    const headers = new Headers({ accept, 'x-api-key': options.token })
+    const headers = new Headers({ accept })
+    if (requestOptions.authenticated !== false) headers.set('x-api-key', options.token)
     const body = requestOptions.body && JSON.stringify(requestOptions.body)
     if (body) headers.set('content-type', 'application/json')
 
@@ -128,11 +136,28 @@ export const createAutoOntologyUpstream = (options: UpstreamOptions) => {
 
   return {
     get: (path: `/api/${string}`, signal: AbortSignal, query?: Query) => request(path, json, { signal, query }),
+    checkHealth: async (signal?: AbortSignal) => {
+      const health = await request('/api/health', (text) => healthPayload.parse(decodeJson(text)), {
+        signal,
+        authenticated: false,
+      })
+      if (health.status !== 'ok') {
+        throw new AutoOntologyUpstreamError('upstream_unhealthy', 'Auto Ontology reported unhealthy status')
+      }
+      return health
+    },
     checkReadiness: async (signal?: AbortSignal) => {
-      const [status, catalog] = await Promise.all([
-        request('/api/semantic-compilation/status', (text) => statusPayload.parse(decodeJson(text)), { signal }),
-        request('/api/datasources/dbs', (text) => catalogPayload.parse(decodeJson(text)), { signal }),
-      ])
+      // Run authenticated checks sequentially so one tool call does not contend on Better Auth's single apikey row lock.
+      const status = await request(
+        '/api/semantic-compilation/status',
+        (text) => statusPayload.parse(decodeJson(text)),
+        {
+          signal,
+        },
+      )
+      const catalog = await request('/api/datasources/dbs', (text) => catalogPayload.parse(decodeJson(text)), {
+        signal,
+      })
       return {
         ready: status.calculated && catalog.data.length > 0,
         semantic_layer_built: status.calculated,

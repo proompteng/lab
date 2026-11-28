@@ -66,4 +66,39 @@ describe('Auto Ontology upstream limits', () => {
       ),
     ).rejects.toMatchObject({ code: 'upstream_invalid_response' })
   })
+
+  it('probes /api/health without x-api-key and fails closed when status is not ok', async () => {
+    const seenHeaders: Headers[] = []
+    const okUpstream = upstreamWith(async (input, init) => {
+      expect(new URL(String(input)).pathname).toBe('/api/health')
+      seenHeaders.push(new Headers(init?.headers))
+      return Response.json({ status: 'ok', postgres: { status: 'ok' } })
+    })
+    await expect(okUpstream.checkHealth(signal)).resolves.toMatchObject({ status: 'ok' })
+    expect(seenHeaders[0]?.has('x-api-key')).toBe(false)
+
+    const degradedUpstream = upstreamWith(async () => Response.json({ status: 'degraded' }))
+    await expect(degradedUpstream.checkHealth(signal)).rejects.toMatchObject({ code: 'upstream_unhealthy' })
+  })
+
+  it('runs checkReadiness upstream calls sequentially to avoid API-key row-lock contention', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const upstream = upstreamWith(async (input) => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await Promise.resolve()
+      const path = new URL(String(input)).pathname
+      inFlight -= 1
+      if (path === '/api/semantic-compilation/status') return Response.json({ calculated: true })
+      return Response.json({ data: [{ id: 'db-1', name: 'agents' }] })
+    })
+    await expect(upstream.checkReadiness(signal)).resolves.toEqual({
+      ready: true,
+      semantic_layer_built: true,
+      catalog_present: true,
+      databases: ['agents'],
+    })
+    expect(maxInFlight).toBe(1)
+  })
 })
