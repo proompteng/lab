@@ -3,9 +3,31 @@ import { z } from 'zod'
 
 const RUN_LABEL = 'agents.proompteng.ai/agent-run'
 const RUN_UID_LABEL = 'agents.proompteng.ai/run-uid'
+const PROVIDER_LABEL = 'agents.proompteng.ai/provider'
+const STANDARD_PROVIDER = 'codex'
 const RUNNER_ACCOUNT = 'codex-auto-ontology-runner'
 const MCP_AUDIENCE = 'agents.proompteng.ai/auto-ontology-mcp'
 const MCP_MOUNT_PATH = '/var/run/secrets/agents-auto-ontology-mcp'
+type ProviderWorkloadContract = {
+  serviceAccountName: string
+  mcpAudience: string
+  mcpMountPath: string
+  mcpName: string
+}
+const PROVIDER_CONTRACTS: Record<string, ProviderWorkloadContract> = {
+  [STANDARD_PROVIDER]: {
+    serviceAccountName: RUNNER_ACCOUNT,
+    mcpAudience: MCP_AUDIENCE,
+    mcpMountPath: MCP_MOUNT_PATH,
+    mcpName: 'Auto Ontology',
+  },
+  'codex-linear': {
+    serviceAccountName: 'codex-linear-runner',
+    mcpAudience: 'agents.proompteng.ai/linear-mcp',
+    mcpMountPath: '/var/run/secrets/agents-linear-mcp',
+    mcpName: 'Linear',
+  },
+}
 const FLEET_NODES = ['turin', 'talos-192-168-1-85'] as const
 const ADMISSION_SECONDS = 180
 const SKEW_PERCENT = 85
@@ -24,7 +46,13 @@ const metadata = z.object({
   namespace: name,
   uid: z.string().optional(),
   deletionTimestamp: timestamp.nullish(),
-  labels: z.object({ [RUN_LABEL]: z.string().optional(), [RUN_UID_LABEL]: z.string().optional() }).optional(),
+  labels: z
+    .object({
+      [RUN_LABEL]: z.string().optional(),
+      [RUN_UID_LABEL]: z.string().optional(),
+      [PROVIDER_LABEL]: z.string().optional(),
+    })
+    .optional(),
   ownerReferences: z.array(z.object({ apiVersion: z.string(), kind: z.string(), name, uid: z.string() })).default([]),
 })
 const list = <Schema extends z.ZodType>(item: Schema) => z.object({ items: z.array(item) })
@@ -175,7 +203,12 @@ const indexWorkloads = ({ agentRuns, jobs, pods }: Snapshot) => {
   const workloads = new Map(
     agentRuns.items.map(({ metadata }) => [
       resourceKey(metadata),
-      { uid: metadata.uid, jobs: [] as Job[], pods: [] as Pod[] },
+      {
+        uid: metadata.uid,
+        provider: metadata.labels?.[PROVIDER_LABEL],
+        jobs: [] as Job[],
+        pods: [] as Pod[],
+      },
     ]),
   )
   const references = new Map<string, { jobUid?: string; run: RunLink }[]>()
@@ -196,31 +229,45 @@ const indexWorkloads = ({ agentRuns, jobs, pods }: Snapshot) => {
     return run && (!link.uid || link.uid === run.uid) ? run : undefined
   }
 
-  const jobLinks = new Map<string, { uid?: string; run: RunLink | undefined }>()
+  const jobLinks = new Map<string, { uid?: string; provider?: string; run: RunLink | undefined }>()
   for (const job of jobs.items.toSorted(byResource)) {
     const key = resourceKey(job.metadata)
     const run = runLink(job.metadata) ?? referencedRun(key, job.metadata.uid)
-    jobLinks.set(key, { uid: job.metadata.uid, run })
+    jobLinks.set(key, { uid: job.metadata.uid, provider: job.metadata.labels?.[PROVIDER_LABEL], run })
     if (run) currentRun(run)?.jobs.push(job)
   }
 
+  const podProviders = new Map<string, string | undefined>()
   const fleetPods = pods.items.toSorted(byResource).filter((pod) => {
     const owner = pod.metadata.ownerReferences.find(
       ({ kind, apiVersion }) => kind === 'Job' && apiVersion === 'batch/v1',
     )
     let fromJob: RunLink | undefined
+    let jobProvider: string | undefined
     if (owner) {
       const key = resourceKey({ namespace: pod.metadata.namespace, name: owner.name })
       const job = jobLinks.get(key)
       // A Pod from a deleted Job must not inherit the identity of a same-name replacement.
-      fromJob = job ? (job.uid === owner.uid ? job.run : undefined) : referencedRun(key, owner.uid)
+      if (job) {
+        if (job.uid === owner.uid) {
+          fromJob = job.run
+          jobProvider = job.provider
+        }
+      } else {
+        fromJob = referencedRun(key, owner.uid)
+      }
     }
     const run = fromJob ?? runLink(pod.metadata)
     if (!run) return false
-    currentRun(run)?.pods.push(pod)
+    const resolvedRun = currentRun(run)
+    resolvedRun?.pods.push(pod)
+    podProviders.set(
+      resourceKey(pod.metadata),
+      pod.metadata.labels?.[PROVIDER_LABEL] ?? jobProvider ?? resolvedRun?.provider,
+    )
     return true
   })
-  return { workloads, fleetPods }
+  return { workloads, fleetPods, podProviders }
 }
 
 const hasCondition = (conditions: z.infer<typeof condition>[] | undefined, type: string, reason?: string) =>
@@ -243,11 +290,11 @@ const jobPhase = (job: Job) => {
   return null
 }
 
-const hasMcpMount = (pod: Pod) => {
+const hasMcpMount = (pod: Pod, contract: ProviderWorkloadContract) => {
   const runner = pod.spec.containers.find(({ name }) => name === 'agent-runner')
   return runner?.volumeMounts.some(
     (mount) =>
-      mount.mountPath === MCP_MOUNT_PATH &&
+      mount.mountPath === contract.mcpMountPath &&
       !mount.subPath &&
       !mount.subPathExpr &&
       pod.spec.volumes.some(
@@ -255,7 +302,7 @@ const hasMcpMount = (pod: Pod) => {
           volume.name === mount.name &&
           volume.projected?.sources.some(
             ({ serviceAccountToken }) =>
-              serviceAccountToken?.audience === MCP_AUDIENCE && serviceAccountToken.path === 'token',
+              serviceAccountToken?.audience === contract.mcpAudience && serviceAccountToken.path === 'token',
           ),
       ),
   )
@@ -314,7 +361,7 @@ const memoryBytes = (value: string | undefined) => {
 const percent = (numerator: number, denominator: number) => Number(((numerator / denominator) * 100).toFixed(2))
 
 export const inspectAgentFleetHealth = (snapshot: Snapshot) => {
-  const { workloads, fleetPods } = indexWorkloads(snapshot)
+  const { workloads, fleetPods, podProviders } = indexWorkloads(snapshot)
   const anomalies: Anomaly[] = []
   const add = (code: AnomalyCode, subject: string, message: string) => {
     anomalies.push({ code, severity: severity[code], subject, message })
@@ -389,13 +436,17 @@ export const inspectAgentFleetHealth = (snapshot: Snapshot) => {
   let memoryCheckedPods = 0
   for (const pod of activePods) {
     const key = resourceKey(pod.metadata)
-    if (pod.spec.serviceAccountName !== RUNNER_ACCOUNT) {
-      const account = pod.spec.serviceAccountName ?? 'default'
-      const observed = account === 'default' || account === 'agents-sa' ? account : 'another account'
-      add('workload_identity', key, `Pod uses ${observed}; expected ${RUNNER_ACCOUNT}.`)
+    const provider = podProviders.get(key) ?? STANDARD_PROVIDER
+    const contract = Object.hasOwn(PROVIDER_CONTRACTS, provider) ? PROVIDER_CONTRACTS[provider] : undefined
+    if (contract) {
+      if (pod.spec.serviceAccountName !== contract.serviceAccountName) {
+        const account = pod.spec.serviceAccountName ?? 'default'
+        const observed = account === 'default' || account === 'agents-sa' ? account : 'another account'
+        add('workload_identity', key, `Pod uses ${observed}; expected ${contract.serviceAccountName}.`)
+      }
+      if (!hasMcpMount(pod, contract))
+        add('mcp_projection', key, `agent-runner is missing the mounted ${contract.mcpName} MCP token projection.`)
     }
-    if (!hasMcpMount(pod))
-      add('mcp_projection', key, 'agent-runner is missing the mounted Auto Ontology MCP token projection.')
 
     if (pod.status?.phase !== 'Running') continue
     runningPods++

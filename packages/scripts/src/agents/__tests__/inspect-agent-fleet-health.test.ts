@@ -339,6 +339,107 @@ describe('fleet spread, identity, and resources', () => {
     ])
   })
 
+  test('scopes identity and MCP projection checks to the Pod provider contract while keeping fleet-wide checks', () => {
+    const PROVIDER_LABEL = 'agents.proompteng.ai/provider'
+    const linearMount = { name: 'codex-linear-mcp-identity', mountPath: '/var/run/secrets/agents-linear-mcp' }
+    const linearProjection = {
+      name: linearMount.name,
+      projected: {
+        sources: [{ serviceAccountToken: { audience: 'agents.proompteng.ai/linear-mcp', path: 'token' } }],
+      },
+    }
+    const report = inspect(
+      fixture({
+        agentRuns: list({
+          metadata: {
+            name: 'smoke-via-run',
+            namespace: 'agents',
+            uid: 'smoke-run-uid',
+            creationTimestamp: NOW,
+            labels: { [PROVIDER_LABEL]: 'codex-smoke' },
+          },
+          status: { phase: 'Running' },
+        }),
+        jobs: list({
+          metadata: {
+            name: 'smoke-via-run-job',
+            namespace: 'agents',
+            uid: 'smoke-job-uid',
+            ownerReferences: [runOwner('smoke-via-run', 'smoke-run-uid')],
+          },
+          status: { active: 1, ready: 1 },
+        }),
+        pods: list(
+          pod('linear-healthy', {
+            metadata: { labels: { [RUN_LABEL]: 'linear-healthy', [PROVIDER_LABEL]: 'codex-linear' } },
+            spec: {
+              serviceAccountName: 'codex-linear-runner',
+              volumes: [linearProjection],
+              containers: [
+                { name: 'agent-runner', resources: { limits: { memory: '1Gi' } }, volumeMounts: [linearMount] },
+              ],
+            },
+            status: { phase: 'Running' },
+          }),
+          pod('linear-broken', {
+            metadata: { labels: { [RUN_LABEL]: 'linear-broken', [PROVIDER_LABEL]: 'codex-linear' } },
+            spec: {
+              serviceAccountName: 'agents-sa',
+              volumes: [],
+              containers: [{ name: 'agent-runner', resources: { limits: { memory: '1Gi' } }, volumeMounts: [] }],
+            },
+            status: { phase: 'Pending' },
+          }),
+          pod('smoke-pod', {
+            metadata: { labels: {}, ownerReferences: [jobOwner('smoke-via-run-job', 'smoke-job-uid')] },
+            spec: {
+              serviceAccountName: undefined,
+              volumes: [],
+              containers: [{ name: 'agent-runner', resources: { limits: { memory: '1Gi' } }, volumeMounts: [] }],
+            },
+            status: { phase: 'Running' },
+          }),
+          pod('anypi-high-mem', {
+            metadata: { labels: { [RUN_LABEL]: 'anypi-high-mem', [PROVIDER_LABEL]: 'anypi' } },
+            spec: {
+              serviceAccountName: undefined,
+              volumes: [],
+              containers: [{ name: 'agent-runner', resources: { limits: { memory: '1Gi' } }, volumeMounts: [] }],
+            },
+            status: { phase: 'Running' },
+          }),
+        ),
+        podMetrics: list(
+          metric('linear-healthy', '400Mi'),
+          metric('smoke-pod', '300Mi'),
+          metric('anypi-high-mem', '900Mi'),
+        ),
+      }),
+    )
+    expect(report.summary.activePods).toBe(4)
+    expect(report.memory).toEqual({ metricsAvailable: true, checkedPods: 3, runningPods: 3 })
+    expect(report.anomalies).toEqual([
+      {
+        code: 'mcp_projection',
+        severity: 'critical',
+        subject: 'agents/linear-broken',
+        message: 'agent-runner is missing the mounted Linear MCP token projection.',
+      },
+      {
+        code: 'workload_identity',
+        severity: 'critical',
+        subject: 'agents/linear-broken',
+        message: 'Pod uses agents-sa; expected codex-linear-runner.',
+      },
+      {
+        code: 'memory_pressure',
+        severity: 'warning',
+        subject: 'agents/anypi-high-mem',
+        message: 'Container agent-runner is at 87.89% of its memory limit (943718400 / 1073741824 bytes).',
+      },
+    ])
+  })
+
   test('compares working set to each running container limit and makes partial coverage visible', () => {
     const report = inspect(
       fixture({
