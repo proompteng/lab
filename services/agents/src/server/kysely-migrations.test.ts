@@ -122,23 +122,29 @@ describe('Agents audit reader migration', () => {
 })
 
 describe('CI audit projection migration', () => {
-  it('creates indexed facts even without login roles and grants only schema-scoped access', async () => {
-    const [statement] = await migrationSql(createCiAuditProjection)
+  it('executes each schema, index, and permission statement separately', async () => {
+    const statements = await migrationSql(createCiAuditProjection)
 
-    expect(statement?.split('DO $grants$')[0]).toMatch(
-      /^CREATE SCHEMA IF NOT EXISTS ci_audit; CREATE TABLE IF NOT EXISTS ci_audit\.workflow_runs \( run_id bigint PRIMARY KEY,/,
-    )
-    expect(statement).toContain('run_id bigint NOT NULL REFERENCES ci_audit.workflow_runs (run_id)')
-    expect(statement).toContain(
-      'CREATE TABLE IF NOT EXISTS ci_audit.failure_clusters ( cluster_key varchar(64) PRIMARY KEY',
-    )
-    expect(statement).toContain('ON ci_audit.workflow_runs (updated_at DESC, run_id)')
-    expect(statement).toContain('ON ci_audit.job_runs (run_id, job_id)')
-    expect(statement).toContain('ON ci_audit.job_runs (completed_at DESC) WHERE failure_category IS NOT NULL')
-    expect(statement).toContain('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ci_audit FROM PUBLIC')
-    expect(statement).toContain("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agents_audit_ro') THEN")
-    expect(statement).toContain("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ci_audit_writer') THEN")
-    expect(statement?.match(/(?:ALTER DEFAULT PRIVILEGES IN SCHEMA ci_audit )?\bGRANT [^;]+/g)).toEqual([
+    expect(statements).toEqual([
+      'CREATE SCHEMA IF NOT EXISTS ci_audit',
+      expect.stringMatching(/^CREATE TABLE IF NOT EXISTS ci_audit\.workflow_runs \( run_id bigint PRIMARY KEY,/),
+      'CREATE INDEX IF NOT EXISTS workflow_runs_updated ON ci_audit.workflow_runs (updated_at DESC, run_id)',
+      'CREATE INDEX IF NOT EXISTS workflow_runs_branch_updated ON ci_audit.workflow_runs (head_branch, updated_at DESC)',
+      expect.stringContaining('run_id bigint NOT NULL REFERENCES ci_audit.workflow_runs (run_id)'),
+      'CREATE INDEX IF NOT EXISTS job_runs_run ON ci_audit.job_runs (run_id, job_id)',
+      'CREATE INDEX IF NOT EXISTS job_runs_failures ON ci_audit.job_runs (completed_at DESC) WHERE failure_category IS NOT NULL',
+      expect.stringMatching(
+        /^CREATE TABLE IF NOT EXISTS ci_audit\.failure_clusters \( cluster_key varchar\(64\) PRIMARY KEY,/,
+      ),
+      'REVOKE ALL PRIVILEGES ON SCHEMA ci_audit FROM PUBLIC',
+      'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ci_audit FROM PUBLIC',
+      expect.stringMatching(/^DO \$grants\$ BEGIN .* END; \$grants\$$/),
+    ])
+
+    const grants = statements.at(-1)
+    expect(grants).toContain("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agents_audit_ro') THEN")
+    expect(grants).toContain("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ci_audit_writer') THEN")
+    expect(grants?.match(/(?:ALTER DEFAULT PRIVILEGES IN SCHEMA ci_audit )?\bGRANT [^;]+/g)).toEqual([
       'GRANT USAGE ON SCHEMA ci_audit TO agents_audit_ro',
       'GRANT SELECT ON ALL TABLES IN SCHEMA ci_audit TO agents_audit_ro',
       'ALTER DEFAULT PRIVILEGES IN SCHEMA ci_audit GRANT SELECT ON TABLES TO agents_audit_ro',

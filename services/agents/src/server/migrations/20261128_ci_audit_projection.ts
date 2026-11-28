@@ -3,9 +3,9 @@ import { type Kysely, sql } from 'kysely'
 import type { AgentsDatabase } from '../db'
 
 export const up = async (db: Kysely<AgentsDatabase>) => {
-  await sql`
-    CREATE SCHEMA IF NOT EXISTS ci_audit;
+  await sql`CREATE SCHEMA IF NOT EXISTS ci_audit`.execute(db)
 
+  await sql`
     CREATE TABLE IF NOT EXISTS ci_audit.workflow_runs (
       run_id bigint PRIMARY KEY,
       workflow_name varchar(255) NOT NULL,
@@ -19,10 +19,16 @@ export const up = async (db: Kysely<AgentsDatabase>) => {
       duration_seconds double precision CHECK (duration_seconds >= 0),
       repository varchar(255) NOT NULL,
       synced_at timestamptz NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS workflow_runs_updated ON ci_audit.workflow_runs (updated_at DESC, run_id);
-    CREATE INDEX IF NOT EXISTS workflow_runs_branch_updated ON ci_audit.workflow_runs (head_branch, updated_at DESC);
+    )
+  `.execute(db)
+  await sql`
+    CREATE INDEX IF NOT EXISTS workflow_runs_updated ON ci_audit.workflow_runs (updated_at DESC, run_id)
+  `.execute(db)
+  await sql`
+    CREATE INDEX IF NOT EXISTS workflow_runs_branch_updated ON ci_audit.workflow_runs (head_branch, updated_at DESC)
+  `.execute(db)
 
+  await sql`
     CREATE TABLE IF NOT EXISTS ci_audit.job_runs (
       job_id bigint PRIMARY KEY,
       run_id bigint NOT NULL REFERENCES ci_audit.workflow_runs (run_id),
@@ -36,11 +42,15 @@ export const up = async (db: Kysely<AgentsDatabase>) => {
       duration_seconds double precision CHECK (duration_seconds >= 0),
       failure_category varchar(32),
       synced_at timestamptz NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS job_runs_run ON ci_audit.job_runs (run_id, job_id);
+    )
+  `.execute(db)
+  await sql`CREATE INDEX IF NOT EXISTS job_runs_run ON ci_audit.job_runs (run_id, job_id)`.execute(db)
+  await sql`
     CREATE INDEX IF NOT EXISTS job_runs_failures ON ci_audit.job_runs (completed_at DESC)
-      WHERE failure_category IS NOT NULL;
+      WHERE failure_category IS NOT NULL
+  `.execute(db)
 
+  await sql`
     CREATE TABLE IF NOT EXISTS ci_audit.failure_clusters (
       cluster_key varchar(64) PRIMARY KEY,
       workflow_name varchar(255) NOT NULL,
@@ -50,11 +60,13 @@ export const up = async (db: Kysely<AgentsDatabase>) => {
       occurrences_24h integer NOT NULL CHECK (occurrences_24h > 0),
       last_seen_at timestamptz NOT NULL,
       synced_at timestamptz NOT NULL DEFAULT now()
-    );
+    )
+  `.execute(db)
 
-    REVOKE ALL PRIVILEGES ON SCHEMA ci_audit FROM PUBLIC;
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ci_audit FROM PUBLIC;
+  await sql`REVOKE ALL PRIVILEGES ON SCHEMA ci_audit FROM PUBLIC`.execute(db)
+  await sql`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ci_audit FROM PUBLIC`.execute(db)
 
+  await sql`
     DO $grants$
     BEGIN
       IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agents_audit_ro') THEN
@@ -67,6 +79,6 @@ export const up = async (db: Kysely<AgentsDatabase>) => {
         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ci_audit TO ci_audit_writer;
       END IF;
     END;
-    $grants$;
+    $grants$
   `.execute(db)
 }
