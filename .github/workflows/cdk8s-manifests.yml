@@ -77,7 +77,6 @@ jobs:
         run: |
           set -euo pipefail
           bun run --filter @proompteng/k8s synth:check -- --all
-          bun run --filter @proompteng/k8s synth:check -- --all
           git diff --exit-code -- ':(glob)argocd/applications/*/generated/**'
 
       - name: Set up Nix toolchain
