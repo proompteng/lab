@@ -2598,9 +2598,10 @@ Effect compatibility and broker sandbox tests run in this suite with broker cred
 four shards, each with its own disposable database server in CI. Every test file runs in an isolated Bun module
 graph with a fresh database, and Bun prints the randomized order's seed. Run one shard locally with
 `bun run --filter @proompteng/bayn test:postgres 1/4` or omit the shard to run the complete suite. The local PostgreSQL
-role needs `CREATEDB` and a loopback URL for a database that ends in `_test`. The Jev batch, migration cutover and broker
-observation suites migrate each fixture once, then clone and remove a separate database for each test. ClickHouse/Java
-archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+role needs `CREATEDB` and a loopback URL for a database that ends in `_test`. Use the disposable server's bootstrap
+user for the audit grant test, which creates a cluster-wide role inside a rolled-back transaction. The Jev batch,
+migration cutover and broker observation suites migrate each fixture once, then clone and remove a separate database
+for each test. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
 
 The PostgreSQL runner assigns the longest measured files to the least-loaded shards using the same checked-in timing

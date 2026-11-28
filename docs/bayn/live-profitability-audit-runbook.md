@@ -6,18 +6,43 @@ capital authorization, broker settlement certificate, or instruction to trade. I
 ## Connect to the standby
 
 From the repository root, install dependencies with `bun install --frozen-lockfile`. Verify the Kubernetes context and
-identity using the [cluster access runbook](../runbooks/galactic-kubernetes-access.md). Run this in a separate terminal:
+identity using the [cluster access runbook](../runbooks/galactic-kubernetes-access.md).
+
+Use the CNPG-managed `bayn_audit_ro` login, not the application writer or `bayn_research`. Before rollout, provision
+`bayn/bayn-audit-ro-db` through the approved secret-sync path as a `kubernetes.io/basic-auth` Secret with username
+`bayn_audit_ro`, its dedicated password, and label `cnpg.io/reload: "true"`. Confirm that CNPG reconciles the role
+before Bayn runs [migration 0226](../../services/bayn/migrations/0226_audit_reader_grants.ts). If the
+migration was recorded before the role existed, have the database owner apply that migration's guarded SQL block on
+the primary through the approved administration path. Do not edit migration history. Verify the role can read
+`public.orders` but has no write privileges on Bayn tables, and wait for the standby to catch up before running the audit.
+
+Run this in a separate terminal:
 
 ```sh
 kubectl -n bayn port-forward --address 127.0.0.1 service/bayn-db-ro 55432:5432
 ```
 
-Through the existing approved credential path, export `BAYN_POSTGRES_URL` for the `bayn` database at
-`127.0.0.1:55432`, using an existing **SELECT-only** role and the approved TLS settings for that identity. Export
-`BAYN_AUDIT_ACCOUNT_ID` for the verified live Alpaca account. Do not put a URL or password in CLI arguments, shell
-history, or an incident report. Do not use the writer secret or create a new role as a workaround. If a standby or
-the read-only identity is unavailable, stop or replay an approved offline fixture. The command uses a single
-repeatable-read, read-only transaction even when the DB role already lacks write access.
+Through the approved credential path, export `BAYN_POSTGRES_URL` for user `bayn_audit_ro`, database `bayn`, and
+host/port `127.0.0.1:55432`. Use a PostgreSQL URI with URL-encoded credentials and no TLS query options. Do not put
+the URI or password in CLI arguments, shell history, or an incident report. Export `BAYN_AUDIT_ACCOUNT_ID` for the
+verified live Alpaca account. Use an approved copy of the CNPG server CA, or extract only the public `ca.crt` if
+authorized to read the CA Secret:
+
+```sh
+export BAYN_POSTGRES_TLS=true
+BAYN_POSTGRES_CA_PATH=$(mktemp)
+export BAYN_POSTGRES_CA_PATH
+kubectl -n bayn get secret bayn-db-ca -o jsonpath='{.data.ca\.crt}' | base64 --decode > "$BAYN_POSTGRES_CA_PATH"
+export BAYN_POSTGRES_TLS_SERVERNAME=bayn-db-ro.bayn.svc.cluster.local
+```
+
+TLS defaults to enabled, with CA path `/var/run/secrets/bayn/postgres/ca.crt` when not set. For a direct standby
+connection, leave `BAYN_POSTGRES_TLS_SERVERNAME` unset if the URL host matches the certificate's DNS SAN. With
+port-forwarding, the URL still dials localhost, but the TLS name must be a DNS SAN on the CNPG certificate, not
+`127.0.0.1`. An unreadable or invalid CA file, an untrusted chain, or a mismatched name fails the audit; never
+disable TLS or verification to work around it. If the standby or the audit login is unavailable, stop or replay an
+approved offline fixture. The command uses one repeatable-read, read-only transaction in addition to the role's
+SELECT-only grants.
 
 ## Monday 2026-11-30: verify the opening cut
 
@@ -107,4 +132,5 @@ are minute **starts**; quotes must have a non-withdrawn side with positive displ
 
 No pairs means drift is unavailable. A live Postgres read without retained quotes or position marks at the time of a stop crossing
 cannot confirm or rule out a gap-through; supply the archived quotes, rather than treating OHLC extremes as an
-executable price. Stop the port-forward when finished, and store outputs only in approved incident/evidence storage.
+executable price. Stop the port-forward and remove the temporary CA file when finished. Store outputs only in
+approved incident/evidence storage.
