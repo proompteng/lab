@@ -1,11 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createAgentRunReconciler, resolveProviderReadinessBlock } from './agent-run-reconciler'
+import { normalizeConditions } from './conditions'
+import { hashAgentRunImmutableSpec } from './immutable-spec'
+import { AGENT_RUN_SPEC_HASH_ANNOTATION, buildRunSpec, makeName } from './job-runtime'
 import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from './provider-capacity'
-import { RESOURCE_MAP } from '../kube-types'
+import { isKubeConflict, RESOURCE_MAP } from '../kube-types'
 import { AgentRunIndex } from './queue-state'
+import { resolveParameters } from './run-utils'
+import { createTemporalRuntimeTools } from './temporal-runtime'
 
 describe('agents controller agent-run reconciler', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
   const createBaseDependencies = (overrides: Partial<Parameters<typeof createAgentRunReconciler>[0]> = {}) => ({
     setStatus: vi.fn(async () => undefined),
     nowIso: () => '2026-05-18T14:00:00.000Z',
@@ -535,5 +543,549 @@ describe('agents controller agent-run reconciler', () => {
 
     expect(kube.get).toHaveBeenCalledWith('job', 'run-1-job', 'agents')
     expect(setStatus).not.toHaveBeenCalled()
+  })
+
+  it('recovers a custom runtime start on HTTP 409 status conflict without repeating the endpoint POST', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: vi.fn().mockResolvedValue({ accepted: true, executionId: 'exec-1' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const initialRun = {
+      metadata: {
+        name: 'custom-run',
+        namespace: 'agents',
+        uid: 'custom-uid-1',
+        generation: 1,
+        resourceVersion: '10',
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'custom-agent' },
+        runtime: { type: 'custom', config: { endpoint: 'https://runner.internal/submit' } },
+        implementation: { inline: { text: 'Run custom action' } },
+        parameters: {},
+      },
+      status: { phase: 'Pending' },
+    }
+    const refreshedRun = {
+      ...initialRun,
+      metadata: {
+        ...initialRun.metadata,
+        resourceVersion: '11',
+        annotations: { 'example.com/updated-in-flight': 'true' },
+      },
+    }
+    const expectedSpecHash = hashAgentRunImmutableSpec(initialRun)
+
+    const setStatus = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('resourceVersion conflict'), { code: 409 }))
+      .mockResolvedValueOnce(undefined)
+
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string, name: string) => {
+        if (kind === RESOURCE_MAP.Agent && name === 'custom-agent') {
+          return {
+            metadata: { name: 'custom-agent' },
+            spec: { providerRef: { name: 'custom-provider' }, defaults: { systemPrompt: 'system' } },
+          }
+        }
+        if (kind === RESOURCE_MAP.AgentProvider && name === 'custom-provider') {
+          return { metadata: { name: 'custom-provider' }, spec: {} }
+        }
+        if (kind === RESOURCE_MAP.AgentRun && name === 'custom-run') {
+          return refreshedRun
+        }
+        return null
+      }),
+    }
+
+    const temporalTools = createTemporalRuntimeTools({
+      getTemporalClient: async () => ({}),
+      resolveParameters,
+      buildRunSpec,
+      makeName,
+      buildConditions: (resource) =>
+        normalizeConditions((resource.status as Record<string, unknown> | undefined)?.conditions),
+      nowIso: () => '2026-05-18T14:00:00.000Z',
+      setStatus: setStatus as never,
+    })
+
+    const reconciler = createAgentRunReconciler(
+      createBaseDependencies({
+        setStatus,
+        submitCustomRun: temporalTools.submitCustomRun,
+        buildConditions: (resource) =>
+          normalizeConditions((resource.status as Record<string, unknown> | undefined)?.conditions),
+      }),
+    )
+
+    await reconciler.reconcileAgentRun(kube as never, initialRun, 'agents', [], new AgentRunIndex(), {
+      perNamespace: 10,
+      perAgent: 10,
+      cluster: 10,
+      repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(kube.get).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'custom-run', 'agents')
+    expect(setStatus).toHaveBeenCalledTimes(2)
+    expect(setStatus).toHaveBeenNthCalledWith(
+      2,
+      kube,
+      refreshedRun,
+      expect.objectContaining({
+        observedGeneration: 1,
+        phase: 'Running',
+        specHash: expectedSpecHash,
+        runtimeRef: {
+          type: 'custom',
+          name: 'https://runner.internal/submit',
+          namespace: 'external',
+          response: { accepted: true, executionId: 'exec-1' },
+        },
+        conditions: expect.arrayContaining([
+          expect.objectContaining({ type: 'Accepted', status: 'True', reason: 'Submitted' }),
+          expect.objectContaining({ type: 'InProgress', status: 'True', reason: 'Running' }),
+        ]),
+      }),
+    )
+  })
+
+  it('recovers a temporal runtime start on HTTP 409 status conflict without repeating workflow.start', async () => {
+    const start = vi.fn().mockResolvedValue({
+      workflowId: 'temporal-run-temporal',
+      namespace: 'temporal',
+      runId: 'wf-run-1',
+    })
+    const temporalClient = {
+      workflow: {
+        start,
+        result: vi.fn(),
+        cancel: vi.fn(async () => undefined),
+      },
+    }
+
+    const initialRun = {
+      metadata: {
+        name: 'temporal-run',
+        namespace: 'agents',
+        uid: 'temporal-uid-1',
+        generation: 1,
+        resourceVersion: '20',
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'temporal-agent' },
+        runtime: {
+          type: 'temporal',
+          config: { workflowType: 'AgentWorkflow', taskQueue: 'agents-queue', namespace: 'temporal' },
+        },
+        implementation: { inline: { text: 'Run temporal workflow' } },
+        parameters: {},
+      },
+      status: { phase: 'Pending' },
+    }
+    const refreshedRun = {
+      ...initialRun,
+      metadata: {
+        ...initialRun.metadata,
+        resourceVersion: '21',
+        labels: { 'example.com/touched': '1' },
+      },
+    }
+    const expectedSpecHash = hashAgentRunImmutableSpec(initialRun)
+
+    const setStatus = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('resourceVersion conflict'), { code: 409 }))
+      .mockResolvedValueOnce(undefined)
+
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string, name: string) => {
+        if (kind === RESOURCE_MAP.Agent && name === 'temporal-agent') {
+          return {
+            metadata: { name: 'temporal-agent' },
+            spec: { providerRef: { name: 'temporal-provider' }, defaults: { systemPrompt: 'system' } },
+          }
+        }
+        if (kind === RESOURCE_MAP.AgentProvider && name === 'temporal-provider') {
+          return { metadata: { name: 'temporal-provider' }, spec: {} }
+        }
+        if (kind === RESOURCE_MAP.AgentRun && name === 'temporal-run') {
+          return refreshedRun
+        }
+        return null
+      }),
+    }
+
+    const temporalTools = createTemporalRuntimeTools({
+      getTemporalClient: async () => temporalClient,
+      resolveParameters,
+      buildRunSpec,
+      makeName,
+      buildConditions: (resource) =>
+        normalizeConditions((resource.status as Record<string, unknown> | undefined)?.conditions),
+      nowIso: () => '2026-05-18T14:00:00.000Z',
+      setStatus: setStatus as never,
+    })
+
+    const reconciler = createAgentRunReconciler(
+      createBaseDependencies({
+        setStatus,
+        getTemporalClient: async () => temporalClient,
+        submitTemporalRun: temporalTools.submitTemporalRun,
+        buildConditions: (resource) =>
+          normalizeConditions((resource.status as Record<string, unknown> | undefined)?.conditions),
+      }),
+    )
+
+    await reconciler.reconcileAgentRun(kube as never, initialRun, 'agents', [], new AgentRunIndex(), {
+      perNamespace: 10,
+      perAgent: 10,
+      cluster: 10,
+      repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+    })
+
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(temporalClient.workflow.cancel).not.toHaveBeenCalled()
+    expect(kube.get).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'temporal-run', 'agents')
+    expect(setStatus).toHaveBeenCalledTimes(2)
+    expect(setStatus).toHaveBeenNthCalledWith(
+      2,
+      kube,
+      refreshedRun,
+      expect.objectContaining({
+        observedGeneration: 1,
+        phase: 'Running',
+        specHash: expectedSpecHash,
+        runtimeRef: {
+          type: 'temporal',
+          name: 'temporal-run-temporal',
+          namespace: 'temporal',
+          workflowId: 'temporal-run-temporal',
+          runId: 'wf-run-1',
+          taskQueue: 'agents-queue',
+        },
+      }),
+    )
+  })
+
+  it('cancels an orphaned temporal start when the refreshed AgentRun transitioned to Cancelled during a 409 conflict', async () => {
+    const cancel = vi.fn(async () => undefined)
+    const submitTemporalRun = vi.fn(async () => ({
+      type: 'temporal',
+      name: 'temporal-run-temporal',
+      namespace: 'temporal',
+      workflowId: 'temporal-run-temporal',
+      runId: 'wf-run-2',
+      taskQueue: 'agents-queue',
+    }))
+    const setStatus = vi.fn().mockRejectedValueOnce(Object.assign(new Error('resourceVersion conflict'), { code: 409 }))
+
+    const initialRun = {
+      metadata: {
+        name: 'temporal-cancelled',
+        namespace: 'agents',
+        uid: 'temporal-uid-2',
+        generation: 1,
+        resourceVersion: '30',
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'temporal-agent' },
+        runtime: { type: 'temporal', config: { workflowType: 'AgentWorkflow', taskQueue: 'agents-queue' } },
+        implementation: { inline: { text: 'Run temporal workflow' } },
+        parameters: {},
+      },
+      status: { phase: 'Pending' },
+    }
+    const cancelledRun = {
+      ...initialRun,
+      metadata: { ...initialRun.metadata, resourceVersion: '31' },
+      status: { phase: 'Cancelled', finishedAt: '2026-05-18T14:00:00.000Z' },
+    }
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string, name: string) => {
+        if (kind === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name },
+            spec: { providerRef: { name: 'temporal-provider' }, defaults: { systemPrompt: 'system' } },
+          }
+        }
+        if (kind === RESOURCE_MAP.AgentProvider) return { metadata: { name }, spec: {} }
+        if (kind === RESOURCE_MAP.AgentRun) return cancelledRun
+        return null
+      }),
+    }
+
+    const reconciler = createAgentRunReconciler(
+      createBaseDependencies({
+        setStatus,
+        submitTemporalRun,
+        getTemporalClient: async () => ({ workflow: { cancel } }),
+      }),
+    )
+
+    await reconciler.reconcileAgentRun(kube as never, initialRun, 'agents', [], new AgentRunIndex(), {
+      perNamespace: 10,
+      perAgent: 10,
+      cluster: 10,
+      repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+    })
+
+    expect(submitTemporalRun).toHaveBeenCalledTimes(1)
+    expect(setStatus).toHaveBeenCalledTimes(1)
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      workflowId: 'temporal-run-temporal',
+      runId: 'wf-run-2',
+      namespace: 'temporal',
+    })
+  })
+
+  it('bounds status conflict retries for non-Job runs and avoids bubbling a 409 that would resubmit', async () => {
+    const submitCustomRun = vi.fn(async () => ({
+      type: 'custom',
+      name: 'https://runner.internal/submit',
+      namespace: 'external',
+      response: { accepted: true },
+    }))
+    const setStatus = vi.fn(async () => {
+      throw Object.assign(new Error('resourceVersion conflict'), { code: 409 })
+    })
+    let version = 40
+    const baseRun = {
+      metadata: {
+        name: 'custom-busy',
+        namespace: 'agents',
+        uid: 'custom-uid-busy',
+        generation: 1,
+        resourceVersion: String(version),
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'custom-agent' },
+        runtime: { type: 'custom', config: { endpoint: 'https://runner.internal/submit' } },
+        implementation: { inline: { text: 'Run custom action' } },
+        parameters: {},
+      },
+      status: { phase: 'Pending' },
+    }
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string, name: string) => {
+        if (kind === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name },
+            spec: { providerRef: { name: 'custom-provider' }, defaults: { systemPrompt: 'system' } },
+          }
+        }
+        if (kind === RESOURCE_MAP.AgentProvider) return { metadata: { name }, spec: {} }
+        if (kind === RESOURCE_MAP.AgentRun) {
+          version += 1
+          return { ...baseRun, metadata: { ...baseRun.metadata, resourceVersion: String(version) } }
+        }
+        return null
+      }),
+    }
+
+    const reconciler = createAgentRunReconciler(
+      createBaseDependencies({
+        setStatus,
+        submitCustomRun,
+      }),
+    )
+
+    let caught: unknown
+    try {
+      await reconciler.reconcileAgentRun(kube as never, baseRun, 'agents', [], new AgentRunIndex(), {
+        perNamespace: 10,
+        perAgent: 10,
+        cluster: 10,
+        repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain('after 6 conflict attempts')
+    expect(isKubeConflict(caught)).toBe(false)
+    expect(submitCustomRun).toHaveBeenCalledTimes(1)
+    expect(setStatus).toHaveBeenCalledTimes(6)
+  })
+
+  it('restores acceptance specHash from the orphaned Job annotation and enforces immutability on subsequent mutation', async () => {
+    const persistedStatuses: Record<string, unknown>[] = []
+    const setStatus = vi.fn(async (_kube, _resource, status: Record<string, unknown>) => {
+      persistedStatuses.push(status)
+    })
+    const originalRun = {
+      metadata: {
+        name: 'adopted-run',
+        namespace: 'agents',
+        uid: 'adopted-uid-1',
+        generation: 1,
+        resourceVersion: '50',
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'codex-agent' },
+        runtime: { type: 'job', config: { mode: 'original' } },
+        implementation: { inline: { text: 'Original implementation' } },
+        secrets: ['secret-a'],
+        parameters: {},
+        workload: {},
+      },
+      status: { phase: 'Pending' },
+    }
+    const originalAcceptanceHash = hashAgentRunImmutableSpec(originalRun)
+    const orphanedJob = {
+      metadata: {
+        name: 'adopted-run-job',
+        namespace: 'agents',
+        uid: 'adopted-job-uid-1',
+        labels: {
+          'agents.proompteng.ai/agent-run': 'adopted-run',
+          'agents.proompteng.ai/run-uid': 'adopted-uid-1',
+        },
+        annotations: {
+          [AGENT_RUN_SPEC_HASH_ANNOTATION]: originalAcceptanceHash,
+        },
+      },
+      status: { active: 1 },
+    }
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      delete: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string, name: string) =>
+        kind === 'job' && name === 'adopted-run-job' ? orphanedJob : null,
+      ),
+    }
+    const submitJobRun = vi.fn()
+    const reconciler = createAgentRunReconciler(
+      createBaseDependencies({
+        setStatus,
+        submitJobRun,
+        buildConditions: (resource) =>
+          normalizeConditions((resource.status as Record<string, unknown> | undefined)?.conditions),
+      }),
+    )
+
+    // Step 1: Initial Running status write was lost; reconciler adopts the orphaned Job and restores status.specHash.
+    await reconciler.reconcileAgentRun(kube as never, originalRun, 'agents', [], new AgentRunIndex(), {
+      perNamespace: 10,
+      perAgent: 10,
+      cluster: 10,
+      repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+    })
+
+    expect(submitJobRun).not.toHaveBeenCalled()
+    expect(persistedStatuses).toHaveLength(1)
+    expect(persistedStatuses[0]).toMatchObject({
+      phase: 'Running',
+      specHash: originalAcceptanceHash,
+      runtimeRef: {
+        type: 'job',
+        name: 'adopted-run-job',
+        namespace: 'agents',
+        uid: 'adopted-job-uid-1',
+      },
+      conditions: expect.arrayContaining([
+        expect.objectContaining({ type: 'Accepted', status: 'True', reason: 'JobAdopted' }),
+      ]),
+    })
+
+    // Step 2: Mutate immutable spec fields after adoption; immutability enforcement must reject and cancel the Job.
+    const mutatedRun = {
+      ...originalRun,
+      metadata: { ...originalRun.metadata, generation: 2, resourceVersion: '51' },
+      spec: {
+        ...originalRun.spec,
+        implementation: { inline: { text: 'Tampered implementation' } },
+        secrets: ['secret-a', 'secret-b'],
+      },
+      status: persistedStatuses[0],
+    }
+
+    await reconciler.reconcileAgentRun(kube as never, mutatedRun, 'agents', [], new AgentRunIndex(), {
+      perNamespace: 10,
+      perAgent: 10,
+      cluster: 10,
+      repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+    })
+
+    expect(kube.delete).toHaveBeenCalledWith('job', 'adopted-run-job', 'agents', { wait: false })
+    expect(persistedStatuses).toHaveLength(2)
+    expect(persistedStatuses[1]).toMatchObject({
+      phase: 'Failed',
+      conditions: expect.arrayContaining([
+        expect.objectContaining({ type: 'Failed', status: 'True', reason: 'SpecImmutableViolation' }),
+      ]),
+    })
+  })
+
+  it('falls back to hashing the current spec when adopting a legacy orphaned Job without a spec-hash annotation', async () => {
+    const setStatus = vi.fn(async () => undefined)
+    const run = {
+      metadata: {
+        name: 'legacy-adopted',
+        namespace: 'agents',
+        uid: 'legacy-uid-1',
+        generation: 1,
+        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+      },
+      spec: {
+        agentRef: { name: 'codex-agent' },
+        runtime: { type: 'job' },
+        implementation: { inline: { text: 'Legacy implementation' } },
+        parameters: {},
+        workload: {},
+      },
+      status: { phase: 'Pending' },
+    }
+    const legacyOrphanedJob = {
+      metadata: {
+        name: 'legacy-adopted-job',
+        namespace: 'agents',
+        uid: 'legacy-job-uid-1',
+        labels: {
+          'agents.proompteng.ai/agent-run': 'legacy-adopted',
+          'agents.proompteng.ai/run-uid': 'legacy-uid-1',
+        },
+      },
+      status: { active: 1 },
+    }
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string, name: string) =>
+        kind === 'job' && name === 'legacy-adopted-job' ? legacyOrphanedJob : null,
+      ),
+    }
+
+    const reconciler = createAgentRunReconciler(createBaseDependencies({ setStatus }))
+
+    await reconciler.reconcileAgentRun(kube as never, run, 'agents', [], new AgentRunIndex(), {
+      perNamespace: 10,
+      perAgent: 10,
+      cluster: 10,
+      repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+    })
+
+    expect(setStatus).toHaveBeenCalledWith(
+      kube,
+      run,
+      expect.objectContaining({
+        phase: 'Running',
+        specHash: hashAgentRunImmutableSpec(run),
+      }),
+    )
   })
 })

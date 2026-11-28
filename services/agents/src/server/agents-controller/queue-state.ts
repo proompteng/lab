@@ -1,4 +1,4 @@
-import { asString, readNested } from '../primitives'
+import { asRecord, asString, readNested } from '../primitives'
 
 import { isActiveRun, isQueuedRun, normalizeRepository, resolveRunHeadBranch, resolveRunRepository } from './run-utils'
 
@@ -29,6 +29,7 @@ const createNamespaceRuns = () => ({
   queued: 0,
   runningByAgent: new Map<string, number>(),
   activeByBranch: new Map<string, number>(),
+  capacityWaiters: new Set<string>(),
 })
 
 const adjustCount = (counts: Map<string, number>, key: string, change: 1 | -1) => {
@@ -56,6 +57,10 @@ export class AgentRunIndex {
     return Array.from(this.namespaces.get(namespace)?.entries.values() ?? [], (entry) => entry.resource)
   }
 
+  capacityWaiters(namespace: string): ReadonlySet<string> | undefined {
+    return this.namespaces.get(namespace)?.capacityWaiters
+  }
+
   update(namespace: string, name: string, resource: Run | null) {
     let ns = this.namespaces.get(namespace)
     const previous = ns?.entries.get(name)
@@ -65,6 +70,7 @@ export class AgentRunIndex {
       this.namespaces.set(namespace, ns)
     }
     if (previous) this.adjust(ns, previous, -1)
+    ns.capacityWaiters.delete(name)
     if (!resource) {
       ns.entries.delete(name)
       if (!ns.entries.size) this.namespaces.delete(namespace)
@@ -85,6 +91,26 @@ export class AgentRunIndex {
     }
     ns.entries.set(name, entry)
     this.adjust(ns, entry, 1)
+    if (
+      entry.queued &&
+      !readNested(resource, ['status', 'runtimeRef']) &&
+      !readNested(resource, ['metadata', 'deletionTimestamp'])
+    ) {
+      const conditions = readNested(resource, ['status', 'conditions'])
+      if (
+        Array.isArray(conditions) &&
+        conditions.some((condition) => {
+          const blocked = asRecord(condition)
+          return (
+            blocked?.type === 'Blocked' &&
+            blocked.status === 'True' &&
+            (blocked.reason === 'ConcurrencyLimit' || blocked.reason === 'RateLimit')
+          )
+        })
+      ) {
+        ns.capacityWaiters.add(name)
+      }
+    }
   }
 
   replaceNamespace(namespace: string, resources: ReadonlyMap<string, Run>) {

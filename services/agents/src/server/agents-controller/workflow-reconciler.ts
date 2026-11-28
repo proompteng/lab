@@ -18,6 +18,7 @@ import {
   validateProviderSecretEnvPolicy,
 } from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
+import type { RateLimitDecision } from './rate-limits'
 import { resolveImplementation, resolveParameters } from './run-utils'
 import { buildRuntimeRef, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
@@ -450,7 +451,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     agentRun: Record<string, unknown>,
     namespace: string,
     memories: Record<string, unknown>[],
-    options: { initialSubmit?: boolean } = {},
+    options: { initialSubmit?: boolean; reserveStart?: () => Promise<RateLimitDecision> } = {},
   ) => {
     const reconcileStartedAt = Date.now()
     const metadata = asRecord(agentRun.metadata) ?? {}
@@ -742,28 +743,36 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           'agents.proompteng.ai/step-index': String(index + 1),
           ...(loopStatus ? { 'agents.proompteng.ai/step-iteration': String(iterationIndex) } : {}),
         }
-        const stepRuntimeRef = await deps.submitJobRun(
-          kube,
-          agentRun,
-          dependencies.agent,
-          dependencies.provider,
-          implementation,
-          dependencies.memory,
-          namespace,
-          workloadImage,
-          'workflow',
-          {
-            nameSuffix: jobSuffix,
-            labels: stepLabels,
-            workload: stepWorkload,
-            parameters: stepParameters,
-            runtimeConfig,
-            vcs: stepVcs,
-            systemPrompt: systemPromptResolution.systemPrompt,
-            systemPromptHash: systemPromptResolution.systemPromptHash,
-            systemPromptRef: systemPromptResolution.systemPromptRef,
-          },
-        )
+        const reservation = await options.reserveStart?.()
+        if (reservation && !reservation.ok) return reservation.retryAt
+        let stepRuntimeRef: RuntimeRef
+        try {
+          stepRuntimeRef = await deps.submitJobRun(
+            kube,
+            agentRun,
+            dependencies.agent,
+            dependencies.provider,
+            implementation,
+            dependencies.memory,
+            namespace,
+            workloadImage,
+            'workflow',
+            {
+              nameSuffix: jobSuffix,
+              labels: stepLabels,
+              workload: stepWorkload,
+              parameters: stepParameters,
+              runtimeConfig,
+              vcs: stepVcs,
+              systemPrompt: systemPromptResolution.systemPrompt,
+              systemPromptHash: systemPromptResolution.systemPromptHash,
+              systemPromptRef: systemPromptResolution.systemPromptRef,
+            },
+          )
+        } catch (error) {
+          reservation?.release()
+          throw error
+        }
 
         const startedAt = deps.nowIso()
         stepStatus.attempt = attempt
