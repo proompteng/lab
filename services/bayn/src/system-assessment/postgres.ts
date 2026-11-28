@@ -9,6 +9,7 @@ import { SystemAssessmentError } from './economics'
 import {
   validateProspectiveSystemRegistration,
   verifyStoredSystemRegistration,
+  isNativeSystemRegistration,
   type ScheduledEvaluation,
 } from './policy'
 import {
@@ -69,7 +70,7 @@ export const verifyNativeCashLedgerSources = (
   peer?: PgClient.PgClient,
 ) =>
   Effect.gen(function* () {
-    if (registration.schemaVersion !== 'bayn.system-registration.v5') return
+    if (!isNativeSystemRegistration(registration)) return
     const candidate = yield* PgClient.PgClient
     if (peer !== undefined) {
       const incumbent = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Incumbent)

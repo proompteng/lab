@@ -267,11 +267,20 @@ discriminator and complete provider payload. Preserve the original Kafka envelop
 required beyond Kafka's configured retention period.
 
 Roll out the TA sample exclusions and the producer implementation first. Verify the deployed TA image contains the
-exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The intended missing set is
-`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`; keep the existing 16 bar and seven quote/trade WebSocket subscriptions.
-Activation requires regular-session proof that actual provider events for these symbols reach Bayn and change its
-candidate coverage. Access checks and readiness alone cannot establish this. Existing historical captures retain their
-gaps, and completing the input stream does not establish a profitable strategy.
+exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The shared IEX plan streams completed bars for all
+22 source symbols, plus quotes and trades for `AAPL,AMZN,NVDA,SPY`, within the existing 30-unit admission budget.
+The remaining 18 symbols use latest REST quotes and trades. Bayn's entry candidates, the retained Torghut candidate
+configuration, and SPY keep their quote/trade paths. `IWM,QQQ,SMH` retain native streamed bars but receive sampled quotes/trades;
+their trade-derived microbars are no longer populated from the stream, so do not admit them to an execution universe
+requiring tick-volume evidence without reviewing this source allocation.
+
+The plan removes completed REST-bar polling from the live decision path. The six additional Bayn equities otherwise
+race the two-second minute decision cut when the next poll observes a newly completed provider bar. Streaming their
+native bars improves arrival opportunity without revising an immutable cut or extending data/inference deadlines.
+The pod-template subscription-plan annotation rolls the env-based configuration through normal GitOps. Activation
+requires regular-session proof of subscription acknowledgements, actual bar-to-feature arrival, and candidate coverage.
+Access checks and readiness alone cannot establish this. Existing historical captures retain their gaps, and completing
+the input stream does not establish a profitable strategy.
 
 Disabling polling does not remove retained sampled records. Keep compatible volume exclusions during rollback, or
 verify that restored offsets cannot replay sampled records into an older volume consumer.
@@ -295,6 +304,31 @@ Run the producer checks from this directory:
 
 Normal deployment uses the repository's reviewed main, image publication, Kargo promotion, and Argo reconciliation.
 Checkpoint compatibility and actual source-to-consumer behavior are separate acceptance checks.
+
+## Consolidated SIP shadow forwarder
+
+Run SIP in a separate equity forwarder with `ALPACA_FEED=sip`, one WebSocket owner, and no `ALPACA_LATEST_SYMBOLS`.
+Do not add SIP to `ALPACA_OBSERVATION_FEEDS` on the IEX forwarder. Set `SYMBOLS` and `SYMBOLS_ALLOWLIST` to the same
+sorted, unique, explicit roster, and set `MARKET_DATA_UNIVERSE_ID` and `MARKET_DATA_UNIVERSE_SYMBOL_HASH` to its
+versioned identity and SHA-256 (uppercase symbols joined by commas, without whitespace or a trailing newline).
+For the [Wave 4H roster](https://github.com/proompteng/lab/pull/16372), these are `torghut-core-equity-sip-v1` and
+`89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b`.
+
+- Set `ALPACA_MARKET_DATA_CHANNELS=bars,quotes,trades` for 219 symbol-channel subscriptions at 73 symbols.
+  `updatedBars` counts separately if enabled.
+- Declare paid access with `ALPACA_MARKET_DATA_ENTITLEMENT=algo_trader_plus` (local ceiling 400), or set
+  `ALPACA_MAX_SYMBOL_CHANNELS=219` against a verified paid account. The explicit limit accepts 1–400 and can tighten
+  the Plus ceiling. An undeclared plan defaults to 30, and an explicit `basic` plan cannot exceed 30. These
+  settings configure local admission; Alpaca still decides whether the credentials can subscribe.
+- Set `TOPIC_BARS_1M`, `TOPIC_QUOTES`, `TOPIC_TRADES`, and `TOPIC_STATUS` to distinct shadow topics, for example
+  `bayn.market-data.sip.{bars.1m,quotes,trades,status}.v1`. The existing `torghut.*` and other `bayn.market-data.*` routes
+  are reserved. SIP records carry `feed=sip`, `delay_class=real_time_consolidated`, `universe_id`, and
+  `universe_symbol_hash`. Optional historical recovery requests `feed=sip` and retains `source=rest`.
+- Alpaca [admission errors](https://docs.alpaca.markets/us/docs/streaming-market-data) 405 (symbol limit), 406
+  (connection limit), and 409 (insufficient subscription) mark SIP unready and stop its reconnect loop. Correct
+  the roster, connection ownership, or account entitlement before restarting the forwarder.
+
+This configuration does not activate a SIP deployment or change what IEX, delayed SIP, or Bayn consume.
 
 ## Producer stall diagnostics
 

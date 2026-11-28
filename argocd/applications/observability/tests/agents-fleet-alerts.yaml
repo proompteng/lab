@@ -1,0 +1,87 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: Backlog alert waits for sustained pressure and clears when the backlog drains
+    interval: 1m
+    input_series:
+      - series: agents_agentrun_untouched_backlog{job="agents",service="agents-controllers",namespace="synthesis",pod="leader"}
+        values: 11+0x6 0+0x3
+      - series: agents_agentrun_untouched_backlog{job="agents",service="agents-controllers",namespace="agents",pod="leader"}
+        values: 10+0x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AgentsUntouchedBacklogHigh",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count by (namespace) (ALERTS{alertname="AgentsUntouchedBacklogHigh",alertstate="firing"})
+        eval_time: 6m
+        exp_samples: [{labels: '{namespace="synthesis"}', value: 1}]
+      - expr: count(ALERTS{alertname="AgentsUntouchedBacklogHigh",alertstate="firing"}) or vector(0)
+        eval_time: 7m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: Failure rate counts failures against non-cancelled runs and ignores a rollout counter reset
+    interval: 1m
+    input_series:
+      - series: agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome="Succeeded",pod="leader"}
+        values: 10+1x7 0+1x10
+      - series: agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome="Failed",pod="leader"}
+        values: 10+1x7 0+1x10
+      - series: agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome="Cancelled",pod="leader"}
+        values: 10+100x18
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AgentsRunFailureRateHigh",alertstate="firing"}) or vector(0)
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="AgentsRunFailureRateHigh",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: One isolated failure is not enough to alert
+    interval: 1m
+    input_series:
+      - series: agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome="Failed",pod="leader"}
+        values: 0 1+0x16
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AgentsRunFailureRateHigh",alertstate="firing"}) or vector(0)
+        eval_time: 15m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: Quota above 85 percent warns per limit and stops firing when the window expires
+    interval: 1m
+    input_series:
+      - series: agents_runner_quota_used_percent{job="agents",service="agents-controllers",limit_id="codex",pod="leader"}
+        values: 86+0x6 stale _x4
+      - series: agents_runner_quota_used_percent{job="agents",service="agents-controllers",limit_id="other",pod="leader"}
+        values: 85+0x12
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AgentsQuotaNearLimit",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count by (limit_id) (ALERTS{alertname="AgentsQuotaNearLimit",alertstate="firing",severity="warning"})
+        eval_time: 6m
+        exp_samples: [{labels: '{limit_id="codex"}', value: 1}]
+      - expr: count(ALERTS{alertname="AgentsQuotaNearLimit",alertstate="firing"}) or vector(0)
+        eval_time: 7m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: Reconcile p95 warns only for a namespace with sustained slow observations
+    interval: 1m
+    input_series:
+      - series: agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun",namespace="synthesis",le="2500"}
+        values: 0+0x12
+      - series: agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun",namespace="synthesis",le="5000"}
+        values: 0+1x12
+      - series: agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun",namespace="synthesis",le="10000"}
+        values: 0+10x12
+      - series: agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun",namespace="synthesis",le="+Inf"}
+        values: 0+10x12
+      - series: agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun",namespace="agents",le="2500"}
+        values: 0+10x12
+      - series: agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun",namespace="agents",le="5000"}
+        values: 0+10x12
+      - series: agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun",namespace="agents",le="+Inf"}
+        values: 0+10x12
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AgentsControllerReconcileSlow",alertstate="firing"}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count by (namespace) (ALERTS{alertname="AgentsControllerReconcileSlow",alertstate="firing"})
+        eval_time: 9m
+        exp_samples: [{labels: '{namespace="synthesis"}', value: 1}]

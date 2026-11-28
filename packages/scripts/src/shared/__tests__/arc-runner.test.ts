@@ -82,7 +82,14 @@ describe('ARC Nix runner toolchain', () => {
             source.helm.valuesObject.runnerScaleSetName,
         )
         .filter(Boolean),
-    ).toEqual(['arc-arm64', 'arc-amd64'])
+    ).toEqual([
+      'arc-arm64',
+      'arc-amd64',
+      'arc-arm64-tmpfs',
+      'arc-amd64-tmpfs',
+      'arc-arm64-tmpfs-large',
+      'arc-amd64-tmpfs-large',
+    ])
     expect(arcApplication).not.toContain('image: docker:dind')
     const armBlock = runnerScaleSetBlock('arc-arm64')
     expect(armBlock).toContain('storageClassName: rook-ceph-block')
@@ -91,6 +98,40 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
     expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
+  })
+
+  it('offers two opt-in scratch sizes on each build host', () => {
+    const application = YAML.parse(arcApplication)
+    const sources = application.spec.sources
+    for (const [index, architecture, sizeLimit, memory] of [
+      [3, 'arm64', '16Gi', '18Gi'],
+      [4, 'amd64', '16Gi', '18Gi'],
+      [5, 'arm64', '24Gi', '28Gi'],
+      [6, 'amd64', '24Gi', '28Gi'],
+    ] as const) {
+      const { releaseName, valuesObject: values } = sources[index].helm
+      const baseline = sources[architecture === 'arm64' ? 1 : 2].helm.valuesObject
+      const label = `arc-${architecture}-tmpfs${sizeLimit === '24Gi' ? '-large' : ''}`
+      const pod = values.template.spec
+      expect(releaseName).toBe(label)
+      expect(values).toMatchObject({
+        runnerScaleSetName: label,
+        scaleSetLabels: [label],
+        minRunners: 0,
+        maxRunners: sizeLimit === '16Gi' ? (architecture === 'amd64' ? 10 : 8) : 6,
+        listenerTemplate: baseline.listenerTemplate,
+        template: {
+          spec: {
+            nodeSelector: baseline.template.spec.nodeSelector,
+            volumes: [{ name: 'scratch', emptyDir: { medium: 'Memory', sizeLimit } }],
+            containers: [{ resources: { requests: { memory: '8Gi' }, limits: { memory } } }],
+          },
+        },
+      })
+      expect(pod.initContainers[0].image).toBe(pod.containers[0].image)
+      expect(pod.initContainers[0].args).toEqual(sources[3].helm.valuesObject.template.spec.initContainers[0].args)
+      expect(pod.containers[0].volumeMounts).toEqual(baseline.template.spec.containers[0].volumeMounts)
+    }
   })
 
   it('keeps ARC control pods on Ryzen while ARM64 runners stay on Altra', () => {

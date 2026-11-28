@@ -57,6 +57,7 @@ describe('Nix rollout report', () => {
     expect(report.deferredApps).toEqual([])
     expect(report.missingBuildContracts).toEqual([])
     expect(forgejo?.deferredReason).toContain('code.forgejo.org/forgejo/forgejo')
+    expect(forgejo?.repoImages).toEqual([])
     expect(hermes?.deferredReason).toContain('NousResearch/hermes-agent')
     expect(tigresse?.deferredReason).toContain('proompteng/tigresse')
     const bayn = report.nixImages.find((candidate) => candidate.name === 'bayn')

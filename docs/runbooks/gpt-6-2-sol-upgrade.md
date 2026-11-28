@@ -1,7 +1,7 @@
-# GPT-6.2 Sol and Codex 0.170.0 upgrade
+# GPT-6.2 Sol and Codex 0.172.0 upgrade
 
-The repository uses Codex `0.170.0` and defaults hosted OpenAI text generation and Codex tasks to `gpt-6.2-sol`.
-See the [Codex release](https://github.com/openai/codex/releases/tag/rust-v0.170.0) and
+The repository uses Codex `0.172.0` and defaults hosted OpenAI text generation and Codex tasks to `gpt-6.2-sol`.
+See the [Codex release](https://github.com/openai/codex/releases/tag/rust-v0.172.0) and
 [OpenAI migration guide](https://developers.openai.com/api/docs/guides/latest-model#migration-quickstart).
 
 ## Scope and compatibility
@@ -11,7 +11,6 @@ See the [Codex release](https://github.com/openai/codex/releases/tag/rust-v0.170
 - Codex clients, container and workspace templates, Agents providers, Jangar, OpenWebUI, Symphony, Sag, Tengri,
   Bumba's hosted completion path, and Torghut's LLM configuration default to Sol.
 - Symphony resolves `codex.model` for each thread and turn. Workflow and per-run model overrides take precedence.
-  The `codex-spark` provider selects Sol for new runs.
 - Jangar and OpenWebUI default to Sol through the signed-in Codex app server. Callers can select `qwen38-flamingo`
   for self-hosted inference. Bumba's self-hosted endpoint uses the model configured for that endpoint.
 - GPT-6.2 Sol requests omit `temperature`, `top_p`, and log-probability controls. Map legacy `none` or `minimal`

@@ -128,11 +128,11 @@ def _validate_hub_and_proxy(documents: list[YamlObject]) -> None:
     proxy = _container(_find(documents, "Deployment", "torghut-notebooks-proxy"), "chp")
     assert (
         hub["image"]
-        == "quay.io/jupyterhub/k8s-hub@sha256:108fbb01c3fe23e4a81efc8899aa73b4c15413615c73dfcdc44248eb63096e41"
+        == "quay.io/jupyterhub/k8s-hub@sha256:6ce210488f5598e2dd5130d82e84d9f74b72538b66895861240bd84926ec50bd"
     )
     assert (
         proxy["image"]
-        == "quay.io/jupyterhub/configurable-http-proxy@sha256:69a7170eeedadb139dda5aef038d0a45378295c0d24cb0dc9da58641ef698ebe"
+        == "quay.io/jupyterhub/configurable-http-proxy@sha256:7977d796d372642aa9eb962ff36590b3019f8f24493fcf9f1d07d2c81e8e6080"
     )
     assert hub["resources"] == {
         "requests": {"cpu": "250m", "memory": "512Mi"},

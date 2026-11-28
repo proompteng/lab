@@ -4,6 +4,7 @@ import { notionalMicros, scaledNumber } from '../strategy/execution-model/fixed-
 import { WEIGHT_SCALE } from '../strategy/execution-model/model'
 import { Sha256Schema } from '../schemas'
 import { reconciliationIncompleteRestrictionReason } from './authority'
+import type { OrderStatus } from './contracts'
 import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 
 export const QualificationBindingSchema = Schema.Struct({
@@ -29,9 +30,23 @@ export interface ExecutionMandateAllocationFacts {
   readonly maxDailyTradedNotionalMicros: bigint | null
   readonly maxAdverseSlippageBps: bigint
   readonly targetWeights: Readonly<Record<string, number>>
+  readonly signedTargetWeights?: Readonly<Record<string, number>>
+  readonly disjointEntry?: boolean
   readonly positions: readonly {
     readonly quantityAtoms: string
     readonly symbol: string
+    readonly marketValueMicros?: string
+  }[]
+  readonly openOrders?: readonly {
+    readonly symbol: string
+    readonly side: 'BUY' | 'SELL'
+    readonly status: string
+    readonly quantityAtoms?: string | undefined
+    readonly filledQuantityAtoms: string
+    readonly limitPriceMicros?: string | undefined
+    readonly stopPriceMicros?: string | undefined
+    readonly intentId?: string | undefined
+    readonly brokerOrderId: string
   }[]
   readonly referencePriceMicros: Readonly<Record<string, string>>
 }
@@ -60,6 +75,9 @@ const currentReferenceGrossExposureMicros = (
       Result.flatMap(total, (current) => {
         const price = facts.referencePriceMicros[position.symbol]
         if (price === undefined) {
+          if (facts.disjointEntry === true && position.marketValueMicros !== undefined) {
+            return Result.succeed(current + absolute(BigInt(position.marketValueMicros)))
+          }
           return Result.fail({ _tag: 'MissingPositionReferencePrice', symbol: position.symbol })
         }
         return Result.mapError(
@@ -76,6 +94,55 @@ const currentReferenceGrossExposureMicros = (
       }),
     Result.succeed(0n),
   )
+
+const currentSignedNetExposureMicros = (facts: ExecutionMandateAllocationFacts): bigint =>
+  facts.positions.reduce(
+    (total, position) => total + (position.marketValueMicros === undefined ? 0n : BigInt(position.marketValueMicros)),
+    0n,
+  )
+
+// Keep a type-only import of OrderStatus so mandate.ts and contracts.ts never form a runtime ESM cycle.
+const TERMINAL_ORDER_STATUSES = new Set<string>([
+  'FILLED',
+  'CANCELED',
+  'REJECTED',
+  'EXPIRED',
+] satisfies readonly `${OrderStatus}`[])
+const isTerminalOrderStatus = (status: string): boolean => TERMINAL_ORDER_STATUSES.has(status)
+const QUANTITY_SCALE = 1_000_000_000n
+
+/**
+ * Worst-case net buy/sell envelope across independently executable open orders, grouping mutually
+ * exclusive protective orders by (symbol, side, intentId) to match mutation-authority.ts.
+ */
+const existingOpenOrderNetEnvelopeMicros = (
+  facts: ExecutionMandateAllocationFacts,
+): { readonly buyMicros: bigint; readonly sellMicros: bigint } => {
+  const orders = facts.openOrders
+  if (orders === undefined || orders.length === 0) return { buyMicros: 0n, sellMicros: 0n }
+  const groupedBuys = new Map<string, bigint>()
+  const groupedSells = new Map<string, bigint>()
+  for (const order of orders) {
+    if (isTerminalOrderStatus(order.status) || order.quantityAtoms === undefined) continue
+    const remaining = BigInt(order.quantityAtoms) - BigInt(order.filledQuantityAtoms)
+    if (remaining <= 0n) continue
+    const limit = order.limitPriceMicros === undefined ? 0n : BigInt(order.limitPriceMicros)
+    const stop = order.stopPriceMicros === undefined ? 0n : BigInt(order.stopPriceMicros)
+    const price = limit >= stop ? limit : stop
+    if (price <= 0n) continue
+    const notional = (remaining * price + QUANTITY_SCALE - 1n) / QUANTITY_SCALE
+    const groupKey =
+      order.intentId !== undefined ? `${order.symbol}|${order.side}|${order.intentId}` : order.brokerOrderId
+    const map = order.side === 'BUY' ? groupedBuys : groupedSells
+    const prev = map.get(groupKey) ?? 0n
+    if (notional > prev) map.set(groupKey, notional)
+  }
+  let buyMicros = 0n
+  for (const value of groupedBuys.values()) buyMicros += value
+  let sellMicros = 0n
+  for (const value of groupedSells.values()) sellMicros += value
+  return { buyMicros, sellMicros }
+}
 
 /**
  * Bounds entry target construction by a sell-plus-buy turnover upper bound. Current reference gross exposure plus
@@ -113,11 +180,46 @@ export const executionMandateAllocationCapitalMicros = (
       if (grossTargetWeight === 0n) return Result.succeed(0n)
       const capitalForNotional = (notional: bigint): bigint =>
         (nonNegative(notional) * WEIGHT_SCALE) / grossTargetWeight
+      const grossHeadroom =
+        facts.disjointEntry === true
+          ? nonNegative(facts.maxGrossExposureMicros - currentReferenceGrossExposure)
+          : facts.maxGrossExposureMicros
+      const netCapitalCap = (() => {
+        if (facts.disjointEntry !== true || facts.signedTargetWeights === undefined) {
+          return capitalForNotional(facts.maxNetExposureMicros)
+        }
+        // Bound proposed longs and shorts independently against the worst-case net envelope across
+        // co-held positions and independently executable open orders, matching validateExecutionCapitalLimits.
+        let longWeightUnits = 0n
+        let shortWeightUnits = 0n
+        for (const weight of Object.values(facts.signedTargetWeights)) {
+          const scaled = BigInt(Math.round(Math.abs(weight) * Number(WEIGHT_SCALE)))
+          if (weight > 0) longWeightUnits += scaled
+          else if (weight < 0) shortWeightUnits += scaled
+        }
+        const currentNet = currentSignedNetExposureMicros(facts)
+        const pendingEnvelope = existingOpenOrderNetEnvelopeMicros(facts)
+        const worstPositiveNet = currentNet + pendingEnvelope.buyMicros
+        const worstNegativeNet = -currentNet + pendingEnvelope.sellMicros
+        const caps: bigint[] = []
+        if (longWeightUnits > 0n) {
+          const longHeadroom = nonNegative(facts.maxNetExposureMicros - worstPositiveNet)
+          caps.push((longHeadroom * WEIGHT_SCALE) / longWeightUnits)
+        }
+        if (shortWeightUnits > 0n) {
+          const shortHeadroom = nonNegative(facts.maxNetExposureMicros - worstNegativeNet)
+          caps.push((shortHeadroom * WEIGHT_SCALE) / shortWeightUnits)
+        }
+        if (caps.length === 0) {
+          return absolute(currentNet) <= facts.maxNetExposureMicros ? facts.accountEquityMicros : 0n
+        }
+        return caps.reduce((minimum, value) => (value < minimum ? value : minimum))
+      })()
       return Result.succeed(
         [
           facts.accountEquityMicros,
-          capitalForNotional(facts.maxGrossExposureMicros),
-          capitalForNotional(facts.maxNetExposureMicros),
+          capitalForNotional(grossHeadroom),
+          netCapitalCap,
           ...(remainingReferenceTurnover === null
             ? []
             : [capitalForNotional(remainingReferenceTurnover - currentReferenceGrossExposure)]),

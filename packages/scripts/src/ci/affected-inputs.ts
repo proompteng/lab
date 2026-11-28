@@ -192,6 +192,29 @@ export const changedRange = (event: string, base: string, head: string): { base:
   return { base: event === 'pull_request' ? git('merge-base', base, head) : base, head }
 }
 
+export const selectAffectedRange = (
+  event: string,
+  base: string,
+  head: string,
+  targets: Record<string, InputTarget>,
+  dependencyAwarePush: boolean,
+): Record<string, boolean> => {
+  const range = changedRange(event, base, head)
+  const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
+  // Most main publishers use path selection to co-build a Kargo image set at one revision.
+  if (event === 'push' && !dependencyAwarePush) {
+    return Object.fromEntries(
+      Object.entries(targets).map(([name, target]) => [name, files.some((file) => matchesPaths(file, target.paths))]),
+    )
+  }
+  return selectAffectedInputs(
+    files,
+    targets,
+    Bun.JSONC.parse(git('show', `${range.base}:bun.lock`)),
+    Bun.JSONC.parse(git('show', `${range.head}:bun.lock`)),
+  )
+}
+
 if (import.meta.main) {
   const env = process.env
   const dependencyAwarePush = env.INPUT_DEPENDENCY_AWARE_PUSH ?? 'false'
@@ -208,23 +231,13 @@ if (import.meta.main) {
     affected = Object.fromEntries(Object.keys(targets).map((name) => [name, true]))
   } else {
     if (!['pull_request', 'push'].includes(event)) throw new Error(`Unsupported CI event: ${event}`)
-    const range = changedRange(event, env.BASE_SHA ?? '', env.HEAD_SHA ?? '')
-    const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
-    // Main publishes co-built Kargo image sets at one revision. Keep its source path contract.
-    affected =
-      event === 'push' && dependencyAwarePush === 'false'
-        ? Object.fromEntries(
-            Object.entries(targets).map(([name, target]) => [
-              name,
-              files.some((file) => matchesPaths(file, target.paths)),
-            ]),
-          )
-        : selectAffectedInputs(
-            files,
-            targets,
-            Bun.JSONC.parse(git('show', `${range.base}:bun.lock`)),
-            Bun.JSONC.parse(git('show', `${range.head}:bun.lock`)),
-          )
+    affected = selectAffectedRange(
+      event,
+      env.BASE_SHA ?? '',
+      env.HEAD_SHA ?? '',
+      targets,
+      dependencyAwarePush === 'true',
+    )
   }
   console.log(JSON.stringify(affected, null, 2))
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `affected=${JSON.stringify(affected)}\n`)

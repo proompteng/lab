@@ -6,3 +6,6 @@ resources:
   - deployment.yaml
   - service.yaml
   - pdb.yaml
+  - sip-configmap.yaml
+  - sip-deployment.yaml
+  - sip-service.yaml

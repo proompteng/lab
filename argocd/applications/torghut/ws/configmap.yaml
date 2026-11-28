@@ -17,20 +17,19 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
-  # Preserve the existing WebSocket streams at Alpaca Basic's 30-unit limit:
-  # 16 bar subscriptions + 7 quote subscriptions + 7 trade subscriptions = 30. Bayn does not consume updatedBars.
+  # Stream completed bars for every shared symbol before Bayn's immutable minute cut.
+  # Preserve execution quotes/trades and SPY: 22 bars + 4 quotes + 4 trades = 30 units.
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars"
-  ALPACA_MARKET_DATA_BARS_SYMBOLS: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
-  ALPACA_MARKET_DATA_TRADES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
-  ALPACA_MARKET_DATA_QUOTES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
-  ALPACA_LATEST_SYMBOLS: "AMD,AVGO,COHR,CRDO,GOOGL,INTC,LITE,META,MRVL,MSFT,MU,NFLX,SNDK,TSLA,WDC"
-  ALPACA_LATEST_BAR_SYMBOLS: "GOOGL,INTC,META,MSFT,NFLX,TSLA"
+  ALPACA_MARKET_DATA_BARS_SYMBOLS: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,NVDA,QQQ,SMH,SNDK,SPY,TSLA,WDC"
+  ALPACA_MARKET_DATA_TRADES_SYMBOLS: "AAPL,AMZN,NVDA,SPY"
+  ALPACA_MARKET_DATA_QUOTES_SYMBOLS: "AAPL,AMZN,NVDA,SPY"
+  ALPACA_LATEST_SYMBOLS: "AMD,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,QQQ,SMH,SNDK,TSLA,WDC"
   ALPACA_LATEST_POLL_INTERVAL_MS: "2000"
   ALPACA_LATEST_MAX_AGE_MS: "10000"
-  # The former 16-symbol subscription-amendment experiment is complete. New symbols use
-  # actual completed REST bars and latest quotes/trades without consuming WS subscriptions.
+  # IWM/QQQ/SMH are outside the executable universes; their quotes/trades remain REST point samples.
+  # All candidate quote/trade paths and provider-completed bar validation remain unchanged.
   OPTIONS_MARKET_HOLIDAYS: "2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25"
-  # WebSocket and completed REST provider bars cover the versioned 22-symbol shared source.
+  # WebSocket provider bars cover the unchanged versioned 22-symbol shared source.
   SYMBOLS: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,NVDA,QQQ,SMH,SNDK,SPY,TSLA,WDC"
   SYMBOLS_ALLOWLIST: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,GOOGL,INTC,IWM,LITE,META,MRVL,MSFT,MU,NFLX,NVDA,QQQ,SMH,SNDK,SPY,TSLA,WDC"
   # Observation symbols and their versioned identity are supplied separately in deployment.yaml.

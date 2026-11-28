@@ -33,6 +33,7 @@ jobs:
     with:
       image_name: torghut-webull-feed
       package_attr: torghut-webull-feed-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       kargo_tag_include_run_id: true

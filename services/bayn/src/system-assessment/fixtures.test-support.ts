@@ -81,7 +81,12 @@ export const activeEvaluationSessions = (now: number, sessionCount = 20) => {
 }
 
 export const calendarFixture = (registration: SystemRegistration) => {
-  if (registration.schemaVersion === 'bayn.system-registration.v5') return registration.calendar.marketCalendar
+  if (
+    registration.schemaVersion === 'bayn.system-registration.v5' ||
+    registration.schemaVersion === 'bayn.system-registration.v6' ||
+    registration.schemaVersion === 'bayn.system-registration.v7'
+  )
+    return registration.calendar.marketCalendar
   const material = withProviderSessions({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
@@ -99,7 +104,10 @@ export const calendarFixture = (registration: SystemRegistration) => {
   return { ...material, normalizedResponseHash: testHash(material) }
 }
 
-type RetainedRegistration = Exclude<SystemRegistration, { schemaVersion: 'bayn.system-registration.v5' }>
+type RetainedRegistration = Exclude<
+  SystemRegistration,
+  { schemaVersion: 'bayn.system-registration.v5' | 'bayn.system-registration.v6' | 'bayn.system-registration.v7' }
+>
 
 const baseRegistrationFixture = (
   sessionCount: number,
@@ -414,7 +422,7 @@ export const nativeRegistrationFixture = (
   })
 }
 
-export const assessmentFixture = (registration: SystemRegistration = registrationFixture()) => {
+const buildAssessmentFixture = <Registration extends SystemRegistration>(registration: Registration) => {
   const asOf = new Date(
     Math.max(
       Date.parse('2026-12-01T00:00:00.000Z'),
@@ -596,43 +604,51 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
       scheduleEvidenceHash: source(sha256(`${kind}:schedule`)),
     })),
   ]
-  const input: typeof SystemAssessmentInputSchema.Type = {
-    schemaVersion: 'bayn.system-assessment-input.v1',
-    registration,
-    asOf,
-    registrationReceiptHash: registrationHash,
-    sourceCutHash: source(sha256('synthetic captured source cut')),
-    calendarEvidence: calendarFixture(registration),
-    entryTimingSources: [],
-    latencyStressSources: [],
-    policies,
-    reliability: {
+  const input: Omit<typeof SystemAssessmentInputSchema.Type, 'registration'> & { readonly registration: Registration } =
+    {
+      schemaVersion: 'bayn.system-assessment-input.v1',
+      registration,
       asOf,
-      schedule,
-      completions: schedule.map((o) => ({
-        obligationId: o.obligationId,
-        outcome: ObligationOutcome.Correct,
-        completedAt: o.deadlineAt,
-        evidenceHash: source(sha256(`${o.class}:completion`)),
-      })),
-    },
-    obligationCoverageHash: source(sha256('complete obligation audit')),
-    realism: { expectedDecisionIds: [], expectedFillIds: [], decisions: [], fills: [], unsupportedAssumptions: [] },
-    safety: {
-      coverage: 'COMPLETE',
-      sourceHash: source(sha256('safety audit')),
-      registrationHash,
-      asOf,
-      violations: [],
-    },
-  }
+      registrationReceiptHash: registrationHash,
+      sourceCutHash: source(sha256('synthetic captured source cut')),
+      calendarEvidence: calendarFixture(registration),
+      entryTimingSources: [],
+      latencyStressSources: [],
+      policies,
+      reliability: {
+        asOf,
+        schedule,
+        completions: schedule.map((o) => ({
+          obligationId: o.obligationId,
+          outcome: ObligationOutcome.Correct,
+          completedAt: o.deadlineAt,
+          evidenceHash: source(sha256(`${o.class}:completion`)),
+        })),
+      },
+      obligationCoverageHash: source(sha256('complete obligation audit')),
+      realism: { expectedDecisionIds: [], expectedFillIds: [], decisions: [], fills: [], unsupportedAssumptions: [] },
+      safety: {
+        coverage: 'COMPLETE',
+        sourceHash: source(sha256('safety audit')),
+        registrationHash,
+        asOf,
+        violations: [],
+      },
+    }
   return { input, verifiedSources, source }
 }
 
-export const supportedAssessmentFixture = (
-  sessionCount = 20,
-  registration: SystemRegistration = registrationFixture(undefined, sessionCount),
-) => {
+export function assessmentFixture(
+  registration?: RetainedRegistration,
+): ReturnType<typeof buildAssessmentFixture<RetainedRegistration>>
+export function assessmentFixture<Registration extends SystemRegistration>(
+  registration: Registration,
+): ReturnType<typeof buildAssessmentFixture<Registration>>
+export function assessmentFixture(registration: SystemRegistration = registrationFixture()) {
+  return buildAssessmentFixture(registration)
+}
+
+const buildSupportedAssessmentFixture = <Registration extends SystemRegistration>(registration: Registration) => {
   const fixture = assessmentFixture(registration)
   const decisions: (typeof DecisionRealismSchema.Type)[] = []
   const fills: (typeof FillRealismSchema.Type)[] = []
@@ -705,6 +721,20 @@ export const supportedAssessmentFixture = (
       },
     },
   }
+}
+export function supportedAssessmentFixture(
+  sessionCount?: number,
+  registration?: RetainedRegistration,
+): ReturnType<typeof buildSupportedAssessmentFixture<RetainedRegistration>>
+export function supportedAssessmentFixture<Registration extends SystemRegistration>(
+  sessionCount: number,
+  registration: Registration,
+): ReturnType<typeof buildSupportedAssessmentFixture<Registration>>
+export function supportedAssessmentFixture(
+  sessionCount = 20,
+  registration: SystemRegistration = registrationFixture(undefined, sessionCount),
+) {
+  return buildSupportedAssessmentFixture(registration)
 }
 /** A controlled deterministic process, declared before observations; not a model for market returns. */
 export const knownPayoffAssessmentFixture = (operatingHours: 'REGULAR_SESSION' | 'NATIVE' = 'REGULAR_SESSION') => {

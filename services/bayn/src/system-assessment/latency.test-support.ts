@@ -22,7 +22,10 @@ import {
 import { measureFullBatchLatency } from './full-batch-latency'
 import { ObligationClass } from './reliability'
 import { registeredSchedule } from './schedule'
-import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
+import {
+  RetainedSystemSourceCutSchema as SystemSourceCutSchema,
+  type RetainedSystemSourceCut as SystemSourceCut,
+} from './source-cut'
 import { latencyReplayExecutionModelHash, latencyReplayPolicyMaterial } from './latency-replay'
 import { BacktestInputSchema, prepareBacktest } from '../intraday-replay/backtest'
 import {

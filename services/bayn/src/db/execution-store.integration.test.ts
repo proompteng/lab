@@ -30,7 +30,7 @@ import {
 } from '../execution/contracts'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { makeExecutionPersistence } from './execution-store/postgres'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -2947,6 +2947,89 @@ describePostgres('PostgreSQL execution persistence', () => {
             false,
           ).pipe(Effect.flip)).failure,
         ).toBe('invariant')
+      }),
+    )
+  })
+
+  test('requires fresh exact reconciliation for equivalent activity witnesses and rejects exact numeric conflicts', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const authority = yield* AuthorityGenerationStore
+        const store = yield* ReconciliationStore
+        const sql = yield* PgClient.PgClient
+        if (authority.readOrInitializeObserveAuthority === undefined)
+          return yield* Effect.die('missing native authority initializer')
+        const generationHash = hash('equivalent-source-cache-generation')
+        const state = yield* authority.readOrInitializeObserveAuthority({ generationHash, maximum: Authority.Observe })
+        const cut = yield* ingestReconciliationCut(false, false)
+        const sourceEventId = '00000000000000000000000001'
+        const refId = '00000000-0000-4000-8000-000000000001'
+        const body = JSON.stringify({
+          event_id: sourceEventId,
+          ref_id: refId,
+          account_id: accountId,
+          activity_type: 'FEE',
+          status: 'executed',
+          currency: 'USD',
+          net_amount: '-0.02',
+          details: { system_date: '2026-08-28' },
+        })
+        const original = `${body.slice(0, -1)},"exact":9007199254740992.1234567890123456789}`
+        yield* sql`INSERT INTO broker_activity_events(
+          account_id,source_event_id,transport_event_id,source_event_hash,source_revision,ref_id,
+          activity_type,session_id,request_id,received_at,recorded_at,activity_json
+        ) VALUES (
+          ${accountId},${sourceEventId},${hash('equivalent-source-transport')},${sha256(original)},${'a'.repeat(40)},${refId},
+          'FEE','activity-session','activity-request','2026-08-28T14:31:00.000Z','2026-08-28T14:31:00.000Z',${original}
+        )`
+        const first = yield* reconcileSnapshot(store, { ...cut, reconciledAt: '2026-08-28T14:32:00.000Z' })
+        const version = {
+          reconciliationId: first.reconciliation.reconciliationId,
+          reconciledAt: first.reconciliation.reconciledAt,
+          authorityGenerationHash: generationHash,
+          authorityVersion: state.version,
+        }
+        yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent'), false)
+        const retainConflict = (
+          activityJson: string,
+          recordedAt: string,
+        ) => sql`INSERT INTO broker_activity_source_conflicts(
+          account_id,source_event_id,retained_source_event_hash,conflicting_source_event_hash,
+          transport_event_id,source_revision,session_id,request_id,received_at,recorded_at,activity_json
+        ) VALUES (
+          ${accountId},${sourceEventId},${sha256(original)},${sha256(activityJson)},${hash(activityJson)},${'a'.repeat(40)},
+          'activity-session','activity-request',${recordedAt}::timestamptz,${recordedAt}::timestamptz,${activityJson}
+        )`
+        yield* retainConflict(original.replaceAll(',', ',\n '), '2026-08-28T14:33:00.000Z')
+        expect(
+          Result.isFailure(
+            yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent'), false).pipe(Effect.result),
+          ),
+        ).toBe(true)
+        const fresh = yield* reconcileSnapshot(store, { ...cut, reconciledAt: '2026-08-28T14:34:00.000Z' })
+        const freshVersion = {
+          ...version,
+          reconciliationId: fresh.reconciliation.reconciliationId,
+          reconciledAt: fresh.reconciliation.reconciledAt,
+        }
+        yield* verifyBrokerStateVersion(sql, accountId, freshVersion, hash('current-intent'), false)
+        yield* retainConflict(
+          original.replace('9007199254740992.1234567890123456789', '9007199254740992.1234567890123456790'),
+          '2026-08-28T14:33:01.000Z',
+        )
+        expect(
+          Result.isFailure(
+            yield* verifyBrokerStateVersion(sql, accountId, freshVersion, hash('current-intent'), false).pipe(
+              Effect.result,
+            ),
+          ),
+        ).toBe(true)
+        expect(
+          yield* sql`SELECT source_event_hash,activity_json FROM broker_activity_events WHERE account_id = ${accountId}`,
+        ).toEqual([{ source_event_hash: sha256(original), activity_json: original }])
+        expect(
+          yield* sql`SELECT count(*)::int AS count FROM broker_activity_source_conflicts WHERE account_id = ${accountId}`,
+        ).toEqual([{ count: 2 }])
       }),
     )
   })

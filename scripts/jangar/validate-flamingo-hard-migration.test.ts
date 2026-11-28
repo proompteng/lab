@@ -9,16 +9,14 @@ spec:
   replicas: 1
   template:
     spec:
-      runtimeClassName: nvidia
       nodeSelector:
-        kubernetes.io/arch: arm64
-        kubernetes.io/hostname: talos-192-168-1-85
-        nvidia.com/gpu.present: "true"
+        kubernetes.io/arch: amd64
+        kubernetes.io/hostname: talos-192-168-1-194
       containers:
         - name: ollama
           resources:
             limits:
-              nvidia.com/gpu: "1"
+              amd.com/gpu: "1"
         - name: embedding-proxy
           env:
             - name: SAIGAK_REQUIRE_GPU_RESIDENCY
@@ -26,7 +24,7 @@ spec:
       volumes:
         - name: model-cache
           persistentVolumeClaim:
-            claimName: saigak-altra-data
+            claimName: saigak-ryzen-data
 `
 
 const validPlatform = `
@@ -40,7 +38,7 @@ ignoreDifferences:
       - /spec/volumeName
   - group: ""
     kind: PersistentVolumeClaim
-    name: saigak-altra-data
+    name: saigak-ryzen-data
     jsonPointers:
       - /metadata/annotations
       - /spec/volumeMode
@@ -104,17 +102,17 @@ test('does not accept SAIGAK_REQUIRE_GPU_RESIDENCY from a non-proxy container', 
   )
 })
 
-test('requires saigak-altra-data PVC bound-field diff ignore', () => {
+test('requires saigak-ryzen-data PVC bound-field diff ignore', () => {
   const failures = validateActiveSaigakMigrationContent(
     filesWith({
       'argocd/applicationsets/platform.yaml': validPlatform.replace(
-        /\n  - group: ""\n    kind: PersistentVolumeClaim\n    name: saigak-altra-data\n    jsonPointers:\n      - \/metadata\/annotations\n      - \/spec\/volumeMode\n      - \/spec\/volumeName\n/,
+        /\n  - group: ""\n    kind: PersistentVolumeClaim\n    name: saigak-ryzen-data\n    jsonPointers:\n      - \/metadata\/annotations\n      - \/spec\/volumeMode\n      - \/spec\/volumeName\n/,
         '\n',
       ),
     }),
   )
 
   expect(failures).toContain(
-    'argocd/applicationsets/platform.yaml: Saigak must ignore bound local-path PVC drift for saigak-altra-data',
+    'argocd/applicationsets/platform.yaml: Saigak must ignore bound local-path PVC drift for saigak-ryzen-data',
   )
 })

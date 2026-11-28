@@ -11,6 +11,7 @@ export const protectedAccountAdmission = (
   policy: Policy,
   authorityGenerationHash: string,
   observedAt: string,
+  concurrentDisjointPositions = false,
 ): Extract<CycleRunResult, { readonly outcome: 'ADMISSION_WAITING' }> | undefined => {
   if (preflight === undefined) return undefined
   const { brokerState, riskContext, report } = preflight
@@ -19,7 +20,11 @@ export const protectedAccountAdmission = (
   const inputs: AccountProtectionFacts = {
     schemaVersion: 'bayn.account-protection-inputs.v2',
     observedAt,
-    portfolio: { purpose: JevPurpose.Entry, brokerState },
+    portfolio: {
+      purpose: JevPurpose.Entry,
+      brokerState,
+      ...(concurrentDisjointPositions ? { concurrentDisjointPositions: true as const } : {}),
+    },
     policy,
     authority,
     authorityObservedAt: riskContext.authorityObservedAt,
