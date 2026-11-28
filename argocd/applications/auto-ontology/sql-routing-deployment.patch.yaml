@@ -12,9 +12,10 @@ spec:
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              mkdir -p /work/original /work/original-utils
+              mkdir -p /work/original /work/original-utils /work/original-entity-coverage
               cp -R /app/auto_ontology/retrieval/text_to_sql/. /work/original/
               cp -R /app/auto_ontology/utils/. /work/original-utils/
+              cp -R /app/auto_ontology/retrieval/entity_coverage/. /work/original-entity-coverage/
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -29,15 +30,19 @@ spec:
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              mkdir -p /work/patched /work/patched-utils
+              mkdir -p /work/patched /work/patched-utils /work/patched-entity-coverage
               cp -R /work/original/. /work/patched/
               cp -R /work/original-utils/. /work/patched-utils/
+              cp -R /work/original-entity-coverage/. /work/patched-entity-coverage/
               cd /work/patched
               find . -name '*.pyc' -delete
               patch -p1 -i /config/sql-routing.patch
               cd /work/patched-utils
               find . -name '*.pyc' -delete
               patch -p1 -i /config/non-reasoning-thinking.patch
+              cd /work/patched-entity-coverage
+              find . -name '*.pyc' -delete
+              patch -p1 -i /config/entity-coverage-non-reasoning.patch
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -61,9 +66,13 @@ spec:
               mountPath: /app/auto_ontology/utils
               subPath: patched-utils
               readOnly: true
+            - name: sql-runtime
+              mountPath: /app/auto_ontology/retrieval/entity_coverage
+              subPath: patched-entity-coverage
+              readOnly: true
       volumes:
         - name: sql-runtime
-          emptyDir: {sizeLimit: 8Mi}
+          emptyDir: {sizeLimit: 12Mi}
         - name: sql-routing
           configMap:
             name: auto-ontology-sql-routing

@@ -140,7 +140,11 @@ test('SQL routing and non-reasoning thinking are patched on the backend image fr
   expect(spec.initContainers.slice(0, 2).map(({ name }) => name)).toEqual(['copy-sql-runtime', 'apply-sql-routing'])
   expect(spec.initContainers[0].image).toBe(backend?.image)
   expect(spec.initContainers[0].args?.join('\n')).toContain('cp -R /app/auto_ontology/utils/. /work/original-utils/')
+  expect(spec.initContainers[0].args?.join('\n')).toContain(
+    'cp -R /app/auto_ontology/retrieval/entity_coverage/. /work/original-entity-coverage/',
+  )
   expect(spec.initContainers[1].args?.join('\n')).toContain('patch -p1 -i /config/non-reasoning-thinking.patch')
+  expect(spec.initContainers[1].args?.join('\n')).toContain('patch -p1 -i /config/entity-coverage-non-reasoning.patch')
   expect(backend?.volumeMounts).toContainEqual({
     name: 'sql-runtime',
     mountPath: '/app/auto_ontology/retrieval/text_to_sql',
@@ -153,12 +157,19 @@ test('SQL routing and non-reasoning thinking are patched on the backend image fr
     subPath: 'patched-utils',
     readOnly: true,
   })
+  expect(backend?.volumeMounts).toContainEqual({
+    name: 'sql-runtime',
+    mountPath: '/app/auto_ontology/retrieval/entity_coverage',
+    subPath: 'patched-entity-coverage',
+    readOnly: true,
+  })
   const name = spec.volumes?.find((v) => v.name === 'sql-routing')?.configMap?.name
   expect(name).toMatch(/^auto-ontology-sql-routing-[a-z0-9]+$/)
   const configMap = resource<Resource & { data: Record<string, string> }>('ConfigMap', name!)
   expect(configMap.data['sql-routing.patch']).toContain('def resolve_connector_for_sql(')
   expect(configMap.data['non-reasoning-thinking.patch']).toContain('def _with_thinking_disabled(')
   expect(configMap.data['non-reasoning-thinking.patch']).toContain('AUTO_ONTOLOGY_NON_REASONING_DISABLE_THINKING')
+  expect(configMap.data['entity-coverage-non-reasoning.patch']).toContain('get_non_reasoning_llm_client()')
 })
 
 test('ingestion loads the corrected client from its own pinned image', () => {
