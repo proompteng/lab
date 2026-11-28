@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg'
 import { Data, Effect, Result, Schema } from 'effect'
 
+import { BrokerEnvironment } from '../src/broker/identity'
 import { OrderType } from '../src/execution/contracts'
 import { legacyExecutionAuthorityToken } from '../src/execution/legacy-wire'
 import { CycleDecisionJsonRow } from '../src/forward-performance/postgres/model'
@@ -19,6 +20,8 @@ const Calendar = Session.fields.calendar
 const Entry = Session.fields.entries.value
 const Id = StrictNonEmptyStringSchema
 const nullableId = Schema.NullOr(Id)
+// Runtime decision verification owns both versions; only use a verified intraday alpha target.
+const auditableTargetVersions = new Set<string>(['bayn.intraday-alpha-target.v2', 'bayn.intraday-alpha-target.v3'])
 const read = <S extends Schema.Constraint>(schema: S) =>
   Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(schema), strictParseOptions))
 
@@ -40,6 +43,7 @@ const ReconciliationCut = Schema.Struct({ id: nullableId, ...reconciliationField
 type Calendar = NonNullable<typeof Calendar.Type>
 
 class AuditScopeError extends Data.TaggedError('AuditScopeError')<{ readonly message: string }> {}
+const readBrokerKeys = read(Schema.Struct({ key: Id }))
 
 const projectDecisions = (rows: readonly (typeof DecisionRow.Type)[], account: string, date: string) => {
   const entries: (typeof Entry.Type)[] = []
@@ -81,7 +85,9 @@ const projectDecisions = (rows: readonly (typeof DecisionRow.Type)[], account: s
       continue
     }
     if (
-      target?.schemaVersion !== 'bayn.intraday-alpha-target.v2' ||
+      target === undefined ||
+      !('phase' in target) ||
+      !auditableTargetVersions.has(target.schemaVersion) ||
       target.sessionDate !== date ||
       !document.dispatchable ||
       target.phase === IntradayAlphaPhase.OutsideWindow
@@ -380,28 +386,33 @@ const readSession = (sql: PgClient.PgClient, account: string, date: string, cont
     }
   })
 
-export const readLiveProfitability = (sql: PgClient.PgClient, account: string, dates: readonly string[]) =>
+export const readProfitability = (
+  sql: PgClient.PgClient,
+  account: string,
+  dates: readonly string[],
+  environment: BrokerEnvironment,
+) =>
   forwardPerformanceSnapshot(sql).withTransaction(
     Effect.gen(function* () {
       yield* sql`SET LOCAL statement_timeout = '25s'`
       yield* sql`SET LOCAL lock_timeout = '2s'`
-      const keys = yield* sql`
-    SELECT DISTINCT broker_identity_hash AS key FROM live_capital_grants
-    WHERE account_id=${account} AND broker_environment='live' AND schema_version='bayn.live-capital-grant.v1'
-    UNION
-    SELECT DISTINCT broker_identity_hash AS key FROM authority_generations
-    WHERE account_id=${account} AND broker_environment='live' AND broker_identity_hash IS NOT NULL
-  `.pipe(read(Schema.Struct({ key: Id })))
+      const retained = yield* sql`
+        SELECT DISTINCT broker_identity_hash AS key FROM authority_generations
+        WHERE account_id=${account} AND broker_environment=${environment} AND broker_identity_hash IS NOT NULL
+      `.pipe(readBrokerKeys)
+      const grants =
+        environment === BrokerEnvironment.Live
+          ? yield* sql`
+            SELECT DISTINCT broker_identity_hash AS key FROM live_capital_grants
+            WHERE account_id=${account} AND broker_environment='live' AND schema_version='bayn.live-capital-grant.v1'
+          `.pipe(readBrokerKeys)
+          : []
+      const keys = [...new Set([...retained, ...grants].map(({ key }) => key))]
       if (keys.length === 0)
-        return yield* new AuditScopeError({ message: 'No retained live broker binding for the configured account' })
-      const sessions = yield* Effect.forEach(dates, (date) =>
-        readSession(
-          sql,
-          account,
-          date,
-          keys.map(({ key }) => key),
-        ),
-      )
+        return yield* new AuditScopeError({
+          message: `No retained ${environment} broker binding for the configured account`,
+        })
+      const sessions = yield* Effect.forEach(dates, (date) => readSession(sql, account, date, keys))
       return {
         schemaVersion: 'bayn.live-profitability-evidence.v1' as const,
         sessions: sessions.filter((row) => row !== null),

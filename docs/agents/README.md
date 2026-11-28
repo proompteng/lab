@@ -10,6 +10,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Source-read implementation map: `current-source-state.md`
 - Safe AgentRun creation: `agentrun-creation-guide.md`
 - Runner tools and browser/platform acceptance: `runner-environment.md`
+- Node-local Git and Bun bootstrap cache: `workspace-cache.md`
 - CRD contract and YAML examples: `crd-yaml-spec.md`
 - Helm implementation contract: `agents-helm-chart-implementation.md`
 - Installation, upgrade, and incident operations: `runbooks.md`
@@ -17,9 +18,12 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Shell tool and command activity: `agents-shell-activity.md`
 - Preserving shell sessions during storage migration: `agents-shell-workspace-migration.md`
 - Engineering memory and shell tools: `memory-notes.md`
+- Collective knowledge proposals and Auto Ontology publication: `collective-knowledge-workflow.md`
 - Talos, Omni and BMC shell inspection: `agents-shell-infrastructure.md`
 - Paperless documents and AI tools: `agents-shell-paperless.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
+- Auto Ontology read-only MCP activation: [auto-ontology-mcp.md](auto-ontology-mcp.md)
+- Auto Ontology knowledge review, sync, and token rotation: [auto-ontology-operations.md](auto-ontology-operations.md)
 - Codex MCP integration: `codex-mcp-agents.md`
 - Workflow-loop launches: `agentrun-workflow-loop-launch-guide.md`
 - CI validation: `ci-validation-plan.md`

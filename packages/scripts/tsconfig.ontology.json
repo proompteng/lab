@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/agents/curate-ontology-deltas.ts", "src/agents/__tests__/curate-ontology-deltas.test.ts"]
+}

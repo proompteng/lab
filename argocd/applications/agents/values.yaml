@@ -18,6 +18,7 @@ controlPlane:
     digest: sha256:37c7a3ca4db11869e2cd296dfc0fee88256cc4ec1611e1bc6a1344ae8d432aa3
   env:
     vars:
+      AGENTS_DB_POOL_MAX: "8"
       AGENTS_RELAY_TARGETS_FILE: /etc/agents-relay/relay-targets.json
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
@@ -35,6 +36,8 @@ runner:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
     tag: sha-1cabb3c79880542f44f4a7195cb938879df3f648
     digest: sha256:7b8a41fa0b957323dff2f0df427a3535dac944c67caf0048861a435ecf1f52ab
+autoOntologyMcpGateway:
+  enabled: true
 linearMcpGateway:
   enabled: false
   replicaCount: 2
@@ -207,12 +210,22 @@ argocdHooks:
 controllers:
   enabled: true
   replicaCount: 2
+  env:
+    vars:
+      AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH: /var/lib/agents-workspace-cache
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
     tag: sha-1cabb3c79880542f44f4a7195cb938879df3f648
     digest: sha256:b59b29243f205c545692839ad12270b8ce34add55e25b360f82e8780490b2374
   autoscaling:
     enabled: false
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+  env:
+    vars:
+      AGENTS_DB_POOL_MAX: "16"
 swarm:
   enabled: true
 resources:
@@ -228,20 +241,37 @@ controller:
       - key: node-role.kubernetes.io/control-plane
         operator: Exists
         effect: NoSchedule
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values:
+                    - talos-192-168-1-194
+    topologySpreadConstraints:
+      - maxSkew: 2
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchExpressions:
+            - key: agents.proompteng.ai/agent-run
+              operator: Exists
     resources:
       requests:
-        cpu: "1"
-        memory: 4Gi
-        ephemeral-storage: 8Gi
+        cpu: "2"
+        memory: "8Gi"
+        ephemeral-storage: "8Gi"
       limits:
-        memory: 16Gi
-        ephemeral-storage: 16Gi
+        memory: "32Gi"
+        ephemeral-storage: "16Gi"
   namespaces:
     - agents
     - synthesis
   concurrency:
-    perNamespace: 14
-    perAgent: 10
+    perNamespace: 40
+    perAgent: 32
   queue:
     perRepo: 200
   agentRunRetentionSeconds: 604800
@@ -325,7 +355,6 @@ env:
     AGENTS_GRPC_HOST: 0.0.0.0
     AGENTS_GRPC_PORT: "50051"
     AGENTS_GITHUB_REPOS_ALLOWED: proompteng/lab
-    AGENTS_DB_POOL_MAX: "8"
     AGENTS_MEMORY_DB_POOL_MAX: "2"
     PGQUERY_TIMEOUT_MS: "90000"
     AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
@@ -350,3 +379,6 @@ extraVolumes:
 extraVolumeMounts:
   - name: relay-targets
     mountPath: /etc/agents-relay
+
+telemetry:
+  otlpEndpoint: http://observability-tempo-distributor.observability.svc.cluster.local:4318

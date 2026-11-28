@@ -5,13 +5,7 @@ import { writeFile } from 'node:fs/promises'
 import { NodeRuntime } from '@effect/platform-node'
 import { Effect, Schema } from 'effect'
 
-import {
-  ArchiveError,
-  loadTapes,
-  readArchiveMetadata,
-  replacementBlindSource,
-  withArchive,
-} from './8yr-unseen-intraday-data'
+import { ArchiveError, loadTapes, readArchiveMetadata, replacementBlindSource } from './8yr-unseen-intraday-data'
 import {
   baselineNames,
   benchmark,
@@ -28,7 +22,8 @@ import {
   universe,
 } from './8yr-unseen-intraday-protocol'
 import { evaluate } from './8yr-unseen-intraday-statistics'
-import { sha256 } from './research-orb-zab-data'
+import { sha256 } from '../src/hash'
+import { withS3Archive } from './research-lib/s3-archive'
 
 export const freezeReceipt = () => ({
   schema: 'bayn.research.wave-4e.freeze.v1',
@@ -124,14 +119,14 @@ if (import.meta.main) {
         yield* Effect.sync(() => process.stdout.write(`${JSON.stringify(freezeReceipt(), null, 2)}\n`))
       } else if (remaining.length === 0 && command === '--audit') {
         const source = yield* provenance(() => committedBlindSource('HEAD'))
-        const metadata = yield* withArchive((read) => readArchiveMetadata(read, source?.binding))
+        const metadata = yield* withS3Archive(({ readJson }) => readArchiveMetadata(readJson, source?.binding))
         yield* Effect.logInfo(
           `Validated metadata for ${metadata.blind.calendar.length} blind and ${metadata.prior.calendar.length} prior sessions`,
         )
       } else if (command === '--score' && remaining.length === 2 && remaining[0] === '--output') {
         const { publication, source } = yield* provenance(publishedRevision)
-        yield* withArchive(async (read, open, signal) => {
-          const { blind: blindTape, prior } = await loadTapes(read, open, source?.binding)
+        yield* withS3Archive(async (archive, signal) => {
+          const { blind: blindTape, prior } = await loadTapes(archive, source?.binding)
           const study = evaluate([...blindTape.days, ...prior.days], signal)
           const result = {
             schema: resultsSchema,

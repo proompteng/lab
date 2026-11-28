@@ -12,6 +12,7 @@ import { TestClock } from 'effect/testing'
 import { Side, type Bar, type OrderRequest, type Position } from './macro-canary-runner/alpaca'
 import { Mode, TimeInForce } from './macro-canary-runner/contract'
 import { etfs, macroInputs, type Etf } from './macro-canary-runner/signals'
+import { buildScorecard } from './multi-horizon-scorecard-core'
 import { parseOptions, runRebalance } from './run-macro-canary-etf-rebalance'
 
 const accountId = '11111111-1234-4234-8123-000000000001'
@@ -70,6 +71,7 @@ const receiptIdentity = Schema.Struct({
 
 type MockOptions = {
   regime?: Regime
+  scopedAccountId?: string
   prior?: number
   clockTimestamp?: string
   now?: string
@@ -156,8 +158,10 @@ const mock = (options: MockOptions = {}) => {
         expect(symbols).toEqual(seed ? [...macroInputs] : [...etfs])
         expect(start).toBe(seed ? 0 : raw ? prior : prior - 319)
         const end = seed ? prior - 320 : prior
-        const endBoundary = seed ? end + 1 : prior + 1
-        expect(params.get('end')).toBe(new Date(Date.parse(timestamps[endBoundary]) - 1).toISOString())
+        const expectedEnd = seed
+          ? new Date(Date.parse(timestamps[end + 1]) - 1).toISOString()
+          : timestamp(previousDate, options.earlyClose === true ? '13:00' : '16:00')
+        expect(params.get('end')).toBe(expectedEnd)
         const selected = series(symbols, start, end, raw)
         const paged = !raw && !seed
         const page = params.get('page_token')
@@ -243,8 +247,13 @@ const mock = (options: MockOptions = {}) => {
     TestClock.layer(),
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
-        BAYN_ALPACA_KEY_ID: testKey,
-        BAYN_ALPACA_SECRET_KEY: testSecret,
+        ...(options.scopedAccountId === undefined
+          ? { BAYN_ALPACA_KEY_ID: testKey, BAYN_ALPACA_SECRET_KEY: testSecret }
+          : {
+              BAYN_MACRO_CANARY_ALPACA_ACCOUNT_ID: options.scopedAccountId,
+              BAYN_MACRO_CANARY_ALPACA_KEY_ID: testKey,
+              BAYN_MACRO_CANARY_ALPACA_SECRET_KEY: testSecret,
+            }),
         ...(options.origin === undefined ? {} : { BAYN_ALPACA_BASE_URL: options.origin }),
       }),
     ),
@@ -316,6 +325,22 @@ const independentCanonical = (value: unknown): string => {
     .join(',')}}`
 }
 const sha256 = (value: unknown) => createHash('sha256').update(independentCanonical(value)).digest('hex')
+
+test('uses canary-scoped credentials only for the verified shadow account', () =>
+  fixture(async (dir) => {
+    const broker = mock({ scopedAccountId: accountId })
+    const receipt = verify(await broker.run(join(dir, 'isolated.json'), ['--mode', 'shadow']))
+    expect(receipt.mode).toBe(Mode.Shadow)
+    expect(receipt.reconciliation.account.id).toBe(accountId)
+    expect(broker.posts).toEqual([])
+
+    const mismatch = mock({ scopedAccountId: otherId })
+    rejected(await mismatch.run(join(dir, 'mismatch.json')), 'Paper account ID does not match the expected account')
+    expect(mismatch.calls.at(-1)?.url.pathname).toBe('/v2/account')
+    expect(mismatch.calls.every(({ method }) => method === 'GET')).toBe(true)
+    rejected(await broker.run(join(dir, 'submit.json'), paper), 'isolated credentials can only run in shadow mode')
+    expect(await readdir(dir)).toEqual(['isolated.json'])
+  }))
 
 test('defaults to shadow and rejects ambiguous or unsafe options', () => {
   expect(parseOptions(['--output', 'r.json'])).toEqual(
@@ -439,6 +464,8 @@ test('writes a deterministic private shadow receipt with independent bar and pla
     expect(await readFile(otherPath, 'utf8')).toBe(text)
     expect(JSON.parse(text)).toEqual(receipt)
     expect(Schema.is(receiptIdentity)(receipt)).toBe(true)
+    const scored = Result.getOrThrow(buildScorecard({ intraday: [], macroCore: [], macroCanary: [JSON.parse(text)] }))
+    expect(scored.sessions[0]?.macroCanary?.planSha256).toBe(receipt.planSha256)
     const { mode, timestamp: observedAt, planSha256, ...plan } = receipt
     expect(mode).toBe(Mode.Shadow)
     expect(observedAt).toBe(broker.now)

@@ -165,7 +165,11 @@ export const previousConfiguredController = (sql: PgClient.PgClient, identity: B
     Effect.map((rows) => rows[0]?.controller_key ?? null),
   )
 
-export const selectConfiguredBrokerAccount = (identity: BrokerIdentity, staleThresholdMs: number) =>
+export const selectConfiguredBrokerAccount = (
+  identity: BrokerIdentity,
+  staleThresholdMs: number,
+  allowAccountHandoff = true,
+) =>
   Effect.flatMap(PgClient.PgClient, (sql) =>
     sql.withTransaction(
       Effect.gen(function* () {
@@ -183,11 +187,20 @@ export const selectConfiguredBrokerAccount = (identity: BrokerIdentity, staleThr
           return yield* failExecutionStore('authority', 'invariant', 'authority history is missing')
         const binding = validateObserveGenerationBrokerIdentityReplay(source, identity)
         if (Result.isSuccess(binding)) {
-          return source.broker_identity_hash === null ? null : yield* previousConfiguredController(sql, identity)
+          return !allowAccountHandoff || source.broker_identity_hash === null
+            ? null
+            : yield* previousConfiguredController(sql, identity)
         }
         if (binding.failure.failure === 'invariant' || source.broker_identity_hash === null) {
           return yield* executionStoreError({ operation: 'authority', ...binding.failure })
         }
+        // A namespaced controller cannot retire a predecessor in another Restate namespace.
+        if (!allowAccountHandoff)
+          return yield* failExecutionStore(
+            'authority',
+            'conflict',
+            'a prefixed Restate sleeve requires its own Postgres database and broker account',
+          )
         const predecessor = source.broker_identity_hash
         const activatedAt = yield* authority.nextAuthorityInstant
         const generationHash = sha256(

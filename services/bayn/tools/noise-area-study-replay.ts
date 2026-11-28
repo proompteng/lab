@@ -244,6 +244,19 @@ interface Path {
   readonly missingEntry?: true
 }
 
+export const budgetedShares = (budget: number, open: number, reference: number) =>
+  Math.floor(Math.min(budget / (open * worstFill), budget / reference))
+
+export const markedGrossBound = (quantity: number, high: number) => quantity * high * worstFill
+
+export const closedLeg = (side: 1 | -1, quantity: number, entry: number, exit: number) => {
+  const sell = side === 1 ? exit : entry
+  return {
+    base: quantity * (side * (exit - entry) - sell * sellFee),
+    slope: (quantity * (entry + exit - sell * sellFee)) / 20_000,
+  }
+}
+
 const weightOf = (features: Features | undefined, trial: Trial) => {
   if (features === undefined || (trial.exit === 'band_with_1.5xATR_stop' && !(Number(features.atr) > 0))) return 0
   if (trial.sizing === 'equal_weight') return 1
@@ -327,9 +340,9 @@ export const netAt = (row: Ledger, bp: number) => (row.unresolved > 0 ? null : r
 
 interface Allocation {
   readonly budget: number
-  readonly blocked: (symbol: Symbol) => boolean
-  readonly onBlocked: () => void
-  readonly onFill: (fill: Omit<Leg, 'exit'> & { readonly exit: number; readonly quantity: number }) => void
+  readonly blocked?: (symbol: Symbol) => boolean
+  readonly onBlocked?: () => void
+  readonly onFill?: (fill: Omit<Leg, 'exit'> & { readonly exit: number; readonly quantity: number }) => void
 }
 
 // Paths do not depend on basket allocation; reuse them for same-day basket and omission diagnostics.
@@ -388,8 +401,8 @@ export const createReplay = (day: Prepared) => {
         path = trace(features, spec, day.slots, conditioning)
         paths.set(key, path)
       }
-      if (allocation?.blocked(symbol) === true && (path.leg !== undefined || path.missingEntry === true)) {
-        allocation.onBlocked()
+      if (allocation?.blocked?.(symbol) === true && (path.leg !== undefined || path.missingEntry === true)) {
+        allocation.onBlocked?.()
         continue
       }
       if (path.missingEntry === true) missingEntries++
@@ -399,24 +412,25 @@ export const createReplay = (day: Prepared) => {
         spec.legacy === true ? 60_000 : ((allocation?.budget ?? capital) * weight * grossScale) / totalWeight
       const legacyAtr = features.legacyAtr
       const reference = features.bars[leg.entrySlot - 1]?.close
-      const quantity = Math.floor(
-        Math.min(
-          budget / (leg.entry * worstFill),
-          spec.legacy === true ? Infinity : reference === undefined ? 0 : budget / reference,
-          spec.legacy === true && legacyAtr !== undefined ? 1500 / (2 * legacyAtr) : Infinity,
-        ),
-      )
+      const quantity =
+        spec.legacy === true
+          ? Math.floor(
+              Math.min(budget / (leg.entry * worstFill), legacyAtr === undefined ? Infinity : 1500 / (2 * legacyAtr)),
+            )
+          : reference === undefined
+            ? 0
+            : budgetedShares(budget, leg.entry, reference)
       if (quantity === 0) continue
-      grossUpperBound += quantity * leg.maxHigh * worstFill
+      grossUpperBound += markedGrossBound(quantity, leg.maxHigh)
       missingHeld += leg.missingHeld
       if (leg.exit === undefined) {
         unresolved++
         continue
       }
-      allocation?.onFill({ ...leg, exit: leg.exit, quantity })
-      const sell = leg.side === 1 ? leg.exit : leg.entry
-      base += quantity * (leg.side * (leg.exit - leg.entry) - sell * sellFee)
-      slope += (quantity * (leg.entry + leg.exit - sell * sellFee)) / 20_000
+      allocation?.onFill?.({ ...leg, exit: leg.exit, quantity })
+      const closed = closedLeg(leg.side, quantity, leg.entry, leg.exit)
+      base += closed.base
+      slope += closed.slope
       trades++
     }
     return { base, slope, trades, unresolved, missingEntries, missingHeld, grossUpperBound }

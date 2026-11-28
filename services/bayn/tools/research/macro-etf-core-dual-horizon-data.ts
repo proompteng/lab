@@ -1,10 +1,12 @@
-import { S3Client } from 'bun'
-import { Config, Data, Effect, Redacted, Schema } from 'effect'
+import { Effect, Result } from 'effect'
 
+import { canonicalHashV1Result } from '../../src/hash'
 import { type Etf, universe } from '../../src/strategy/macro-etf-core/policy'
-import { gunzipBound, receipts } from '../pure-etf-dual-horizon-data'
+import { closeSnapshotSchema } from '../../src/strategy/macro-etf-core/signals'
+import { receipts, tapeReceipt } from '../pure-etf-dual-horizon-data'
 import { noiseRosters } from '../pure-etf-dual-horizon-noise'
-import { normalizeResearchCalendar } from '../research-orb-zab-data'
+import { normalizeResearchCalendar, requireCalendarCoverage } from '../research-lib/calendar'
+import { type ArchiveReader, countArchiveLines, withS3Archive } from '../research-lib/s3-archive'
 
 const { datasets, calendars } = receipts
 type Dataset = (typeof datasets)[keyof typeof datasets]
@@ -25,77 +27,6 @@ export type IntradayFrame = {
 const dailySymbols = new Set<string>(universe)
 const intradaySymbols = new Set<string>(noiseRoster)
 
-class ArchiveError extends Data.TaggedError('MacroEtfCoreArchiveError')<{ readonly cause: unknown }> {}
-
-const readObject = async (client: S3Client, key: string, signal: AbortSignal) => {
-  let response: Response
-  try {
-    response = await fetch(client.presign(key, { expiresIn: 60 }), { signal, redirect: 'error' })
-  } catch (cause) {
-    // Transport errors can embed the signed URL.
-    throw new Error(`Unable to fetch frozen archive ${key}: ${cause instanceof Error ? cause.name : 'transport error'}`)
-  }
-  if (!response.ok || response.body === null) {
-    await response.body?.cancel()
-    throw new Error(`Unable to read frozen archive ${key}: HTTP ${response.status}`)
-  }
-  return response
-}
-const verifiedObject = async (client: S3Client, key: string, expected: string, signal: AbortSignal) => {
-  const bytes = await (await readObject(client, key, signal)).bytes()
-  if (new Bun.CryptoHasher('sha256').update(bytes).digest('hex') !== expected)
-    throw new Error(`Frozen object digest mismatch: ${key}`)
-  return bytes
-}
-
-const verifiedLines = async (
-  client: S3Client,
-  receipt: Dataset,
-  signal: AbortSignal,
-  onLine: (line: string, index: number) => void,
-) => {
-  const response = await readObject(client, `${receipt.prefix}/${receipt.name}`, signal)
-  if (response.body === null) throw new Error(`Missing archive body: ${receipt.name}`)
-  const reader = gunzipBound(response.body, receipt).getReader()
-  const decoder = new TextDecoder('utf-8', { fatal: true })
-  const rawHash = new Bun.CryptoHasher('sha256')
-  let rows = 0
-  let rest = ''
-  let bytes = 0
-  try {
-    for (;;) {
-      signal.throwIfAborted()
-      const { done, value } = await reader.read()
-      if (done) break
-      if ('rawSha256' in receipt) rawHash.update(value)
-      bytes += value.length
-      const lines = (rest + decoder.decode(value, { stream: true })).split('\n')
-      rest = lines.pop() ?? ''
-      for (const line of lines) onLine(line, rows++)
-    }
-    signal.throwIfAborted()
-    rest += decoder.decode()
-    if (rest.length > 0) onLine(rest, rows++)
-    if ('rawSha256' in receipt && (bytes !== receipt.rawBytes || rawHash.digest('hex') !== receipt.rawSha256))
-      throw new Error(`Decoded byte receipt mismatch: ${receipt.name}`)
-    return rows
-  } finally {
-    await reader.cancel().catch(() => undefined)
-    reader.releaseLock()
-  }
-}
-
-const readCalendar = async (
-  client: S3Client,
-  receipt: (typeof calendars)[keyof typeof calendars],
-  signal: AbortSignal,
-): Promise<unknown> => {
-  const bytes = await verifiedObject(client, `${receipt.prefix}/${receipt.name}`, receipt.sha256, signal)
-  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
-}
-const decodeBlindCalendar = Schema.decodeUnknownSync(
-  Schema.Array(Schema.Struct({ date: Schema.String, open: Schema.String, close: Schema.String })),
-)
 const first = '2016-01-04'
 const seam = '2023-12-29'
 const last = '2026-11-25'
@@ -112,31 +43,33 @@ const bar = (fields: readonly string[], volumeAt: number, label: string): Bar =>
   return { open, high, low, close }
 }
 
-const load = async (client: S3Client, signal: AbortSignal) => {
-  for (const dataset of Object.values(datasets))
-    await verifiedObject(client, `${dataset.prefix}/MANIFEST.json`, dataset.manifestSha256, signal)
-  const blind = normalizeResearchCalendar({
-    query: { start: first, end: seam },
-    response: decodeBlindCalendar(await readCalendar(client, calendars.blind, signal)),
-  })
-  const recent = normalizeResearchCalendar(await readCalendar(client, calendars.recent, signal)).filter(
-    ({ date }) => date <= last,
+const verifiedLines = (archive: ArchiveReader, receipt: Dataset, onLine: (line: string, index: number) => void) =>
+  archive.readGzip(tapeReceipt(receipt), countArchiveLines(onLine))
+
+const loadDaily = async (archive: ArchiveReader) => {
+  const { readJson } = archive
+  for (const dataset of [datasets.daily, datasets.macro])
+    await readJson(`${dataset.prefix}/MANIFEST.json`, dataset.manifestSha256)
+  const readCalendar = (receipt: (typeof calendars)[keyof typeof calendars]) =>
+    readJson(`${receipt.prefix}/${receipt.name}`, receipt.sha256)
+  const blind = requireCalendarCoverage(
+    normalizeResearchCalendar({ query: { start: first, end: seam }, response: await readCalendar(calendars.blind) }),
+    first,
+    seam,
+    2_012,
   )
-  if (
-    blind.length !== 2_012 ||
-    blind[0]?.date !== first ||
-    blind.at(-1)?.date !== seam ||
-    recent.length !== 729 ||
-    recent[0]?.date !== '2024-01-02' ||
-    recent.at(-1)?.date !== last
+  const recent = requireCalendarCoverage(
+    normalizeResearchCalendar(await readCalendar(calendars.recent)).filter(({ date }) => date <= last),
+    '2024-01-02',
+    last,
+    729,
   )
-    throw new Error('Unexpected frozen calendar counts or endpoint sessions')
   const calendar = [...blind, ...recent]
   const byDate = new Map(calendar.map(({ date }) => [date, new Map<Etf, Bar>()]))
   for (const kind of ['daily', 'macro'] as const) {
     const receipt = datasets[kind]
     const seen = new Map<Etf, string>()
-    const rows = await verifiedLines(client, receipt, signal, (line) => {
+    const rows = await verifiedLines(archive, receipt, (line) => {
       const symbol = line.slice(0, line.indexOf('\t')) as Etf
       if (!dailySymbols.has(symbol)) return
       const fields = line.split('\t')
@@ -166,6 +99,34 @@ const load = async (client: S3Client, signal: AbortSignal) => {
     }
     return { date, openAt: openMs, closeAt: openMs + minutes * 60_000, bars }
   })
+  return { daily, blind, recent }
+}
+
+export const closeEvidence = (daily: readonly DailyFrame[]) => {
+  const calendar = daily.map(({ date, openAt, closeAt }) => ({ date, openAt, closeAt }))
+  const bars = daily
+    .slice(0, -1)
+    .map(({ date, closeAt, bars }) =>
+      [...bars].map(([symbol, bar]) => ({ date, symbol, availableAt: closeAt, ...bar })),
+    )
+  const snapshot = {
+    schema: closeSnapshotSchema,
+    datasetVersion: 'alpacav2-sip-10yr-sp100-with-dia-uup-2026-11-27',
+    adjustment: 'all',
+    calendar,
+    bars,
+  }
+  return {
+    asOf: daily[daily.length - 1].openAt,
+    snapshot,
+    snapshotHash: Result.getOrThrow(canonicalHashV1Result(snapshot)),
+  }
+}
+
+const load = async (archive: ArchiveReader) => {
+  for (const dataset of [datasets.blind, datasets.recent])
+    await archive.readJson(`${dataset.prefix}/MANIFEST.json`, dataset.manifestSha256)
+  const { daily, blind, recent } = await loadDaily(archive)
   const intraday: IntradayFrame[] = []
   const coverage = []
   for (const [kind, sessions] of [
@@ -186,7 +147,7 @@ const load = async (client: S3Client, signal: AbortSignal) => {
     const accepted = new Map<NoiseEtf, number>()
     const lastSeen = new Map<NoiseEtf, number>()
     let header = 0
-    const rows = await verifiedLines(client, receipt, signal, (line, index) => {
+    const rows = await verifiedLines(archive, receipt, (line, index) => {
       if (kind === 'blind' && index === 0 && line === 'symbol\tt\to\th\tl\tc\tv\tn\tvw') {
         header++
         return
@@ -239,27 +200,8 @@ const load = async (client: S3Client, signal: AbortSignal) => {
   return { daily, intraday, coverage }
 }
 
-export const loadFrozenFrames = Effect.gen(function* () {
-  const config = yield* Config.all({
-    endpoint: Config.String('AGENTS_ARTIFACTS_ENDPOINT'),
-    bucket: Config.String('AGENTS_ARTIFACTS_BUCKET'),
-    accessKeyId: Config.Redacted('AWS_ACCESS_KEY_ID'),
-    secretAccessKey: Config.Redacted('AWS_SECRET_ACCESS_KEY'),
-  })
-  if (config.bucket !== receipts.bucket || config.endpoint !== 'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80')
-    return yield* new ArchiveError({ cause: 'Expected the frozen Rook-Ceph agents-artifacts source' })
-  return yield* Effect.tryPromise({
-    try: (signal) =>
-      load(
-        new S3Client({
-          endpoint: config.endpoint,
-          bucket: config.bucket,
-          accessKeyId: Redacted.value(config.accessKeyId),
-          secretAccessKey: Redacted.value(config.secretAccessKey),
-          region: 'us-east-1',
-        }),
-        signal,
-      ),
-    catch: (cause) => new ArchiveError({ cause }),
-  })
-})
+export const loadFrozenFrames = withS3Archive(load)
+export const loadFrozenDailyFrames = withS3Archive(loadDaily).pipe(
+  Effect.map(({ daily }) => daily),
+  Effect.timeout('1 minute'),
+)

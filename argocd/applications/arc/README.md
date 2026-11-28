@@ -68,7 +68,7 @@ Set `runs-on` to one of these labels to run on memory-backed scratch.
 | `arc-amd64-tmpfs` | `arc-arm64-tmpfs` | 16 GiB | 18 GiB |
 | `arc-amd64-tmpfs-large` | `arc-arm64-tmpfs-large` | 24 GiB | 28 GiB |
 
-The standard labels scale from zero to three workers per architecture. The large labels scale from zero to two.
+The standard labels scale from zero to ten workers on AMD64 and eight on ARM64. The large labels scale from zero to six.
 Each worker requests 8 GiB of memory. Scratch and job processes share the memory limit. Bootstrap allows up to
 4 GiB for the seed and verifies the copy and remaining capacity. Jobs with larger scratch requirements, such as
 the Restate Cargo cache export, use the default 64 GiB Ceph labels.
