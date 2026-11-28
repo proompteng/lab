@@ -1,6 +1,11 @@
 {{- $controlPlaneImage := .Values.controlPlane.image | default dict -}}
 {{- $controlPlaneEnvVars := .Values.controlPlane.env.vars | default dict -}}
 {{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controlPlaneEnvVars) -}}
+{{- $_ := set $envVars "AGENTS_PROMETHEUS_METRICS_ENABLED" (toString .Values.metrics.enabled) -}}
+{{- $_ := set $envVars "AGENTS_PROMETHEUS_METRICS_PATH" (.Values.metrics.path | default "/metrics") -}}
+{{- with .Values.telemetry.otlpEndpoint -}}
+{{- $_ := set $envVars "OTEL_EXPORTER_OTLP_ENDPOINT" . -}}
+{{- end -}}
 {{- $grpcManagedByChart := true -}}
 {{- if hasKey .Values "grpc" -}}
 {{- if hasKey .Values.grpc "manageEnvVar" -}}
@@ -265,14 +270,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.uid
-            {{- $metricsEnabled := true }}
-            {{- if and (hasKey .Values "metrics") (hasKey .Values.metrics "enabled") }}
-            {{- $metricsEnabled = .Values.metrics.enabled }}
-            {{- end }}
-            - name: AGENTS_PROMETHEUS_METRICS_ENABLED
-              value: {{ $metricsEnabled | quote }}
-            - name: AGENTS_PROMETHEUS_METRICS_PATH
-              value: {{ .Values.metrics.path | default "/metrics" | quote }}
             - name: AGENTS_LEADER_ELECTION_ENABLED
               value: {{ .Values.controller.leaderElection.enabled | default true | quote }}
             - name: AGENTS_LEADER_ELECTION_LEASE_NAME

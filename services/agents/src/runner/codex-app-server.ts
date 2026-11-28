@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, stat, statfs, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -41,6 +41,12 @@ type AgentRunPayload = Record<string, unknown>
 export const DEFAULT_CODEX_BINARY_PATH = '/usr/local/bin/codex'
 const BOOTSTRAP_RETRY_DELAY_MS = 2_000
 const MAX_RESULT_RESPONSE_CHARS = 64_000
+const TMPFS_MAGIC = 0x01021994
+
+export const readRunnerWorkspaceTmpfsBytes = async (path = '/workspace') => {
+  const stats = await statfs(path).catch(() => undefined)
+  return stats?.type === TMPFS_MAGIC ? (stats.blocks - stats.bfree) * stats.bsize : undefined
+}
 
 export type CodexAppServerRunnerStatus = {
   provider: string
@@ -1185,16 +1191,30 @@ export const runCodexAppServerAdapter = async (
     state.logStream = await openLog(logPath).catch((cause: unknown) => {
       throw new CodexRunnerLogError({ operation: 'open-log', path: logPath, cause })
     })
+    const publishTelemetry = options.publishTelemetry ?? createTelemetryPublisher()
+    const write = (line: string) => {
+      state.logStream?.write(line)
+      process.stdout.write(line)
+    }
     state.telemetry = createRunnerTelemetry({
       model: adapter.model,
       effort: adapter.effort,
       now,
       podName: process.env.AGENT_RUN_POD_NAME,
-      publish: options.publishTelemetry ?? createTelemetryPublisher(),
-      write: (line) => {
-        state.logStream?.write(line)
-        process.stdout.write(line)
+      publish: async (snapshot) => {
+        const workspaceTmpfsUsedBytes = await readRunnerWorkspaceTmpfsBytes()
+        if (workspaceTmpfsUsedBytes !== undefined) {
+          write(
+            `${JSON.stringify({
+              ts: snapshot.heartbeatAt,
+              component: 'agent-runner',
+              event: { type: 'workspace_usage', workspaceTmpfsUsedBytes },
+            })}\n`,
+          )
+        }
+        await publishTelemetry?.(snapshot)
       },
+      write,
     })
     await state.telemetry.start()
     exitCode = await runCodexEffectPromise(runCodexAppServerAdapterEffect({ spec, adapter, options, state }))

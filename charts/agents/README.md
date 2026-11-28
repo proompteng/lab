@@ -401,6 +401,9 @@ metrics:
     enabled: true
 ```
 
+The ServiceMonitor scrapes the control-plane metrics Service. With `controllers.enabled: true`, it also scrapes a
+separate controller-only ClusterIP Service so the dashboard receives controller metrics such as queue snapshots.
+
 ### Network Policy
 
 The chart can create a NetworkPolicy, but you must set rules that match your cluster. Start restrictive and explicitly allow Postgres, Kubernetes API, registry, and any external APIs your runners need.
@@ -567,6 +570,7 @@ Frequent render failures:
 | `controllers.enabled`                                                | Run the controller deployment.                                            |
 | `grpc.enabled`                                                       | Expose gRPC support for in-cluster clients and agentctl.                  |
 | `metrics.serviceMonitor.enabled`                                     | Create a ServiceMonitor.                                                  |
+| `telemetry.otlpEndpoint`                                             | Opt-in OTLP/HTTP base URL for AgentRun lifecycle traces.                  |
 | `podDisruptionBudget.enabled`                                        | Create a PDB for the control plane.                                       |
 | `controllers.podDisruptionBudget.enabled`                            | Create a PDB for controllers.                                             |
 | `tests.enabled`                                                      | Render the optional Helm test Pod.                                        |

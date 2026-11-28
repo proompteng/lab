@@ -24,11 +24,16 @@ import {
   CodexRunnerTurnError,
   CodexRunnerWorkspaceError,
   DEFAULT_CODEX_BINARY_PATH,
+  readRunnerWorkspaceTmpfsBytes,
   resolveCodexBinaryPath,
   runCodexAppServerAdapter,
   type CodexAppServerRunnerClient,
   type RunCodexAppServerAdapterOptions,
 } from './codex-app-server'
+
+it('omits tmpfs usage when the workspace mount is unavailable', async () => {
+  expect(await readRunnerWorkspaceTmpfsBytes('/dev/null/not-a-workspace')).toBeUndefined()
+})
 
 const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
   yield { type: 'message', delta: 'done' }

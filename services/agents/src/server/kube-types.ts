@@ -452,10 +452,13 @@ const applyStatusResource = async (clients: KubeClients, resource: Record<string
   const customTarget = resolveCustomTargetFromObject(resource)
   const resourceKey = RESOURCE_MAP[target.kind as keyof typeof RESOURCE_MAP] ?? `${target.kind.toLowerCase()}s`
 
-  const current = customTarget
-    ? await readCustomObject(clients.customObjects, resourceKey, target.name, target.namespace ?? 'default')
-    : await readObject(clients.objects, resourceKey, target.name, target.namespace ?? 'default')
-  const resourceVersion = asString(asRecord(current.metadata)?.resourceVersion)
+  let resourceVersion = asString(asRecord(resource.metadata)?.resourceVersion)
+  if (!resourceVersion) {
+    const current = customTarget
+      ? await readCustomObject(clients.customObjects, resourceKey, target.name, target.namespace ?? 'default')
+      : await readObject(clients.objects, resourceKey, target.name, target.namespace ?? 'default')
+    resourceVersion = asString(asRecord(current.metadata)?.resourceVersion)
+  }
   const metadata = {
     name: target.name,
     ...(target.namespace ? { namespace: target.namespace } : {}),
