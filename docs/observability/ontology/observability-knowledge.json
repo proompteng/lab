@@ -51,6 +51,7 @@
   ],
   "customAnalyses": [],
   "dataSource": "observability",
+  "ruleTag": "obs canonical rule",
   "rules": [
     {
       "description": "Use bounded labels such as service, namespace, and normalized route. Never use request or trace IDs, raw URLs, or other unbounded values as metric or log-stream labels. Review Alloy allowlists and estimate added series and streams before enabling collection; verify headroom under Mimir's 300,000-series shared tenant limit.",
