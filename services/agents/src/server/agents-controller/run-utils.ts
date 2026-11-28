@@ -76,12 +76,11 @@ export const resolveRunRepository = (agentRun: Record<string, unknown>) => {
 
 export const normalizeRepository = (value: string) => value.trim().toLowerCase()
 
-export const normalizeBranchName = (value: string) => value.trim()
+export const isAgentRunTerminalPhase = (phase: string | null): phase is 'Succeeded' | 'Failed' | 'Cancelled' =>
+  phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled'
 
-export const isActiveRun = (run: Record<string, unknown>) => {
-  const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-  return phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
-}
+export const isActiveRun = (run: Record<string, unknown>) =>
+  !isAgentRunTerminalPhase(asString(readNested(run, ['status', 'phase'])))
 
 export const isQueuedRun = (run: Record<string, unknown>) => {
   const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
@@ -92,27 +91,6 @@ export const resolveRunHeadBranch = (run: Record<string, unknown>) =>
   asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
   asString(readNested(run, ['status', 'vcs', 'branch'])) ??
   resolveRunParam(run, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])
-
-export const hasBranchConflict = (
-  runs: Record<string, unknown>[],
-  currentRunName: string,
-  repository: string,
-  headBranch: string,
-) => {
-  if (!repository || !headBranch) return false
-  const normalizedRepo = normalizeRepository(repository)
-  const normalizedBranch = normalizeBranchName(headBranch)
-  return runs.some((run) => {
-    const runName = asString(readNested(run, ['metadata', 'name'])) ?? ''
-    if (!runName || runName === currentRunName) return false
-    if (!isActiveRun(run)) return false
-    const runRepo = resolveRunRepository(run)
-    if (!runRepo || normalizeRepository(runRepo) !== normalizedRepo) return false
-    const runBranch = resolveRunHeadBranch(run)
-    if (!runBranch) return false
-    return normalizeBranchName(runBranch) === normalizedBranch
-  })
-}
 
 export const appendBranchSuffix = (branch: string, suffix: string) => {
   const trimmed = suffix.trim()

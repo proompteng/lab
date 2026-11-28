@@ -1,4 +1,6 @@
-import type { RateBucket } from './mutable-state'
+import { normalizeRepository } from './run-utils'
+
+type RateBucket = { count: number; resetAt: number }
 
 export type ControllerRateState = {
   cluster: RateBucket
@@ -17,31 +19,24 @@ export type RateLimitDecision =
   | { ok: true }
   | { ok: false; scope: 'cluster' | 'namespace' | 'repo'; retryAfterSeconds: number; message: string }
 
-export const getRateBucket = (map: Map<string, RateBucket>, key: string) => {
-  const existing = map.get(key)
-  if (existing) return existing
-  const created = { count: 0, resetAt: 0 }
-  map.set(key, created)
-  return created
+const getRetryAfter = (bucket: RateBucket | undefined, limit: number, now: number) => {
+  if (limit <= 0 || !bucket || now >= bucket.resetAt || bucket.count < limit) return 0
+  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))
 }
 
-export const checkRateLimit = (bucket: RateBucket, limit: number, windowMs: number, now: number) => {
-  if (limit <= 0) return { ok: true as const }
+const consume = (bucket: RateBucket, windowMs: number, now: number) => {
   if (now >= bucket.resetAt) {
     bucket.count = 0
     bucket.resetAt = now + windowMs
   }
-  if (bucket.count >= limit) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))
-    return { ok: false as const, retryAfterSeconds }
-  }
   bucket.count += 1
-  return { ok: true as const }
+  return bucket
 }
 
+const emptyBucket = (): RateBucket => ({ count: 0, resetAt: 0 })
+
 export const resetControllerRateState = (state: ControllerRateState) => {
-  state.cluster.count = 0
-  state.cluster.resetAt = 0
+  state.cluster = emptyBucket()
   state.perNamespace.clear()
   state.perRepo.clear()
 }
@@ -52,45 +47,41 @@ export const checkControllerRateLimits = (input: {
   state: ControllerRateState
   limits: RateLimits
   now: number
-  normalizeRepository: (value: string) => string
 }): RateLimitDecision => {
-  const { namespace, repository, state, limits, now, normalizeRepository } = input
-  const windowMs = limits.windowSeconds * 1000
-
-  const clusterResult = checkRateLimit(state.cluster, limits.cluster, windowMs, now)
-  if (!clusterResult.ok) {
-    return {
-      ok: false,
-      scope: 'cluster',
-      retryAfterSeconds: clusterResult.retryAfterSeconds,
-      message: 'Cluster rate limit reached',
-    }
+  const { namespace, repository, state, limits, now } = input
+  const clusterRetry = getRetryAfter(state.cluster, limits.cluster, now)
+  if (clusterRetry) {
+    return { ok: false, scope: 'cluster', retryAfterSeconds: clusterRetry, message: 'Cluster rate limit reached' }
   }
 
-  const namespaceBucket = getRateBucket(state.perNamespace, namespace)
-  const namespaceResult = checkRateLimit(namespaceBucket, limits.perNamespace, windowMs, now)
-  if (!namespaceResult.ok) {
+  const namespaceBucket = state.perNamespace.get(namespace)
+  const namespaceRetry = getRetryAfter(namespaceBucket, limits.perNamespace, now)
+  if (namespaceRetry) {
     return {
       ok: false,
       scope: 'namespace',
-      retryAfterSeconds: namespaceResult.retryAfterSeconds,
+      retryAfterSeconds: namespaceRetry,
       message: `Namespace ${namespace} rate limit reached`,
     }
   }
 
-  if (repository) {
-    const repoKey = normalizeRepository(repository)
-    const repoBucket = getRateBucket(state.perRepo, repoKey)
-    const repoResult = checkRateLimit(repoBucket, limits.perRepo, windowMs, now)
-    if (!repoResult.ok) {
-      return {
-        ok: false,
-        scope: 'repo',
-        retryAfterSeconds: repoResult.retryAfterSeconds,
-        message: `Repository ${repository} rate limit reached`,
-      }
+  const repoKey = repository ? normalizeRepository(repository) : ''
+  const repoBucket = repoKey ? state.perRepo.get(repoKey) : undefined
+  const repoRetry = getRetryAfter(repoBucket, limits.perRepo, now)
+  if (repoRetry) {
+    return {
+      ok: false,
+      scope: 'repo',
+      retryAfterSeconds: repoRetry,
+      message: `Repository ${repository} rate limit reached`,
     }
   }
 
+  // Only attempts allowed by all scopes consume the shared budget.
+  const windowMs = limits.windowSeconds * 1000
+  if (limits.cluster > 0) consume(state.cluster, windowMs, now)
+  if (limits.perNamespace > 0)
+    state.perNamespace.set(namespace, consume(namespaceBucket ?? emptyBucket(), windowMs, now))
+  if (repoKey && limits.perRepo > 0) state.perRepo.set(repoKey, consume(repoBucket ?? emptyBucket(), windowMs, now))
   return { ok: true }
 }
