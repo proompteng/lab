@@ -1,0 +1,123 @@
+{
+  "acronyms": [
+    {
+      "description": "An Argo CD resource that generates and maintains Applications from templates. In Galactic it owns application namespace creation and preserves Kargo-managed source revisions and metadata.",
+      "name": "ApplicationSet"
+    },
+    {
+      "description": "Argo CD, the GitOps reconciler that applies Git-declared Kubernetes state. For Kargo-managed applications it tracks the generated kargo/<stage> branch; it does not select release images.",
+      "name": "ArgoCD"
+    },
+    {
+      "description": "The Nix binary cache used to substitute reusable build outputs and dependencies. It is not the OCI registry or a promotion authority.",
+      "name": "Attic"
+    },
+    {
+      "description": "Loki, Grafana, Tempo, and Mimir: Galactic's observability stack for logs, visualization, traces, and metrics, respectively.",
+      "name": "LGTM"
+    },
+    {
+      "description": "Grafana Loki, the log aggregation backend that indexes stream labels and serves log queries.",
+      "name": "Loki"
+    },
+    {
+      "description": "Grafana Mimir, the Prometheus-compatible backend for storing and querying metrics.",
+      "name": "Mimir"
+    },
+    {
+      "description": "The management plane that owns Galactic's Talos machine configuration and Talos and Kubernetes upgrades.",
+      "name": "Omni"
+    },
+    {
+      "description": "A durable execution platform for services and workflows. Its retained state allows interrupted work to resume.",
+      "name": "Restate"
+    },
+    {
+      "description": "Rook-Ceph, the Kubernetes-managed Ceph storage stack that provides RBD block volumes, shared CephFS filesystems, and S3-compatible object storage through RGW.",
+      "name": "RookCeph"
+    },
+    {
+      "description": "A Kubernetes resource holding encrypted secret data that the target cluster's Sealed Secrets controller reconciles into a Kubernetes Secret.",
+      "name": "SealedSecret"
+    },
+    {
+      "description": "A Kargo resource defining which Freight it accepts, the steps that promote it, and how the result is verified. A Galactic application Stage writes generated desired state to kargo/<stage>.",
+      "name": "Stage"
+    },
+    {
+      "description": "The private mesh network used for remote Galactic Kubernetes API and service access. Omni owns the Talos extension; the Kubernetes operator manages in-cluster service exposure and subnet routing.",
+      "name": "Tailscale"
+    },
+    {
+      "description": "The API-managed operating system for Galactic's Kubernetes nodes. Omni owns its routine machine configuration and upgrades.",
+      "name": "Talos"
+    },
+    {
+      "description": "Grafana Tempo, the backend for storing and querying distributed traces.",
+      "name": "Tempo"
+    },
+    {
+      "description": "A durable workflow orchestration platform. Workers execute workflow and activity code, and the service persists workflow histories so execution can resume after failures.",
+      "name": "Temporal"
+    },
+    {
+      "description": "A Kargo resource that discovers eligible artifacts from configured subscriptions and produces Freight that a Stage may promote.",
+      "name": "Warehouse"
+    }
+  ],
+  "customAnalyses": [],
+  "dataSource": "galactic",
+  "rules": [
+    {
+      "description": "Confirm the Galactic Kubernetes context and pass an explicit namespace to kubectl. On an authorization failure, verify identity and follow docs/runbooks/galactic-kubernetes-access.md; do not silently switch credentials or targets. Never include credentials in evidence.",
+      "name": "Galactic cluster access",
+      "searchTerm": "kubectl"
+    },
+    {
+      "description": "Read deployment, bootstrap, and reseal scripts before using them. Select an explicitly owned and current stack for OpenTofu or Ansible. Record rollout order, impact, and recovery, and render and validate desired state before an authorized apply. Direct cluster mutation requires explicit authorization or an authorized emergency procedure.",
+      "name": "Galactic infrastructure changes",
+      "searchTerm": "GitOps"
+    },
+    {
+      "description": "Use Helm 3 via nix develop for kustomize build --enable-helm; Helm 4 is unsupported. Child applications under argocd/applications must not render Namespace objects. ApplicationSets own namespaces through CreateNamespace=true and managedNamespaceMetadata. Remove upstream Namespace objects from rendered output with $patch: delete and prevent live namespace pruning.",
+      "name": "Galactic namespace ownership",
+      "searchTerm": "ApplicationSet"
+    },
+    {
+      "description": "Use Omni for routine Talos machine configuration and upgrades, not direct talosctl applies. Keep machine.files[].path entries unique and validate the full configuration before an authorized apply.",
+      "name": "Galactic Talos configuration",
+      "searchTerm": "Talos"
+    },
+    {
+      "description": "Use the approved secret-sync path and the verified target controller for resealing. Commit only the resulting encrypted SealedSecret data; keep plaintext, credentials, and private keys out of Git, command output, and artifacts.",
+      "name": "Galactic secret handling",
+      "searchTerm": "SealedSecret"
+    },
+    {
+      "description": "Promote reviewed main source through successful immutable image publication, the owning Warehouse and eligible Freight, the exact automatic Stage policy, and the generated kargo/<stage> commit that Argo CD reconciles. Do not bypass gates with digest bumps, release branches, deployment PRs, release automerge, operator-created or retagged aliases, or direct kubectl deployment.",
+      "name": "Galactic production release path",
+      "searchTerm": "Kargo"
+    },
+    {
+      "description": "Publish repo-owned kargo-sha-<40> or receipt-bearing kargo-sha-<40>-run-<github-run-id> aliases only after the final multi-architecture OCI index succeeds. Preserve source and revision provenance and read actual CI receipts from the selected image's annotations. For multi-image receipts, keep preparation tags undiscoverable and withhold all eligible aliases until every image, terminal validation, and artifact upload succeeds. Preserve the external analysis latest/Digest and bilig bare 40-hex/NewestBuild discovery contracts; both promote by digest.",
+      "name": "Galactic image eligibility",
+      "searchTerm": "Warehouse"
+    },
+    {
+      "description": "Enroll new targets with a main-only immutable build, Warehouse, Stage, exact automatic policy, and kargo.akuity.io/authorized-stage annotation. Let the Stage update the configured renderer's source inputs and verify the rendered digest. ApplicationSet must preserve the Kargo branch and managed metadata. Re-promote current Freight if an Application is recreated; for an authorized rollback, promote previously proven Freight instead of editing live workloads.",
+      "name": "Galactic promotion ownership",
+      "searchTerm": "Stage"
+    },
+    {
+      "description": "During an authorized manual Argo CD sync, verify the target, exact reviewed revision, live diff, and required CI. Limit root or ApplicationSet syncs to affected resources. For Kargo-managed apps, verify the eligible image, selected Freight, and authorized Stage commit, then sync only that commit without changing automation, metadata, or retention.",
+      "name": "Galactic authorized Argo CD sync",
+      "searchTerm": "Argo CD"
+    },
+    {
+      "description": "Read promotion evidence in the owning <project>-release namespace and Application evidence in argocd. Verify the exact deployed revision, running image, and requested live behavior; Argo CD Synced/Healthy and readiness alone are not product proof. Retained post-deploy workflows follow the exact kargo/<stage> branch and Stage-written paths; manual dispatch is diagnostic.",
+      "name": "Galactic rollout evidence",
+      "searchTerm": "rollout"
+    }
+  ],
+  "version": 1
+}

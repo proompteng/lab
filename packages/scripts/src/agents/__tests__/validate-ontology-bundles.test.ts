@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url'
 
 import { format } from 'oxfmt'
 
+import agentsSeed from '../../../../../docs/agents/ontology/agents-knowledge.json'
+import baynSeed from '../../../../../docs/bayn/ontology/bayn-knowledge.json'
+import clusterSeed from '../../../../../docs/cluster/ontology/cluster-knowledge.json'
 import { readMigrationRelations } from '../ontology-migration-relations'
 import { validateOntologyBundles } from '../validate-ontology-bundles'
 
@@ -80,6 +83,16 @@ const runCli = () =>
   })
 
 describe('discovery and JSON contracts', () => {
+  test('keeps Galactic acronym names distinct from Agents and Bayn in the shared catalog', () => {
+    const reserved = new Set(
+      [...agentsSeed.acronyms, ...baynSeed.acronyms].map(({ name }) => name.trim().toLowerCase()),
+    )
+    const collisions = clusterSeed.acronyms
+      .map(({ name }) => name)
+      .filter((name) => reserved.has(name.trim().toLowerCase()))
+    expect(collisions).toEqual([])
+  })
+
   test('succeeds with no docs or bundles and ignores unrelated JSON files', async () => {
     expect(await validateOntologyBundles(root)).toEqual({ files: 0, errors: [] })
     await put('docs/agents/ontology/metadata.json', 'not a bundle')
