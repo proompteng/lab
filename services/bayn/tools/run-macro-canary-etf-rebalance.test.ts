@@ -12,6 +12,7 @@ import { TestClock } from 'effect/testing'
 import { Side, type Bar, type OrderRequest, type Position } from './macro-canary-runner/alpaca'
 import { Mode, TimeInForce } from './macro-canary-runner/contract'
 import { etfs, macroInputs, type Etf } from './macro-canary-runner/signals'
+import { buildScorecard } from './multi-horizon-scorecard-core'
 import { parseOptions, runRebalance } from './run-macro-canary-etf-rebalance'
 
 const accountId = '11111111-1234-4234-8123-000000000001'
@@ -439,6 +440,8 @@ test('writes a deterministic private shadow receipt with independent bar and pla
     expect(await readFile(otherPath, 'utf8')).toBe(text)
     expect(JSON.parse(text)).toEqual(receipt)
     expect(Schema.is(receiptIdentity)(receipt)).toBe(true)
+    const scored = Result.getOrThrow(buildScorecard({ intraday: [], macroCore: [], macroCanary: [JSON.parse(text)] }))
+    expect(scored.sessions[0]?.macroCanary?.planSha256).toBe(receipt.planSha256)
     const { mode, timestamp: observedAt, planSha256, ...plan } = receipt
     expect(mode).toBe(Mode.Shadow)
     expect(observedAt).toBe(broker.now)
