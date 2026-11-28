@@ -351,4 +351,31 @@ describe('runner log summary', () => {
     expect(JSON.stringify(result)).not.toContain('opaque-adc-error')
     expect(JSON.stringify(result)).not.toContain('opaque-stderr-secret')
   })
+
+  it('recovers a complete agy-cli result.response when status.result.text is truncated and deltas rotated out', () => {
+    const fullResponse = `${'A'.repeat(300)} https://github.com/proompteng/lab/pull/514`
+    const logs = JSON.stringify({
+      ts: '2026-11-28T10:00:04Z',
+      event: 'result',
+      result: {
+        model: 'gemini-4-neon',
+        effort: 'high',
+        response: fullResponse,
+      },
+    })
+    const status = {
+      provider: 'google',
+      adapter: 'agy-cli',
+      status: 'succeeded',
+      result: {
+        text: 'A'.repeat(256),
+        truncated: true,
+      },
+    }
+
+    const parsed = parseRunLogs(logs, status)
+    expect(parsed.assistantMessage).toBe(fullResponse)
+    expect(parsed.assistantMessageComplete).toBe(true)
+    expect(parsed.prUrls).toEqual(['https://github.com/proompteng/lab/pull/514'])
+  })
 })
