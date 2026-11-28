@@ -240,8 +240,8 @@ controller:
     - agents
     - synthesis
   concurrency:
-    perNamespace: 14
-    perAgent: 10
+    perNamespace: 24
+    perAgent: 20
   queue:
     perRepo: 200
   agentRunRetentionSeconds: 604800

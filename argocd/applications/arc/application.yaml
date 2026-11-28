@@ -515,7 +515,7 @@ spec:
           scaleSetLabels:
             - arc-arm64-tmpfs
           minRunners: 0
-          maxRunners: 3
+          maxRunners: 6
           listenerTemplate: &tmpfs-listener
             spec:
               nodeSelector:
@@ -739,7 +739,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-tmpfs
           minRunners: 0
-          maxRunners: 3
+          maxRunners: 6
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -813,7 +813,7 @@ spec:
           scaleSetLabels:
             - arc-arm64-tmpfs-large
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 4
           listenerTemplate: *tmpfs-listener
           template:
             spec:
@@ -883,7 +883,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-tmpfs-large
           minRunners: 0
-          maxRunners: 2
+          maxRunners: 4
           listenerTemplate: *tmpfs-listener
           template:
             spec:
