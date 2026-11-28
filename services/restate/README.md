@@ -1,9 +1,9 @@
 # Restate runtime patch
 
-This build retains upstream Restate 1.8.1 at `20efb1b83a39b8227451e531c366e067588ae9ee` with two focused patches:
+This build retains upstream Restate 1.8.1-hotfix.3 at `bc55288da0d6fd8874bb5a3bc72f12f3698475ab` with two focused patches:
 metadata write dispatch uses the existing background I/O executor, and connection-blocked election requests get a
 bounded opportunity to reach a newly connected peer. WAL synchronization, write completion, replication, on-disk
-format follow upstream 1.8.1. The source archive and build/runtime images are pinned. Test-only
+format follow upstream 1.8.1-hotfix.3. The source archive and build/runtime images are pinned. Test-only
 fault injection and connection barriers are absent from the runtime image.
 
 `docker buildx build --target test services/restate` injects a two-second delay into real WAL `fsync`/`fdatasync` calls in an

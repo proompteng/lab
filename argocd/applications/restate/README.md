@@ -1,6 +1,6 @@
 # Restate
 
-Restate 1.8.1 uses three retained members on three physical hosts. Each member keeps its native node identity,
+Restate 1.8.1-hotfix.3 uses three retained members on three physical hosts. Each member keeps its native node identity,
 metadata, logs and worker state on the existing generic `local-path` class backed by local NVMe. The three claims
 request 16Gi each. Local-path requests do not reserve space or impose quotas; monitor actual host free space.
 
@@ -53,7 +53,7 @@ singleton path or overwrite newer acknowledged work with an older offline copy.
 
 ## Runtime and failure detection
 
-The [runtime build](../../../services/restate/README.md) pins upstream Restate 1.8.1 and retains two regression-tested
+The [runtime build](../../../services/restate/README.md) pins upstream Restate 1.8.1-hotfix.3 and retains two regression-tested
 patches. Metadata writes use the existing background I/O executor while still awaiting durable completion. Bounded
 cold-peer election requests can reach a newly connected peer. Log-server and partition writes use their native
 `always-commit-in-background` options.

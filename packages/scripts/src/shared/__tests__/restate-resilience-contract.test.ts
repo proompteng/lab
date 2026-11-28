@@ -85,7 +85,7 @@ test.each([
   expect(matchesPaths(path, workflow.on.push.paths)).toBe(affected)
 })
 
-test('Restate 1.8.1 preserves retained HA state while Kargo owns runtime image selection', () => {
+test('Restate 1.8.1-hotfix.3 preserves retained HA state while Kargo owns runtime image selection', () => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const env = new Map(
     statefulSet.spec.template.spec.containers[0].env.map((entry: { name: string; value?: string }) => [
@@ -101,8 +101,8 @@ test('Restate 1.8.1 preserves retained HA state while Kargo owns runtime image s
     {
       name: 'restate-runtime',
       newName: 'docker.restate.dev/restatedev/restate',
-      newTag: '1.8.1',
-      digest: 'sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
+      newTag: '1.8.1-hotfix.3',
+      digest: 'sha256:a08ba07bd867dff3b2b399ccb0575ce8c8c0ca32e47e17c1f023533c8a9a7b69',
     },
   ])
   expect(env.get('RESTATE_METADATA_SERVER__RAFT_ELECTION_TICK')).toBe('450')
