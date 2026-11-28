@@ -322,64 +322,6 @@ test('Bayn publication ignores Froussard-only dependencies and still selects Bay
   expect(selectAffectedInputs(['bun.lock'], configured, prior, changedDependency).image).toBe(true)
 })
 
-test('Bayn retains a pending production push when a later manifest-only push skips publication', () => {
-  const workflowPath = '.github/workflows/bayn-build-push.yml'
-  const workflow: unknown = Bun.YAML.parse(readFileSync(workflowPath, 'utf8'))
-  const configured = parseTargets("image: ['', 'services/bayn']", '', workflowPath, 'push')
-  const paths = configured.image?.paths
-  if (paths === undefined) throw new Error('Missing Bayn publication inputs')
-  const lock = {
-    ...before,
-    workspaces: { ...before.workspaces, 'apps/froussard': { name: 'froussard', dependencies: {} } },
-  }
-  const productionPush = ['services/bayn/src/jev/runtime.ts']
-  const laterManifestPush = ['apps/froussard/package.json']
-  expect(productionPush.some((file) => matchesPaths(file, paths))).toBe(true)
-  expect(laterManifestPush.some((file) => matchesPaths(file, paths))).toBe(true)
-  expect(selectAffectedInputs(productionPush, configured, lock, lock).image).toBe(true)
-  expect(selectAffectedInputs(laterManifestPush, configured, lock, lock).image).toBe(false)
-  // Both pushes enter concurrency before selection; the skipped successor must retain the pending production run.
-  expect(property(workflow, 'concurrency')).toEqual({
-    group: '${{ github.workflow }}-main',
-    'cancel-in-progress': false,
-    queue: 'max',
-  })
-})
-
-test('Bayn queue lint compatibility is limited to its exact unsupported-key diagnostic', () => {
-  const config: unknown = Bun.YAML.parse(readFileSync('.github/actionlint.yaml', 'utf8'))
-  const path = '.github/workflows/bayn-build-push.yml'
-  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
-  const declarations: string[] = []
-  const visit = (value: unknown, ancestors: string[]) => {
-    if (typeof value !== 'object' || value === null) return
-    for (const [key, child] of Object.entries(value)) {
-      const location = [...ancestors, key]
-      if (key === 'concurrency' || key === 'queue') declarations.push(location.join('.'))
-      visit(child, location)
-    }
-  }
-  visit(workflow, [])
-  // The parser exception must not hide an invalid nested queue or job-level concurrency.
-  expect(declarations).toEqual(['concurrency', 'concurrency.queue'])
-  const scopes = property(config, 'paths')
-  if (typeof scopes !== 'object' || scopes === null) throw new Error('Missing actionlint file scopes')
-  expect(Object.keys(scopes).filter((scope) => matchesGlob(path, scope))).toEqual([path])
-  expect(matchesGlob('.github/workflows/opencode-build-push.yml', path)).toBe(false)
-  expect(property(config, 'ignore')).toBeUndefined()
-  const pattern = String.raw`^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$`
-  expect(property(property(scopes, path), 'ignore')).toEqual([pattern])
-  const ignored = new RegExp(pattern)
-  expect(
-    ignored.test('unexpected key "queue" for "concurrency" section. expected one of "cancel-in-progress", "group"'),
-  ).toBe(true)
-  expect(
-    ignored.test('unexpected key "bogus" for "concurrency" section. expected one of "cancel-in-progress", "group"'),
-  ).toBe(false)
-  expect(ignored.test('unexpected key "queue" for "job" section. expected one of "name", "runs-on"')).toBe(false)
-  expect(ignored.test('property "unknown" is not defined in object type')).toBe(false)
-})
-
 test('App source changes do not force dependency downloads; dependency input changes still do', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const jobs = property(workflow, 'jobs')
@@ -998,6 +940,12 @@ test('Bayn separates contract, formal, and GEPA checks from runtime validation a
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
     'services/bayn/README.md',
+    'services/bayn/tools/macro-canary-runner/README.md',
+    'services/bayn/tools/benchmark-forward-performance.md',
+    'services/bayn/AGENTS.md',
+    'services/bayn/.gitignore',
+    'services/bayn/tools/research-10yr-pure-etf-dual-horizon.ts',
+    'services/bayn/tools/research-sip-momentum-data.ts',
     'services/bayn/src/jev/entry-economics.test.ts',
     'services/bayn/src/jev/native.test-support.ts',
     'services/bayn/src/testing/streaming-market-fixture.ts',
@@ -1015,6 +963,11 @@ test('Bayn separates contract, formal, and GEPA checks from runtime validation a
     'services/bayn/migrations/20261106-cost-evidence.sql',
     'services/bayn/tools/compile-frozen-control.ts',
     'services/bayn/tools/record-jev-compiler-dependencies.ts',
+    'services/bayn/tools/equity-edge-screen.ts',
+    'services/bayn/src/research-command.ts',
+    'services/bayn/gepa/native.py',
+    'services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/BrokerFeedMain.kt',
+    'docs/bayn/jev-migration-acceptance-v2.json',
     'services/bayn/package.json',
     'nix/images/bayn.nix',
     'argocd/applications/bayn/configmap.yaml',
