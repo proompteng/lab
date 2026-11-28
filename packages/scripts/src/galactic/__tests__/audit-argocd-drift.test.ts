@@ -109,6 +109,57 @@ describe('retained tracking-ID drift', () => {
     expect(entry?.finding?.classification).toBe('retained_prune_false_orphan')
   })
 
+  test('accepts colon-containing RBAC path-segment resource names in synced apps and live tracking IDs', () => {
+    const syncedRole = {
+      group: 'rbac.authorization.k8s.io',
+      version: 'v1',
+      kind: 'ClusterRole',
+      namespace: '',
+      name: 'system:controller:attachdetach-controller',
+      status: 'Synced',
+    }
+    const orphanRole = {
+      group: 'rbac.authorization.k8s.io',
+      version: 'v1',
+      kind: 'ClusterRole',
+      namespace: '',
+      name: 'system:aggregate-to-admin',
+      status: 'OutOfSync',
+      requiresPruning: true,
+    }
+    const results = report(
+      [
+        app('healthy-rbac', { sync: { status: 'Synced' }, resources: [syncedRole] }),
+        app('retained-rbac', { resources: [orphanRole] }),
+      ],
+      [
+        {
+          apiVersion: 'rbac.authorization.k8s.io/v1',
+          kind: 'ClusterRole',
+          metadata: {
+            name: orphanRole.name,
+            annotations: {
+              [trackingId]: 'retained-rbac:rbac.authorization.k8s.io/ClusterRole:argocd/system:aggregate-to-admin',
+              [syncOptions]: 'Prune=false',
+            },
+          },
+        },
+      ],
+    )
+
+    expect(results.map(({ name, finding }) => [name, finding?.classification ?? null])).toEqual([
+      ['healthy-rbac', null],
+      ['retained-rbac', 'retained_prune_false_orphan'],
+    ])
+    for (const invalidName of ['..', '.', 'bad/name', 'bad%20name', '--all']) {
+      expect(
+        snapshotSchema.safeParse({
+          items: [app('invalid-rbac', { resources: [{ ...syncedRole, name: invalidName }] })],
+        }).success,
+      ).toBe(false)
+    }
+  })
+
   test('keeps mixed desired-state drift actionable even when one orphan is verified', () => {
     const items = [app('forgejo', { resources: [differentDeployment, claim] })]
     const result = report(items, [liveClaim()])

@@ -12,11 +12,27 @@ const dnsName = z
   .string()
   .max(253)
   .regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/)
+// RBAC and other path-segment Kubernetes objects allow names outside DNS syntax (such as colons).
+const resourceName = z
+  .string()
+  .min(1)
+  .max(253)
+  .refine(
+    (value) =>
+      value !== '.' &&
+      value !== '..' &&
+      !value.startsWith('-') &&
+      !/[\s/%]/.test(value) &&
+      [...value].every((char) => {
+        const code = char.charCodeAt(0)
+        return code >= 0x21 && code !== 0x7f
+      }),
+  )
 const kind = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/)
 const optionalDnsName = z.union([dnsName, z.literal('')]).default('')
 const syncCode = z.enum(['Synced', 'OutOfSync', 'Unknown']).catch('Unknown')
 const healthCode = z.enum(['Healthy', 'Progressing', 'Degraded', 'Missing', 'Suspended', 'Unknown']).catch('Unknown')
-const resourceRef = z.object({ group: optionalDnsName, kind, namespace: optionalDnsName, name: dnsName })
+const resourceRef = z.object({ group: optionalDnsName, kind, namespace: optionalDnsName, name: resourceName })
 const resourceStatus = resourceRef.extend({
   status: syncCode.optional(),
   requiresPruning: z.boolean().optional(),
@@ -29,7 +45,7 @@ export const liveResourceSchema = z
     apiVersion: z.string().regex(/^(?:[a-z0-9.-]+\/)?v[0-9][a-z0-9]*$/),
     kind,
     metadata: z.object({
-      name: dnsName,
+      name: resourceName,
       namespace: optionalDnsName,
       annotations: z
         .object({
@@ -124,20 +140,34 @@ export const localPruneCandidates = ({ items }: Snapshot) => {
 const hasOption = (options: string | undefined, value: string) =>
   options?.split(',').some((option) => option.trim() === value)
 
+const parseTrackingId = (value: string | undefined) => {
+  if (!value) return undefined
+  const first = value.indexOf(':')
+  const second = first === -1 ? -1 : value.indexOf(':', first + 1)
+  if (first <= 0 || second <= first + 1) return undefined
+  const namespacedName = value.slice(second + 1)
+  const slash = namespacedName.indexOf('/')
+  if (slash === -1 || namespacedName.indexOf('/', slash + 1) !== -1) return undefined
+  return {
+    owner: value.slice(0, first),
+    groupKind: value.slice(first + 1, second),
+    trackedNamespace: namespacedName.slice(0, slash),
+    trackedName: namespacedName.slice(slash + 1),
+  }
+}
+
 const retention = (app: Application, resource: ResourceStatus, live: LiveResource | undefined) => {
   if (!needsPruning(resource)) return 'not_applicable'
   if (!live || !inCluster(app)) return 'metadata_unavailable'
 
-  const [owner, groupKind, namespacedName, extra] = live.annotations?.[trackingId]?.split(':') ?? []
-  const [trackedNamespace, trackedName, extraName] = namespacedName?.split('/') ?? []
+  const parsed = parseTrackingId(live.annotations?.[trackingId])
   // Argo can put the destination namespace in a cluster-scoped object's tracking ID.
   if (
-    owner !== app.metadata.name ||
-    groupKind !== `${resource.group}/${resource.kind}` ||
-    trackedName !== resource.name ||
-    (resource.namespace !== '' && trackedNamespace !== resource.namespace) ||
-    extra !== undefined ||
-    extraName !== undefined ||
+    !parsed ||
+    parsed.owner !== app.metadata.name ||
+    parsed.groupKind !== `${resource.group}/${resource.kind}` ||
+    parsed.trackedName !== resource.name ||
+    (resource.namespace !== '' && parsed.trackedNamespace !== resource.namespace) ||
     !hasOption(live.annotations?.[syncOptions], 'Prune=false')
   ) {
     return 'not_confirmed'
