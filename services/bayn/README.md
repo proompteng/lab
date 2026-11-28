@@ -1407,7 +1407,10 @@ bun services/bayn/tools/verify-monday-cutover.ts --phase post-cutover --require-
 - `pre-open` reports Account #1's signed GOOGL quantity. `post-flatten` rejects any nonzero GOOGL quantity or
   working GOOGL order, including flat-listed bracket children. These are separate broker reads; use the
   settlement procedure to rule out concurrent new submissions.
-- `post-cutover` requires the QQQ/SMH/XLK position allowlist. For the optional policy gate, use the
+- `post-cutover` rejects positions outside the reviewed v3 QQQ/SMH universe by default, including XLK.
+  For a separately reviewed Phase 2 check, explicitly replace the allowlist with `--allowed-symbols QQQ,SMH,XLK`.
+  The report records the effective allowlist; the flag does not change the running strategy or verify its policy.
+  For the optional policy gate, use the
   [reviewed v3 behavior hash](https://github.com/proompteng/lab/pull/16395) as the expectation and supply
   `BAYN_STRATEGY_BEHAVIOR_HASH` and `BAYN_STRATEGY_PARAMETER_HASH` from the **running, build-verified execution
   controller**. Do not source the observed hashes from the proposed release or this checkout. The parameter hash

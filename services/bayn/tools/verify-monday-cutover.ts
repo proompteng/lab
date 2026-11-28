@@ -12,6 +12,7 @@ import {
   AccountIdentitySchema,
   AlpacaEndpoint,
   CheckStatus,
+  CutoverEtf,
   cutoverReport,
   evaluated,
   failed,
@@ -37,6 +38,7 @@ import {
 const usage = `Usage: bun services/bayn/tools/verify-monday-cutover.ts --phase pre-open|post-flatten|post-cutover
   [--format json|markdown] [--output <new-report-path>] [--skip-macro-accounts]
   [--allow-live-endpoint] [--require-standby] [--expected-policy-hash <behavior-sha256>]
+  [--allowed-symbols <comma-separated-etfs>]
 
 Alpaca: load BAYN_ALPACA_{KEY_ID,SECRET_KEY} for Account #1. Load the corresponding
 BAYN_MACRO_CORE_ALPACA_* and BAYN_MACRO_CANARY_ALPACA_* credentials unless explicitly skipped.
@@ -44,6 +46,8 @@ Each prefix accepts BASE_URL (default: official Paper) and ACCOUNT_ID (optional 
 Postgres: BAYN_POSTGRES_URL (read-only role), plus optional BAYN_POSTGRES_CA_PATH and
 BAYN_POSTGRES_TLS_SERVERNAME. --require-standby also requires the URL.
 Ontology: AUTO_ONTOLOGY_API_URL (optional, advisory only).
+Positions: --allowed-symbols is post-cutover only and replaces the reviewed v3 QQQ,SMH default.
+Only QQQ, SMH, and XLK are supported; XLK must be explicitly listed.
 Policy: --expected-policy-hash is post-cutover only and compares against the running controller's
 BAYN_STRATEGY_BEHAVIOR_HASH and canonical v3 BAYN_STRATEGY_PARAMETER_HASH.
 Reports default to JSON on stdout. Verification grants no trading or capital authority.`
@@ -56,6 +60,7 @@ const options = {
   'allow-live-endpoint': { type: 'boolean' },
   'require-standby': { type: 'boolean' },
   'expected-policy-hash': { type: 'string' },
+  'allowed-symbols': { type: 'string' },
 } as const
 const OptionsSchema = Schema.Struct({
   phase: Schema.Enum(Phase),
@@ -65,6 +70,9 @@ const OptionsSchema = Schema.Struct({
   'allow-live-endpoint': Schema.optionalKey(Schema.Boolean),
   'require-standby': Schema.optionalKey(Schema.Boolean),
   'expected-policy-hash': Schema.optionalKey(Sha256Schema),
+  'allowed-symbols': Schema.optionalKey(
+    Schema.Array(Schema.Enum(CutoverEtf)).check(Schema.isMinLength(1), Schema.isUnique()),
+  ),
 })
 type Options = typeof OptionsSchema.Type
 
@@ -89,8 +97,15 @@ const parseOptions = (args: readonly string[]) =>
     })
     const names = parsed.tokens.flatMap((token) => (token.kind === 'option' ? [token.name] : []))
     if (new Set(names).size !== names.length) return yield* invalid()
-    const decoded = yield* Schema.decodeUnknownEffect(OptionsSchema)(parsed.values).pipe(Effect.mapError(invalid))
-    if (decoded['expected-policy-hash'] !== undefined && decoded.phase !== Phase.PostCutover) {
+    const { 'allowed-symbols': allowedSymbols, ...values } = parsed.values
+    const decoded = yield* Schema.decodeUnknownEffect(OptionsSchema)({
+      ...values,
+      ...(allowedSymbols === undefined ? {} : { 'allowed-symbols': allowedSymbols.split(',') }),
+    }).pipe(Effect.mapError(invalid))
+    if (
+      decoded.phase !== Phase.PostCutover &&
+      (decoded['expected-policy-hash'] !== undefined || decoded['allowed-symbols'] !== undefined)
+    ) {
       return yield* invalid()
     }
     return decoded
@@ -258,8 +273,11 @@ const readBrokerChecks = (options: Options) =>
       )
       const positions = yield* getAlpaca(PositionsSchema, binding.connection, '/v2/positions', 'Account #1')
       const policy =
-        options['expected-policy-hash'] === undefined ? null : yield* readPolicy(options['expected-policy-hash'])
-      return verifyIntraday(options.phase, binding, positions, orders, policy)
+        options['expected-policy-hash'] === undefined ? undefined : yield* readPolicy(options['expected-policy-hash'])
+      return verifyIntraday(options.phase, binding, positions, orders, {
+        policy,
+        allowedSymbols: options['allowed-symbols'],
+      })
     }).pipe(Effect.catch((error) => Effect.succeed(failed([error]))))
 
     const inspectMacros = Effect.gen(function* () {

@@ -61,8 +61,8 @@ describe('cutover phase decisions', () => {
     expect(verifyIntraday(Phase.PostFlatten, intradayBinding, [], []).status).toBe(CheckStatus.Pass)
   })
 
-  test('post-cutover accepts only the named ETFs and requires US equity asset class', () => {
-    expect(verifyIntraday(Phase.PostCutover, intradayBinding, ['QQQ', 'SMH', 'XLK'].map(holding), []).status).toBe(
+  test('post-cutover accepts the reviewed v3 ETFs and requires US equity asset class', () => {
+    expect(verifyIntraday(Phase.PostCutover, intradayBinding, ['QQQ', 'SMH'].map(holding), []).status).toBe(
       CheckStatus.Pass,
     )
     for (const position of [holding('AAPL'), holding('SPY'), { ...holding('QQQ'), asset_class: AssetClass.UsOption }]) {
@@ -72,7 +72,9 @@ describe('cutover phase decisions', () => {
 
   test('post-cutover checks both requested behavior hash and the reviewed v3 parameters', () => {
     const verify = (observed: { behaviorHash: string; parameterHash: string } | null) =>
-      verifyIntraday(Phase.PostCutover, intradayBinding, [], [], { expectedBehaviorHash: behaviorHash, observed })
+      verifyIntraday(Phase.PostCutover, intradayBinding, [], [], {
+        policy: { expectedBehaviorHash: behaviorHash, observed },
+      })
     expect(verify({ behaviorHash, parameterHash })).toMatchObject({
       status: CheckStatus.Pass,
       evidence: { verifiedPolicy: intradayPolicyVersion },
@@ -286,6 +288,63 @@ describe('read-only verifier wiring', () => {
     expect(report.verdict).toBe(CheckStatus.Pass)
     expect(report.checks.intraday).toMatchObject({ evidence: { verifiedPolicy: intradayPolicyVersion } })
     expect((await Effect.runPromise(fixture().provide(verifyMondayCutover(options)))).verdict).toBe(CheckStatus.Fail)
+  })
+
+  test.each([
+    ['the default allowlist', [], CheckStatus.Fail, ['QQQ', 'SMH'], ['XLK']],
+    ['an explicit v3 allowlist', ['--allowed-symbols', 'QQQ,SMH'], CheckStatus.Fail, ['QQQ', 'SMH'], ['XLK']],
+    ['an expanded allowlist', ['--allowed-symbols', 'QQQ,SMH,XLK'], CheckStatus.Pass, ['QQQ', 'SMH', 'XLK'], []],
+  ] as const)(
+    'CLI post-cutover checks XLK against %s even with matching v3 hashes',
+    async (_label, flags, verdict, allowedSymbols, unexpectedPositions) => {
+      const { provide } = fixture(
+        { ...env, BAYN_STRATEGY_BEHAVIOR_HASH: behaviorHash, BAYN_STRATEGY_PARAMETER_HASH: parameterHash },
+        (url, key) =>
+          url.pathname === '/v2/positions' && key === 'intraday-key' ? Response.json([holding('XLK')]) : undefined,
+      )
+      const directory = await mkdtemp(join(tmpdir(), 'bayn-cutover-verifier-'))
+      try {
+        const output = join(directory, 'result.json')
+        const args = [
+          '--phase',
+          Phase.PostCutover,
+          '--expected-policy-hash',
+          behaviorHash,
+          '--output',
+          output,
+          ...flags,
+        ]
+        const exit = await Effect.runPromiseExit(provide(runMondayCutover(args)))
+        const report: unknown = JSON.parse(await readFile(output, 'utf8'))
+        expect(Exit.isSuccess(exit)).toBe(verdict === CheckStatus.Pass)
+        expect(report).toMatchObject({
+          verdict,
+          checks: {
+            intraday: {
+              status: verdict,
+              evidence: { allowedSymbols, unexpectedPositions, verifiedPolicy: intradayPolicyVersion },
+            },
+          },
+        })
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    },
+  )
+
+  test.each([
+    [Phase.PostCutover, ''],
+    [Phase.PostCutover, 'QQQ,,SMH'],
+    [Phase.PostCutover, 'QQQ,QQQ'],
+    [Phase.PostCutover, 'QQQ,GOOGL'],
+    [Phase.PostFlatten, 'QQQ,SMH,XLK'],
+  ])('CLI rejects --allowed-symbols for %s with value %p before I/O', async (phase, symbols) => {
+    const { calls, provide } = fixture()
+    const exit = await Effect.runPromiseExit(
+      provide(runMondayCutover(['--phase', phase, '--allowed-symbols', symbols])),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(calls).toEqual([])
   })
 
   test('rejects the writer login and a missing standby URL without disclosing connection strings', async () => {

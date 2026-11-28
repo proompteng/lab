@@ -143,7 +143,14 @@ export type OntologyCheck =
 export const intradayPolicyVersion = 'bayn.intraday-alpha-policy.v3'
 // The canonical parameter hash binds the deployed build to the reviewed v3 policy document (#16395).
 const v3ParameterHash = '40d0643d63c368dd207d0f6a55b3feadb673dbd74b7c8b82bd7ee8d52e256eb5'
-const allowedEtfs = new Set(['QQQ', 'SMH', 'XLK'])
+
+export enum CutoverEtf {
+  Qqq = 'QQQ',
+  Smh = 'SMH',
+  Xlk = 'XLK',
+}
+
+const reviewedV3Etfs = [CutoverEtf.Qqq, CutoverEtf.Smh] as const
 const isZero = (quantity: string) => /^0(?:\.0+)?$/.test(quantity)
 
 interface PolicyComparison {
@@ -168,7 +175,13 @@ export const verifyIntraday = (
   binding: AccountBinding<AccountIdentity>,
   positions: Positions,
   openOrders: OpenOrders,
-  policy: PolicyComparison | null = null,
+  {
+    policy,
+    allowedSymbols = reviewedV3Etfs,
+  }: {
+    readonly policy?: PolicyComparison | undefined
+    readonly allowedSymbols?: readonly CutoverEtf[] | undefined
+  } = {},
 ) => {
   const failures = accountFailures(binding, 'Account #1')
   const googlQuantities = positions
@@ -177,7 +190,9 @@ export const verifyIntraday = (
     .sort(Order.String)
   const googlOpenOrders = openOrders.filter(({ symbol }) => symbol === 'GOOGL').length
   const unexpectedPositions = positions
-    .filter(({ asset_class, symbol }) => asset_class !== AssetClass.UsEquity || !allowedEtfs.has(symbol))
+    .filter(
+      ({ asset_class, symbol }) => asset_class !== AssetClass.UsEquity || !allowedSymbols.some((etf) => etf === symbol),
+    )
     .map(({ symbol }) => symbol)
     .sort(Order.String)
 
@@ -187,8 +202,10 @@ export const verifyIntraday = (
   }
   let verifiedPolicy: typeof intradayPolicyVersion | null = null
   if (phase === Phase.PostCutover) {
-    if (unexpectedPositions.length > 0) failures.push('Positions outside the QQQ, SMH, XLK ETF allowlist remain.')
-    if (policy !== null) {
+    if (unexpectedPositions.length > 0) {
+      failures.push(`Positions outside the ${allowedSymbols.join(', ')} ETF allowlist remain.`)
+    }
+    if (policy !== undefined) {
       if (policy.observed === null) {
         failures.push('Deployed strategy behavior and parameter hashes are required to verify the policy.')
       } else {
@@ -210,6 +227,7 @@ export const verifyIntraday = (
       openOrderCount: openOrders.length,
       googlQuantities,
       googlOpenOrders,
+      allowedSymbols,
       unexpectedPositions,
       verifiedPolicy,
     },
@@ -305,6 +323,7 @@ export const renderCutoverReport = (report: CutoverReport, format: Format): stri
     ...markdownCheck('Account #1 Intraday', intraday, (evidence) => [
       `Status: ${evidence.accountStatus}; positions: ${evidence.positionCount}; open orders: ${evidence.openOrderCount}`,
       `GOOGL position quantity: ${evidence.googlQuantities.join(', ') || 'flat'}; open GOOGL orders: ${evidence.googlOpenOrders}`,
+      `Post-cutover ETF allowlist: ${evidence.allowedSymbols.join(', ')}`,
       `Positions outside the post-cutover ETF allowlist: ${evidence.unexpectedPositions.join(', ') || 'none'}`,
       `Verified policy: ${evidence.verifiedPolicy ?? 'not verified'}`,
     ]),
