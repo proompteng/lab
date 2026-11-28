@@ -831,16 +831,6 @@ export const resolveCodexBinaryPath = (
   )
 }
 
-const renderOptionalTemplate = (
-  template: string | undefined,
-  spec: AgentRunnerSpec,
-  runPayload: AgentRunPayload,
-): string | null => {
-  if (!template) return null
-  const rendered = renderTemplate(template, buildRuntimeTemplateContext(spec, runPayload))
-  return nonBlankStringPreserve(rendered)
-}
-
 const buildRuntimeTemplateContext = (spec: AgentRunnerSpec, runPayload: AgentRunPayload) => ({
   ...buildTemplateContext(spec),
   run: runPayload,
@@ -869,12 +859,8 @@ const renderThreadConfig = (
   return isRecord(rendered) ? rendered : threadConfig
 }
 
-const resolvePrompt = (
-  spec: AgentRunnerSpec,
-  adapter: CodexAppServerAdapterConfig,
-  runPayload: AgentRunPayload,
-): string => {
-  const adapterPrompt = renderOptionalTemplate(adapter.prompt, spec, runPayload)
+const resolvePrompt = (adapter: CodexAppServerAdapterConfig): string => {
+  const adapterPrompt = nonBlankStringPreserve(adapter.prompt)
   if (adapterPrompt) return adapterPrompt
 
   throw new CodexRunnerInputError({
@@ -883,13 +869,9 @@ const resolvePrompt = (
   })
 }
 
-const resolvePromptEffect = (
-  spec: AgentRunnerSpec,
-  adapter: CodexAppServerAdapterConfig,
-  runPayload: AgentRunPayload,
-) =>
+const resolvePromptEffect = (adapter: CodexAppServerAdapterConfig) =>
   Effect.try({
-    try: () => resolvePrompt(spec, adapter, runPayload),
+    try: () => resolvePrompt(adapter),
     catch: (cause) =>
       cause instanceof CodexRunnerInputError
         ? cause
@@ -923,13 +905,13 @@ const assertSystemPromptHash = (contents: string, adapter: CodexAppServerAdapter
 
 export const readRunnerSystemPrompt = async (
   adapter: Pick<CodexAppServerAdapterConfig, 'baseInstructions' | 'systemPromptPath' | 'systemPromptExpectedHash'>,
-  spec: AgentRunnerSpec,
+  _spec: AgentRunnerSpec,
   runPayload: AgentRunPayload,
 ): Promise<string | null> => {
-  const rendered = renderOptionalTemplate(adapter.baseInstructions, spec, runPayload)
-  if (rendered) {
-    assertSystemPromptHash(rendered, adapter, 'adapter.baseInstructions')
-    return rendered
+  const baseInstructions = nonBlankStringPreserve(adapter.baseInstructions)
+  if (baseInstructions) {
+    assertSystemPromptHash(baseInstructions, adapter, 'adapter.baseInstructions')
+    return baseInstructions
   }
 
   const systemPromptPath = resolveSystemPromptPath(adapter)
@@ -1210,9 +1192,9 @@ export const runCodexAppServerAdapterEffect = ({
     })
     yield* throwIfCancelledEffect(options.abortSignal)
 
-    const prompt = yield* resolvePromptEffect(spec, adapter, runPayload)
+    const prompt = yield* resolvePromptEffect(adapter)
     const baseInstructions = yield* readSystemPromptInstructionsEffect(adapter, spec, runPayload)
-    const developerInstructions = renderOptionalTemplate(adapter.developerInstructions, spec, runPayload)
+    const developerInstructions = nonBlankStringPreserve(adapter.developerInstructions)
     const goal = mergeGoals(normalizeGoal(runPayload.goal), spec.goal, adapter.goal)
 
     const clientOptions: CodexAppServerOptions = {
