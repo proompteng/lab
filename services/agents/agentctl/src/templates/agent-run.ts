@@ -25,6 +25,28 @@ export type AgentRunParams = Implementation & {
   vcsPolicyRequired?: boolean
 }
 
+export const DEFAULT_GOOGLE_AGENT = 'google-agent'
+export const GOOGLE_ADC_SECRET = 'google-adc-auth'
+export const GITHUB_TOKEN_SECRET = 'github-token'
+
+export const resolveGoogleRunSecrets = ({
+  secrets = [],
+  repository,
+  vcsPolicyMode,
+}: {
+  secrets?: readonly string[]
+  repository?: string
+  vcsPolicyMode?: string
+}) => {
+  const defaults = [GOOGLE_ADC_SECRET]
+  const hasRepository = Boolean(repository?.trim())
+  const isReadWriteVcs = !vcsPolicyMode || vcsPolicyMode === 'read-write'
+  if (hasRepository && isReadWriteVcs) {
+    defaults.push(GITHUB_TOKEN_SECRET)
+  }
+  return [...new Set([...defaults, ...secrets])]
+}
+
 export const buildAgentRunSpec = (params: AgentRunParams) => {
   const requests = {
     ...(params.cpu ? { cpu: params.cpu } : {}),

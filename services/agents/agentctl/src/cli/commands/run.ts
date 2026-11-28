@@ -26,7 +26,12 @@ import {
   readNestedValue,
   RESOURCE_SPECS,
 } from '../../runtime'
-import { type AgentRunParams, buildAgentRunSpec } from '../../templates/agent-run'
+import {
+  type AgentRunParams,
+  buildAgentRunSpec,
+  DEFAULT_GOOGLE_AGENT,
+  resolveGoogleRunSecrets,
+} from '../../templates/agent-run'
 import { type Transport, TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError, validationError } from '../errors'
@@ -135,9 +140,14 @@ const readInputs = (flags: CommonFlags, transport: Transport, implementationRef?
     if (ttl !== undefined && (!Number.isSafeInteger(ttl) || ttl < 0 || ttl > 2_147_483_647)) {
       return yield* Effect.fail(validationError('--ttl must be between 0 and 2147483647 seconds.'))
     }
-    if (flags.verify && Object.hasOwn(runtimeConfig, 'serviceAccountName')) {
+    const saOverride = Object.hasOwn(runtimeConfig, 'serviceAccountName')
+      ? 'serviceAccountName'
+      : Object.hasOwn(runtimeConfig, 'serviceAccount')
+        ? 'serviceAccount'
+        : undefined
+    if (flags.verify && saOverride) {
       return yield* Effect.fail(
-        validationError('--verify requires provider identity; omit --runtime-config serviceAccountName.'),
+        validationError(`--verify requires provider identity; omit --runtime-config ${saOverride}.`),
       )
     }
     const implementationText =
@@ -264,8 +274,16 @@ const submitRun = (
     if (expected || wait) console.error(`Submitted AgentRun ${namespace}/${name}.`)
     if (expected && transport.mode === 'kube') {
       const { configMap, account } = yield* verifyRun(transport.backend, namespace, name, expected)
+      const identityDetails = [
+        expected.serviceAccountName && account ? `inherited SA ${account}` : account ? `SA ${account}` : null,
+        expected.audience && expected.mountPath ? 'projected MCP token mount' : null,
+      ].filter((detail): detail is string => detail !== null)
       console.error(
-        `Verified AgentRun ${name}: ${configMap} run.json.prompt, inherited SA ${account}, and projected MCP token mount.`,
+        identityDetails.length === 2
+          ? `Verified AgentRun ${name}: ${configMap} run.json.prompt, ${identityDetails[0]}, and ${identityDetails[1]}.`
+          : identityDetails.length === 1
+            ? `Verified AgentRun ${name}: ${configMap} run.json.prompt and ${identityDetails[0]}.`
+            : `Verified AgentRun ${name}: ${configMap} run.json.prompt.`,
       )
     }
     if (!wait) {
@@ -405,6 +423,54 @@ export const makeRunCommand = () => {
         yield* submitRun(transport, namespace, output, { ...base, implName }, flags.wait, expected)
       }),
   ).pipe(Command.withDescription('Submit a Codex run from a literal prompt or a locally generated ImplementationSpec.'))
+
+  const google = Command.make(
+    'google',
+    {
+      impl: optionalText('impl', 'Reference an existing ImplementationSpec instead of an inline prompt.'),
+      agent: textFlag('agent', `Agent to execute the task (default: ${DEFAULT_GOOGLE_AGENT}).`).pipe(
+        Flag.withDefault(DEFAULT_GOOGLE_AGENT),
+      ),
+      runtime: runtimeFlag.pipe(Flag.withDefault('workflow')),
+      ...commonFlags,
+    },
+    ({ impl, agent, runtime, ...flags }) =>
+      Effect.gen(function* () {
+        const {
+          resolved: { namespace, output },
+        } = yield* AgentctlContext
+        const transport = yield* TransportService
+        const implName = get(impl)
+        const { implementationText, ...inputs } = yield* readInputs(flags, transport, implName)
+        if (transport.mode !== 'kube') {
+          return yield* Effect.fail(validationError('run google requires Kubernetes mode.'))
+        }
+        if (flags.verify && !isJobRuntime(runtime)) {
+          return yield* Effect.fail(validationError('--verify requires the job or workflow runtime.'))
+        }
+        if (implementationText === undefined && !implName) {
+          return yield* Effect.fail(validationError('Provide --impl, --inline-prompt, or --prompt-file.'))
+        }
+        const secrets = resolveGoogleRunSecrets({
+          secrets: inputs.secrets,
+          repository: inputs.parameters.repository,
+          vcsPolicyMode: inputs.vcsPolicyMode,
+        })
+        const input: AgentRunParams = {
+          agentName: agent,
+          runtimeType: runtime,
+          ...inputs,
+          secrets,
+          ...(implementationText !== undefined ? { implementationText } : { implName: implName ?? '' }),
+        }
+        const expected = flags.verify ? yield* readVerification(transport.backend, namespace, input) : undefined
+        yield* submitRun(transport, namespace, output, input, flags.wait, expected)
+      }),
+  ).pipe(
+    Command.withDescription(
+      'Submit a Google (agy-cli) AgentRun with google-adc-auth and repo VCS secret wiring (kube only).',
+    ),
+  )
 
   const logs = Command.make(
     'logs',
@@ -581,6 +647,7 @@ export const makeRunCommand = () => {
     Command.withSubcommands([
       submit,
       codex,
+      google,
       makeRunBatchCommand(),
       makeRunListCommand(),
       makeRunSummaryCommand(),
