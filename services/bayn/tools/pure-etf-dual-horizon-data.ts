@@ -10,7 +10,6 @@ export const etfs = [...new Set<string>([...canaryEtfs, ...premiaEtfs])]
 export const intradayEtfs = ['IWM', 'QQQ', 'SMH', 'SPY'] as const
 const intradaySet = new Set<string>(intradayEtfs)
 const etfSet = new Set(etfs)
-export type CanarySession = { date: string; open: Float64Array; close: Float64Array }
 export type DailyFrame = { date: string; bars: ReadonlyMap<string, Bar> }
 export type IntradayDay = { date: string; slots: number; bars: ReadonlyMap<string, readonly (Bar | undefined)[]> }
 const prefix = 'bayn-research-datasets/2026-11-27'

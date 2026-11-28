@@ -190,6 +190,11 @@ spec:
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
+                    # DaemonSet/agents-workspace-cache and AgentRun pods mount hostPath
+                    # /var/lib/agents-workspace-cache (#16431) for the node-local Git and Bun cache.
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: baseline
+                    pod-security.kubernetes.io/warn: baseline
                 automation: manual
                 enabled: "true"
               - name: agents-ci

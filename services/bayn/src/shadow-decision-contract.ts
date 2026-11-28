@@ -87,7 +87,7 @@ import {
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, canonicalJsonEqualV1, canonicalJsonV1Result, sha256 } from './hash'
 import { intradayAgeNanos, millisecondsAsNanos } from './market-data/intraday/time'
-import { IntradaySnapshotPurpose } from './market-data/intraday/model'
+import { IntradaySnapshotPurpose, sameIntradaySource } from './market-data/intraday/model'
 import {
   AuthorityStateSchema,
   OrderSide,
@@ -376,14 +376,6 @@ export const isSnapshotExecutionMarketDataBinding = (
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
-
-const sameSourceUniverse = (
-  left: SnapshotExecutionMarketDataBinding,
-  right: SnapshotExecutionMarketDataBinding,
-): boolean =>
-  left.universeId === right.universeId &&
-  left.universeSymbolHash === right.universeSymbolHash &&
-  sameStrings(left.universe, right.universe)
 
 const ShadowDecisionBindingsSchema = Schema.Struct({
   strategyName: StrictNonEmptyStringSchema,
@@ -1599,7 +1591,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !isSnapshotExecutionMarketDataBinding(source) ||
     !isSnapshotExecutionMarketDataBinding(pricing) ||
-    !sameSourceUniverse(source, pricing) ||
+    !sameIntradaySource(source, pricing) ||
     document.executionSession === undefined ||
     !sameMarketHours(source.calendar, document.executionSession.calendar) ||
     !sameMarketHours(pricing.calendar, source.calendar) ||
@@ -1613,7 +1605,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   )
     issues.push({
       path: ['bindings'],
-      issue: 'Jev execution requires fresh quote pricing from the same verified source universe and session',
+      issue: 'Jev execution requires fresh quote pricing from the same verified market source and session',
     })
   issues.push(...streamingPricingEvidenceIssues(document))
   return issues
@@ -1982,7 +1974,7 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
             issue: 'dedicated intraday execution pricing must be explicitly quote-only',
           })
         }
-        if (!sameSourceUniverse(decisionMarketData, executionMarketData)) {
+        if (!sameIntradaySource(decisionMarketData, executionMarketData)) {
           issues.push({
             path: ['bindings', 'executionMarketData', 'universe'],
             issue: 'intraday decision and execution pricing evidence must share one immutable source universe',

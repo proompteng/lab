@@ -300,6 +300,11 @@ spec:
             {{- else if .Values.controller.enabled }}
             - name: AGENTS_CONTROLLER_ENABLED
               value: "1"
+            {{- else }}
+            - name: AGENTS_CONTROLLER_ENABLED
+              value: "0"
+            {{- end }}
+            {{- if .Values.controller.enabled }}
             - name: AGENTS_CONTROLLER_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
             - name: AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE
@@ -312,6 +317,7 @@ spec:
               value: {{ .Values.controller.repoConcurrency.enabled | default false | quote }}
             - name: AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT
               value: {{ .Values.controller.repoConcurrency.default | default 0 | quote }}
+            {{- if not (hasKey $envVars "AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES") }}
             {{- $repoConcurrencyOverrides := dict -}}
             {{- if .Values.controller.repoConcurrency.overrides }}
             {{- $repoConcurrencyOverrides = .Values.controller.repoConcurrency.overrides -}}
@@ -319,6 +325,7 @@ spec:
             - name: AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES
               # Default to {} so the controller does not crash when the env var is unset.
               value: {{ $repoConcurrencyOverrides | toJson | quote }}
+            {{- end }}
             - name: AGENTS_CONTROLLER_QUEUE_NAMESPACE
               value: {{ .Values.controller.queue.perNamespace | default 200 | quote }}
             - name: AGENTS_CONTROLLER_QUEUE_REPO
@@ -393,9 +400,6 @@ spec:
             - name: AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
               value: {{ .Values.controller.authSecret.mountPath | default "/root/.codex" | quote }}
             {{- end }}
-            {{- else }}
-            - name: AGENTS_CONTROLLER_ENABLED
-              value: "0"
             {{- end }}
             {{- if .Values.controllers.enabled }}
             - name: AGENTS_ORCHESTRATION_CONTROLLER_ENABLED

@@ -91,9 +91,7 @@ const SipTradeSchema = Schema.Struct({
   size: PositiveFiniteSchema,
 })
 
-export type SipBar = typeof SipBarSchema.Type
 export type SipQuote = typeof SipQuoteSchema.Type
-export type SipTrade = typeof SipTradeSchema.Type
 export type SipNbboQuote = SipQuote & { readonly market_session: SipMarketSession.Regular }
 
 const SipQuoteCutSchema = Schema.Struct({

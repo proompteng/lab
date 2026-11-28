@@ -11,8 +11,8 @@ spec:
   suspend: false
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
   jobTemplate:
     metadata:
       labels:
@@ -21,7 +21,8 @@ spec:
     spec:
       backoffLimit: 3
       activeDeadlineSeconds: 3600
-      ttlSecondsAfterFinished: 86400
+      # Keep pod logs past the daily backup's 26-hour freshness alert and its 30-minute hold.
+      ttlSecondsAfterFinished: 14400
       template:
         metadata:
           labels:

@@ -15,6 +15,14 @@ spec:
     - host: auto-ontology.ide-newton.ts.net
       http:
         paths:
+          # Tailscale matches prefixes; the discovery proxy enforces the exact path.
+          - path: /.well-known/oauth-authorization-server/api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auto-ontology-oauth-discovery
+                port:
+                  number: 8080
           - path: /
             pathType: Prefix
             backend:
