@@ -420,6 +420,38 @@ test('flags actionable overlaps, observed anomalies and both gross cap violation
   expect(result.blockingReasons.join('\n')).toContain('NON_FLAT_EOD')
 })
 
+test('daily diagnostics report isolated next-open shadow plans without qualifying or losing today’s audit', () => {
+  const { intraday, macroCore, macroCanary, qualification } = campaign(2)
+  const date = calendar[0].date
+  const next = calendar[1].date
+  const scope = { date, intradayAccountId: '00000000-0000-4000-8000-000000000000' }
+  const core = macroCore[1]
+  for (const target of core.allocation.targets) target.weight = Number(target.symbol === 'QQQ')
+  const isolated = {
+    intraday: [intraday[0]],
+    macroCore: [resign({ ...core, timestamp: at(date, '22:00:00') })],
+    macroCanary: [{ ...macroCanary[1], timestamp: at(date, '22:00:00') }],
+  }
+  const result = Result.getOrThrow(buildScorecard(isolated, scope))
+  expect(result.QUALIFICATION_GATE).toBe(Gate.Incomplete)
+  expect(result.blockingReasons.join('\n')).toContain('not shared-account qualification evidence')
+  expect(result.blockingReasons.join('\n')).not.toContain('overlaps intraday v3')
+  expect(result.sessions.find((row) => row.date === next)?.macroCore?.mode).toBe(Mode.Shadow)
+  const stale = Result.getOrThrow(
+    buildScorecard({ ...isolated, macroCore: [{ ...macroCore[0], timestamp: at('2025-12-31', '22:00:00') }] }, scope),
+  )
+  expect(stale.blockingReasons.join('\n')).toContain('Missing fresh macro ETF core receipt')
+  expect(result.intraday.cumulativeNetMicros).toBe(intraday[0].sessions[0].metrics.netRealizedMicros)
+  expect(score(isolated).QUALIFICATION_GATE).toBe(Gate.Fail)
+  expect(Result.isFailure(buildScorecard(isolated, { ...scope, intradayAccountId: coreAccount }))).toBe(true)
+  expect(Result.isFailure(buildScorecard({ ...isolated, qualification }, scope))).toBe(true)
+  expect(
+    Result.isFailure(
+      buildScorecard({ ...isolated, macroCore: [{ ...isolated.macroCore[0], mode: Mode.PaperSubmit }] }, scope),
+    ),
+  ).toBe(true)
+})
+
 test('shared inventory is counted once without netting independent plans', () => {
   const data = campaign(1)
   const canary = data.macroCanary[0]

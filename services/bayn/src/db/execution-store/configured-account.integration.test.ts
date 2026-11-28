@@ -118,6 +118,12 @@ integration('Configured broker account against migrated PostgreSQL', () => {
           { generation_hash: active },
         ])
 
+        expect(yield* Effect.result(selectConfiguredBrokerAccount(to, 120_000, false))).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'a prefixed Restate sleeve requires its own Postgres database and broker account' },
+        })
+        expect(yield* predecessorStore.readAuthorityState).toEqual(unchanged)
+
         expect(yield* select).toBe(from.identityHash)
         expect(yield* previousConfiguredController(sql, to)).toBe(from.identityHash)
         expect(yield* previousConfiguredController(sql, from)).toBeNull()

@@ -217,11 +217,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const finishedAt = asString(status.finishedAt)
     const agentName = asString(readNested(spec, ['agentRef', 'name']))
     const finalizer = 'agents.proompteng.ai/runtime-cleanup'
-    let finalizers = Array.isArray(metadata.finalizers)
+    const finalizers = Array.isArray(metadata.finalizers)
       ? metadata.finalizers.filter((item): item is string => typeof item === 'string')
       : []
-    let hasFinalizer = finalizers.includes(finalizer)
+    const hasFinalizer = finalizers.includes(finalizer)
     const deleting = Boolean(metadata.deletionTimestamp)
+    const runtimeType = asString(readNested(spec, ['runtime', 'type']))
+    const runtimeRef = parseRuntimeRef(status.runtimeRef)
+    const isWorkflowRun = runtimeType === 'workflow' || runtimeRef?.type === 'workflow'
 
     let conditions = buildConditions(agentRun)
     const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
@@ -282,11 +285,11 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             phase,
             conditions,
           })
+          if (isWorkflowRun) return
         }
       }
     }
 
-    const runtimeType = asString(readNested(spec, ['runtime', 'type']))
     const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
     const workload = asRecord(readNested(spec, ['workload'])) ?? {}
     let workloadImage: string | null = null
@@ -375,15 +378,16 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     if (!hasFinalizer) {
       try {
+        const resourceVersion = isWorkflowRun ? asString(metadata.resourceVersion) : null
         await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
-          metadata: { finalizers: [...finalizers, finalizer] },
+          metadata: { finalizers: [...finalizers, finalizer], ...(resourceVersion ? { resourceVersion } : {}) },
         })
       } catch (error) {
         if (isKubeNotFoundError(error)) return
         throw error
       }
-      finalizers = [...finalizers, finalizer]
-      hasFinalizer = true
+      // Workflow status writes use the observed resourceVersion. Reconcile the updated object from the watch.
+      if (isWorkflowRun) return
     }
 
     if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
@@ -420,7 +424,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       phase,
     })
 
-    const runtimeRef = parseRuntimeRef(status.runtimeRef)
     const shouldSubmit =
       !runtimeRef && phase !== 'Running' && phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
 
@@ -1199,7 +1202,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     if (phase !== 'Running') return
 
-    if (runtimeType === 'workflow' || runtimeRef?.type === 'workflow') {
+    if (isWorkflowRun) {
       await reconcileWorkflowRun(kube, agentRun, namespace, memories)
       return
     }

@@ -99,6 +99,7 @@ export type AgentRunnerDefaultsConfig = {
   imagePullSecrets: unknown[] | null
   resources: Record<string, unknown> | null
   defaultRunnerImage: string | null
+  sharedCacheHostPath: string | null
 }
 
 export type ImplementationSourceWebhookConfig = {
@@ -194,6 +195,7 @@ export const resolveRuntimeDebrisCleanupConfig = (env: EnvSource = process.env):
 })
 
 export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): AgentRunnerDefaultsConfig => {
+  const sharedCacheHostPath = normalizeNonEmpty(env.AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH)
   const nodeSelector = asRecord(parseJson(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_NODE_SELECTOR')))
   const affinity = asRecord(parseJson(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_AFFINITY')))
   const podSecurityContext = asRecord(parseJson(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_POD_SECURITY_CONTEXT')))
@@ -225,6 +227,14 @@ export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): 
     imagePullSecrets: Array.isArray(imagePullSecrets) ? imagePullSecrets : null,
     resources,
     defaultRunnerImage: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_IMAGE')) ?? null,
+    sharedCacheHostPath:
+      sharedCacheHostPath?.startsWith('/') &&
+      sharedCacheHostPath
+        .slice(1)
+        .split('/')
+        .every((part) => part && part !== '.' && part !== '..')
+        ? sharedCacheHostPath
+        : null,
   }
 }
 

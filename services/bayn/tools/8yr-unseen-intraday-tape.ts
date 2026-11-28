@@ -1,5 +1,5 @@
 import { blind, listingDates, parameters, universe } from './8yr-unseen-intraday-protocol'
-import type { Session } from './research-orb-zab-data'
+import type { Session } from './research-lib/calendar'
 
 const minutes = parameters.barMinutes
 const stride = 6
