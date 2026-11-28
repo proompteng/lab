@@ -252,7 +252,9 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
   const source = { chart, protocol: original.input.protocol, funding: original.input.funding }
   const visualRequest = Result.getOrThrow(makeInitialChartStageRequest(source))
   const visual = nativeChartInference(visualRequest.request, at)
-  const disposition = Result.getOrThrow(deriveEntryHandoffDisposition(original.input, visual))
+  const disposition = Result.getOrThrow(
+    deriveEntryHandoffDisposition({ input: original.input, chart, visualRequest }, visual),
+  )
   if (disposition.status !== 'READY') throw Error('Fixture requires funded source-bound proposals')
   const prepared = Result.getOrThrow(
     prepareJevRequest({

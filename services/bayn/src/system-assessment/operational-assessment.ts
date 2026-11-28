@@ -21,7 +21,7 @@ import {
 } from './operational-period'
 import { measureReliability, ObligationOutcome, ReliabilityStatus } from './reliability'
 import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema } from './source-cut'
 import { BrokerIdentitySchema } from '../broker/identity'
 import { AccountingTransactionSchema } from '../accounting/schema'
 import { StoredCashSettlementSchema } from '../accounting/cash-settlement'
@@ -30,7 +30,7 @@ import { makeOperationalSafetyScan, type NativeOperationalSafetyAudit } from './
 import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
 
 const MutationCoverageSchema = Schema.Struct({
-  mutations: SystemSourceCutSchema.fields.mutations,
+  mutations: RetainedSystemSourceCutSchema.fields.mutations,
   accounts: Schema.Array(
     Schema.Struct({
       policy: Schema.Enum(JevResearchPolicy),

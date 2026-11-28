@@ -1,3 +1,5 @@
+import type { RunnerTelemetry } from '../runner-telemetry'
+
 type MetricsAttributes = Record<string, string>
 
 export type AgentsMetricsSink = {
@@ -32,12 +34,14 @@ type MetricRecord = {
 }
 
 type HistogramRecord = {
+  buckets: number[]
   count: number
   labels: MetricsAttributes
   sum: number
 }
 
 type MetricDefinition = {
+  buckets?: readonly number[]
   help: string
   name: string
 }
@@ -45,12 +49,17 @@ type MetricDefinition = {
 const externalMetricsSink: AgentsMetricsSink = {}
 
 const counters = new Map<string, MetricRecord>()
+const gauges = new Map<string, MetricRecord & { observedAt?: number; expiresAt?: number }>()
 const histograms = new Map<string, HistogramRecord>()
 
 const METRICS = {
   agentConcurrency: {
     name: 'agents_active_concurrency',
     help: 'Observed active AgentRun concurrency.',
+  },
+  agentConcurrencyLimit: {
+    name: 'agents_concurrency_limit',
+    help: 'Configured active AgentRun concurrency limit.',
   },
   agentQueueDepth: {
     name: 'agents_agent_queue_depth',
@@ -115,6 +124,24 @@ const METRICS = {
   reconcileDurationMs: {
     name: 'agents_reconcile_duration_ms',
     help: 'Time spent reconciling agents controller resources.',
+    buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000],
+  },
+  runnerTokens: {
+    name: 'agents_runner_tokens_total',
+    help: 'Tokens reported by completed runners; cached input and reasoning are subsets of input and output.',
+  },
+  runnerQuotaUsedPercent: {
+    name: 'agents_runner_quota_used_percent',
+    help: 'Observed weekly runner quota used as a percentage, by provider limit ID.',
+  },
+  runnerRunDurationSeconds: {
+    name: 'agents_runner_run_duration_seconds',
+    help: 'Elapsed time of completed runners in seconds.',
+    buckets: [10, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200],
+  },
+  runnerTelemetryPublishErrors: {
+    name: 'agents_runner_telemetry_publish_errors_total',
+    help: 'Telemetry publish errors reported by completed runners.',
   },
   sseConnections: {
     name: 'agents_sse_connections_total',
@@ -201,12 +228,18 @@ const recordCounter = (definition: MetricDefinition, increment: number, attribut
   })
 }
 
+const recordGauge = (definition: MetricDefinition, value: number, attributes?: MetricsAttributes) => {
+  const labels = normalizeAttributes(attributes)
+  gauges.set(metricKey(definition, labels), { labels, value })
+}
+
 const recordHistogram = (definition: MetricDefinition, value: number, attributes?: MetricsAttributes) => {
   const labels = normalizeAttributes(attributes)
   const key = metricKey(definition, labels)
   const current = histograms.get(key)
   histograms.set(key, {
     labels,
+    buckets: (definition.buckets ?? []).map((bound, index) => (current?.buckets[index] ?? 0) + Number(value <= bound)),
     count: (current?.count ?? 0) + 1,
     sum: (current?.sum ?? 0) + value,
   })
@@ -217,7 +250,7 @@ export const configureAgentsMetricsSink = (sink: AgentsMetricsSink) => {
 }
 
 export const recordAgentQueueDepth = (depth: number, attributes?: MetricsAttributes) => {
-  recordHistogram(METRICS.agentQueueDepth, depth, attributes)
+  recordGauge(METRICS.agentQueueDepth, depth, attributes)
   externalMetricsSink.recordAgentQueueDepth?.(depth, attributes)
 }
 
@@ -227,8 +260,20 @@ export const recordAgentRateLimitRejection = (scope: string, attributes?: Metric
 }
 
 export const recordAgentConcurrency = (count: number, attributes?: MetricsAttributes) => {
-  recordHistogram(METRICS.agentConcurrency, count, attributes)
+  recordGauge(METRICS.agentConcurrency, count, attributes)
   externalMetricsSink.recordAgentConcurrency?.(count, attributes)
+}
+
+export const recordAgentConcurrencyLimit = (
+  limit: number,
+  attributes: { scope: 'cluster' | 'namespace'; namespace?: string },
+) => {
+  recordGauge(METRICS.agentConcurrencyLimit, limit, attributes)
+}
+
+export const clearAgentsControllerGauges = () => {
+  // A former leader must not continue advertising an old fleet snapshot.
+  gauges.clear()
 }
 
 export const recordAgentRunOutcome = (outcome: string, attributes?: MetricsAttributes) => {
@@ -254,7 +299,7 @@ export const recordAgentRunResyncAdoptions = (count: number, attributes?: Metric
 }
 
 export const recordAgentRunUntouchedBacklog = (count: number, attributes?: MetricsAttributes) => {
-  recordHistogram(METRICS.agentRunUntouchedBacklog, count, attributes)
+  recordGauge(METRICS.agentRunUntouchedBacklog, count, attributes)
   externalMetricsSink.recordAgentRunUntouchedBacklog?.(count, attributes)
 }
 
@@ -276,7 +321,7 @@ export const recordRuntimeDebrisDeleteErrors = (count: number, attributes?: Metr
 }
 
 export const recordRuntimeDebrisOrphanPods = (count: number, attributes?: MetricsAttributes) => {
-  recordHistogram(METRICS.runtimeDebrisOrphanPods, count, attributes)
+  recordGauge(METRICS.runtimeDebrisOrphanPods, count, attributes)
   externalMetricsSink.recordRuntimeDebrisOrphanPods?.(count, attributes)
 }
 
@@ -295,6 +340,78 @@ export const recordAgentCommsError = (stage: string, attributes?: MetricsAttribu
 export const recordReconcileDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {
   recordHistogram(METRICS.reconcileDurationMs, durationMs, attributes)
   externalMetricsSink.recordReconcileDurationMs?.(durationMs, attributes)
+}
+
+// Runners can report custom models and Agent names. Bound distinct values across a process lifetime.
+const runnerModels = new Set<string>()
+const runnerAgents = new Set<string>()
+const runnerLimitIds = new Set<string>()
+const runnerEfforts = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+
+const boundedLabel = (value: string | null | undefined, seen: Set<string>, limit: number) => {
+  if (!value) return 'unknown'
+  if (!/^[a-zA-Z0-9_.:/-]{1,128}$/.test(value)) return 'other'
+  if (seen.has(value)) return value
+  if (seen.size >= limit) return 'other'
+  seen.add(value)
+  return value
+}
+
+const recordRunnerWeeklyQuota = (telemetry: RunnerTelemetry, nowMs: number) => {
+  const { quota } = telemetry
+  if (!quota) return
+  const window = [quota.primary, quota.secondary].find((candidate) => candidate?.windowDurationMins === 7 * 24 * 60)
+  if (!window) return
+  const observedAt = Date.parse(telemetry.heartbeatAt)
+  // Without a reset timestamp, keep a limited observation rather than a week-long stale alert.
+  const expiresAt = window.resetsAt === null ? observedAt + 60 * 60 * 1000 : window.resetsAt * 1000
+  if (expiresAt <= nowMs) return
+  const labels = { limit_id: boundedLabel(quota.limitId, runnerLimitIds, 8) }
+  const key = metricKey(METRICS.runnerQuotaUsedPercent, labels)
+  const current = gauges.get(key)
+  if (current && window.resetsAt !== null && current.expiresAt === expiresAt) {
+    // Another runner can finish later with an older, lower snapshot of the same shared quota.
+    current.value = Math.max(current.value, window.usedPercent)
+  } else if ((current?.observedAt ?? 0) <= observedAt) {
+    gauges.set(key, { labels, value: window.usedPercent, observedAt, expiresAt })
+  }
+}
+
+export const recordRunnerCompletion = (
+  input: {
+    outcome: 'Succeeded' | 'Failed' | 'Cancelled'
+    agent?: string | null
+    durationSeconds?: number
+    model?: string | null
+    effort?: string | null
+    telemetry?: RunnerTelemetry
+  },
+  nowMs = Date.now(),
+) => {
+  const { telemetry, durationSeconds } = input
+  const model = boundedLabel(telemetry?.model ?? input.model, runnerModels, 16)
+  const effort = (telemetry?.effort ?? input.effort)?.trim().toLowerCase()
+  const labels = { model, effort: !effort ? 'unknown' : runnerEfforts.has(effort) ? effort : 'other' }
+
+  if (durationSeconds !== undefined && Number.isFinite(durationSeconds) && durationSeconds >= 0) {
+    recordHistogram(METRICS.runnerRunDurationSeconds, durationSeconds, { ...labels, outcome: input.outcome })
+  }
+  if (!telemetry) return
+  if (telemetry.usage) {
+    const { inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens } = telemetry.usage
+    for (const [direction, tokens] of Object.entries({
+      input: inputTokens,
+      cached_input: cachedInputTokens,
+      output: outputTokens,
+      reasoning: reasoningOutputTokens,
+    })) {
+      recordCounter(METRICS.runnerTokens, tokens, { ...labels, direction })
+    }
+  }
+  recordCounter(METRICS.runnerTelemetryPublishErrors, telemetry.publishErrors, {
+    agent: boundedLabel(input.agent, runnerAgents, 32),
+  })
+  recordRunnerWeeklyQuota(telemetry, nowMs)
 }
 
 export const recordSseConnection = (stream: string, state: string, attributes?: MetricsAttributes) => {
@@ -337,13 +454,11 @@ export const recordLinearMcpRequestDurationMs = (durationMs: number, attributes?
   externalMetricsSink.recordLinearMcpRequestDurationMs?.(durationMs, attributes)
 }
 
-export const renderAgentsPrometheusMetrics = () => {
-  if (counters.size === 0 && histograms.size === 0) return '# no metrics collected\n'
-
+export const renderAgentsPrometheusMetrics = (nowMs = Date.now()) => {
   const lines: string[] = []
   const metadataSeen = new Set<string>()
 
-  const appendMetadata = (definition: MetricDefinition, type: 'counter' | 'histogram') => {
+  const appendMetadata = (definition: MetricDefinition, type: 'counter' | 'gauge' | 'histogram') => {
     const name = sanitizePrometheusName(definition.name)
     const key = `${name}:${type}`
     if (metadataSeen.has(key)) return name
@@ -362,10 +477,23 @@ export const renderAgentsPrometheusMetrics = () => {
       }
     }
 
+    for (const [key, record] of gauges) {
+      if (!key.startsWith(`${definition.name}:`)) continue
+      if (record.expiresAt !== undefined && record.expiresAt <= nowMs) continue
+      const name = appendMetadata(definition, 'gauge')
+      lines.push(`${name}${formatPrometheusLabels(record.labels)} ${formatPrometheusNumber(record.value)}`)
+    }
+
     const matchingHistograms = [...histograms.entries()].filter(([key]) => key.startsWith(`${definition.name}:`))
     if (matchingHistograms.length === 0) continue
     const name = appendMetadata(definition, 'histogram')
     for (const [, record] of matchingHistograms) {
+      const buckets = 'buckets' in definition ? definition.buckets : []
+      for (const [index, bound] of buckets.entries()) {
+        lines.push(
+          `${name}_bucket${formatPrometheusLabels({ ...record.labels, le: String(bound) })} ${record.buckets[index]}`,
+        )
+      }
       lines.push(
         `${name}_bucket${formatPrometheusLabels({ ...record.labels, le: '+Inf' })} ${formatPrometheusNumber(record.count)}`,
       )
@@ -374,12 +502,16 @@ export const renderAgentsPrometheusMetrics = () => {
     }
   }
 
-  return `${lines.join('\n')}\n`
+  return lines.length ? `${lines.join('\n')}\n` : '# no metrics collected\n'
 }
 
 const resetMetricsForTest = () => {
   counters.clear()
+  gauges.clear()
   histograms.clear()
+  runnerModels.clear()
+  runnerAgents.clear()
+  runnerLimitIds.clear()
   for (const key of Object.keys(externalMetricsSink) as Array<keyof AgentsMetricsSink>) {
     delete externalMetricsSink[key]
   }

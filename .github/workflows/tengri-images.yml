@@ -1,11 +1,10 @@
 name: Tengri images
 
 on:
-  merge_group:
-    types: [checks_requested]
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, edited]
     paths:
+      - '.github/workflows/tengri-validation.yml'
       - 'services/tengri/**'
       - 'services/ofz/src/**'
       - 'services/ofz/Cargo.*'
@@ -100,139 +99,31 @@ env:
   TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri
 
 jobs:
-  validate-tengri:
+  validate:
+    name: Validate Tengri and Nanoagent
     if: github.event.action != 'edited' || github.event.changes.base
-    name: Validate Tengri
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.90.0
-          components: clippy,rustfmt
-
-      - name: Cache validation Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: tengri-validation
-          workspaces: |
-            services/tengri -> target
-            services/ofz -> target
-      - name: Install native build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends build-essential e2fsprogs protobuf-compiler
-
-      - name: Set up Go for seccomp and guest interoperability
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: services/tengri/seccomp/go.mod
-          cache-dependency-path: |
-            services/nanoagent/go.sum
-            services/tengri/seccomp/go.sum
-
-      - name: Validate native runner seccomp profile
-        working-directory: services/tengri/seccomp
-        env:
-          GOWORK: 'off'
-        run: |
-          set -euo pipefail
-          go test .
-          go run . | diff -u ../../../devices/galactic/omni/tengri-runner-amd64.json -
-
-      - name: Validate controller and generated CRD
-        working-directory: services/tengri
-        run: |
-          set -euo pipefail
-          cargo fmt --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked --all-targets
-          cargo test --locked restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill -- --ignored --nocapture
-          bash test-runtime.sh
-          bash test-rpc-interop.sh
-          cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
-          diff -u /tmp/tengri-crd.yaml crd.yaml
-          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
-
-  validate-nanoagent:
-    if: github.event.action != 'edited' || github.event.changes.base
-    name: Validate Nanoagent
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: services/nanoagent/go.mod
-          cache-dependency-path: services/nanoagent/go.sum
-
-      - uses: ./.github/actions/setup-nix-toolchain
-        with:
-          github-token: ${{ github.token }}
-
-      - name: Install pinned Buf
-        run: |
-          set -euo pipefail
-          buf_tools="$(nix build --no-link --print-out-paths .#buf)"
-          echo "${buf_tools}/bin" >> "$GITHUB_PATH"
-
-      - name: Install race detector build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends build-essential e2fsprogs
-
-      - name: Validate guest service
-        working-directory: services/nanoagent
-        env:
-          CGO_ENABLED: '1'
-        run: |
-          set -euo pipefail
-          bash -n bootstrap-codex.sh
-          bash -n bootstrap-toolchain.sh
-          bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
-          bash -n build-editor.sh launch-editor.sh test-editor-bundle.sh
-          bash -n validate-rootfs.sh validate-rootfs.test.sh
-          bash -n build-boot-artifacts.sh tengri-init.sh
-          bash validate-rootfs.test.sh
-          bash bootstrap-codex.sh --validate-manifest
-          bash bootstrap-codex.sh --install-only
-          buf lint ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto
-          buf format ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto --diff --exit-code
-          bash generate-proto.sh
-          git diff --exit-code -- internal/guestpb
-          node ../tengri/fixtures/generate-ofz-guest-request-v4.mjs
-          git diff --exit-code -- ../tengri/fixtures/ofz-guest-request-v4.json internal/guestauth/testdata/ofz-guest-request-v4.json
-          test -z "$(gofmt -l .)"
-          python3 -m unittest browser_mcp_tunnel_test.py
-          node --test relay-client.test.mjs
-          TENGRI_CODEX_CONTRACT_BINARY="$HOME/.local/bin/codex" GOWORK=off go test -race ./...
-          GOWORK=off go vet ./...
+    uses: ./.github/workflows/tengri-validation.yml
 
   build:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
-    timeout-minutes: ${{ matrix.image == 'nanoagent' && 360 || 240 }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         architecture: [amd64, arm64]
         image: [nanoagent, tengri]
         include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
           - image: tengri
             build_contexts: |
               ofz-proto=proto
               ofz-catalog=services/ofz
               nanoagent-src=services/nanoagent
-    runs-on: arc-${{ matrix.architecture }}
-    env:
-      IMAGE: registry.ide-newton.ts.net/lab/${{ matrix.image }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -247,46 +138,37 @@ jobs:
           timestamp="$(git show -s --format=%cI HEAD)"
           printf 'timestamp=%s\n' "$timestamp" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push native image
+      - name: Build native image archive
         uses: docker/build-push-action@v6
         with:
           context: services/${{ matrix.image }}
           build-args: ${{ matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha) || '' }}
           build-contexts: ${{ matrix.build_contexts }}
           platforms: linux/${{ matrix.architecture }}
-          push: true
-          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          outputs: type=oci,dest=${{ runner.temp }}/${{ matrix.image }}-${{ matrix.architecture }}.tar
           labels: |
             org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
-          # The release images copy build artifacts out of their package and compiler stages.
-          # Keep those stages reusable across releases, including when the final artifact changes.
-          cache-to: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
           provenance: mode=max
           sbom: true
 
-      - name: Verify paired boot artifact checksums
-        if: matrix.image == 'nanoagent'
-        env:
-          ARCHITECTURE: ${{ matrix.architecture }}
-        run: |
-          set -euo pipefail
-          guest="${IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
-          directory="$(mktemp -d)"
-          trap 'rm -rf "$directory"' EXIT
-          crane export --platform "linux/${ARCHITECTURE}" "$guest" - | tar -xf - -C "$directory" guest/
-          sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
-          (cd "$directory" && sha256sum --check SHA256SUMS)
+      - name: Hand native image to publisher
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-native-${{ matrix.image }}-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/${{ matrix.image }}-${{ matrix.architecture }}.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
 
   publish:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs:
       - build
-      - validate-tengri
-      - validate-nanoagent
+      - validate
     runs-on: arc-amd64
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -308,6 +190,42 @@ jobs:
 
       - name: Verify pinned Cosign
         run: cosign version
+
+      - name: Download native image archives
+        uses: actions/download-artifact@v5
+        with:
+          pattern: tengri-native-*
+          path: ${{ runner.temp }}/tengri-native
+          merge-multiple: true
+
+      - name: Import native images into the private registry
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for image in "$TENGRI_IMAGE" "$NANOAGENT_IMAGE"; do
+            service="${image##*/}"
+            for architecture in amd64 arm64; do
+              archive="$RUNNER_TEMP/tengri-native/$service-$architecture.tar"
+              regctl image import "$image:sha-$SOURCE_SHA-$architecture" "$archive"
+              rm "$archive"
+            done
+          done
+
+      - name: Verify paired boot artifact checksums
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          directory="$(mktemp -d)"
+          trap 'rm -rf "$directory"' EXIT
+          for architecture in amd64 arm64; do
+            guest="$NANOAGENT_IMAGE:sha-$SOURCE_SHA-$architecture"
+            crane export --platform "linux/$architecture" "$guest" - | tar -xf - -C "$directory" guest/
+            sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
+            (cd "$directory" && sha256sum --check SHA256SUMS)
+            rm -r "$directory/guest"
+          done
 
       - name: Publish, verify, and sign multi-architecture images
         id: images

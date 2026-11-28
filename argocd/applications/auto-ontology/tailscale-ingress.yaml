@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auto-ontology-tailscale
+  namespace: auto-ontology
+  annotations:
+    tailscale.com/tags: tag:k8s
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - auto-ontology.ide-newton.ts.net
+  rules:
+    - host: auto-ontology.ide-newton.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auto-ontology-mcp-tailscale
+  namespace: auto-ontology
+  annotations:
+    tailscale.com/tags: tag:k8s
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - auto-ontology-mcp.ide-newton.ts.net
+  rules:
+    - host: auto-ontology-mcp.ide-newton.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: auto-ontology-mcp
+                port:
+                  number: 3003

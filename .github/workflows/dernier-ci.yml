@@ -11,11 +11,10 @@ on:
       - 'docs/dernier.md'
       - 'skaffold.yaml'
       - '.github/workflows/dernier-ci.yml'
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: dernier-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

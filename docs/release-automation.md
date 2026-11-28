@@ -5,7 +5,7 @@ source, workload configuration, and Kargo resources are reviewed in Git. Kargo o
 has been published; it directly manages a deployment branch and does not open a second pull request to rewrite a SHA or
 digest in the source repository.
 
-The cluster installation is pinned to Kargo v1.12.6. Keep Warehouse, Freight, Stage, and
+The cluster installation is pinned to Kargo v1.12.7. Keep Warehouse, Freight, Stage, and
 promotion-step fields aligned with that pinned version when enrolling an application. The Warehouse webhook rejects
 unknown subscription fields. Use `constraint` for image subscriptions and `semverConstraint` for chart and Git subscriptions.
 
@@ -85,6 +85,10 @@ production workflows watch the same cohort inputs so a component change cannot s
 The four component READMEs are excluded from publication triggers. A push with a changed runtime input still
 publishes the full cohort.
 
+Tengri and Nanoagent build on native GitHub-hosted Linux runners. Each build hands an OCI archive with its
+provenance and SBOM to the private publisher. The publisher imports all four architecture images, verifies
+the paired guest boot checksums and source labels, and signs the indexes before exposing Kargo aliases.
+
 The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
 Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and
 `proompteng` accepts the same Freight only after Tengri is verified. Both consumers use `MatchUpstream` and cannot
@@ -142,8 +146,14 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
-Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
-image from `main`. This avoids execution-controller reactivation when production code is unchanged.
+Changes restricted to Bayn tests, operating guides, or standalone `tools/research-*.ts` studies do not trigger
+production publication. Packaged research commands still trigger the full cohort. This avoids execution-controller
+reactivation when the shipped code and configuration are unchanged.
+
+Bayn keeps one pending release run while the active run finishes. A surviving push compares its exact source revision
+with the last successful `publish-cohort` job on `main`, not with the preceding push. A successful dependency-only
+no-op does not advance that baseline. If the available history contains no verified cohort, the run builds the full
+cohort rather than risking a skipped release. A failure to read history fails the planner.
 
 If a test-only correction fixes a failed Bayn publication, `bayn-build-push.yml` supports explicit recovery on `main`:
 `gh workflow run bayn-build-push.yml --ref main -f expected_main_sha=<full-reviewed-main-commit>`.

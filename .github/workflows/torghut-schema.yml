@@ -5,8 +5,7 @@ on:
     paths:
       - argocd/applications/torghut/clickhouse/**
       - .github/workflows/torghut-schema.yml
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches: [main]
     paths:

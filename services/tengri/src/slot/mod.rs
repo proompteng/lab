@@ -430,9 +430,10 @@ impl Slot {
     async fn cold_boot(&mut self, claim: &Claim) -> anyhow::Result<()> {
         // A cancelled snapshot is never a boot source. Both disks stay with this runner.
         self.remove_old_snapshots(0).await?;
-        runner::update_guest_agent(
+        runner::update_guest_runtime(
             &self.config.root_disk,
             std::path::Path::new(runner::PACKAGED_GUEST_AGENT),
+            std::path::Path::new(runner::PACKAGED_CODEX_BOOTSTRAP),
         )
         .await?;
         self.vm = Some(Vmm::spawn(&self.config).await?);

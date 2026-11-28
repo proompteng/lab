@@ -31,8 +31,7 @@ on:
       - 'nix/packages.nix'
       - 'flake.nix'
       - 'flake.lock'
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches: [main]
     paths:

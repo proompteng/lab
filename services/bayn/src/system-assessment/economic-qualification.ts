@@ -28,7 +28,7 @@ export const evaluateEconomicQualification = (
   evaluated: readonly EvaluatedPolicy[],
 ) =>
   Result.gen(function* () {
-    if (registration.schemaVersion !== 'bayn.system-registration.v4')
+    if (!('statisticalPlan' in registration))
       return yield* Result.fail(
         new SystemAssessmentError({
           message: 'Conditional qualification requires its prospective statistical registration',

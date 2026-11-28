@@ -29,7 +29,7 @@ flowchart LR
   B --> C[Signed SessionReady and TradeUpdate]
   C -->|direct HTTP plus stable idempotency key| R[Restate durable ingress]
   R --> S[Immutable source ledger]
-  S --> O[Immediate order, fill and accounting projection]
+  S --> O[Immediate order and fill evidence]
   R --> G[Serialized canonical gap reconciliation]
   O --> D[Serialized account decision and execution]
 ```
@@ -43,8 +43,13 @@ The producer awaits a successful Restate receipt before reading the next update.
 with the same idempotency key; a terminal response or exhausted connection ends the session and reconnects with a new
 verified `SessionReady`, allowing canonical gap repair. Updates can be delivered more than once. Stable update IDs,
 Restate receipts, the immutable source ledger and the financial stores retain independent idempotency boundaries.
-`/readyz` becomes ready only after the verified session notification has been durably acknowledged, and resets on
-disconnect. `/metrics` exposes readiness, publications and session failures without account labels.
+The same process owns Alpaca Activity SSE. It proves a finite initial publication range through
+`BaynBrokerActivities`, then opens the live stream from the durable cursor. Reconnecting reuses the latest stored
+ULID. When initial catchup is interrupted, a new finite read includes the full range in its hash and sends only the
+unrecorded suffix. Bayn checks this hash independently against PostgreSQL before marking the range complete.
+
+`/readyz` requires the acknowledged trade-update session and a live heartbeat accepted against the durable Activity
+cursor. A disconnect clears its lane. `/metrics` exposes lane readiness, publications and failures without account labels.
 
 Market-data and trade-update sessions allow up to five seconds for a graceful WebSocket close, then cancel that
 session and close both channels. This bounds Ktor's otherwise unbounded close/flush path after a network failure,
@@ -58,8 +63,8 @@ and `RESTATE_INGRESS_URL=http://restate.restate.svc.cluster.local:8080`. Live br
 destinations are rejected.
 The existing Torghut collector retains its own account, topics and release path.
 
-Run `./gradlew :websockets:ktlintCheck :websockets:test` for real local HTTP/WebSocket contract tests, including
-wrong-account rejection, binary frames, failed publication, reconnect and the shared signature vector. Deployment and
+Run `./gradlew :websockets:ktlintCheck :websockets:test` for local HTTP, WebSocket and SSE contract tests covering
+wrong-account rejection, failed publication, finite replay, inclusive reconnect and the shared signature vector. Deployment and
 runtime acceptance follow the [Bayn deployment guide](../../argocd/applications/bayn/README.md).
 
 ## Exception tracking
@@ -262,11 +267,20 @@ discriminator and complete provider payload. Preserve the original Kafka envelop
 required beyond Kafka's configured retention period.
 
 Roll out the TA sample exclusions and the producer implementation first. Verify the deployed TA image contains the
-exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The intended missing set is
-`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`; keep the existing 16 bar and seven quote/trade WebSocket subscriptions.
-Activation requires regular-session proof that actual provider events for these symbols reach Bayn and change its
-candidate coverage. Access checks and readiness alone cannot establish this. Existing historical captures retain their
-gaps, and completing the input stream does not establish a profitable strategy.
+exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The shared IEX plan streams completed bars for all
+22 source symbols, plus quotes and trades for `AAPL,AMZN,NVDA,SPY`, within the existing 30-unit admission budget.
+The remaining 18 symbols use latest REST quotes and trades. Bayn's entry candidates, the retained Torghut candidate
+configuration, and SPY keep their quote/trade paths. `IWM,QQQ,SMH` retain native streamed bars but receive sampled quotes/trades;
+their trade-derived microbars are no longer populated from the stream, so do not admit them to an execution universe
+requiring tick-volume evidence without reviewing this source allocation.
+
+The plan removes completed REST-bar polling from the live decision path. The six additional Bayn equities otherwise
+race the two-second minute decision cut when the next poll observes a newly completed provider bar. Streaming their
+native bars improves arrival opportunity without revising an immutable cut or extending data/inference deadlines.
+The pod-template subscription-plan annotation rolls the env-based configuration through normal GitOps. Activation
+requires regular-session proof of subscription acknowledgements, actual bar-to-feature arrival, and candidate coverage.
+Access checks and readiness alone cannot establish this. Existing historical captures retain their gaps, and completing
+the input stream does not establish a profitable strategy.
 
 Disabling polling does not remove retained sampled records. Keep compatible volume exclusions during rollback, or
 verify that restored offsets cannot replay sampled records into an older volume consumer.
@@ -291,57 +305,30 @@ Run the producer checks from this directory:
 Normal deployment uses the repository's reviewed main, image publication, Kargo promotion, and Argo reconciliation.
 Checkpoint compatibility and actual source-to-consumer behavior are separate acceptance checks.
 
-## Same-session IEX subscription qualification
+## Consolidated SIP shadow forwarder
 
-`ALPACA_IEX_SUBSCRIPTION_QUALIFICATION=true` enables a diagnostic on the existing core IEX connection. The reviewed
-baseline remains sixteen bar, seven quote and seven trade subscriptions. The nine REST-only symbols continue through
-the existing latest-observation path. Neither the summed baseline subscription budget nor its REST/WS overlap guard
-is relaxed. Credentials, destination, preferred feed, delay class, topics, private trade updates, crypto and delayed SIP
-retain their existing contracts.
+Run SIP in a separate equity forwarder with `ALPACA_FEED=sip`, one WebSocket owner, and no `ALPACA_LATEST_SYMBOLS`.
+Do not add SIP to `ALPACA_OBSERVATION_FEEDS` on the IEX forwarder. Set `SYMBOLS` and `SYMBOLS_ALLOWLIST` to the same
+sorted, unique, explicit roster, and set `MARKET_DATA_UNIVERSE_ID` and `MARKET_DATA_UNIVERSE_SYMBOL_HASH` to its
+versioned identity and SHA-256 (uppercase symbols joined by commas, without whitespace or a trailing newline).
+For the [Wave 4H roster](https://github.com/proompteng/lab/pull/16372), these are `torghut-core-equity-sip-v1` and
+`89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b`.
 
-After authentication and a complete baseline acknowledgement, the diagnostic waits for a regular equity session and
-sends one additive subscription containing only the nine missing quote and trade memberships. It never adds a fourth
-channel or another connection. Alpaca documents that subscriptions are additive, acknowledgements contain the full
-current membership, and error 405 preserves the previous membership. See the
-[provider protocol](https://docs.alpaca.markets/us/docs/streaming-market-data).
+- Set `ALPACA_MARKET_DATA_CHANNELS=bars,quotes,trades` for 219 symbol-channel subscriptions at 73 symbols.
+  `updatedBars` counts separately if enabled.
+- Declare paid access with `ALPACA_MARKET_DATA_ENTITLEMENT=algo_trader_plus` (local ceiling 400), or set
+  `ALPACA_MAX_SYMBOL_CHANNELS=219` against a verified paid account. The explicit limit accepts 1–400 and can tighten
+  the Plus ceiling. An undeclared plan defaults to 30, and an explicit `basic` plan cannot exceed 30. These
+  settings configure local admission; Alpaca still decides whether the credentials can subscribe.
+- Set `TOPIC_BARS_1M`, `TOPIC_QUOTES`, `TOPIC_TRADES`, and `TOPIC_STATUS` to distinct shadow topics, for example
+  `bayn.market-data.sip.{bars.1m,quotes,trades,status}.v1`. The existing `torghut.*` and other `bayn.market-data.*` routes
+  are reserved. SIP records carry `feed=sip`, `delay_class=real_time_consolidated`, `universe_id`, and
+  `universe_symbol_hash`. Optional historical recovery requests `feed=sip` and retains `source=rest`.
+- Alpaca [admission errors](https://docs.alpaca.markets/us/docs/streaming-market-data) 405 (symbol limit), 406
+  (connection limit), and 409 (insufficient subscription) mark SIP unready and stop its reconnect loop. Correct
+  the roster, connection ownership, or account entitlement before restarting the forwarder.
 
-Candidate data is blocked before sequence allocation, deduplication, Kafka publication and ordinary freshness tracking,
-including frames before acknowledgement, buffered frames after rollback and frames on a later connection. Candidate
-and admitted maps are separate. The diagnostic records only membership, counters and provider/receipt/processing
-times; it retains no prices, raw source payloads, credentials or account identity.
-
-A complete sixteen-quote/sixteen-trade/sixteen-bar acknowledgement starts a bounded observation window: two sixty-second bar intervals plus the existing ten-second provider-age allowance
-(130 seconds).
-Qualification requires usable coverage of every member across that active window, quote/trade age and receipt gaps
-within ten seconds, bar coverage within 130 seconds, and decoded-frame processing delay within one second. Silence,
-unusable values, clock or queue violations and departure from the regular session leave coverage unproved. These are
-qualification limits, not measured production latency or an entitlement claim. The bar budget accommodates starting
-just after a minute boundary and receiving a completed bar after that minute; bars retain their minute-start timestamp.
-
-The diagnostic removes only its added quote/trade memberships after the observation window, including success, and
-requires the full original baseline acknowledgement within ten seconds. A partial or delayed candidate acknowledgement
-also triggers that exact rollback; an uncertain rollback closes the connection for coherent baseline recovery. Error
-405 is consumed only while the additive request is pending: it latches rejection and preserves baseline authentication
-without reconnecting. Other provider errors retain normal recovery. The process attempts the amendment once and does
-not repeat it on reconnect. Session generations fence late diagnostic updates; historical completed proof never makes
-a replacement session appear fresh.
-
-Inspect `/readyz` field `iex_subscription_qualification` alongside the exact Kargo revision, running image and ordinary
-channel readiness. `qualified` requires a completed observation window and verified baseline restoration; it does not
-switch financial admission. `outcome` retains the last trial decision; a new connection resets current qualification
-and retains any completed proof under its original generation. Retain the full diagnostic outcome and timing coverage during a real regular session.
-Infrastructure health, an accepted subscription or a quiet after-hours connection alone cannot establish qualification.
-
-The reviewed desired configuration changes the existing single-replica Recreate Deployment's configuration generation.
-Its normal immutable image/Kargo rollout has a restart gap; it preserves neither the old TCP connection nor uninterrupted
-market capture. Within the replacement process, baseline admission and the additive trial share one authenticated TCP
-session. A failed trial preserves current inputs or reconnects to the baseline. Recovery disables the flag through
-reviewed GitOps and the same Kargo path; it does not repoint an account or change entitlements. A process restart creates
-a new diagnostic attempt, so retain evidence and disable the flag after the bounded qualification is assessed.
-
-After live qualification, a separately reviewed hard cutover must promote one admitted source map under a new source
-generation, fence in-flight REST publications and delete ordinary latest polling and the temporary qualification path.
-The full forty-eight-membership target remains open until that product proof and hard migration are complete.
+This configuration does not activate a SIP deployment or change what IEX, delayed SIP, or Bayn consume.
 
 ## Producer stall diagnostics
 

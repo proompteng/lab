@@ -17,7 +17,9 @@ import org.apache.kafka.common.errors.UnknownTopicOrPartitionException
 enum class ReadinessErrorClass(
   val id: String,
 ) {
+  Alpaca405SymbolLimit("alpaca_405_symbol_limit"),
   Alpaca406SecondConnection("alpaca_406_second_connection"),
+  Alpaca409InsufficientSubscription("alpaca_409_insufficient_subscription"),
   AlpacaAuth("alpaca_auth"),
   OptionsEventStarvation("options_event_starvation"),
   KafkaAuth("kafka_auth"),
@@ -55,7 +57,6 @@ data class ReadinessInfo(
   @SerialName("market_data_feeds") val marketDataFeeds: List<MarketDataFeedReadiness> = emptyList(),
   @SerialName("market_data_universe") val marketDataUniverse: MarketDataUniverseInfo? = null,
   @SerialName("latest_rest_observations") val latestRestObservations: LatestMarketDataCoverage? = null,
-  @SerialName("iex_subscription_qualification") val subscriptionQualification: SubscriptionQualificationStatus? = null,
 )
 
 @Serializable

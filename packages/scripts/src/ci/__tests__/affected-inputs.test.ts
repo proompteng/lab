@@ -322,64 +322,6 @@ test('Bayn publication ignores Froussard-only dependencies and still selects Bay
   expect(selectAffectedInputs(['bun.lock'], configured, prior, changedDependency).image).toBe(true)
 })
 
-test('Bayn retains a pending production push when a later manifest-only push skips publication', () => {
-  const workflowPath = '.github/workflows/bayn-build-push.yml'
-  const workflow: unknown = Bun.YAML.parse(readFileSync(workflowPath, 'utf8'))
-  const configured = parseTargets("image: ['', 'services/bayn']", '', workflowPath, 'push')
-  const paths = configured.image?.paths
-  if (paths === undefined) throw new Error('Missing Bayn publication inputs')
-  const lock = {
-    ...before,
-    workspaces: { ...before.workspaces, 'apps/froussard': { name: 'froussard', dependencies: {} } },
-  }
-  const productionPush = ['services/bayn/src/jev/runtime.ts']
-  const laterManifestPush = ['apps/froussard/package.json']
-  expect(productionPush.some((file) => matchesPaths(file, paths))).toBe(true)
-  expect(laterManifestPush.some((file) => matchesPaths(file, paths))).toBe(true)
-  expect(selectAffectedInputs(productionPush, configured, lock, lock).image).toBe(true)
-  expect(selectAffectedInputs(laterManifestPush, configured, lock, lock).image).toBe(false)
-  // Both pushes enter concurrency before selection; the skipped successor must retain the pending production run.
-  expect(property(workflow, 'concurrency')).toEqual({
-    group: '${{ github.workflow }}-main',
-    'cancel-in-progress': false,
-    queue: 'max',
-  })
-})
-
-test('Bayn queue lint compatibility is limited to its exact unsupported-key diagnostic', () => {
-  const config: unknown = Bun.YAML.parse(readFileSync('.github/actionlint.yaml', 'utf8'))
-  const path = '.github/workflows/bayn-build-push.yml'
-  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
-  const declarations: string[] = []
-  const visit = (value: unknown, ancestors: string[]) => {
-    if (typeof value !== 'object' || value === null) return
-    for (const [key, child] of Object.entries(value)) {
-      const location = [...ancestors, key]
-      if (key === 'concurrency' || key === 'queue') declarations.push(location.join('.'))
-      visit(child, location)
-    }
-  }
-  visit(workflow, [])
-  // The parser exception must not hide an invalid nested queue or job-level concurrency.
-  expect(declarations).toEqual(['concurrency', 'concurrency.queue'])
-  const scopes = property(config, 'paths')
-  if (typeof scopes !== 'object' || scopes === null) throw new Error('Missing actionlint file scopes')
-  expect(Object.keys(scopes).filter((scope) => matchesGlob(path, scope))).toEqual([path])
-  expect(matchesGlob('.github/workflows/opencode-build-push.yml', path)).toBe(false)
-  expect(property(config, 'ignore')).toBeUndefined()
-  const pattern = String.raw`^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$`
-  expect(property(property(scopes, path), 'ignore')).toEqual([pattern])
-  const ignored = new RegExp(pattern)
-  expect(
-    ignored.test('unexpected key "queue" for "concurrency" section. expected one of "cancel-in-progress", "group"'),
-  ).toBe(true)
-  expect(
-    ignored.test('unexpected key "bogus" for "concurrency" section. expected one of "cancel-in-progress", "group"'),
-  ).toBe(false)
-  expect(ignored.test('unexpected key "queue" for "job" section. expected one of "name", "runs-on"')).toBe(false)
-  expect(ignored.test('property "unknown" is not defined in object type')).toBe(false)
-})
-
 test('App source changes do not force dependency downloads; dependency input changes still do', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const jobs = property(workflow, 'jobs')
@@ -930,7 +872,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
   }
 })
 
-test('Bayn separates formal checks from runtime validation and publication', () => {
+test('Bayn separates contract, formal, and GEPA checks from runtime validation and publication', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing Bayn change detection')
@@ -944,38 +886,44 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     '',
     'pull_request',
   )
-  const lock = { ...before, workspaces: { ...before.workspaces, 'packages/scripts': { name: 'scripts' } } }
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8'))
+  const selected = (...paths: string[]) =>
+    Object.entries(selectAffectedInputs(paths, targets, lock, lock))
+      .filter(([, affected]) => affected)
+      .map(([name]) => name)
   for (const path of [
     'services/bayn/formal/Bayn/Reliability.lean',
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
     '.github/workflows/bayn-formal.yml',
   ])
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, gepa: false, formal: true })
-  expect(selectAffectedInputs(['services/bayn/src/execution/controller.ts'], targets, lock, lock)).toEqual({
-    bayn: true,
-    gepa: false,
-    formal: true,
-  })
-  expect(selectAffectedInputs(['argocd/applications/bayn/configmap.yaml'], targets, lock, lock)).toEqual({
-    bayn: true,
-    gepa: false,
-    formal: false,
-  })
-  expect(selectAffectedInputs(['apps/landing/src/index.ts'], targets, lock, lock)).toEqual({
-    bayn: false,
-    gepa: false,
-    formal: false,
-  })
-  for (const path of ['services/bayn/src/risk.test.ts', 'services/bayn/tools/history.test.ts'])
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal: false, gepa: false })
+    expect(selected(path)).toEqual(['formal'])
+  expect(selected('services/bayn/src/execution/controller.ts')).toEqual(['bayn', 'formal'])
+  for (const path of [
+    'argocd/applications/bayn/research-networkpolicy.yaml',
+    'packages/scripts/src/bayn/verify-egress-proxy-restart.sh',
+    'packages/scripts/package.json',
+    'services/bayn/src/system-assessment/README.md',
+  ])
+    expect(selected(path)).toEqual(['contracts'])
+  expect(selected('argocd/applications/bayn/postgres-monitoring.yaml')).toEqual(['bayn', 'contracts'])
+  expect(selected('argocd/applications/bayn/research-networkpolicy.yaml', 'services/bayn/src/index.ts')).toEqual([
+    'bayn',
+    'contracts',
+    'formal',
+  ])
+  for (const path of ['apps/landing/src/index.ts', 'services/bayn/formal/tla/README.md', 'services/dorvud/README.md'])
+    expect(selected(path)).toEqual([])
+  for (const path of [
+    'services/bayn/src/risk.test.ts',
+    'services/bayn/tools/history.test.ts',
+    'services/bayn/tools/compile-frozen-control.ts',
+    'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql',
+  ])
+    expect(selected(path)).toEqual(['bayn'])
   for (const [path, formal] of baynPostgresTestHelpers)
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal, gepa: false })
-  expect(selectAffectedInputs(['services/bayn/gepa/runner.py'], targets, lock, lock)).toEqual({
-    bayn: true,
-    formal: false,
-    gepa: true,
-  })
+    expect(selected(path)).toEqual(formal ? ['bayn', 'formal'] : ['bayn'])
+  expect(selected('services/bayn/gepa/runner.py')).toEqual(['contracts', 'gepa'])
   for (const path of [
     'services/bayn/src/db/entry-inference-postgres.integration.test.ts',
     'services/bayn/src/system-assessment/postgres.integration.test.ts',
@@ -992,6 +940,12 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
     'services/bayn/README.md',
+    'services/bayn/tools/macro-canary-runner/README.md',
+    'services/bayn/tools/benchmark-forward-performance.md',
+    'services/bayn/AGENTS.md',
+    'services/bayn/.gitignore',
+    'services/bayn/tools/research-10yr-pure-etf-dual-horizon.ts',
+    'services/bayn/tools/research-sip-momentum-data.ts',
     'services/bayn/src/jev/entry-economics.test.ts',
     'services/bayn/src/jev/native.test-support.ts',
     'services/bayn/src/testing/streaming-market-fixture.ts',
@@ -1009,19 +963,18 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/migrations/20261106-cost-evidence.sql',
     'services/bayn/tools/compile-frozen-control.ts',
     'services/bayn/tools/record-jev-compiler-dependencies.ts',
+    'services/bayn/tools/equity-edge-screen.ts',
+    'services/bayn/src/research-command.ts',
+    'services/bayn/gepa/native.py',
+    'services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/BrokerFeedMain.kt',
+    'docs/bayn/jev-migration-acceptance-v2.json',
     'services/bayn/package.json',
     'nix/images/bayn.nix',
     'argocd/applications/bayn/configmap.yaml',
     'bun.lock',
   ])
     expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
-  expect(
-    selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], targets, lock, lock),
-  ).toEqual({
-    bayn: false,
-    gepa: false,
-    formal: false,
-  })
+  expect(selected('services/bayn/README.md', 'argocd/applications/bayn/README.md')).toEqual([])
 })
 
 test.each([

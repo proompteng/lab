@@ -59,7 +59,7 @@ pub(crate) struct WorkspaceAccess {
     action: Action,
     target: String,
     receipt: Arc<Mutex<String>>,
-    observation: bool,
+    audit_scope: ofz::AuditScope,
 }
 
 impl WorkspaceAuthorization {
@@ -124,7 +124,7 @@ impl WorkspaceAuthorization {
             action: principal.action,
             target: target.into(),
             receipt: Arc::new(Mutex::new(String::new())),
-            observation: principal.observation,
+            audit_scope: principal.audit_scope,
         })
     }
 
@@ -554,7 +554,7 @@ impl WorkspaceAccess {
                             stream_receipt_id: receipt.clone(),
                         },
                         self.recovery_generation,
-                        self.observation,
+                        self.audit_scope,
                     )
                     .await?;
                 *receipt = decision.audit_receipt_id.clone();

@@ -1,0 +1,14 @@
+
+=== Production TypeScript 3-Engine Concurrent Intraday Alpha v2 Replay (66 OOS sessions: 2026-08-25 .. 2026-11-25) ===
+
+[Slip 2.0 bp RT] Active=66/66 (100.0%) | Trades=326 (ORB30=62 $770, MR=199 $10455, ZAB=65 $778) | ConcurrentOverlaps=91 | Net=$12004 (L/S=$4893/$7110, SPY-Excess L/S=$6677/$2729) | Folds=[$708, $3871, $7424] | MaxDD=$1623 | Sharpe=3.93 | PlannerBlocks=0
+  Recent 5 sessions @ 2bp RT:
+    2026-11-19: trades=5, net=$-434.59
+    2026-11-20: trades=7, net=$1615.62
+    2026-11-23: trades=3, net=$-1197.20
+    2026-11-24: trades=6, net=$706.57
+    2026-11-25: trades=4, net=$1694.06
+[Slip 5.0 bp RT] Active=66/66 (100.0%) | Trades=318 (ORB30=62 $633, MR=191 $7606, ZAB=65 $173) | ConcurrentOverlaps=93 | Net=$8412 (L/S=$3626/$4785, SPY-Excess L/S=$5432/$806) | Folds=[$56, $3028, $5328] | MaxDD=$2507 | Sharpe=2.89 | PlannerBlocks=0
+[Slip 10.0 bp RT] Active=66/66 (100.0%) | Trades=295 (ORB30=61 $-1788, MR=171 $6550, ZAB=63 $-616) | ConcurrentOverlaps=98 | Net=$4146 (L/S=$1541/$2605, SPY-Excess L/S=$3191/$-1049) | Folds=[$-1038, $1145, $4038] | MaxDD=$2768 | Sharpe=1.47 | PlannerBlocks=0
+
+Multi-Engine Concurrent Alpha Gate: PASSED

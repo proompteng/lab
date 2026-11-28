@@ -1,8 +1,7 @@
 name: buf
 
 on:
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches:
       - main
@@ -25,8 +24,11 @@ on:
       - '.github/workflows/buf-ci.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: buf-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint:

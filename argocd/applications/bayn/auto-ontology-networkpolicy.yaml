@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-db-auto-ontology-ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: bayn-db
+      cnpg.io/instanceRole: replica
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-ontology
+      ports:
+        - port: 5432
+          protocol: TCP

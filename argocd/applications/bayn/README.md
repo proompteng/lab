@@ -18,6 +18,23 @@ report command rejects them. Both artifacts publish as one commit- and run-bound
 workload credentials and network policies remain separate. Operator qualification commands need their existing
 explicit target configuration; the research service's scoped database identity is not a financial-report credential.
 
+## Daily shadow sleeves and scorecard
+
+`bayn-macro-daily-sleeves` runs weekdays at 20:20 New York time, after the SIP embargo. Its two containers each
+verify the account ID from their own paper Secret and run only in shadow, capped at $10,000 per sleeve. F4 keeps its
+full allocation because it does not share the intraday account. Only the plan hash, mode and hypothetical order count
+are logged. The private receipts volume retains the latest complete JSON per sleeve; each writer publishes its file
+atomically.
+
+`bayn-daily-scorecard` is scheduled for 20:35 New York time. It reads the current PAPER intraday audit from the
+TLS-verified PostgreSQL standby and the latest same-day shadow receipts from a read-only mount. Delayed or missing
+sleeve runs are reported as missing evidence, not filled in with stale receipts. This scorecard cannot qualify the
+shared-account strategy or submit orders. The CronJob is suspended until the approved SELECT-only audit identity is
+bound to `bayn-scorecard-db-ro` (keys `username`, `password`, and the verified intraday `account-id`); do not substitute the
+execution database credentials or broker Secret. Both jobs use the research image digest selected by the Bayn Kargo Stage.
+On promotion, Argo reconciles the receipts claim and network policies before the jobs. To stop either schedule,
+suspend that CronJob through GitOps; leave the claim in place so recovery does not discard the last receipts.
+
 ## Streaming broker delivery
 
 `bayn-broker-feed` runs Dorvud's `BrokerFeedMain` for the existing Bayn PAPER account. It verifies `/v2/account`
@@ -64,8 +81,10 @@ invocations. Current code has no caller for it. After live acceptance, the clean
 into `broker_source_events` before dropping the sink. The migration also installs a temporary shared-database order
 version fence for the same overlap: a prepared predecessor insert derives the canonical nine-digit provider version
 from its immutable source identity, while stale or conflicting provider versions fail before insertion. Current code
-supplies that value directly and applies the same rule. The cleanup migration removes the predecessor insert branch and
-its trigger only after the old revision drains.
+supplies that value directly and applies the same rule. A REST order whose microsecond `updated_at` truncates a retained
+stream nanosecond version reuses that stream receipt only when the complete order content matches; a different state or
+genuinely older microsecond still fails closed. The cleanup migration removes the predecessor insert branch and its
+trigger only after the old revision drains.
 
 This hard migration removes the broker-only Kafka adapter, producer, consumer group, health script and Bayn Kafka
 credentials. It intentionally retains the now-inert topic during cutover: the Kafka application tracks `main`, while
@@ -144,12 +163,14 @@ If the new stream fails, deploy a reviewed streaming fix or restore a compatible
 through Kargo and verify canonical reconciliation against the same PAPER account. Do not start an ordinary polling path,
 repoint Torghut, reset financial history, or bypass promotion gates.
 
-The current financial-completeness Activity SSE still runs in the Bayn runtime and is not part of this transport cut.
-The next hard migration is to make the single feed process own that connection, persist its ULID cursor, resume with
-`since_id`, deduplicate by `ref_id`, and apply `previous_id` corrections/busts before retiring replica-local streams.
-The provider contract and target boundaries are recorded in
-[durable broker event architecture](../../../docs/bayn/durable-broker-event-architecture.md). Until that migration is
-deployed, canonical snapshots remain mandatory and no reduction in Activity SSE connections or REST reads is claimed.
+The single broker-feed process owns both trade updates and Activity SSE. Bayn migration 211 adds durable Activity
+source, projection and cursor records. Verify the promoted Bayn worker and broker-feed images name the same source
+revision, then verify the new worker owns broker observations before accepting its Activity receipts. The finite
+publication range and live heartbeat must both be accepted before the feed reports Activity readiness.
+
+Verify one durable cursor across a feed restart, inclusive redelivery with unchanged source and projection identities,
+and canonical PostgreSQL and TigerBeetle reconciliation for the same PAPER account. Use the
+[durable broker event architecture](../../../docs/bayn/durable-broker-event-architecture.md) for this acceptance.
 
 Superseded protocol activation recipes and completed cleanup receipts are available in
 [the repository history](https://github.com/proompteng/lab/blob/45579965308e14c07afd3d8960bc7d089de1986e/argocd/applications/bayn/README.md).
@@ -205,7 +226,7 @@ The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memor
 `bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.
 Kinds are `heap_used`, `heap_total`, `external`, `array_buffers` and `heap_limit`. `array_buffers` is included in
 `external`; `heap_used` is included in `heap_total`. These overlapping measures must not be added together.
-Projection memory travels in the bounded 15-second capture-health frame; decision memory travels in completed
+Projection memory travels in the bounded 15-second memory sample; decision memory travels in completed
 decision replies. Workers acquire no additional exporter or diagnostic request channel.
 
 Always display `time() - bayn_runtime_memory_sample_timestamp_seconds` beside worker memory. An idle decision
@@ -287,19 +308,12 @@ prior resource values through a reviewed commit and the same Kargo path. Infrast
 
 ## Unified PostgreSQL storage
 
-`postgres-cluster.yaml` owns the two-instance `bayn-db` cluster and the `bayn` application database. Financial
-records and immutable native-arrival captures share this database. Both PGDATA claims use the existing
-`local-path` NVMe filesystems on Turin and Altra with a 500Gi working allowance; WAL uses separate 32Gi
-NVMe claims. Required host anti-affinity, synchronous `ANY 1`, TLS, checksums and backups remain enabled.
+`postgres-cluster.yaml` owns the two-instance `bayn-db` cluster and the `bayn` application database. Both PGDATA
+claims use the existing `local-path` NVMe filesystems on Turin and Altra with a 500Gi working allowance. WAL uses
+separate 32Gi NVMe claims. Required host anti-affinity, synchronous `ANY 1`, TLS, checksums and backups remain enabled.
 
-The projection thread uses the existing application PostgreSQL connection and a single scoped client. Application
-startup alone owns schema migrations. Native capture and read-only exports retain the original checksum,
-ordered-prefix and immutable guards, and use the same PostgreSQL endpoint and CA as financial reads.
-
-The hard migration must merge all retained capture epochs, chunks and end markers before the replacement image
-is activated. Verify exact identities and content; do not infer duplicates from table names. Keep the old archive
-and original financial volumes until both unified NVMe replicas, backups, recovery and actual Bayn consumers pass.
-The [migration procedure](../../../docs/bayn/unified-nvme-migration.md) records the ordered data cutover and evidence.
+The [November 9 migration record](../../../docs/bayn/unified-nvme-migration.md) documents the bulk archive copy
+into this database. Live Kafka projection now runs in memory and application startup owns financial schema migrations.
 
 ## Isolated Jev instruction research
 
@@ -673,14 +687,14 @@ build lineage. It has no calendar expiry and does not need a daily rotation. Eve
 separate durable cycle with its own entry cutoff, forced-flatten window, risk budget, reconciliation gate, and terminal
 state. Rotate the mandate only when one of its bound identities changes.
 
-A mandate rotation must update the request content hash, build lineage, and activation generation in one reviewed
-change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation hook in
-wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status rollout
-and a drained Restate worker revision; the activation hook itself cannot reach the broker.
+Rotate the sealed request and its identity annotation together. Kargo derives the build lineage and activation
+generation from the reviewed Secret and the promoted build. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, and runs the idempotent activation hook in
+wave `0`. The broker feed and read-only status service roll in wave `1`. The activation hook binds the broker observation
+owner before the feed can persist Activity events and pass readiness. The hook itself cannot reach the broker.
 
 The SealedSecret's `proompteng.ai/bayn.mandate-identity` annotation records the request hash, strategy identity, authored
 build, and ciphertext hash without exposing the broker account. The manifest check compares it with the compiled
-strategy and all three runtime lineages. Regenerate this annotation from the validated request when sealing it;
+strategy. Kargo uses the annotation to populate the runtime lineage. Regenerate it from the validated request;
 changing an annotation does not authorize a different encrypted request. Runtime validation remains authoritative.
 Invalid static mandate configuration fails preparation with its specific reason before authority recovery begins.
 
@@ -697,8 +711,8 @@ The automatic Stage checks out that image revision, updates the status, worker, 
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact
 controller binding before the status service rolls out.
-Image and source bindings always update. Mandate lookup and lineage updates run only when the reviewed source contains
-that lineage, so an OBSERVE-only deactivation can use the same Stage without fabricating a mandate.
+Image and source bindings always update. The Stage populates mandate lineage when the SealedSecret includes a
+mandate identity.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
@@ -718,6 +732,14 @@ change, move the account-keyed binding to a compatible native replacement, or de
 returns to OBSERVE-only operation. Never recreate the retired legacy controller. Do not delete Restate registrations,
 CRDs, PVCs, durable state, or controller pods by hand. Confirm exact reconciliation, zero unresolved mutations, and no
 broker-ledger advance before and after the handoff.
+
+### Change the Alpaca account
+
+Bayn uses the account configured in the `bayn-alpaca-auth` SealedSecret. Change `account-id`, `key-id`,
+and `secret-key` together. Between sessions, normal activation replaces the settled account and
+preserves its trading history. Include the configured account's PAPER mandate to enable trading,
+or omit `capital-activation-request` and its mandate annotation for OBSERVE. Key rotation for the
+same account only changes the API keys.
 
 ### Execution activation service migration
 

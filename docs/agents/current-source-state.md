@@ -89,7 +89,7 @@ runtime resources.
 `argocd/applications/agents/**` wires live desired state for:
 
 - Agents CRD primitive manifests;
-- Codex and Codex Spark agents/providers;
+- Codex agents and providers;
 - VersionControlProvider and SecretBinding resources;
 - sample approval, budget, and signal resources;
 - Agents service networking, Tailscale exposure, Postgres, object bucket claim, and observability pieces;

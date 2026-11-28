@@ -7,6 +7,8 @@ resources:
   - serviceaccount.yaml
   - clickhouse-secret.yaml
   - alpaca-sealedsecret.yaml
+  - alpaca-macro-core-sealedsecret.yaml
+  - alpaca-macro-canary-sealedsecret.yaml
   - objectbucketclaim.yaml
   - research-storage.yaml
   - research-objectbucket.yaml
@@ -31,10 +33,16 @@ resources:
   - networkpolicy.yaml
   - jev-sealedsecret.yaml
   - bayn-research-db-sealedsecret.yaml
+  - bayn-audit-ro-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
+  - macro-daily-sleeves-receipts.yaml
+  - macro-daily-sleeves-cronjob.yaml
+  - daily-scorecard-cronjob.yaml
+  - daily-jobs-networkpolicy.yaml
   - opencode-retained-state.yaml
   - research-networkpolicy.yaml
+  - auto-ontology-networkpolicy.yaml
 configMapGenerator:
   - name: bayn-telemetry
     files:

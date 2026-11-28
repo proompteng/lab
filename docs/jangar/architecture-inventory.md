@@ -27,7 +27,7 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | ---- | ----------------------------------------------------------------------- | ---: |
 | 1    | `services/jangar/src/server/control-plane-status-types.ts`              | 2611 |
 | 2    | `services/jangar/src/server/chat-completion-encoder.ts`                 | 2073 |
-| 3    | `services/jangar/src/server/torghut-market-context-agents.ts`           | 2002 |
+| 3    | `services/jangar/src/server/torghut-market-context-agents.ts`           | 1996 |
 | 4    | `services/jangar/src/server/atlas-store.ts`                             | 1826 |
 | 5    | `services/jangar/src/server/torghut-simulation-control-plane.ts`        | 1724 |
 | 6    | `services/jangar/src/server/github-review-store.ts`                     | 1459 |
@@ -123,7 +123,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 
 ## Control-Plane Source Boundaries
 
-Summary: 164 control-plane source files, 50314 LOC across 6 current boundaries.
+Summary: 164 control-plane source files, 50337 LOC across 6 current boundaries.
 
 Tests (`*.test.*`, `*.spec.*`) and generated (`*.gen.*`, `*.generated.*`) source are excluded from these structural counts.
 
@@ -200,7 +200,7 @@ Boundary: `services/jangar/src/server/app.ts`, `control-plane*.ts`, and `torghut
 Boundary: `services/jangar/src/routes/ready.tsx`, `torghut/control-plane*`, and `api/torghut/trading/control-plane/**`
 
 | File                                                                                    | LOC |
-| --------------------------------------------------------------------------------------- | ---: |
+| --------------------------------------------------------------------------------------- | --: |
 | `services/jangar/src/routes/api/torghut/trading/control-plane/llm/rollout.ts`           | 187 |
 | `services/jangar/src/routes/api/torghut/trading/control-plane/quant/account-witness.ts` |  71 |
 | `services/jangar/src/routes/api/torghut/trading/control-plane/quant/alerts.ts`          |  54 |
@@ -226,7 +226,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/agents-controller/immutable-spec.ts`          |   27 |
 | `services/agents/src/server/agents-controller/implementation-contract.ts` |  265 |
 | `services/agents/src/server/agents-controller/index.ts`                   | 1626 |
-| `services/agents/src/server/agents-controller/job-runtime.ts`             | 1111 |
+| `services/agents/src/server/agents-controller/job-runtime.ts`             | 1134 |
 | `services/agents/src/server/agents-controller/job-status.ts`              |   31 |
 | `services/agents/src/server/agents-controller/lifecycle-machine.ts`       |   69 |
 | `services/agents/src/server/agents-controller/mutable-state.ts`           |   95 |
@@ -281,7 +281,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 Boundary: `services/agents/src/routes/v1/control-plane/**` registered HTTP handlers
 
 | File                                                             | LOC |
-| ---------------------------------------------------------------- | ---: |
+| ---------------------------------------------------------------- | --: |
 | `services/agents/src/routes/v1/control-plane/events.ts`          |  11 |
 | `services/agents/src/routes/v1/control-plane/execution-trust.ts` |  13 |
 | `services/agents/src/routes/v1/control-plane/logs.ts`            |  11 |
@@ -294,7 +294,7 @@ Boundary: `services/agents/src/routes/v1/control-plane/**` registered HTTP handl
 Boundary: `services/agents/src/app-routes/**` control-plane web entry and primitive routes
 
 | File                                                                   | LOC |
-| ---------------------------------------------------------------------- | ---: |
+| ---------------------------------------------------------------------- | --: |
 | `services/agents/src/app-routes/__root.tsx`                            |  53 |
 | `services/agents/src/app-routes/api.primitives.$kind.resource.ts`      |  12 |
 | `services/agents/src/app-routes/api.primitives.$kind.resources.ts`     |  13 |
@@ -317,7 +317,7 @@ Boundary: `services/agents/src/app-routes/**` control-plane web entry and primit
 Boundary: `services/agents/src/components/control-plane/**` and `services/agents/src/control-plane/**`
 
 | File                                                                       | LOC |
-| -------------------------------------------------------------------------- | ---: |
+| -------------------------------------------------------------------------- | --: |
 | `services/agents/src/components/control-plane/agent-run-status-filter.tsx` | 211 |
 | `services/agents/src/components/control-plane/agentrun-detail.tsx`         | 795 |
 | `services/agents/src/components/control-plane/app-shell.tsx`               | 299 |

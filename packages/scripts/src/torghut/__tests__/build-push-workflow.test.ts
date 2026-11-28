@@ -137,8 +137,12 @@ describe('torghut build-push workflow', () => {
     expect(testsExclude).toBeGreaterThan(scriptsInclude)
     expect(testFilesExclude).toBeGreaterThan(scriptsInclude)
     expect(updaterExclude).toBeGreaterThan(scriptsInclude)
-    expect(ciPathPatternIndex('.github/workflows/torghut-ci.yml')).toBe(-1)
     expect(ciPathPatternIndex('.github/workflows/torghut-build-push.yaml')).toBe(-1)
+  })
+
+  it('validates changes to the Torghut CI workflow on pull requests', () => {
+    expect(ciPathPatternIndex('.github/workflows/torghut-ci.yml')).toBeGreaterThan(-1)
+    expect(pushPathPatterns(ciWorkflow)).not.toContain('.github/workflows/torghut-ci.yml')
   })
 
   it('does not use actions/cache on the ARC-backed build runner', () => {
@@ -560,7 +564,7 @@ describe('torghut build-push workflow', () => {
 
   it('does not cancel main source CI while release promotion verifies the image contract', () => {
     expect(ciWorkflow).toContain(
-      "group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",
+      "group: torghut-ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",
     )
     expect(ciWorkflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")
   })

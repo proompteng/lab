@@ -1,9 +1,10 @@
+import { executionServiceName } from './execution-service-names'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result, Schema } from 'effect'
 
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import type { BrokerNotification, BrokerNotificationError } from '../broker/notifications'
-import type { BrokerSourceProjectionReceipt } from '../broker/trade-update-projection'
+import type { BrokerSourceProjectionAttempt } from '../broker/trade-update-projection'
 import type { ExecutionWakeup, ProtectionReleaseReference } from '../execution/events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
@@ -12,7 +13,6 @@ const previousKey = 'polling'
 const budgetKey = 'next-poll-not-before-ms'
 const recoveryDelayMs = 1_000
 const coalescingDelayMs = 100
-const protectionSettlementDelayMs = 200
 export const brokerSourceProjectionContract = 'bayn.broker-source-projection.v1'
 // Explicit intervals override the finite handler retry policy. Accepted notifications must survive a database
 // outage without recording a terminal run result; leave attempt and duration limits unset for idempotent writes.
@@ -66,7 +66,11 @@ export interface BrokerObservationRuntime {
     notification: BrokerNotification,
   ) => Promise<{ readonly covered: boolean }>
   readonly isNotificationCovered: (signal: AbortSignal, eventId: string) => Promise<boolean>
-  readonly project: (signal: AbortSignal, eventId: string) => Promise<BrokerSourceProjectionReceipt>
+  readonly project: (
+    signal: AbortSignal,
+    eventId: string,
+    allowProtectionWait?: boolean,
+  ) => Promise<BrokerSourceProjectionAttempt>
   readonly invalidate: (signal: AbortSignal) => Promise<void>
   readonly probeProtection: (
     signal: AbortSignal,
@@ -83,6 +87,7 @@ export interface BrokerObservationRuntime {
   }>
 }
 export interface BrokerObservationOwnerConfig {
+  readonly servicePrefix?: string
   readonly controllerKey: string
   readonly sourceRevision: string
   readonly maxAgeMs: number
@@ -118,7 +123,7 @@ export const makeBaynBrokerObservations = (
   // SDK 1.16.5 encodes delay as invoke_time; core 7.0.2 excludes it from send replay equality.
   const schedule = (ctx: restate.ObjectContext, method: 'capture' | 'freshness', state: State, dueAt: number) =>
     ctx.genericSend({
-      service: 'BaynBrokerObservations',
+      service: executionServiceName('observations', config.servicePrefix),
       method,
       key: ctx.key,
       parameter: { sourceRevision: state.sourceRevision, epoch: state.epoch, sequence: state.sequence },
@@ -155,7 +160,7 @@ export const makeBaynBrokerObservations = (
     ctx.set(key, state)
     if (poll._tag === 'Published') {
       ctx.genericSend({
-        service: 'BaynExecutionController',
+        service: executionServiceName('controller', config.servicePrefix),
         method: 'wake',
         key: ctx.key,
         parameter: {
@@ -184,7 +189,7 @@ export const makeBaynBrokerObservations = (
     return state
   }
   return restate.object({
-    name: 'BaynBrokerObservations',
+    name: executionServiceName('observations', config.servicePrefix),
     metadata: {
       'bayn.source-revision': config.sourceRevision,
       'bayn.broker-identity-hash': config.controllerKey,
@@ -212,7 +217,7 @@ export const makeBaynBrokerObservations = (
             persistenceRunOptions,
           )
           ctx.genericSend({
-            service: 'BaynBrokerSourceProjector',
+            service: executionServiceName('projector', config.servicePrefix),
             method: 'project',
             key: ctx.key,
             parameter: { eventId: notification.eventId },
@@ -291,8 +296,6 @@ export const makeBaynBrokerObservations = (
           ctx.set(key, state)
           const cycleId = binding.cycleId
           if (cycleId !== undefined) {
-            const settleInMs = receivedAt + protectionSettlementDelayMs - (await ctx.date.now())
-            if (settleInMs > 0) await ctx.sleep({ milliseconds: settleInMs })
             let proof: ProtectionReleaseReference | null = null
             try {
               proof = await ctx.run(
@@ -306,7 +309,7 @@ export const makeBaynBrokerObservations = (
             }
             if (proof !== null)
               ctx.genericSend({
-                service: 'BaynExecutionController',
+                service: executionServiceName('controller', config.servicePrefix),
                 method: 'wake',
                 key: ctx.key,
                 parameter: {
@@ -411,7 +414,7 @@ export const makeBaynBrokerSourceProjector = (
     if (ctx.key !== config.controllerKey) throw new restate.TerminalError('broker projector account binding mismatch')
   }
   return restate.object({
-    name: 'BaynBrokerSourceProjector',
+    name: executionServiceName('projector', config.servicePrefix),
     metadata: {
       'bayn.source-revision': config.sourceRevision,
       'bayn.broker-identity-hash': config.controllerKey,
@@ -424,11 +427,37 @@ export const makeBaynBrokerSourceProjector = (
           verifyKey(ctx)
           const receipt = decode(ReceiptSchema, candidate)
           const signal = ctx.request().attemptCompletedSignal
-          const projection = await ctx.run(
+          let projection = await ctx.run(
             'project durable broker source event',
             () => runtime.project(signal, receipt.eventId),
             persistenceRunOptions,
           )
+          if (projection._tag === 'AwaitingProtection') {
+            // Only the ordered projector waits. The financial writer transaction has returned, and the independent
+            // canonical owner can establish the parent/child binding or cover this early nonfinancial event.
+            ctx.genericSend({
+              service: executionServiceName('observations', config.servicePrefix),
+              method: 'reconcile',
+              key: ctx.key,
+              parameter: { eventId: receipt.eventId },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `broker-source-reconcile:${receipt.eventId}`,
+            })
+            const deadlineMs = Date.parse(projection.deadlineAt)
+            let attempt = 0
+            while (projection._tag === 'AwaitingProtection') {
+              const remaining = Math.max(0, deadlineMs - (await ctx.date.now()))
+              if (remaining > 0) await ctx.sleep({ milliseconds: Math.min(recoveryDelayMs, remaining) })
+              const allowProtectionWait = (await ctx.date.now()) < deadlineMs
+              projection = await ctx.run(
+                `resolve broker protection binding ${++attempt}`,
+                () => runtime.project(signal, receipt.eventId, allowProtectionWait),
+                persistenceRunOptions,
+              )
+              if (!allowProtectionWait && projection._tag === 'AwaitingProtection')
+                throw new restate.TerminalError('broker protection binding exceeded its original recovery deadline')
+            }
+          }
           if (projection._tag === 'CanonicallyCovered') return projection
           const covered = await ctx.run(
             'check canonical broker source coverage',
@@ -437,7 +466,7 @@ export const makeBaynBrokerSourceProjector = (
           )
           if (projection._tag === 'Projected')
             ctx.genericSend({
-              service: 'BaynExecutionController',
+              service: executionServiceName('controller', config.servicePrefix),
               method: 'wake',
               key: ctx.key,
               parameter: {
@@ -452,7 +481,7 @@ export const makeBaynBrokerSourceProjector = (
             })
           if (!covered)
             ctx.genericSend({
-              service: 'BaynBrokerObservations',
+              service: executionServiceName('observations', config.servicePrefix),
               method: 'reconcile',
               key: ctx.key,
               parameter: { eventId: projection.eventId },

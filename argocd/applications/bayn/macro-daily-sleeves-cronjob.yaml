@@ -1,0 +1,147 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bayn-macro-daily-sleeves
+  namespace: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app.kubernetes.io/name: bayn-macro-daily-sleeves
+    app.kubernetes.io/part-of: bayn
+spec:
+  timeZone: America/New_York
+  # After the 20:15 ET SIP embargo.
+  schedule: "20 20 * * 1-5"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      podReplacementPolicy: Failed
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: bayn-macro-daily-sleeves
+            app.kubernetes.io/part-of: bayn
+        spec:
+          serviceAccountName: bayn
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          restartPolicy: Never
+          nodeSelector:
+            network.proompteng.ai/100g: "true"
+          dnsConfig:
+            options:
+              - name: ndots
+                value: "1"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: macro-core
+              image: bayn-research
+              command: [sh, -ec]
+              args:
+                - |
+                  umask 077
+                  dir=/tmp/bayn-macro-sleeves/core
+                  mkdir -p "$dir"
+                  run=$(mktemp -d "$dir/.run.XXXXXX")
+                  trap 'rm -rf "$run"' EXIT
+                  node dist/run-macro-etf-core-rebalance.js --mode shadow --profile F4 \
+                    --exclude-symbols "" --capital-budget-usd 10000 --output "$run/receipt.json"
+                  mv -f "$run/receipt.json" "$dir/latest.json"
+              env:
+                - name: NODE_USE_ENV_PROXY
+                  value: "1"
+                - name: HTTPS_PROXY
+                  value: http://bayn-egress-proxy.bayn.svc.cluster.local:3128
+                - name: BAYN_MACRO_CORE_ALPACA_ACCOUNT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-alpaca-macro-core-auth
+                      key: account-id
+                - name: BAYN_MACRO_CORE_ALPACA_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-alpaca-macro-core-auth
+                      key: key-id
+                - name: BAYN_MACRO_CORE_ALPACA_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-alpaca-macro-core-auth
+                      key: secret-key
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 192Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              volumeMounts:
+                - name: receipts
+                  mountPath: /tmp/bayn-macro-sleeves
+            - name: macro-canary
+              image: bayn-research
+              command: [sh, -ec]
+              args:
+                - |
+                  umask 077
+                  dir=/tmp/bayn-macro-sleeves/canary
+                  mkdir -p "$dir"
+                  run=$(mktemp -d "$dir/.run.XXXXXX")
+                  trap 'rm -rf "$run"' EXIT
+                  node dist/run-macro-canary-etf-rebalance.js --mode shadow \
+                    --capital-budget-usd 10000 --output "$run/receipt.json"
+                  mv -f "$run/receipt.json" "$dir/latest.json"
+              env:
+                - name: NODE_USE_ENV_PROXY
+                  value: "1"
+                - name: HTTPS_PROXY
+                  value: http://bayn-egress-proxy.bayn.svc.cluster.local:3128
+                - name: BAYN_MACRO_CANARY_ALPACA_ACCOUNT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-alpaca-macro-canary-auth
+                      key: account-id
+                - name: BAYN_MACRO_CANARY_ALPACA_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-alpaca-macro-canary-auth
+                      key: key-id
+                - name: BAYN_MACRO_CANARY_ALPACA_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-alpaca-macro-canary-auth
+                      key: secret-key
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 192Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              volumeMounts:
+                - name: receipts
+                  mountPath: /tmp/bayn-macro-sleeves
+          volumes:
+            - name: receipts
+              persistentVolumeClaim:
+                claimName: bayn-macro-daily-sleeves-receipts

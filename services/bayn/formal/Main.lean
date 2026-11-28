@@ -974,8 +974,6 @@ def evaluate (json : Json) : Except String Json := do
       | none => throw "deadline must be an integer string or null")
     return toJson (marketHandoffReadiness (← json.getObjValAs? Bool "ready")
       (← json.getObjValAs? Bool "failed") deadline (← readInteger json "now"))
-  | "nativeSafetyJournalInsert" =>
-    return toJson (nativeSafetyJournalInsertAllowed (← readNatural json "triggerDepth"))
   | "nativeAuditTiming" =>
     return Json.mkObj [
       ("admission",toJson (nativeAuditSubmitTiming (← json.getObjValAs? Bool "approved")

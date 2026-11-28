@@ -14,6 +14,7 @@ struct CheckService {
     concurrent: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
     delay_ms: Arc<AtomicU64>,
     database_clock_offset_ms: Arc<AtomicU64>,
+    abort_next_control: Arc<AtomicBool>,
 }
 
 impl tonic::server::UnaryService<CheckRequest> for CheckService {
@@ -34,7 +35,13 @@ impl tonic::server::UnaryService<CheckRequest> for CheckService {
             } else {
                 request.stream_receipt_id.clone()
             };
+            let abort = request.action == Action::CodexControl as i32
+                && request.stream_receipt_id.is_empty()
+                && service.abort_next_control.swap(false, Ordering::SeqCst);
             service.calls.lock().await.push(request);
+            if abort {
+                return Err(Status::aborted("authorization revision changed"));
+            }
             tokio::time::sleep(Duration::from_millis(
                 service.delay_ms.load(Ordering::SeqCst),
             ))
@@ -66,6 +73,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         concurrent: Arc::new(Mutex::new(None)),
         delay_ms: Arc::new(AtomicU64::new(0)),
         database_clock_offset_ms: Arc::new(AtomicU64::new(0)),
+        abort_next_control: Arc::new(AtomicBool::new(false)),
     };
     let incoming = service.clone();
     let server = tokio::spawn(async move {
@@ -113,7 +121,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
     }))
     .await;
@@ -150,7 +158,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
     }));
     let parallel = tokio::time::timeout(Duration::from_secs(3), parallel)
@@ -174,7 +182,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                     stream_receipt_id: String::new()
                 },
                 1,
-                false
+                AuditScope::Submission,
             )
             .await
             .unwrap_err()
@@ -197,7 +205,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
         .await
         .unwrap();
@@ -212,7 +220,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         )
     }))
     .await;
@@ -239,7 +247,11 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         target: "/workspace/cold".into(),
         stream_receipt_id: String::new(),
     };
-    let slot = client.receipts.slot(&waiting, 1).await.unwrap();
+    let slot = client
+        .receipts
+        .slot(&waiting, 1, AuditScope::Observation)
+        .await
+        .unwrap();
     let guard = slot.lock().await;
     let calls = service.calls.lock().await.len();
     let expired = tokio::time::timeout(
@@ -253,7 +265,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
                 stream_receipt_id: String::new(),
             },
             1,
-            false,
+            AuditScope::Submission,
         ),
     )
     .await
@@ -343,6 +355,53 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         tonic::Code::PermissionDenied
     );
     assert_eq!(service.calls.lock().await.len(), before_controls + 5);
+    service.allowed.store(true, Ordering::SeqCst);
+
+    service.abort_next_control.store(true, Ordering::SeqCst);
+    authority
+        .access(&control, uid, &control.context.runtime_epoch, "run-status")
+        .unwrap()
+        .require()
+        .await
+        .unwrap();
+    {
+        let calls = service.calls.lock().await;
+        let attempts = &calls[before_controls + 5..];
+        assert_eq!(attempts.len(), 2, "an aborted control check gets one retry");
+        assert!(attempts[0].stream_receipt_id.is_empty());
+        assert_eq!(
+            attempts[0], attempts[1],
+            "the signed request must stay intact"
+        );
+    }
+
+    let before_run = service.calls.lock().await.len();
+    let mut first_run = control.clone();
+    first_run.audit_scope = AuditScope::RunStart(uuid::Uuid::new_v4());
+    let mut second_run = control.clone();
+    second_run.audit_scope = AuditScope::RunStart(uuid::Uuid::new_v4());
+    let check_start = |principal| {
+        authority
+            .access(principal, uid, &control.context.runtime_epoch, "run-status")
+            .unwrap()
+    };
+    check_start(&first_run).require().await.unwrap();
+    check_start(&first_run).require().await.unwrap();
+    check_start(&second_run).require().await.unwrap();
+    service.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        check_start(&first_run).require().await.unwrap_err().code(),
+        tonic::Code::PermissionDenied
+    );
+    {
+        let calls = service.calls.lock().await;
+        let starts = &calls[before_run..];
+        assert_eq!(starts.len(), 4);
+        assert!(starts[0].stream_receipt_id.is_empty());
+        assert!(!starts[1].stream_receipt_id.is_empty());
+        assert!(starts[2].stream_receipt_id.is_empty());
+        assert_eq!(starts[3].stream_receipt_id, starts[1].stream_receipt_id);
+    }
     service.allowed.store(true, Ordering::SeqCst);
 
     service

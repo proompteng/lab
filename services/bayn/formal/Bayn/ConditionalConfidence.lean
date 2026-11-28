@@ -1,7 +1,6 @@
 module
 public import Mathlib.Data.Nat.Log
 public import Mathlib.Data.Nat.Sqrt
-public import Bayn.Qualification
 
 @[expose] public section
 
