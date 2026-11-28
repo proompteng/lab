@@ -17,6 +17,11 @@
 {{- $_ := unset $controllersSharedEnvVars $reservedKey -}}
 {{- end }}
 {{- $envVars := merge $controllersSharedEnvVars (deepCopy $controllersEnvVars) -}}
+{{- $_ := set $envVars "AGENTS_PROMETHEUS_METRICS_ENABLED" (toString .Values.metrics.enabled) -}}
+{{- $_ := set $envVars "AGENTS_PROMETHEUS_METRICS_PATH" (.Values.metrics.path | default "/metrics") -}}
+{{- with .Values.telemetry.otlpEndpoint -}}
+{{- $_ := set $envVars "OTEL_EXPORTER_OTLP_ENDPOINT" . -}}
+{{- end -}}
 {{- if not (hasKey $envVars "AGENTS_MIGRATIONS") -}}
 {{- $_ := set $envVars "AGENTS_MIGRATIONS" "skip" -}}
 {{- end -}}

@@ -282,7 +282,7 @@ describe('Agents MCP handler', () => {
           arguments: {
             deliveryId: 'delivery-1',
             payload: {
-              agentRef: { name: 'codex-spark-agent' },
+              agentRef: { name: 'codex-agent' },
               runtime: { type: 'workflow' },
               goal: { objective: 'prove mcp AgentRun creation' },
             },
@@ -298,7 +298,7 @@ describe('Agents MCP handler', () => {
       {
         deliveryId: 'delivery-1',
         payload: {
-          agentRef: { name: 'codex-spark-agent' },
+          agentRef: { name: 'codex-agent' },
           runtime: { type: 'workflow' },
           goal: { objective: 'prove mcp AgentRun creation' },
         },

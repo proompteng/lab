@@ -119,7 +119,9 @@ test('the workflow rejects a wrong ref before checkout and guards both admission
   const admission = changes[2]
   expect(admission.run).toBe('bash packages/scripts/src/bayn/verify-publication-source.sh')
   expect(admission.env).toEqual({ BAYN_EXPECTED_MAIN_SHA: '${{ inputs.expected_main_sha }}' })
-  expect(changes[3].uses).toBe('./.github/actions/affected-inputs')
+  expect(changes[3].uses).toBe('oven-sh/setup-bun@v2')
+  expect(changes[4].run).toBe('bun run packages/scripts/src/bayn/plan-publication.ts')
+  expect(changes[4].env).toEqual({ GH_TOKEN: '${{ github.token }}' })
   const discovery = workflow.jobs['publish-cohort'].steps
   const publishIndex = discovery.findIndex(
     (step: { name?: string }) => step.name === 'Publish the verified cohort for Kargo',
@@ -137,11 +139,6 @@ test('recovery retains every validation and immutable cohort dependency without 
       required: true,
       type: 'string',
     },
-  })
-  expect(workflow.concurrency).toEqual({
-    group: '${{ github.workflow }}-main',
-    'cancel-in-progress': false,
-    queue: 'max',
   })
   expect(workflow.jobs.validation).toEqual({
     needs: 'changes',

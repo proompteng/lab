@@ -18,6 +18,23 @@ report command rejects them. Both artifacts publish as one commit- and run-bound
 workload credentials and network policies remain separate. Operator qualification commands need their existing
 explicit target configuration; the research service's scoped database identity is not a financial-report credential.
 
+## Daily shadow sleeves and scorecard
+
+`bayn-macro-daily-sleeves` runs weekdays at 20:20 New York time, after the SIP embargo. Its two containers each
+verify the account ID from their own paper Secret and run only in shadow, capped at $10,000 per sleeve. F4 keeps its
+full allocation because it does not share the intraday account. Only the plan hash, mode and hypothetical order count
+are logged. The private receipts volume retains the latest complete JSON per sleeve; each writer publishes its file
+atomically.
+
+`bayn-daily-scorecard` is scheduled for 20:35 New York time. It reads the current PAPER intraday audit from the
+TLS-verified PostgreSQL standby and the latest same-day shadow receipts from a read-only mount. Delayed or missing
+sleeve runs are reported as missing evidence, not filled in with stale receipts. This scorecard cannot qualify the
+shared-account strategy or submit orders. The CronJob is suspended until the approved SELECT-only audit identity is
+bound to `bayn-scorecard-db-ro` (keys `username`, `password`, and the verified intraday `account-id`); do not substitute the
+execution database credentials or broker Secret. Both jobs use the research image digest selected by the Bayn Kargo Stage.
+On promotion, Argo reconciles the receipts claim and network policies before the jobs. To stop either schedule,
+suspend that CronJob through GitOps; leave the claim in place so recovery does not discard the last receipts.
+
 ## Streaming broker delivery
 
 `bayn-broker-feed` runs Dorvud's `BrokerFeedMain` for the existing Bayn PAPER account. It verifies `/v2/account`

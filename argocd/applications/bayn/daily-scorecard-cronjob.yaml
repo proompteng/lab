@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bayn-daily-scorecard
+  namespace: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app.kubernetes.io/name: bayn-daily-scorecard
+    app.kubernetes.io/part-of: bayn
+spec:
+  timeZone: America/New_York
+  schedule: "35 20 * * 1-5"
+  concurrencyPolicy: Forbid
+  # Enable only after the approved SELECT-only audit login and account binding are provisioned.
+  suspend: true
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: bayn-daily-scorecard
+            app.kubernetes.io/part-of: bayn
+        spec:
+          serviceAccountName: bayn
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          restartPolicy: Never
+          nodeSelector:
+            network.proompteng.ai/100g: "true"
+          dnsConfig:
+            options:
+              - name: ndots
+                value: "1"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: scorecard
+              image: bayn-research
+              command: [node, dist/bayn-daily-scorecard.js]
+              args:
+                - --postgres
+                - --macro-core-dir
+                - /tmp/bayn-macro-sleeves/core
+                - --macro-canary-dir
+                - /tmp/bayn-macro-sleeves/canary
+                - --format
+                - json
+              env:
+                - name: BAYN_SCORECARD_POSTGRES_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-scorecard-db-ro
+                      key: username
+                - name: BAYN_SCORECARD_POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-scorecard-db-ro
+                      key: password
+                - name: BAYN_AUDIT_ACCOUNT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-scorecard-db-ro
+                      key: account-id
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 192Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              volumeMounts:
+                - name: postgres-ca
+                  mountPath: /var/run/secrets/bayn/postgres
+                  readOnly: true
+                - name: receipts
+                  mountPath: /tmp/bayn-macro-sleeves
+                  readOnly: true
+          volumes:
+            - name: postgres-ca
+              secret:
+                secretName: bayn-db-ca
+                defaultMode: 0444
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            - name: receipts
+              persistentVolumeClaim:
+                claimName: bayn-macro-daily-sleeves-receipts
+                readOnly: true

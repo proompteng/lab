@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto'
 
+import { quantityToScalar } from '@kubernetes/client-node/dist/util.js'
+
 import { asRecord, asString, readNested } from '../primitives'
 import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
+import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../../workspace-cache'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
@@ -142,6 +145,12 @@ const normalizeResourceQuantityMap = (value: unknown) => {
       })
       .filter((entry): entry is [string, string] => entry !== null),
   )
+}
+
+const memoryQuantityBytes = (quantity: string) => {
+  // The client only accepts integer magnitudes with a suffix (e.g. 1Gi, not 1.5Gi).
+  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-zA-Z]+)$/.exec(quantity)
+  return match ? Number(match[1]) * Number(quantityToScalar(`1${match[2]}`)) : Number(quantityToScalar(quantity))
 }
 
 const buildJobResources = (
@@ -770,6 +779,7 @@ export const submitJobRun = async (
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig, provider)
   const serviceAccountToken = resolveProviderServiceAccountToken(provider)
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
+  const usesStandardRunner = workloadImage === runnerDefaultsConfig.defaultRunnerImage
   const nodeSelector =
     asRecord(runtimeConfig.nodeSelector) ??
     runnerDefaultsConfig.nodeSelector ??
@@ -850,10 +860,41 @@ export const submitJobRun = async (
   )
   if (existingJobRef) return existingJobRef
 
+  const resources = buildJobResources(workload, provider, runtimeConfig)
+  const memoryLimit = resources.limits?.memory
+  const memoryLimitBytes = usesStandardRunner && memoryLimit ? memoryQuantityBytes(memoryLimit) : 0
+  const tmpfs = (sizeGiB: number) => ({
+    medium: 'Memory',
+    sizeLimit:
+      memoryLimit && memoryLimitBytes > 0 && memoryLimitBytes < sizeGiB * 1024 ** 3 ? memoryLimit : `${sizeGiB}Gi`,
+  })
+
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
   const configVolumeMounts = [] as Record<string, unknown>[]
   const volumes = [...volumeSpecs]
+
+  if (usesStandardRunner) {
+    const declaredMounts = [...volumeMounts, ...(vcsRuntime?.volumeMounts ?? [])]
+    for (const [suffix, mountPath, sizeGiB] of [
+      ['scratch-workspace', '/workspace', 16],
+      ['scratch-tmp', '/tmp', 6],
+      ['scratch-bun-cache', '/opt/bun/install/cache', 8],
+    ] as const) {
+      const name = makeName(runName, suffix)
+      if (
+        declaredMounts.some((mount) => {
+          const path = asString(mount.mountPath)?.replace(/\/+$/, '')
+          return path !== undefined && (path === mountPath || mountPath.startsWith(`${path}/`))
+        }) ||
+        volumes.some((volume) => volume.name === name)
+      ) {
+        continue
+      }
+      volumes.push({ name, spec: { emptyDir: tmpfs(sizeGiB) } })
+      volumeMounts.push({ name, mountPath })
+    }
+  }
 
   if (inputsConfig) {
     const volumeName = makeName(inputsConfig.name, 'vol')
@@ -922,7 +963,7 @@ export const submitJobRun = async (
     )
     volumes.push({
       name: codexHomeVolumeName,
-      spec: { emptyDir: {} },
+      spec: { emptyDir: usesStandardRunner ? tmpfs(1) : {} },
     })
     configVolumeMounts.push({
       name: codexHomeVolumeName,
@@ -997,6 +1038,26 @@ export const submitJobRun = async (
     })
   }
 
+  const sharedCacheHostPath = runnerDefaultsConfig.sharedCacheHostPath
+  if (
+    sharedCacheHostPath &&
+    usesStandardRunner &&
+    agentRunnerSpec?.adapter?.type === 'codex-app-server' &&
+    vcsContext?.repository === LAB_REPOSITORY &&
+    isGitHubCloneBaseUrl(asString(vcsContext.cloneBaseUrl))
+  ) {
+    const name = makeName(runName, 'shared-workspace-cache')
+    if (
+      !volumes.some((volume) => volume.name === name) &&
+      !hasVolumeMountAtPath(volumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH) &&
+      !hasVolumeMountAtPath(configVolumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH)
+    ) {
+      // On nodes without the refresher, kubelet can mount an empty cache instead of blocking the Job.
+      volumes.push({ name, spec: { hostPath: { path: sharedCacheHostPath, type: 'DirectoryOrCreate' } } })
+      volumeMounts.push({ name, mountPath: SHARED_WORKSPACE_CACHE_MOUNT_PATH, readOnly: true })
+    }
+  }
+
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount,
     ...(serviceAccountToken ? { automountServiceAccountToken: false } : {}),
@@ -1031,7 +1092,7 @@ export const submitJobRun = async (
             : []),
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
-        resources: buildJobResources(workload, provider, runtimeConfig),
+        resources,
         volumeMounts: [...volumeMounts, ...configVolumeMounts],
         terminationMessagePath: '/workspace/.agent/status.json',
         terminationMessagePolicy: 'File',
