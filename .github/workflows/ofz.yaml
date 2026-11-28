@@ -140,7 +140,6 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Cache Keycloak 26.8.2 fixture archive
-        if: steps.selection.outputs.run != 'false'
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ofz-keycloak/keycloak-26.8.2.tar.gz
