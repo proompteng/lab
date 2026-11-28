@@ -485,7 +485,7 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(env, 'AGENTS_ARTIFACTS_ENDPOINT')).toBe('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80')
   })
 
-  it('gives the headless Codex provider a 60-second bootstrap budget and no local MCP servers', () => {
+  it('gives the headless Codex provider a 60-second bootstrap budget and only the Auto Ontology MCP bridge', () => {
     const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
     const spec = objectAt(provider, 'spec')
     const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
@@ -494,9 +494,28 @@ describe('scheduled AgentRun templates', () => {
     const config = Bun.TOML.parse(String(objectAt(input, 'content')))
 
     expect(objectAt(codex, 'bootstrapTimeoutMs')).toBe(60_000)
-    expect(objectAt(objectAt(codex, 'threadConfig'), 'mcp_servers')).toEqual({})
+    expect(objectAt(objectAt(spec, 'workload'), 'serviceAccountName')).toBe('codex-auto-ontology-runner')
+    expect(objectAt(objectAt(codex, 'threadConfig'), 'mcp_servers')).toEqual({
+      auto_ontology: {
+        command: '/usr/local/bin/auto-ontology-mcp-bridge',
+        required: false,
+        startup_timeout_sec: 15,
+        tool_timeout_sec: 100,
+        env_vars: ['AGENTS_MCP_IDENTITY_TOKEN_PATH'],
+        env: {
+          AUTO_ONTOLOGY_MCP_GATEWAY_URL: 'http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp',
+        },
+      },
+    })
     expect(objectAt(config, 'mcp_servers')).toEqual({})
     expect(objectAt(objectAt(config, 'features'), 'multi_agent')).toBeUndefined()
+
+    const orchestrations = readYamlObjects('argocd/applications/agents/codex-orchestrations.yaml')
+    for (const orchestration of orchestrations) {
+      const steps = objectAt(orchestration, 'spec').steps as unknown[]
+      const runtime = JSON.parse(String(objectAt(objectAt(steps[0], 'with'), 'runtime')))
+      expect(runtime.config.serviceAccountName).toBe('codex-auto-ontology-runner')
+    }
   })
 
   it('ends the default Codex worker task at a locally validated, ready-to-review PR', () => {

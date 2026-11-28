@@ -48,6 +48,7 @@ resources:
   - ingressroute-agents-api.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
+  - auto-ontology-mcp-token-sealedsecret.yaml
   - auto-ontology-networkpolicy.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
