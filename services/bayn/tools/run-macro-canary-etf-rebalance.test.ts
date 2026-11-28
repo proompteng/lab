@@ -71,6 +71,7 @@ const receiptIdentity = Schema.Struct({
 
 type MockOptions = {
   regime?: Regime
+  scopedAccountId?: string
   prior?: number
   clockTimestamp?: string
   now?: string
@@ -246,8 +247,13 @@ const mock = (options: MockOptions = {}) => {
     TestClock.layer(),
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
-        BAYN_ALPACA_KEY_ID: testKey,
-        BAYN_ALPACA_SECRET_KEY: testSecret,
+        ...(options.scopedAccountId === undefined
+          ? { BAYN_ALPACA_KEY_ID: testKey, BAYN_ALPACA_SECRET_KEY: testSecret }
+          : {
+              BAYN_MACRO_CANARY_ALPACA_ACCOUNT_ID: options.scopedAccountId,
+              BAYN_MACRO_CANARY_ALPACA_KEY_ID: testKey,
+              BAYN_MACRO_CANARY_ALPACA_SECRET_KEY: testSecret,
+            }),
         ...(options.origin === undefined ? {} : { BAYN_ALPACA_BASE_URL: options.origin }),
       }),
     ),
@@ -319,6 +325,22 @@ const independentCanonical = (value: unknown): string => {
     .join(',')}}`
 }
 const sha256 = (value: unknown) => createHash('sha256').update(independentCanonical(value)).digest('hex')
+
+test('uses canary-scoped credentials only for the verified shadow account', () =>
+  fixture(async (dir) => {
+    const broker = mock({ scopedAccountId: accountId })
+    const receipt = verify(await broker.run(join(dir, 'isolated.json'), ['--mode', 'shadow']))
+    expect(receipt.mode).toBe(Mode.Shadow)
+    expect(receipt.reconciliation.account.id).toBe(accountId)
+    expect(broker.posts).toEqual([])
+
+    const mismatch = mock({ scopedAccountId: otherId })
+    rejected(await mismatch.run(join(dir, 'mismatch.json')), 'Paper account ID does not match the expected account')
+    expect(mismatch.calls.at(-1)?.url.pathname).toBe('/v2/account')
+    expect(mismatch.calls.every(({ method }) => method === 'GET')).toBe(true)
+    rejected(await broker.run(join(dir, 'submit.json'), paper), 'isolated credentials can only run in shadow mode')
+    expect(await readdir(dir)).toEqual(['isolated.json'])
+  }))
 
 test('defaults to shadow and rejects ambiguous or unsafe options', () => {
   expect(parseOptions(['--output', 'r.json'])).toEqual(

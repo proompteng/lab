@@ -55,6 +55,24 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
+  it.each(['scripts/agents/validate-agents.sh', 'scripts/download_crd_schema.py'])(
+    'runs chart and CRD checks without Kind for verifier-only changes to %s',
+    (path) => {
+      expect(classifyAgentsImageMode([path])).toMatchObject({
+        tier: 'static',
+        runUnit: false,
+        runStatic: true,
+        runIntegration: false,
+        imageTargets: [],
+      })
+      expect(classifyAgentsImageMode([path, 'scripts/agents/values-ci.yaml'])).toMatchObject({
+        tier: 'published-smoke',
+        runStatic: true,
+        runIntegration: true,
+      })
+    },
+  )
+
   it('builds only the runner image for runner implementation changes', () => {
     const result = classifyAgentsImageMode(['services/agents/scripts/codex/agent-runner.ts'])
 

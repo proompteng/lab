@@ -85,8 +85,11 @@ Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
 Bayn also publishes images only from `main`. Its PRs retain source builds, type checks, PostgreSQL, archive, ledger,
-replay and production metadata validation. Python checks run for GEPA inputs; ordinary service test edits skip
-the independent proof pipeline unless they change its PostgreSQL conformance cases. Replay image and execution
+replay and production metadata validation. Standalone deployment manifests, Bayn validation scripts, and service
+documentation that is linted run the PR contract checks without starting runtime suites. Manifests read by runtime
+tests, such as `postgres-monitoring.yaml` and the ClickHouse schema, still select runtime validation. Python checks
+run for GEPA inputs; ordinary service test edits skip the independent proof pipeline unless they change its
+PostgreSQL conformance cases. Merge groups and release callers still validate every suite. Replay image and execution
 acceptance share one hosted job and Nix environment, including dependency source boundary checks.
 The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
@@ -97,9 +100,12 @@ GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
 
-Agents' existing Kind smoke job forces a rebuild of its shared dependency closure only when its Nix dependency
-inputs, installed workspace manifests or the installed Effect patch change. Ordinary runtime edits reuse the cache;
-test-only edits retain the unit tier. All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
+Agents CI runs the selected unit, chart/CRD, and Kind jobs in parallel once planning succeeds. Changes limited to the
+chart/CRD verifier or schema extractor need only the chart/CRD job; changes to charts and Kind inputs still run smoke.
+The central gate still requires the called workflow to pass, and merge groups select all suites. Kind forces a rebuild
+of its shared dependency closure only when its Nix dependency inputs, installed workspace manifests or the installed
+Effect patch change. Ordinary runtime edits reuse the cache; test-only edits retain the unit tier.
+All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
 semaphore used by Bayn; Agents' publication and Kargo discovery include that installed dependency input.
 A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.
 The shared verifier's own changes use its behavioral regressions and App's existing two native checks. Other services

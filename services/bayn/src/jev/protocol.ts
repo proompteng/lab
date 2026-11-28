@@ -472,11 +472,6 @@ export const usesJevOnlyInference = (protocol: Pick<JevProtocolMaterial, 'schema
   protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v37'
 
-export const usesBoxChartInference = (protocol: { readonly schemaVersion: string }): boolean =>
-  protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
-  protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
-  hasRiskSymmetryProtocol(protocol)
-
 export const retainedJevProtocolV40Document = Object.freeze({
   schemaVersion: 'bayn.jev.protocol.v40',
   entrySizingPolicy: 'capital-weighted-session-limit',

@@ -16,7 +16,9 @@ import { Mode, TimeInForce } from './macro-canary-runner/contract'
 import { coexistenceWeights } from './macro-etf-core-runner/allocation'
 import { parseOptions, RunnerProfile } from './macro-etf-core-runner/contract'
 import { buildScorecard } from './multi-horizon-scorecard-core'
+import { SleeveMode, Strategy } from './multi-account-daily-sleeves/contract'
 import { runRebalance } from './run-macro-etf-core-rebalance'
+import { runDailySleeves } from './run-multi-account-daily-sleeves'
 
 const accountId = '11111111-1234-4234-8123-000000000001'
 const orderId = '11111111-1234-4234-8123-000000000002'
@@ -47,7 +49,11 @@ const bookPosition = (symbol: string, qty: number, price = rawPrice): Position =
 })
 
 type Mock = {
+  accountId?: string
+  key?: string
+  secret?: string
   count?: number
+  scopedAccountId?: string
   time?: string
   clockTimestamp?: string
   differentNextOpen?: boolean
@@ -168,8 +174,8 @@ const mock = (options: Mock = {}) => {
       const method = init?.method ?? 'GET'
       calls.push({ url, method })
       const headers = new Headers(init?.headers)
-      expect(headers.get('apca-api-key-id')).toBe(testKey)
-      expect(headers.get('apca-api-secret-key')).toBe(testSecret)
+      expect(headers.get('apca-api-key-id')).toBe(options.key ?? testKey)
+      expect(headers.get('apca-api-secret-key')).toBe(options.secret ?? testSecret)
       expect(init?.redirect).toBe('error')
       if (url.pathname === '/v2/stocks/bars') {
         expect(url.origin).toBe('https://data.alpaca.markets')
@@ -237,7 +243,7 @@ const mock = (options: Mock = {}) => {
           })
         case '/v2/account':
           return Response.json({
-            id: accountId,
+            id: options.accountId ?? accountId,
             status: 'ACTIVE',
             currency: 'USD',
             equity: '200000',
@@ -287,8 +293,13 @@ const mock = (options: Mock = {}) => {
     TestClock.layer(),
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
-        BAYN_ALPACA_KEY_ID: testKey,
-        BAYN_ALPACA_SECRET_KEY: testSecret,
+        ...(options.scopedAccountId === undefined
+          ? { BAYN_ALPACA_KEY_ID: testKey, BAYN_ALPACA_SECRET_KEY: testSecret }
+          : {
+              BAYN_MACRO_CORE_ALPACA_ACCOUNT_ID: options.scopedAccountId,
+              BAYN_MACRO_CORE_ALPACA_KEY_ID: testKey,
+              BAYN_MACRO_CORE_ALPACA_SECRET_KEY: testSecret,
+            }),
         ...(options.origin === undefined ? {} : { BAYN_ALPACA_BASE_URL: options.origin }),
       }),
     ),
@@ -313,7 +324,7 @@ const mock = (options: Mock = {}) => {
       Effect.provide(layer),
       Effect.runPromiseExit,
     )
-  return { run, posts, calls, abortCount: () => aborts, signalDate, executionDate }
+  return { run, posts, calls, abortCount: () => aborts, signalDate, executionDate, fetchMock, now }
 }
 
 const inDirectory = async (f: (directory: string) => Promise<void>) => {
@@ -351,7 +362,7 @@ const targets = (receipt: Effect.Success<ReturnType<typeof runRebalance>>) => {
   return receipt.allocation.targets
 }
 
-test('closed CLI inputs, safe defaults and permanent QQQ/SMH coexistence', () => {
+test('closed CLI inputs and default QQQ/SMH coexistence', () => {
   expect(Result.getOrThrow(parseOptions(['--output', 'new.json']))).toMatchObject({
     mode: Mode.Shadow,
     tif: TimeInForce.Open,
@@ -365,8 +376,8 @@ test('closed CLI inputs, safe defaults and permanent QQQ/SMH coexistence', () =>
   const rejected = [
     ['--profile', 'f4'],
     ['--profile', 'O1'],
-    ['--exclude-symbols', ''],
     ['--exclude-symbols', 'QQQ,'],
+    ['--mode', 'paper-submit', '--confirm-paper-account', accountId, '--exclude-symbols', ''],
     ['--mode', 'live'],
     ['--mode', 'paper-submit'],
     ['--confirm-paper-account', accountId],
@@ -380,6 +391,32 @@ test('closed CLI inputs, safe defaults and permanent QQQ/SMH coexistence', () =>
   for (const flags of rejected) expect(Result.isFailure(parseOptions(['--output', 'r.json', ...flags]))).toBe(true)
   expect(Result.isFailure(parseOptions([]))).toBe(true)
 })
+
+test('allows the full F4 allocation only on a verified isolated shadow account', () =>
+  inDirectory(async (dir) => {
+    const flags = ['--mode', 'shadow', '--exclude-symbols', '', '--capital-budget-usd', '10000']
+    const broker = mock({ scopedAccountId: accountId })
+    const receipt = success(await broker.run(join(dir, 'isolated.json'), flags))
+    expect(receipt.configuredExclusions).toEqual([])
+    const signal = receipt.allocation.components[0]?.signal
+    if (signal == null) throw new Error('Expected an F4 review signal')
+    const qqq = targets(receipt).find(({ symbol }) => symbol === 'QQQ')?.weight
+    expect(qqq).toBeGreaterThan(0)
+    expect(qqq).toBe(signal.weights[universe.indexOf('QQQ')])
+    expect(broker.posts).toEqual([])
+
+    const unscoped = mock()
+    failure(await unscoped.run(join(dir, 'unscoped.json'), flags), 'require a verified isolated shadow account')
+    expect(unscoped.calls).toEqual([])
+
+    const mismatched = mock({ scopedAccountId: 'ffffffff-ffff-ffff-ffff-ffffffffffff' })
+    failure(
+      await mismatched.run(join(dir, 'mismatch.json'), flags),
+      'Paper account ID does not match the expected account',
+    )
+    expect(mismatched.calls.map(({ url, method }) => [url.pathname, method])).toEqual([['/v2/account', 'GET']])
+    expect(await readdir(dir)).toEqual(['isolated.json'])
+  }))
 
 // Frozen unmodified Wave 5C signalModel digests also used by Wave 8A's golden-replay test.
 // Exercise the actual SIP-to-evidence adapter and a 50/50 blend over the same five review closes.
@@ -753,3 +790,164 @@ test('cutoff during a batch records the in-flight acknowledgement but never send
     expect(entries[0]).toMatchObject({ outcome: 'dispatching', request: broker.posts[0] })
     expect(entries[1]).toMatchObject({ outcome: 'acknowledged', ack: broker.posts[0] })
   }))
+
+const otherAccountId = '22222222-1234-4234-8123-000000000003'
+const otherKey = 'other-paper-key-do-not-echo'
+const otherSecret = 'other-paper-secret-do-not-echo'
+const portfolioSleeves = [
+  {
+    sleeveId: 'core-a',
+    strategy: Strategy.MacroEtfCore,
+    profile: RunnerProfile.F4,
+    accountId,
+    credentialsEnvPrefix: 'CORE_A',
+    capitalBudgetUsd: 50_000,
+  },
+  {
+    sleeveId: 'core-b',
+    strategy: Strategy.MacroEtfCore,
+    profile: RunnerProfile.Equal,
+    accountId: otherAccountId,
+    credentialsEnvPrefix: 'CORE_B',
+    capitalBudgetUsd: 60_000,
+  },
+]
+
+const portfolio = async (
+  dir: string,
+  primary: ReturnType<typeof mock>,
+  other: ReturnType<typeof mock>,
+  mode: SleeveMode,
+  flags: readonly string[] = [],
+  outputName = 'portfolio.json',
+) => {
+  const manifest = join(dir, 'manifest.json')
+  const output = join(dir, outputName)
+  await writeFile(
+    manifest,
+    JSON.stringify({
+      schemaVersion: 'bayn.multi-account-daily-sleeves-config.v1',
+      intradayAccountId: '33333333-1234-4234-8123-000000000004',
+      sleeves: portfolioSleeves.map((sleeve) => ({ ...sleeve, mode })),
+    }),
+  )
+  const transport: typeof fetch = Object.assign(
+    (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+      (new Headers(init?.headers).get('apca-api-key-id') === testKey ? primary.fetchMock : other.fetchMock)(
+        input,
+        init,
+      ),
+    { preconnect: fetch.preconnect },
+  )
+  const exit = await Effect.runPromiseExit(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(primary.now))
+      return yield* runDailySleeves(['--manifest', manifest, '--output', output, ...flags])
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(FetchHttpClient.Fetch, transport),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- test composition root
+      Effect.provide(
+        Layer.mergeAll(
+          NodeFileSystem.layer,
+          FetchHttpClient.layer,
+          TestClock.layer(),
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              CORE_A_ALPACA_KEY_ID: testKey,
+              CORE_A_ALPACA_SECRET_KEY: testSecret,
+              CORE_B_ALPACA_KEY_ID: otherKey,
+              CORE_B_ALPACA_SECRET_KEY: otherSecret,
+            }),
+          ),
+        ),
+      ),
+    ),
+  )
+  return { exit, output }
+}
+
+test('portfolio uses distinct credentials and real Wave 9C planning with full QQQ, without POSTing in Shadow', async () => {
+  await inDirectory(async (dir) => {
+    const primary = mock()
+    const other = mock({ accountId: otherAccountId, key: otherKey, secret: otherSecret })
+    const { exit, output } = await portfolio(dir, primary, other, SleeveMode.Shadow, ['--confirm-paper-submit'])
+    const receipt = success(exit)
+    expect(receipt.isolation.allBrokerAccountsVerified).toBe(true)
+    for (const sleeve of receipt.sleeves) {
+      expect(sleeve.disposition).toBe('shadow')
+      expect(sleeve.plan?.targetExposure?.find(({ symbol }) => symbol === 'QQQ')?.targetCents).toBeGreaterThan(0)
+    }
+    expect(receipt.aggregateTargetExposure.targetCentsBySymbol['QQQ']).toBe(
+      receipt.sleeves.reduce(
+        (total, { plan }) => total + (plan?.targetExposure?.find(({ symbol }) => symbol === 'QQQ')?.targetCents ?? 0),
+        0,
+      ),
+    )
+    expect(primary.posts).toEqual([])
+    expect(other.posts).toEqual([])
+    expect((await readdir(dir)).sort()).toEqual(['manifest.json', 'portfolio.json'])
+    const stored = await readFile(output, 'utf8')
+    for (const value of [testKey, testSecret, otherKey, otherSecret]) expect(stored).not.toContain(value)
+    expect(JSON.parse(stored)).toEqual(receipt)
+  })
+})
+
+test('portfolio checks confirmation before broker I/O and a swapped credential withholds other paper sleeves', async () => {
+  await inDirectory(async (dir) => {
+    const primary = mock()
+    const swapped = mock({ key: otherKey, secret: otherSecret })
+    const unconfirmed = await portfolio(dir, primary, swapped, SleeveMode.PaperSubmit)
+    failure(unconfirmed.exit, 'PaperSubmitNotConfirmed')
+    expect(primary.calls).toHaveLength(0)
+    expect(swapped.calls).toHaveLength(0)
+
+    const { exit, output } = await portfolio(dir, primary, swapped, SleeveMode.PaperSubmit, ['--confirm-paper-submit'])
+    failure(exit, 'AccountMismatch')
+    expect(primary.posts).toEqual([])
+    expect(swapped.calls.map(({ url }) => url.pathname)).toEqual(['/v2/account'])
+    const body = await readFile(output, 'utf8')
+    expect(JSON.parse(body)).toMatchObject({
+      isolation: { allBrokerAccountsVerified: false },
+      sleeves: [
+        { disposition: 'withheld', verifiedAccountId: accountId, error: null },
+        { disposition: 'failed', verifiedAccountId: null, error: { stage: 'reconcile' } },
+      ],
+    })
+    for (const value of [testKey, testSecret, otherKey, otherSecret]) expect(body).not.toContain(value)
+  })
+})
+
+test('paper portfolio keeps completed sleeves, journals an uncertain write, and never retries it', async () => {
+  await inDirectory(async (dir) => {
+    const primary = mock()
+    const other = mock({ accountId: otherAccountId, key: otherKey, secret: otherSecret, postFault: 'transport' })
+    const { exit, output } = await portfolio(dir, primary, other, SleeveMode.PaperSubmit, ['--confirm-paper-submit'])
+    failure(exit, 'TransportError')
+    expect(primary.posts.length).toBeGreaterThan(0)
+    expect(other.posts).toHaveLength(1)
+    const journals = (await readdir(dir)).filter((name) => name.endsWith('submissions.jsonl'))
+    expect(journals).toHaveLength(2)
+    const body = await readFile(output, 'utf8')
+    expect(JSON.parse(body)).toMatchObject({
+      sleeves: [{ disposition: 'submitted' }, { disposition: 'failed', error: { stage: 'paper-submit' } }],
+    })
+    const secondJournal = journals.find((name) => name.includes(sha256(otherAccountId).slice(0, 12)))
+    if (secondJournal === undefined) throw new Error('No durable account fence')
+    const entries = (await readFile(join(dir, secondJournal), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as unknown)
+    expect(entries).toMatchObject([{ outcome: 'prepared' }, { outcome: 'dispatching' }])
+    const duplicate = await portfolio(
+      dir,
+      primary,
+      other,
+      SleeveMode.PaperSubmit,
+      ['--confirm-paper-submit'],
+      'retry.json',
+    )
+    failure(duplicate.exit, 'FileOperationFailed')
+    expect(other.posts).toHaveLength(1)
+  })
+})

@@ -33,10 +33,16 @@ resources:
 - networkpolicy.yaml
 - jev-sealedsecret.yaml
 - bayn-research-db-sealedsecret.yaml
+- bayn-audit-ro-db-sealedsecret.yaml
 - bayn-research-authority-sealedsecret.yaml
 - research-worker.yaml
+- macro-daily-sleeves-receipts.yaml
+- macro-daily-sleeves-cronjob.yaml
+- daily-scorecard-cronjob.yaml
+- daily-jobs-networkpolicy.yaml
 - opencode-retained-state.yaml
 - research-networkpolicy.yaml
+- auto-ontology-networkpolicy.yaml
 configMapGenerator:
 - name: bayn-telemetry
   files:
@@ -50,10 +56,10 @@ configMapGenerator:
 images:
 - name: bayn-broker-feed
   newName: registry.ide-newton.ts.net/lab/bayn-broker-feed
-  digest: sha256:d3fae28244ab247518621ab4416c21063fbbd66df9a16673447be74a140e5d76
+  digest: sha256:6076de94cf4ca0191019bd2e04cc6c08d79fb90a881181bcd92d7b12a80758fa
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:cefeb13f8a5df15a913cdbbfe81ce9c2566bd1014a3430687a7fc3d5c4ad013e
+  digest: sha256:e9ab172309175d4d8e0eccde66f420e326a73c174ef5e69319df5a6a5c003431
 - name: bayn-research
   newName: registry.ide-newton.ts.net/lab/bayn-research
-  digest: sha256:a443bb8c955cdaf111f2dc28cab19f43915154c1254b70d6fff3bda3dddd89c8
+  digest: sha256:1ac9bb0db39cab38840e6d2ccefb0b3a69b938b52fdaf696fb98ead8a18d450f

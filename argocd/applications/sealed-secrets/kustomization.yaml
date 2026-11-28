@@ -13,6 +13,14 @@ helmCharts:
     releaseName: sealed-secrets
     namespace: sealed-secrets
     includeCRDs: true
+    valuesInline:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: "1"
+          memory: 256Mi
   - name: sealed-secrets-web
     repo: https://charts.bakito.net
     version: 3.3.2

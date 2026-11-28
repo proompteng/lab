@@ -121,8 +121,10 @@ dashboardsConfigMaps:
   ci-build-performance-dashboard: ci-build-performance-dashboard
   graf-bumba-dashboard: graf-bumba-dashboard
   arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
+  agents-fleet-operations-dashboard: agents-fleet-operations-dashboard
   bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
   bayn-cache-performance-dashboard: bayn-cache-performance-dashboard
+  bayn-multi-sleeve-operations-dashboard: bayn-multi-sleeve-operations-dashboard
 
 dashboardProviders:
   dashboardproviders.yaml:
@@ -161,6 +163,15 @@ dashboardProviders:
         updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/bayn-cycle-operations-dashboard
+      - name: agents-fleet-operations-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/agents-fleet-operations-dashboard
       - name: bayn-cache-performance-dashboard
         orgId: 1
         folder: Trading
@@ -170,3 +181,12 @@ dashboardProviders:
         updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/bayn-cache-performance-dashboard
+      - name: bayn-multi-sleeve-operations-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/bayn-multi-sleeve-operations-dashboard

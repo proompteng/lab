@@ -77,7 +77,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          # PRs get the changed files from the central router; only a push diffs local history.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -223,6 +224,7 @@ jobs:
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
             packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
+            packages/scripts/src/agents/__tests__/workspace-cache.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
       - name: Run Agents service typecheck and unit tests
@@ -300,18 +302,9 @@ jobs:
 
   integration:
     name: Agents Kind smoke (${{ needs.plan.outputs.tier }})
-    needs:
-      - plan
-      - unit
-      - static
-    if: >-
-      ${{
-        always() &&
-        needs.plan.result == 'success' &&
-        needs.plan.outputs.run_integration == 'true' &&
-        (needs.unit.result == 'success' || needs.unit.result == 'skipped') &&
-        (needs.static.result == 'success' || needs.static.result == 'skipped')
-      }}
+    # The smoke job owns its fixtures. ci-pr still requires the entire called workflow to pass.
+    needs: plan
+    if: ${{ needs.plan.outputs.run_integration == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -453,14 +446,16 @@ jobs:
         run: scripts/agents/ensure-kind-network.sh
 
       - name: Install pinned Kind binary
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           kind_bin="${RUNNER_TOOL_CACHE}/kind/v0.31.0/amd64/kind/bin"
           mkdir -p "${kind_bin}"
-          curl --fail --location --retry 3 \
-            --output "${RUNNER_TEMP}/kind-linux-amd64" \
-            https://github.com/kubernetes-sigs/kind/releases/download/v0.31.0/kind-linux-amd64
-          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum --check
+          # The anonymous release URL can return 403 on hosted runners.
+          gh release download v0.31.0 --repo kubernetes-sigs/kind \
+            --pattern kind-linux-amd64 --output "${RUNNER_TEMP}/kind-linux-amd64"
+          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum -c
           # kind-action reuses this checksum-verified executable.
           install -m 755 "${RUNNER_TEMP}/kind-linux-amd64" "${kind_bin}/kind"
 
