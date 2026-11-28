@@ -43,7 +43,7 @@ kind: NetworkPolicy
 metadata:
   name: agents-auto-ontology-codex-egress
 spec:
-  # The Agents namespace's existing traffic-neutral policy preserves other runner egress.
+  # This gateway policy is additive to the AgentRun triage egress policy.
   podSelector:
     matchLabels:
       agents.proompteng.ai/provider: codex

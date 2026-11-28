@@ -79,7 +79,12 @@ describe('agents controller job-runtime module', () => {
     expect(resolveRunnerServiceAccount({})).toBe('runner-default')
   })
 
-  it('mounts a rotating provider identity token without the default Kubernetes token', async () => {
+  it.each([
+    { projected: true, optIn: undefined, override: undefined, automount: false },
+    { projected: true, optIn: true, override: undefined, automount: true },
+    { projected: true, optIn: true, override: 'other-runner', automount: false },
+    { projected: false, optIn: true, override: undefined, automount: true },
+  ])('renders the API token mount policy: %j', async ({ projected, optIn, override, automount }) => {
     const applied: Record<string, unknown>[] = []
     const kube = {
       get: vi.fn(async () => null),
@@ -93,7 +98,7 @@ describe('agents controller job-runtime module', () => {
       kube as never,
       {
         metadata: { name: 'linear-run', uid: 'run-uid-1', namespace: 'agents' },
-        spec: { runtime: { config: { activeDeadlineSeconds: 7200 } } },
+        spec: { runtime: { config: { activeDeadlineSeconds: 7200, serviceAccountName: override } } },
       },
       { metadata: { name: 'codex-linear-agent' }, spec: {} },
       {
@@ -102,11 +107,16 @@ describe('agents controller job-runtime module', () => {
           adapter: { type: 'codex-app-server', codex: { prompt: 'demo prompt' } },
           workload: {
             serviceAccountName: 'codex-linear-runner',
-            serviceAccountToken: {
-              audience: 'agents.proompteng.ai/linear-mcp',
-              expirationSeconds: 600,
-              mountPath: '/var/run/secrets/agents-linear-mcp',
-            },
+            automountServiceAccountToken: optIn,
+            ...(projected
+              ? {
+                  serviceAccountToken: {
+                    audience: 'agents.proompteng.ai/linear-mcp',
+                    expirationSeconds: 600,
+                    mountPath: '/var/run/secrets/agents-linear-mcp',
+                  },
+                }
+              : {}),
           },
         },
       },
@@ -130,16 +140,22 @@ describe('agents controller job-runtime module', () => {
     const volumes = (podSpec.volumes as Record<string, unknown>[]) ?? []
     const mounts = (container.volumeMounts as Record<string, unknown>[]) ?? []
 
-    expect(podSpec.serviceAccountName).toBe('codex-linear-runner')
-    expect(podSpec.automountServiceAccountToken).toBe(false)
+    expect(podSpec.serviceAccountName).toBe(override ?? 'codex-linear-runner')
+    expect(podSpec.automountServiceAccountToken).toBe(automount)
     expect(env).toContainEqual({ name: 'AGENT_RUN_UID', value: 'run-uid-1' })
     expect(
       applied.some((item) => (item.metadata as Record<string, unknown>)?.name === 'linear-run-job-telemetry'),
     ).toBe(false)
-    expect(env).toContainEqual({
+    const mcpEnv = {
       name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH',
       value: '/var/run/secrets/agents-linear-mcp/token',
-    })
+    }
+    if (!projected) {
+      expect(env).not.toContainEqual(mcpEnv)
+      expect(volumes.some((volume) => volume.projected)).toBe(false)
+      return
+    }
+    expect(env).toContainEqual(mcpEnv)
     expect(volumes).toContainEqual(
       expect.objectContaining({
         projected: {

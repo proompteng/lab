@@ -13,7 +13,8 @@ The image is pinned to the multi-architecture index
 ## Activation safety
 
 The application is manual. Sync wave `-3` retains rollout allow-all policies in agents, argocd, bilig, kafka, media,
-pgadmin, synthesis and torghut. The Agents policy excludes the catalog sync pod so its own allowlist takes effect.
+pgadmin, synthesis and torghut. The Agents policy excludes the catalog sync pod, standard Codex and Google runners,
+and their observability query proxy so their own allowlists take effect.
 Bayn retains an inert policy whose selector must match no Pods.
 Hermes and the reviewed policy sets listed in the rollout runbook keep their restrictive policies enforced.
 Tengri, Relay, GlitchTip, and Jangar are checked only when they contain live NetworkPolicies.
