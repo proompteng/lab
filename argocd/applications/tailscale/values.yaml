@@ -3,3 +3,6 @@ installCRDs: true
 oauthSecretVolume:
   secret:
     secretName: operator-oauth-token
+
+proxyConfig:
+  defaultProxyClass: default

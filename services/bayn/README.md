@@ -29,6 +29,7 @@ See the [Bayn documentation index](../../docs/bayn/README.md) for production run
 | Evaluate economics or a proposed strategy     | [Profitability goal](#profitability-goal), [replay and backtesting](#replay-and-backtesting), [research](#independent-jev-instruction-research) |
 | Configure independent Alpaca Paper sleeves    | [Multi-account sleeve runbook](../../docs/bayn/multi-account-sleeve-architecture.md)                                                            |
 | Qualify daily multi-horizon PAPER evidence    | [Profitability master playbook](../../docs/bayn/profitability-master-playbook.md)                                                               |
+| Review readiness for live capital             | [Paper-to-live graduation gate](../../docs/bayn/paper-to-live-graduation-gate.md)                                                               |
 | Attribute weekly three-account PAPER results  | [Weekly attribution](#weekly-attribution)                                                                                                       |
 | Maintain the research knowledge catalog       | [Auto Ontology seed and standby onboarding](../../docs/bayn/ontology/README.md)                                                                 |
 | Build and validate a change                   | [Package scripts](package.json), [validation](#validation), [service guide](AGENTS.md)                                                          |

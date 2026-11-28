@@ -75,7 +75,8 @@ next full Application sync. If startup exceeds the five-minute Job deadline,
 let the operator recover, then run a full reviewed sync of `bayn-valkey` to
 rerun acceptance. Do not use a `--resource` selective sync for this check:
 [Argo hooks do not run during selective sync](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/#hook-lifecycle-and-cleanup).
-Successful Job history stays available until the next attempt.
+Finished Jobs are eligible for cleanup after one hour, or are replaced when the
+next attempt starts. Capture the Job logs before either happens.
 
 After Bayn's image rollout, run its installed `valkey-command.js --broker` from
 both API and execution replicas. The transport check writes and reads a 1 MiB

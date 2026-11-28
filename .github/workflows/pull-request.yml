@@ -416,6 +416,9 @@ jobs:
               else
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
               fi
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/auto-ontology/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bun test argocd/applications/auto-ontology/oauth-discovery.test.ts
+              fi
               if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
                 nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/temporal-render.yaml" |

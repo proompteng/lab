@@ -50,7 +50,8 @@ timestamps, token totals cover only observed telemetry, and billed USD is unknow
    reads of `public.memory_resources`, `public.agent_runs`, and `agents_control_plane.resources_current` are denied,
    the audit views have no write or grant privileges, and database `CREATE`/`TEMPORARY` and schema `CREATE` are denied.
    Check only the seven audit views were catalogued before running apply. In **Settings → Tags**, create
-   `agents-db-next canonical rule` if absent.
+   `agents canonical rule` (matching `ruleTag` in [agents-knowledge.json](agents-knowledge.json); Auto Ontology 1.3.0
+   enforces a 25-character maximum on tag names) if absent.
 
 ## Preview and publish
 
@@ -92,6 +93,8 @@ Pass any reviewed version 1 JSON bundle with `dataSource`, `acronyms`, `rules`, 
 database name, set `database`, as in the Agents bundle. Optional `provenance` stays in Git. Acronyms and analysis
 names are global identities: use distinct names for distinct meanings and keep shared acronyms consistent across
 bundles. A rule is a database-scoped saved search/tag, not an enforcement policy. Its optional `searchTerm`
-defaults to its name; its description is shown in the rule display name. Precreate `<dataSource> canonical rule`
-when there are rules. The API can rename these rules but cannot retarget their search or tags. Reconcile such drift
-as a catalog operator rather than deleting and recreating rules from the sync.
+defaults to its name; its description is shown in the rule display name. Precreate the canonical rule tag (`ruleTag`,
+or `<dataSource> canonical rule` when `ruleTag` is omitted) when there are rules; Auto Ontology 1.3.0 caps tag names at
+25 characters, so set `ruleTag` whenever `<dataSource> canonical rule` would exceed that limit. The API can rename these
+rules but cannot retarget their search or tags. Reconcile such drift as a catalog operator rather than deleting and
+recreating rules from the sync.
