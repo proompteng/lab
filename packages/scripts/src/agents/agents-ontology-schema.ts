@@ -13,9 +13,8 @@ import {
 } from 'kysely'
 
 import type { AgentsDatabase } from '../../../../services/agents/src/server/db'
-import { ensureMigrations, getRegisteredMigrationNames } from '../../../../services/agents/src/server/kysely-migrations'
 import type { KnowledgeBundle } from './ontology-deltas'
-import { validateOntologyAnalyses } from './ontology-sql'
+import { type OntologySqlSchema, validateOntologyAnalyses } from './ontology-sql'
 
 const migrationDirectory = new URL('../../../../services/agents/src/server/migrations/', import.meta.url)
 
@@ -49,7 +48,9 @@ class MemoryPostgresDriver extends DummyDriver {
   }
 }
 
-export const withAgentsOntologySchema = async <T>(use: (postgres: PGlite) => Promise<T>): Promise<T> => {
+export const createAgentsOntologySchema = async (): Promise<PGlite> => {
+  const { ensureMigrations, getRegisteredMigrationNames } =
+    await import('../../../../services/agents/src/server/kysely-migrations')
   const files = (await readdir(migrationDirectory)).filter((name) => name.endsWith('.ts')).sort()
   const registered = getRegisteredMigrationNames()
   if (!files.length || files.join('\n') !== registered.map((name) => `${name}.ts`).join('\n')) {
@@ -57,16 +58,16 @@ export const withAgentsOntologySchema = async <T>(use: (postgres: PGlite) => Pro
   }
 
   // This database has no production connection or data. Only checked-in migrations are executed here.
-  await using postgres = await PGlite.create({ extensions: { pgcrypto, vector } })
-  const database = new Kysely<AgentsDatabase>({
-    dialect: {
-      createAdapter: () => new PostgresAdapter(),
-      createDriver: () => new MemoryPostgresDriver(postgres),
-      createIntrospector: (db) => new PostgresIntrospector(db),
-      createQueryCompiler: () => new PostgresQueryCompiler(),
-    },
-  })
+  const postgres = await PGlite.create({ extensions: { pgcrypto, vector } })
   try {
+    await using database = new Kysely<AgentsDatabase>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => new MemoryPostgresDriver(postgres),
+        createIntrospector: (db) => new PostgresIntrospector(db),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+    })
     await postgres.exec('CREATE EXTENSION pgcrypto; CREATE EXTENSION vector; CREATE ROLE agents_audit_ro NOLOGIN;')
     await ensureMigrations(database)
     const result = await postgres.query<{ name: string }>(
@@ -77,10 +78,14 @@ export const withAgentsOntologySchema = async <T>(use: (postgres: PGlite) => Pro
     }
     await postgres.exec('SET search_path TO pg_catalog, public')
   } catch (error) {
+    await postgres.close()
     throw new Error(`Could not build the local Agents migration schema: ${(error as Error).message}`)
-  } finally {
-    await database.destroy()
   }
+  return postgres
+}
+
+export const withAgentsOntologySchema = async <T>(use: (postgres: PGlite) => Promise<T>): Promise<T> => {
+  await using postgres = await createAgentsOntologySchema()
   return await use(postgres)
 }
 
@@ -97,12 +102,18 @@ export const readAgentsOntologyTables = async (postgres: PGlite): Promise<Readon
   return new Set(rows.map(({ schema, name }) => `${schema}.${name}`))
 }
 
-export const validateAgentsOntologyAnalyses = async (analyses: KnowledgeBundle['customAnalyses']) => {
+export const describeAgentsOntologySchema = async (postgres: PGlite): Promise<OntologySqlSchema> => ({
+  tables: await readAgentsOntologyTables(postgres),
+  describe: (sql) => postgres.describeQuery(sql),
+})
+
+export const validateAgentsOntologyAnalyses = async (
+  analyses: KnowledgeBundle['customAnalyses'],
+  schema?: OntologySqlSchema,
+) => {
   if (!analyses.length) return
+  if (schema) return await validateOntologyAnalyses(analyses, schema)
   await withAgentsOntologySchema(async (postgres) => {
-    await validateOntologyAnalyses(analyses, {
-      tables: await readAgentsOntologyTables(postgres),
-      describe: (sql) => postgres.describeQuery(sql),
-    })
+    await validateOntologyAnalyses(analyses, await describeAgentsOntologySchema(postgres))
   })
 }

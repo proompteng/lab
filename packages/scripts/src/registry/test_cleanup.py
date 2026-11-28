@@ -2,12 +2,14 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,63 +20,101 @@ cleanup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cleanup)
 
 
+def check_worker_signal_orders():
+    def interrupt(signum, _frame):
+        raise InterruptedError(signal.Signals(signum).name)
+
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGALRM, interrupt)
+    for first, second in (
+        (signal.SIGTERM, signal.SIGALRM),
+        (signal.SIGALRM, signal.SIGTERM),
+    ):
+        started = threading.Event()
+        release = threading.Event()
+        done = threading.Event()
+
+        class SignaledExecutor(ThreadPoolExecutor):
+            def shutdown(self, wait=True, *, cancel_futures=False):
+                # Deliver the second signal at the join boundary while the worker is active.
+                try:
+                    assert wait
+                    signal.raise_signal(second)
+                finally:
+                    release.set()
+                super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+        def work(index):
+            if index == 0:
+                return
+            started.set()
+            assert release.wait(2)
+            done.set()
+
+        with patch.object(cleanup, "ThreadPoolExecutor", SignaledExecutor):
+            try:
+                with cleanup.worker_pool(1) as map_work:
+                    results = map_work(work, [0, 1])
+                    next(results)
+                    assert started.wait(2)
+                    signal.raise_signal(first)
+            except (InterruptedError, TimeoutError):
+                assert done.is_set(), f"{first.name} interrupted the worker join"
+            else:
+                raise AssertionError(f"{first.name} did not interrupt the phase")
+
+
 class CleanupTest(unittest.TestCase):
     def test_failed_phase_cancels_queued_work_before_returning(self):
         started = threading.Event()
         release = threading.Event()
         ran = []
 
+        class ObservedExecutor(ThreadPoolExecutor):
+            def submit(self, function, index):
+                future = super().submit(function, index)
+                if index == 100:
+                    # The running worker stays blocked until the last queued task is cancelled.
+                    future.add_done_callback(
+                        lambda result: release.set() if result.cancelled() else None
+                    )
+                return future
+
         def work(index):
             if index == 0:
                 return index
-            started.set()
-            release.wait(2)
+            if index == 1:
+                started.set()
+                release.wait(2)
             ran.append(index)
             return index
 
-        with self.assertRaisesRegex(RuntimeError, "interrupted phase"):
+        with (
+            patch.object(cleanup, "ThreadPoolExecutor", ObservedExecutor),
+            self.assertRaisesRegex(RuntimeError, "interrupted phase"),
+        ):
             with cleanup.worker_pool(1) as map_work:
                 results = map_work(work, range(101))
                 self.assertEqual(next(results), 0)
                 self.assertTrue(started.wait(1))
-                timer = threading.Timer(0.1, release.set)
-                timer.start()
                 raise RuntimeError("interrupted phase")
-        timer.join(timeout=2)
+        self.assertTrue(release.is_set())
         self.assertEqual(ran, [1])
 
     def test_signal_orders_cannot_interrupt_joining_active_workers(self):
-        script = r"""import json,os,signal,sys,threading,time
-sys.path.insert(0,sys.argv[1])
-import cleanup
-started=threading.Event();done=threading.Event()
-def work(index):
- if index == 0:return 0
- started.set();time.sleep(.15);done.set();return 1
-def terminate(*_):raise InterruptedError('SIGTERM')
-def alarm(*_):raise TimeoutError('SIGALRM')
-signal.signal(signal.SIGTERM,terminate);signal.signal(signal.SIGALRM,alarm)
-try:
- with cleanup.worker_pool(1) as map_work:
-  values=map_work(work,[0,1]);next(values);assert started.wait(1)
-  signal.setitimer(signal.ITIMER_REAL,.03)
-  if sys.argv[2]=='term-first':os.kill(os.getpid(),signal.SIGTERM)
-  else:
-   threading.Timer(.05,lambda:os.kill(os.getpid(),signal.SIGTERM)).start()
-   time.sleep(.04)
-except (InterruptedError,TimeoutError):
- print(json.dumps({'allWorkersStopped':done.is_set()}))
-finally:signal.setitimer(signal.ITIMER_REAL,0)
-"""
-        for order in ["term-first", "alarm-first"]:
-            result = subprocess.run(
-                [sys.executable, "-c", script, str(Path(__file__).parent), order],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=True,
-            )
-            self.assertTrue(json.loads(result.stdout)["allWorkersStopped"], order)
+        # A failed worker join can terminate the process.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from test_cleanup import check_worker_signal_orders; check_worker_signal_orders()",
+            ],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_cooperative_deadline_reports_unfinished_quarantine(self):
         orphan = self.blob(b"deadline candidate")
@@ -91,7 +131,7 @@ finally:signal.setitimer(signal.ITIMER_REAL,0)
         self.root = Path(self.directory.name) / "registry"
         (self.root / "blobs/sha256").mkdir(parents=True)
         (self.root / "repositories").mkdir()
-        self.store = cleanup.Store(self.root, workers=4)
+        self.store = cleanup.Store(self.root, workers=1)
         self.old = time.time() - 10 * 86400
         self.references = ["registry.example/lab/test:latest"]
         self.layer = self.blob(b"retained layer")
@@ -377,6 +417,7 @@ finally:signal.setitimer(signal.ITIMER_REAL,0)
                 self.assertFalse((store.root / (".purged-" + batch)).exists())
 
     def test_prepare_is_read_only_and_collection_reclaims_only_old_orphans(self):
+        self.store = cleanup.Store(self.root, workers=4)
         orphan = self.blob(b"old orphan" * 100)
         recent = self.blob(b"new in-progress content")
         os.utime(self.store.blob(recent), None)
@@ -416,17 +457,19 @@ finally:signal.setitimer(signal.ITIMER_REAL,0)
         layer = self.blob(b"previously orphaned layer")
         image = self.image_manifest(layer)
         plan = self.prepare()
-        self.tag("new-publication", image)
-        self.assertEqual(self.collect(plan)["quarantinedBlobs"], 0)
-        self.assertTrue(self.store.blob(layer).exists())
         self.assertEqual(
             self.collect(
                 plan, self.references + ["registry.example/lab/test@" + image]
             )["quarantinedBlobs"],
             0,
         )
+        self.assertTrue(self.store.blob(layer).exists())
+        self.tag("new-publication", image)
+        self.assertEqual(self.collect(plan)["quarantinedBlobs"], 0)
+        self.assertTrue(self.store.blob(layer).exists())
 
     def test_index_preserves_all_platforms_and_attestations(self):
+        self.store = cleanup.Store(self.root, workers=4)
         other_layer = self.blob(b"amd64 layer")
         other = self.image_manifest(other_layer)
         attestation = self.image_manifest(self.blob(b"attestation statement"))
