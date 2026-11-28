@@ -38,7 +38,11 @@ def _write_synthetic_cube(
     n_sessions: int = 240,
     fmt: str = "jsonl.gz",
     dev_cutoff: str = "2023-12-29",
+    include_calendar: bool = True,
+    calendar_rows_override: list[dict[str, object]] | None = None,
+    extra_calendar_rows: list[dict[str, object]] | None = None,
     extra_daily_rows: list[dict[str, object]] | None = None,
+    extra_baseline_rows: list[dict[str, object]] | None = None,
     drop_daily_keys: set[tuple[str, str]] | None = None,
     include_baselines: bool = True,
     baseline_cols: tuple[str, ...] = ("B0", "F4", "O1"),
@@ -51,6 +55,21 @@ def _write_synthetic_cube(
     vols = {"SPY": 0.010, "QQQ": 0.014, "TLT": 0.009, "GLD": 0.008}
 
     prices = {s: 100.0 for s in symbols}
+    calendar_rows: list[dict[str, object]] = (
+        list(calendar_rows_override)
+        if calendar_rows_override is not None
+        else [
+            {
+                "date": d,
+                "openMs": int(dt.datetime.fromisoformat(f"{d}T14:30:00+00:00").timestamp() * 1000),
+                "minutes": 390,
+            }
+            for d in dates
+        ]
+    )
+    if extra_calendar_rows:
+        calendar_rows.extend(extra_calendar_rows)
+
     daily_rows: list[dict[str, object]] = []
     baseline_rows: list[dict[str, object]] = []
     for i, d in enumerate(dates):
@@ -85,12 +104,14 @@ def _write_synthetic_cube(
 
     if extra_daily_rows:
         daily_rows.extend(extra_daily_rows)
+    if extra_baseline_rows:
+        baseline_rows.extend(extra_baseline_rows)
 
     def write_gz(name: str, rows: list[dict[str, object]], cols: list[str]) -> dict[str, object]:
         buf = io.BytesIO()
         with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0) as gz:
             if fmt == "jsonl.gz":
-                text = "\n".join(json.dumps({c: r[c] for c in cols}) for r in rows) + "\n"
+                text = "\n".join(json.dumps({c: r[c] for c in cols}) for r in rows) + ("\n" if rows else "")
                 gz.write(text.encode("utf-8"))
             else:
                 sio = io.StringIO()
@@ -110,13 +131,16 @@ def _write_synthetic_cube(
             "rowCount": len(rows),
         }
 
-    files = [
+    files: list[dict[str, object]] = []
+    if include_calendar:
+        files.append(write_gz(f"calendar.{fmt}", calendar_rows, ["date", "openMs", "minutes"]))
+    files.append(
         write_gz(
             f"daily_bars.{fmt}",
             daily_rows,
             ["date", "symbol", "open", "high", "low", "close", "volume", "vwap"],
         )
-    ]
+    )
     active_baseline_cols = list(baseline_cols) if include_baselines else []
     if include_baselines and active_baseline_cols:
         files.append(write_gz(f"baseline_returns.{fmt}", baseline_rows, ["date", *active_baseline_cols]))
@@ -451,7 +475,9 @@ class SweepCpcvGpuTests(unittest.TestCase):
         # Hand-compute exact drifted trajectory day by day.
         w0 = np.array([0.4, 0.4])
         self.assertTrue(np.allclose(realized[0, 0], w0))
-        self.assertAlmostEqual(float(turnover[0, 0]), 0.4, places=12)
+        expected_traded_0 = float(np.sum(np.abs(w0)))
+        self.assertAlmostEqual(float(turnover[0, 0]), 0.5 * expected_traded_0, places=12)
+        self.assertAlmostEqual(float(net[0, 0, 0]), -(cost_bp / 10_000.0) * expected_traded_0, places=12)
 
         # Day 1 (non-rebalance): weights drift with returns and cash adjusts consistently.
         g1 = float(np.dot(w0, asset_returns[1]))
@@ -469,14 +495,15 @@ class SweepCpcvGpuTests(unittest.TestCase):
         self.assertEqual(float(turnover[0, 2]), 0.0)
         self.assertAlmostEqual(float(net[0, 0, 2]), g2, places=12)
 
-        # Day 3 (rebalance back to [0.4, 0.4]): drifts to w3_pre, then pays true drift restoration cost.
+        # Day 3 (rebalance back to [0.4, 0.4]): drifts to w3_pre, then pays full traded notional cost.
         g3 = float(np.dot(w2, asset_returns[3]))
         w3_drifted = w2 * (1.0 + asset_returns[3]) / (1.0 + g3)
-        expected_turnover_3 = 0.5 * float(np.sum(np.abs(w0 - w3_drifted)))
+        expected_traded_3 = float(np.sum(np.abs(w0 - w3_drifted)))
+        expected_turnover_3 = 0.5 * expected_traded_3
         self.assertGreater(expected_turnover_3, 0.05)
         self.assertAlmostEqual(float(turnover[0, 3]), expected_turnover_3, places=12)
         self.assertTrue(np.allclose(realized[0, 3], w0))
-        expected_net_3 = g3 - (cost_bp / 10_000.0) * expected_turnover_3
+        expected_net_3 = g3 - (cost_bp / 10_000.0) * expected_traded_3
         self.assertAlmostEqual(float(net[0, 0, 3]), expected_net_3, places=12)
 
     def test_cpcv_purge_and_embargo_govern_train_selection_and_oos_evaluation(self) -> None:
@@ -869,6 +896,199 @@ class SweepCpcvGpuTests(unittest.TestCase):
             self.assertIsNone(corrs["B0"])
             self.assertIsNotNone(corrs["F4"])
             self.assertIsNotNone(corrs["O1"])
+
+    def test_transaction_costs_charge_full_traded_notional_with_separate_half_l1_turnover(self) -> None:
+        # Day 0: cash -> 100% asset A (traded notional = 1.0 -> 5.0 bp at 5 bp per side, half-L1 = 0.5)
+        # Day 1: hold (traded notional = 0.0 -> 0.0 bp)
+        # Day 2: 100% asset A -> 100% asset B (traded notional = 2.0 -> 10.0 bp = 5 bp sell + 5 bp buy, half-L1 = 1.0)
+        # Day 3: 100% asset B -> 100% cash (traded notional = 1.0 -> 5.0 bp sell, half-L1 = 0.5)
+        asset_returns = np.zeros((4, 2), dtype=np.float64)
+        targets = np.array(
+            [
+                [
+                    [1.0, 0.0],
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                    [0.0, 0.0],
+                ]
+            ],
+            dtype=np.float64,
+        )
+        reb_masks = np.array([[True, False, True, True]], dtype=bool)
+        cost_bps = (2, 5, 10, 15)
+
+        net_cpu, turnover_cpu, realized_cpu = engine._evaluate_weights_vectorized(
+            targets,
+            reb_masks,
+            asset_returns,
+            cost_bps,
+            "numpy-cpu",
+            None,
+            return_realized_weights=True,
+        )
+
+        # Half-L1 turnover statistic stays separate from full traded notional cost basis.
+        np.testing.assert_allclose(turnover_cpu[0], np.array([0.5, 0.0, 1.0, 0.5]), atol=1e-12, rtol=0.0)
+
+        # At 5 bp (index 1): cash->100% A pays 5.0 bp, 100% A->100% B pays 10.0 bp, 100% B->cash pays 5.0 bp.
+        self.assertAlmostEqual(float(net_cpu[0, 1, 0]), -5.0 / 10_000.0, places=12)
+        self.assertAlmostEqual(float(net_cpu[0, 1, 1]), 0.0, places=12)
+        self.assertAlmostEqual(float(net_cpu[0, 1, 2]), -10.0 / 10_000.0, places=12)
+        self.assertAlmostEqual(float(net_cpu[0, 1, 3]), -5.0 / 10_000.0, places=12)
+
+        # Verify every cost surface tier scales with full traded notional [1.0, 0.0, 2.0, 1.0].
+        expected_traded = np.array([1.0, 0.0, 2.0, 1.0], dtype=np.float64)
+        for c_idx, bp in enumerate(cost_bps):
+            np.testing.assert_allclose(net_cpu[0, c_idx], -(bp / 10_000.0) * expected_traded, atol=1e-12, rtol=0.0)
+
+        # If PyTorch is installed, verify exact parity between NumPy CPU and PyTorch execution paths.
+        if engine.torch is not None:
+            torch_device = engine.torch.device("cuda" if engine.torch.cuda.is_available() else "cpu")
+            net_torch, turnover_torch, realized_torch = engine._evaluate_weights_vectorized(
+                targets,
+                reb_masks,
+                asset_returns,
+                cost_bps,
+                "cuda",
+                torch_device,
+                return_realized_weights=True,
+            )
+            np.testing.assert_allclose(net_torch, net_cpu, atol=1e-12, rtol=0.0)
+            np.testing.assert_allclose(turnover_torch, turnover_cpu, atol=1e-12, rtol=0.0)
+            np.testing.assert_allclose(realized_torch, realized_cpu, atol=1e-12, rtol=0.0)
+
+    def test_calendar_preserves_missing_bar_sessions_and_rejects_off_calendar_rows(self) -> None:
+        dates = _make_business_dates(90)
+        missing_idx = 25
+        missing_date = dates[missing_idx]
+        all_symbols = ("SPY", "QQQ", "TLT", "GLD")
+        drop_entire_session = {(missing_date, sym) for sym in all_symbols}
+
+        for fmt in ("jsonl.gz", "csv.gz"):
+            with tempfile.TemporaryDirectory() as tmp:
+                cube_dir = _write_synthetic_cube(
+                    Path(tmp),
+                    n_sessions=90,
+                    fmt=fmt,
+                    include_calendar=True,
+                    drop_daily_keys=drop_entire_session,
+                    seed=11,
+                )
+                cube = engine.verify_and_load_dev_cube(cube_dir)
+
+                # Calendar session is preserved in cube.dates rather than silently collapsed away.
+                self.assertEqual(len(cube.dates), 90)
+                self.assertEqual(cube.dates[missing_idx], missing_date)
+                self.assertTrue(np.all(~cube.valid_close_mask[missing_idx]))
+                self.assertTrue(np.all(np.isnan(cube.closes[missing_idx])))
+                # Both the missing session and the following session have NaN returns (no multi-day compression).
+                self.assertTrue(np.all(np.isnan(cube.returns[missing_idx])))
+                self.assertTrue(np.all(np.isnan(cube.returns[missing_idx + 1])))
+                # Surrounding valid sessions retain valid marks and finite returns.
+                self.assertTrue(np.all(cube.valid_close_mask[missing_idx - 1]))
+                self.assertTrue(np.all(cube.valid_close_mask[missing_idx + 1]))
+                self.assertTrue(np.all(np.isfinite(cube.returns[missing_idx - 1])))
+                self.assertTrue(np.all(np.isfinite(cube.returns[missing_idx + 2])))
+                # Baselines remain aligned to all 90 calendar sessions.
+                for bkey in ("B0", "F4", "O1"):
+                    self.assertEqual(len(cube.baselines[bkey]), 90)
+
+                # Evaluating a candidate holding any asset across the missing calendar session fails closed.
+                candidate = engine.CandidateParams(
+                    lookback_days=21,
+                    vol_window_days=20,
+                    entry_z_score=-5.0,
+                    rebalance_cadence_days=21,
+                    top_k=4,
+                    target_vol=0.12,
+                )
+                with self.assertRaisesRegex(ValueError, f"Missing close mark for held asset .* on {missing_date}"):
+                    engine.run_cpcv_sweep(
+                        cube,
+                        candidates=[candidate],
+                        n_groups=4,
+                        k_test_groups=1,
+                        purge_sessions=5,
+                        embargo_sessions=2,
+                        device_request="cpu",
+                        top_n=1,
+                    )
+
+                # Staying 100% in cash across the missing session still evaluates cleanly.
+                zero_targets = np.zeros((1, len(cube.dates), len(cube.symbols)), dtype=np.float64)
+                reb_none = np.zeros((1, len(cube.dates)), dtype=bool)
+                net_cash, _ = engine._evaluate_weights_vectorized(
+                    zero_targets,
+                    reb_none,
+                    cube.returns,
+                    (5,),
+                    "numpy-cpu",
+                    None,
+                    valid_close_mask=cube.valid_close_mask,
+                    dates=cube.dates,
+                    symbols=cube.symbols,
+                )
+                self.assertTrue(np.all(net_cash == 0.0))
+
+        # A daily bar row whose date is NOT in calendar (still <= devCutoff) raises CubeIntegrityError.
+        with tempfile.TemporaryDirectory() as tmp:
+            off_calendar_bar = {
+                "date": "2023-12-29",
+                "symbol": "SPY",
+                "open": 470.0,
+                "high": 472.0,
+                "low": 469.0,
+                "close": 471.0,
+                "volume": 1_000_000,
+                "vwap": 470.5,
+            }
+            cube_dir = _write_synthetic_cube(
+                Path(tmp),
+                n_sessions=30,
+                include_calendar=True,
+                extra_daily_rows=[off_calendar_bar],
+            )
+            with self.assertRaisesRegex(engine.CubeIntegrityError, "not in cube calendar"):
+                engine.verify_and_load_dev_cube(cube_dir)
+
+        # A baseline return row whose date is NOT in calendar raises CubeIntegrityError.
+        with tempfile.TemporaryDirectory() as tmp:
+            off_calendar_baseline = {"date": "2023-12-29", "B0": 0.001, "F4": 0.001, "O1": 0.001}
+            cube_dir = _write_synthetic_cube(
+                Path(tmp),
+                n_sessions=30,
+                include_calendar=True,
+                extra_baseline_rows=[off_calendar_baseline],
+            )
+            with self.assertRaisesRegex(engine.CubeIntegrityError, "not in cube calendar"):
+                engine.verify_and_load_dev_cube(cube_dir)
+
+        # Duplicate calendar sessions raise CubeIntegrityError.
+        with tempfile.TemporaryDirectory() as tmp:
+            dup_session = {
+                "date": dates[0],
+                "openMs": int(dt.datetime.fromisoformat(f"{dates[0]}T14:30:00+00:00").timestamp() * 1000),
+                "minutes": 390,
+            }
+            cube_dir = _write_synthetic_cube(
+                Path(tmp),
+                n_sessions=30,
+                include_calendar=True,
+                extra_calendar_rows=[dup_session],
+            )
+            with self.assertRaisesRegex(engine.CubeIntegrityError, "Duplicate calendar session"):
+                engine.verify_and_load_dev_cube(cube_dir)
+
+        # Empty calendar file raises CubeIntegrityError.
+        with tempfile.TemporaryDirectory() as tmp:
+            cube_dir = _write_synthetic_cube(
+                Path(tmp),
+                n_sessions=30,
+                include_calendar=True,
+                calendar_rows_override=[],
+            )
+            with self.assertRaisesRegex(engine.CubeIntegrityError, "calendar cube contains zero rows"):
+                engine.verify_and_load_dev_cube(cube_dir)
 
 
 if __name__ == "__main__":

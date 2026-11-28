@@ -208,10 +208,23 @@ def verify_and_load_dev_cube(cube_dir: Path) -> DevCubeData:
                 return list(csv.DictReader(handle))
             raise CubeIntegrityError(f"Unsupported cube format: {cube_format!r}")
 
-    # Validate calendar dates if present
+    # Build canonical session timeline from calendar when present so missing-bar sessions are preserved.
+    calendar_dates: tuple[str, ...] | None = None
+    calendar_dates_set: set[str] | None = None
     if "calendar" in by_kind:
-        for row in iter_rows(by_kind["calendar"]):
-            _assert_not_holdout(str(row["date"]), dev_cutoff, excluded_holdout_start, "calendar session")
+        calendar_rows = iter_rows(by_kind["calendar"])
+        if not calendar_rows:
+            raise CubeIntegrityError("calendar cube contains zero rows")
+        calendar_dates_set = set()
+        for row in calendar_rows:
+            raw_date = row.get("date")
+            if not isinstance(raw_date, str) or not raw_date:
+                raise CubeIntegrityError(f"Malformed calendar session row: {row!r}")
+            _assert_not_holdout(raw_date, dev_cutoff, excluded_holdout_start, "calendar session")
+            if raw_date in calendar_dates_set:
+                raise CubeIntegrityError(f"Duplicate calendar session: {raw_date}")
+            calendar_dates_set.add(raw_date)
+        calendar_dates = tuple(sorted(calendar_dates_set))
 
     daily_rows = iter_rows(by_kind["daily_bars"])
     if not daily_rows:
@@ -224,6 +237,8 @@ def verify_and_load_dev_cube(cube_dir: Path) -> DevCubeData:
         date = str(row["date"])
         symbol = str(row["symbol"])
         _assert_not_holdout(date, dev_cutoff, excluded_holdout_start, f"daily bar ({symbol})")
+        if calendar_dates_set is not None and date not in calendar_dates_set:
+            raise CubeIntegrityError(f"Daily bar for {symbol} on {date} is not in cube calendar")
         close_val = float(row["close"])
         if not math.isfinite(close_val) or close_val <= 0.0:
             raise CubeIntegrityError(f"Invalid close price for {symbol} on {date}: {close_val}")
@@ -234,7 +249,7 @@ def verify_and_load_dev_cube(cube_dir: Path) -> DevCubeData:
         dates_set.add(date)
         symbols_set.add(symbol)
 
-    dates = tuple(sorted(dates_set))
+    dates = calendar_dates if calendar_dates is not None else tuple(sorted(dates_set))
     symbols = tuple(sorted(symbols_set))
     t_len = len(dates)
     a_len = len(symbols)
@@ -269,11 +284,17 @@ def verify_and_load_dev_cube(cube_dir: Path) -> DevCubeData:
         base_rows = iter_rows(by_kind["baseline_returns"])
         raw_series = {bkey: np.full(t_len, np.nan, dtype=np.float64) for bkey in BASELINE_KEYS}
         seen_keys: set[str] = set()
+        seen_baseline_dates: set[str] = set()
         for row in base_rows:
             date = str(row["date"])
             _assert_not_holdout(date, dev_cutoff, excluded_holdout_start, "baseline return row")
+            if date in seen_baseline_dates:
+                raise CubeIntegrityError(f"Duplicate baseline return row on {date}")
+            seen_baseline_dates.add(date)
             idx = date_to_idx.get(date)
             if idx is None:
+                if calendar_dates_set is not None:
+                    raise CubeIntegrityError(f"Baseline return row on {date} is not in cube calendar")
                 continue
             for bkey in BASELINE_KEYS:
                 raw_val = row.get(bkey)
@@ -448,7 +469,7 @@ def deflated_sharpe_ratio(
 
 
 def compute_series_metrics(daily_returns: np.ndarray, daily_turnover: np.ndarray) -> dict[str, float | None]:
-    """Compute CAGR, annualized Sharpe, MaxDD, and mean daily turnover."""
+    """Compute CAGR, annualized Sharpe, MaxDD, and mean daily half-L1 turnover."""
     arr = np.asarray(daily_returns, dtype=np.float64)
     t_len = len(arr)
     if t_len < 2 or not np.all(np.isfinite(arr)):
@@ -748,13 +769,20 @@ def _evaluate_weights_vectorized(
     symbols: tuple[str, ...] | None = None,
     return_realized_weights: bool = False,
 ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Simulate drifted portfolio weights, one-way turnover, and net returns (M, C, T).
+    """Simulate drifted portfolio weights, half-L1 turnover, and net returns (M, C, T).
 
     Between scheduled rebalance dates, end-of-day weights drift with realized returns:
         w_post = w_t * (1 + r_t) / (1 + sum(w_t * r_t))
     with implied cash weight c_post = (1 - sum(w_t)) / (1 + sum(w_t * r_t)).
-    On rebalance dates, one-way turnover is measured against the drifted end-of-day
-    weights: 0.5 * sum(|w_target - w_drifted|), charging true drift restoration costs.
+    On rebalance dates, full traded risky notional is measured against the drifted
+    end-of-day weights:
+        traded_notional = sum(|w_target - w_drifted|)
+    which includes initial entry from cash (w_drifted = 0) and full drift restoration.
+    Each cost_bps level is a per-side rate applied to full traded risky notional:
+        cost = traded_notional * (cost_bps / 10_000.0)
+    so cash -> 100% invested pays 1x cost_bps and switching 100% A -> 100% B pays
+    2x cost_bps (matching replayDaily / wholeShareCost). The returned daily turnover
+    series is tracked separately as the half-L1 statistic 0.5 * traded_notional.
 
     Fail-closed mark integrity: if any candidate holds a nonzero weight in an asset on a
     date with a missing/non-positive close mark or uncomputable prior-bar return (or
@@ -804,7 +832,7 @@ def _evaluate_weights_vectorized(
             valid_close_t = torch.as_tensor(valid_close, dtype=torch.bool, device=device)
             w_curr = torch.zeros((m_count, a_len), dtype=torch.float64, device=device)
             gross = torch.zeros((m_count, t_len), dtype=torch.float64, device=device)
-            turnover = torch.zeros((m_count, t_len), dtype=torch.float64, device=device)
+            traded_notional = torch.zeros((m_count, t_len), dtype=torch.float64, device=device)
             realized = (
                 torch.zeros((m_count, t_len, a_len), dtype=torch.float64, device=device)
                 if return_realized_weights
@@ -833,20 +861,21 @@ def _evaluate_weights_vectorized(
                     if bool(torch.any(target_missing).item()):
                         bad_m, bad_a = torch.nonzero(target_missing, as_tuple=False)[0].tolist()
                         _raise_missing_mark(t, int(bad_m), int(bad_a), is_target=True)
-                day_turnover = 0.5 * torch.sum(torch.abs(target_day - w_drifted), dim=-1)
-                turnover[:, t] = torch.where(is_reb, day_turnover, torch.zeros_like(day_turnover))
+                day_traded = torch.sum(torch.abs(target_day - w_drifted), dim=-1)
+                traded_notional[:, t] = torch.where(is_reb, day_traded, torch.zeros_like(day_traded))
                 w_curr = torch.where(is_reb[:, None], target_day, w_drifted)
                 if realized is not None:
                     realized[:, t, :] = w_curr
+            turnover = 0.5 * traded_notional
             costs = torch.tensor([bp / 10_000.0 for bp in cost_bps], dtype=torch.float64, device=device)
-            net = gross[:, None, :] - costs[None, :, None] * turnover[:, None, :]
+            net = gross[:, None, :] - costs[None, :, None] * traded_notional[:, None, :]
             if realized is not None:
                 return net.cpu().numpy(), turnover.cpu().numpy(), realized.cpu().numpy()
             return net.cpu().numpy(), turnover.cpu().numpy()
 
     w_curr = np.zeros((m_count, a_len), dtype=np.float64)
     gross = np.zeros((m_count, t_len), dtype=np.float64)
-    turnover = np.zeros((m_count, t_len), dtype=np.float64)
+    traded_notional = np.zeros((m_count, t_len), dtype=np.float64)
     realized_np = np.zeros((m_count, t_len, a_len), dtype=np.float64) if return_realized_weights else None
 
     for t in range(t_len):
@@ -872,14 +901,15 @@ def _evaluate_weights_vectorized(
             if np.any(target_missing):
                 bad_m, bad_a = np.argwhere(target_missing)[0].tolist()
                 _raise_missing_mark(t, int(bad_m), int(bad_a), is_target=True)
-        day_turnover = 0.5 * np.sum(np.abs(target_day - w_drifted), axis=-1)
-        turnover[:, t] = np.where(is_reb, day_turnover, 0.0)
+        day_traded = np.sum(np.abs(target_day - w_drifted), axis=-1)
+        traded_notional[:, t] = np.where(is_reb, day_traded, 0.0)
         w_curr = np.where(is_reb[:, None], target_day, w_drifted)
         if realized_np is not None:
             realized_np[:, t, :] = w_curr
 
+    turnover = 0.5 * traded_notional
     costs = np.array([bp / 10_000.0 for bp in cost_bps], dtype=np.float64)
-    net = gross[:, None, :] - costs[None, :, None] * turnover[:, None, :]
+    net = gross[:, None, :] - costs[None, :, None] * traded_notional[:, None, :]
     assert net.shape == (m_count, c_count, t_len)
     if realized_np is not None:
         return net, turnover, realized_np
