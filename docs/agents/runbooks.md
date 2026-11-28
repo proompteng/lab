@@ -422,65 +422,12 @@ Expected outcomes:
 - emergency rollback for deploy verification only is `--skip-admission-passport-verification` or
   `JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; leave `/ready` and status passport projections enabled while debugging.
 
-## Native workflow e2e proof (local/explicit break-glass only)
+## Native workflow smoke test
 
-This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)
-and confirms that the Codex implementation step opens a PR against `proompteng/lab`. The
-harness creates temporary resources and credentials; use a disposable namespace or an
-explicitly authorized incident environment. It is not a production image-promotion or
-deployment mechanism.
-
-Prereqs:
-
-- `codex-github-token` secret in the target namespace (GH token with repo permissions).
-- OpenAI key available via `AGENTS_E2E_OPENAI_KEY` or an existing `codex-openai-key` secret
-  (the script will create/update it when the env var is set).
-- Agents is already available in the target environment and Jangar is reachable.
-- A GitHub token secret exists (see below).
-
-Create the GitHub token secret once (or set `AGENTS_E2E_GH_TOKEN`):
-
-```bash
-kubectl -n agents create secret generic codex-github-token \
-  --from-literal=GH_TOKEN="<token>"
-```
-
-Run the native workflow script (override the issue/task as needed):
-
-```bash
-AGENTS_E2E_ISSUE_NUMBER=2614 \
-AGENTS_E2E_PROMPT="Add optional autoscaling support to the Agents Helm chart (HPA + values schema + README)." \
-scripts/agents/native-workflow-e2e.sh
-```
-
-Expected outputs:
-
-- AgentRun reaches `Succeeded` with `status.runtimeRef.type=workflow`.
-- Output directory contains:
-  - `agentrun.json` (final status snapshot)
-  - `jobs.txt` (Job → Pod mapping)
-  - `logs/<job>.log` (job logs)
-  - `artifacts/<job>-runner.log` and `artifacts/<job>-status.json` (agent-runner artifacts)
-- Script summary includes the output paths and, when available, the PR URL.
-
-Verify the PR was created:
-
-```bash
-gh pr list --repo proompteng/lab --head "codex/agents/${AGENTS_E2E_ISSUE_NUMBER}"
-```
-
-Notes:
-
-- The script applies `charts/agents/examples/agentprovider-native-workflow.yaml`,
-  `charts/agents/examples/agent-native-workflow.yaml`, and
-  `charts/agents/examples/implementationspec-native-workflow.yaml` before submitting the AgentRun.
-- Set `AGENTS_E2E_VERIFY_PR=false` to skip the optional PR lookup (uses `gh` if available).
-
-Troubleshooting:
-
-- AgentRun failed: `kubectl -n agents get agentrun <name> -o yaml` and inspect job logs in the output directory.
-- No PR created: confirm `codex-github-token` exists and includes `GH_TOKEN`, and the agent image has `gh` + `git`.
-- Stuck in Pending/Running: check `kubectl -n agents get job -l agents.proompteng.ai/agent-run=<name>` and controller logs.
+Run the [chart's kind quickstart](../../charts/agents/README.md#start-here) in a disposable local cluster. It submits
+a native workflow AgentRun using the runner image's fake Codex app-server and verifies completion without Codex or
+GitHub credentials. For a real VCS-backed run, follow the [AgentRun creation guide](agentrun-creation-guide.md) in an
+authorized repository and namespace.
 
 ## Codex reruns/system improvements (native)
 

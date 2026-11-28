@@ -201,4 +201,3 @@ export const DecisionsInferenceSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
   response: DecisionsResponseSchema,
 })
-export type DecisionsInference = typeof DecisionsInferenceSchema.Type

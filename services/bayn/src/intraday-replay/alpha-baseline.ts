@@ -1,8 +1,8 @@
-import { Effect, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { operationalError, retryableOperationalError, type OperationalError } from '../errors'
-import type { IntradayTrailingBaselineService, TrailingBaselineQuery } from '../market-data/intraday/trailing-baseline'
+import type { TrailingBaselineQuery } from '../market-data/intraday/trailing-baseline'
 import { strictParseOptions } from '../schemas'
 import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
 import { intradayAlphaEquityMarketProfile } from '../strategy/intraday-alpha/policy'
@@ -100,12 +100,3 @@ export const selectReplayAlphaBaseline = (
   selectReplayAlphaBaselineSource(binding, sources, query, observedAt).pipe(
     Result.map((source) => source.payload.trailingBaseline),
   )
-
-export const makeReplayAlphaTrailingBaseline = (
-  binding: ResearchStrategyBinding,
-  sources: readonly AlphaBaselineSource[],
-  observedAt: Effect.Effect<string>,
-): IntradayTrailingBaselineService => ({
-  load: (query) =>
-    observedAt.pipe(Effect.flatMap((at) => Effect.fromResult(selectReplayAlphaBaseline(binding, sources, query, at)))),
-})

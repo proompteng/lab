@@ -13,6 +13,7 @@ resources:
   - signal-publisher-sealed-secret.yaml
   - clickhouse-cluster.yaml
   - clickhouse-service.yaml
+  - auto-ontology-networkpolicy.yaml
   - ta-replicated-table-migration-job.yaml
   - signal-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
@@ -32,5 +33,5 @@ configMapGenerator:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-a28e73858a541eefbb8d25694afc030fb88224b5
-    digest: sha256:3049556bae33c30705ceca0f1640a0c7ec53d0c76decfbc4da408e33ba65e15e
+    newTag: kargo-sha-bbfd14caf20d1b2d4e5943eb07c11f6eed0b0b9b
+    digest: sha256:491489787bf1990ed9a8d20deef092677d488c571a26feaf57482ff59a475db7

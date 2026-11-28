@@ -33,7 +33,7 @@ pub struct RegisteredOperation {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Prepared {
+pub(crate) struct Prepared {
     pub operation: String,
     pub arguments: Value,
 }
@@ -69,7 +69,7 @@ impl RegisteredOperation {
         })
     }
 
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.definition.name
     }
 

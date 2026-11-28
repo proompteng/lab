@@ -409,6 +409,26 @@
       "pattern": "^Jangar CI(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "bumba",
+      "pattern": "^Bumba CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "froussard",
+      "pattern": "^Froussard CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "oirat",
+      "pattern": "^Oirat CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "signal-publisher",
+      "pattern": "^Signal publisher CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ofz-pr",
+      "pattern": "^Ofz PR authorization(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "bayn",
       "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
     },

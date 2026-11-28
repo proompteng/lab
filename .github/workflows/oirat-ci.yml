@@ -18,31 +18,16 @@ on:
       - '.npmrc'
       - 'patches/**'
       - 'argocd/applications/oirat/**'
-  pull_request:
-    paths:
-      - '.github/actions/affected-inputs/**'
-      - 'packages/scripts/src/ci/**'
-      - 'services/oirat/**'
-      - 'nix/images/oirat.nix'
-      - '.github/workflows/nix-bun-dependency-closure.yml'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/images/bun-workspace-deps-source.nix'
-      - 'nix/images/bun-workspace-deps-source.test.sh'
-      - 'nix/images/prune-bun-dependency-metadata.sh'
-      - 'bun.lock'
-      - '**/package.json'
-      - 'bunfig.toml'
-      - '.npmrc'
-      - 'patches/**'
-      - 'argocd/applications/oirat/**'
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: oirat-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
@@ -58,8 +43,7 @@ jobs:
             service: ['', 'services/oirat']
 
   pr-checks:
-    needs: changes
-    if: needs.changes.outputs.changed == 'true' && github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request'
     uses: ./.github/workflows/common-monorepo.yml
     with:
       bun-version: 1.4.2
@@ -73,7 +57,9 @@ jobs:
 
   dependency-closure:
     needs: changes
-    if: needs.changes.outputs.changed == 'true'
+    if: >-
+      !cancelled() && (github.event_name == 'pull_request' ||
+      (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true'))
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: oirat
