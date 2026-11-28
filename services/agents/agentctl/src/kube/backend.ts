@@ -84,10 +84,15 @@ export const createKubectlBackend = (options: KubectlOptions) => {
         ['get', `${resourceRef(spec)}/${name}`, '-o', 'json'],
         scoped(namespace, signal),
       ),
-    createCustomObject: (_spec: KubeResourceSpec, namespace: string, body: Record<string, unknown>) =>
+    createCustomObject: (
+      _spec: KubeResourceSpec,
+      namespace: string,
+      body: Record<string, unknown>,
+      options?: { dryRun?: boolean; signal?: AbortSignal },
+    ) =>
       runKubectlJson<Record<string, unknown>>(
-        ['create', '-f', '-', '-o', 'json'],
-        scoped(namespace),
+        ['create', '-f', '-', '-o', 'json', ...(options?.dryRun ? ['--dry-run=server'] : [])],
+        scoped(namespace, options?.signal),
         JSON.stringify(body),
       ),
     replaceCustomObject: (_spec: KubeResourceSpec, namespace: string, _name: string, body: Record<string, unknown>) =>
@@ -130,6 +135,13 @@ export const createKubectlBackend = (options: KubectlOptions) => {
       if (result.exitCode !== 0) {
         throw new KubectlError(result.stderr.trim() || 'kubectl delete jobs failed', result.stderr, result.exitCode)
       }
+    },
+    readPodLogs: async (namespace: string, podName: string, container: string, signal?: AbortSignal) => {
+      const result = await runKubectl(podLogArgs(podName, { container }), scoped(namespace, signal))
+      if (result.exitCode !== 0) {
+        throw new KubectlError(result.stderr.trim() || 'kubectl logs failed', result.stderr, result.exitCode)
+      }
+      return result.stdout
     },
     streamPodLogs: async (namespace: string, podName: string, logOptions: PodLogOptions, signal?: AbortSignal) => {
       const args = podLogArgs(podName, logOptions)

@@ -38,6 +38,7 @@
     "homebrew:generate": "bun run scripts/generate-homebrew.ts",
     "lint": "bunx oxfmt --check src scripts",
     "test": "bun test",
+    "typecheck": "tsc --noEmit",
     "validate:metadata": "bun run scripts/validate-npm-metadata.ts",
     "validate:bin": "bun run scripts/validate-binary.ts",
     "prepack": "bun run build && bun run build:bins"

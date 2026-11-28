@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import * as grpc from '@grpc/grpc-js'
 import { loadSync } from '@grpc/proto-loader'
 import { REQUIRED_CRDS } from '../kube/fleet'
+import { STEP_INDEX } from '../kube/runs'
 
 const entry = resolve(import.meta.dir, '../index.ts')
 let directory: string
@@ -42,11 +43,32 @@ const [verb, resource] = args
 const manifest = verb === 'create' ? JSON.parse(await Bun.stdin.text()) : undefined
 appendFileSync(process.env.AGENTCTL_FIXTURE_TRACE, JSON.stringify({ args: raw, manifest }) + '\n')
 if (manifest) {
-  console.log(JSON.stringify({ ...manifest, metadata: { ...manifest.metadata, name: 'verification' } }))
+  const trace = process.env.AGENTCTL_FIXTURE_TRACE
+  const name = manifest.metadata.name ?? 'verification'
+  const dryRun = args.includes('--dry-run=server')
+  const error = fixture[(dryRun ? 'dry-run ' : 'create ') + name]?.error
+  if (error) {
+    console.error(error)
+    process.exit(1)
+  }
+  if (!dryRun && fixture.parallelCreates) {
+    const realCreates = () => readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse)
+      .filter(({ args, manifest }) => manifest && !args.includes('--dry-run=server')).length
+    const deadline = Date.now() + 1000
+    while (realCreates() < fixture.parallelCreates && Date.now() < deadline) await Bun.sleep(10)
+    if (realCreates() < fixture.parallelCreates) process.exit(1)
+    appendFileSync(trace, JSON.stringify({ args: raw, completed: name }) + '\n')
+  }
+  console.log(JSON.stringify({ ...manifest, metadata: { ...manifest.metadata, name, uid: name + '-uid' } }))
 } else if (verb === 'delete') {
   console.log('job deleted')
 } else if (verb === 'logs') {
-  console.log('runner fixture log')
+  const response = fixture[verb + ' ' + resource]
+  if (response?.error) {
+    console.error(response.error)
+    process.exit(1)
+  }
+  console.log(response ?? 'runner fixture log')
 } else {
   const field = args[args.indexOf('--field-selector') + 1]
   const response = fixture[verb + ' ' + resource + ' ' + field] ?? fixture[verb + ' ' + resource]
@@ -110,6 +132,15 @@ describe('Effect CLI entry point', () => {
       expect(result.exitCode).toBe(2)
       expect(result.stderr).toContain('USAGE')
     }
+  })
+
+  it('discovers fleet run commands and rejects invalid batch concurrency before reading the spec', async () => {
+    const help = await run(['help', 'run'])
+    expect(help.stdout).toContain('run summary <name> [--json]')
+    expect(help.stdout).toContain('run batch --spec')
+    const result = await run(['run', 'batch', '--spec', '/missing/file', '--concurrency', '0'])
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('--concurrency must be a positive integer')
   })
 
   it('defaults absent boolean flags to false and preserves repeated values', async () => {
@@ -295,11 +326,85 @@ const fixture = async (name: string, data: Record<string, unknown>) => {
         .trim()
         .split('\n')
         .filter(Boolean)
-        .map((line): { args: string[]; manifest?: Record<string, unknown> } => JSON.parse(line)),
+        .map((line): { args: string[]; manifest?: Record<string, unknown>; completed?: string } => JSON.parse(line)),
   }
 }
 
 describe('Kubernetes fleet operations', () => {
+  it('summarizes the selected runner container without printing raw log lines or credentials', async () => {
+    const text = 'Opened https://github.com/owner/repo/pull/7.\nBearer fixture-log-token'
+    const status = { status: 'succeeded', model: 'gpt-test', effort: 'high', result: { text, truncated: false } }
+    const client = await fixture('summary', {
+      ...baseFixture,
+      [`get ${agentRuns}/running`]: {
+        ...running,
+        status: {
+          phase: 'Succeeded',
+          startedAt: '2026-07-02T00:00:00Z',
+          finishedAt: '2026-07-02T00:00:02.500Z',
+          vcs: { baseBranch: 'main', headBranch: 'codex/actual-head' },
+        },
+      },
+      'get pods': {
+        items: [
+          {
+            ...livePod,
+            status: {
+              phase: 'Succeeded',
+              containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: JSON.stringify(status) } } }],
+            },
+          },
+        ],
+      },
+      'logs pod/running-pod': [
+        'raw opaque secret from setup',
+        JSON.stringify({
+          event: {
+            type: 'usage',
+            usage: { inputTokens: 8, cachedInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 1 },
+          },
+        }),
+      ].join('\n'),
+    })
+    const result = await client.run(['run', 'summary', 'running', '--json'])
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).not.toContain('fixture-log-token')
+    expect(result.stdout).not.toContain('raw opaque secret')
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      phase: 'Succeeded',
+      node: 'node-arm',
+      base: 'main',
+      head: 'codex/actual-head',
+      logStatus: 'available',
+      durationMs: 2500,
+      model: 'gpt-test',
+      effort: 'high',
+      usage: { input: 8, cached: 0, output: 3, reasoning: 1 },
+      prUrls: ['https://github.com/owner/repo/pull/7'],
+      assistantMessageComplete: true,
+      assistantMessage: 'Opened https://github.com/owner/repo/pull/7.\n[redacted authorization]',
+    })
+    expect((await client.requests()).at(-1)?.args.slice(4)).toEqual(['logs', 'pod/running-pod', '-c', 'agent-runner'])
+    const pending = await client.run(['run', 'summary', 'queued'])
+    expect(pending.exitCode).toBe(0)
+    expect(pending.stdout).toMatch(/Logs:\s+no-runner-pod/)
+    expect(pending.stdout).toContain('No assistant message available.')
+  })
+
+  it('fails summary on a denied Pod log read without printing kubectl stderr', async () => {
+    const client = await fixture('summary-denied', {
+      ...baseFixture,
+      'logs pod/running-pod': { error: 'Forbidden: opaque-sensitive-server-error' },
+    })
+    const result = await client.run(['run', 'summary', 'running', '--json'])
+    expect(result).toEqual({
+      exitCode: 3,
+      stdout: '',
+      stderr: 'Could not read runner logs for AgentRun running (Forbidden); see agentctl describe run running.\n',
+    })
+  })
+
   it('shares workload joins, sorting, filters, and raw JSON across run lists', async () => {
     const client = await fixture('listing', baseFixture)
     const table = await client.run(['run', 'list', '-o', 'wide'])
@@ -563,6 +668,121 @@ describe('AgentRun prompt and verification boundary', () => {
       ],
     },
   }
+
+  const batchRun = (name: string, text = promptText) => ({
+    ...fixtureRun(name, 'Running', '2026-07-01T00:00:00Z'),
+    metadata: { name },
+    status: undefined,
+    spec: { ...verificationRun.spec, parameters: { head: `codex/${name}` }, implementation: { inline: { text } } },
+  })
+
+  it('preflights the entire batch before creating any runs', async () => {
+    const client = await fixture('batch-invalid', { 'dry-run bad': { error: 'Invalid: opaque-admission-value' } })
+    const file = resolve(directory, 'batch-invalid-manifests.json')
+    const first = batchRun('first')
+    const bad = batchRun('bad')
+    for (const [spec, message] of [
+      [{ ...bad.spec, parameters: first.spec.parameters }, 'duplicate head branch'],
+      [
+        { ...bad.spec, runtime: { type: 'job', config: { serviceAccountName: 'overridden' } } },
+        'serviceAccountName overrides are forbidden',
+      ],
+      [{ ...bad.spec, implementation: undefined }, 'provide a prompt'],
+    ] as const) {
+      await writeFile(file, JSON.stringify([first, { ...bad, spec }]))
+      const result = await client.run(['run', 'batch', '--spec', file])
+      expect(result.exitCode).toBe(2)
+      expect(result.stderr).toContain(message)
+    }
+    expect(await client.requests()).toEqual([])
+    await writeFile(file, JSON.stringify([first, bad]))
+    const result = await client.run(['run', 'batch', '--spec', file, '--concurrency', '1'])
+    expect(result.exitCode).toBe(3)
+    expect(result.stderr).toContain('Kubernetes dry-run rejected the manifest (Invalid); no runs submitted')
+    expect(result.stderr).not.toContain('opaque-admission-value')
+    expect((await client.requests()).map(({ args }) => args.includes('--dry-run=server'))).toEqual([true, true])
+  }, 10_000)
+
+  it('dispatches at the requested concurrency after preflight and keeps result order', async () => {
+    const client = await fixture('batch-dispatch', { ...baseFixture, parallelCreates: 2 })
+    const file = resolve(directory, 'batch-dispatch-manifests.json')
+    await writeFile(file, JSON.stringify(['running', 'second', 'third'].map((name) => batchRun(name))))
+    const result = await client.run(['run', 'batch', '--spec', file, '--concurrency', '2'])
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(
+      result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => line.trim().split(/\s+/)),
+    ).toEqual([
+      ['ENTRY', 'NAME', 'NODE', 'STATUS'],
+      ['1', 'running', 'node-arm', 'Submitted'],
+      ['2', 'second', '-', 'Submitted'],
+      ['3', 'third', '-', 'Submitted'],
+    ])
+    const requests = await client.requests()
+    expect(requests.slice(0, 3).every(({ args }) => args.includes('--dry-run=server'))).toBe(true)
+    expect(
+      requests
+        .slice(3, 9)
+        .map(({ manifest }) => (manifest ? 'start' : 'end'))
+        .slice(0, 3),
+    ).toEqual(['start', 'start', 'end'])
+    expect(requests.filter(({ manifest, args }) => manifest && !args.includes('--dry-run=server'))).toHaveLength(3)
+    expect(requests.at(-1)?.args.slice(4)).toEqual(['get', 'pods', '-o', 'json', '-l', runLabel])
+  })
+
+  it('verifies each submitted run and reports successful creates even when another fails verification', async () => {
+    const workflow = batchRun('verification', 'First workflow step.')
+    const workflowRun = {
+      ...workflow,
+      spec: {
+        ...workflow.spec,
+        runtime: { type: 'workflow' },
+        workflow: { steps: [{ name: 'first' }, { name: 'second', implementation: { inline: { text: promptText } } }] },
+      },
+    }
+    const mismatch = fixtureRun('mismatch', 'Running', '2026-07-01T00:00:00Z')
+    const verificationPod = data['get pods'].items[0]
+    const client = await fixture('batch-verify', {
+      ...data,
+      [`get ${agentRuns}/verification`]: { ...verificationRun, spec: workflowRun.spec },
+      [`get ${agentRuns}/mismatch`]: mismatch,
+      'get jobs.batch': { items: [...data['get jobs.batch'].items, fixtureJob('mismatch', 'job', { active: 1 })] },
+      'get pods': {
+        items: [
+          {
+            ...verificationPod,
+            metadata: {
+              ...verificationPod.metadata,
+              labels: { ...verificationPod.metadata.labels, [STEP_INDEX]: '2' },
+            },
+          },
+          {
+            metadata: {
+              name: 'mismatch-pod',
+              labels: { [runLabel]: 'mismatch', [runUid]: 'mismatch-uid', 'job-name': 'mismatch-job' },
+            },
+            spec: podSpec,
+          },
+        ],
+      },
+    })
+    const file = resolve(directory, 'batch-verify-manifests.json')
+    await writeFile(file, JSON.stringify([workflowRun, batchRun('mismatch', 'different-prerequisite')]))
+    const result = await client.run(['run', 'batch', '--spec', file, '--verify', '-o', 'json'])
+    expect(result.exitCode).toBe(3)
+    expect(result.stderr).toContain('Submitted AgentRun fixture/mismatch')
+    expect(result.stderr).toContain('run.json.prompt does not match the task text')
+    expect(result.stderr).not.toContain('different-prerequisite')
+    expect(JSON.parse(result.stdout).runs).toEqual([
+      { entry: 1, name: 'verification', node: 'node-arm', status: 'Verified' },
+      { entry: 2, name: 'mismatch', node: 'node-arm', status: 'Verification failed' },
+    ])
+    const requests = await client.requests()
+    expect(requests.filter(({ manifest, args }) => manifest && !args.includes('--dry-run=server'))).toHaveLength(2)
+    expect(requests.filter(({ args }) => args[5] === 'agents.agents.proompteng.ai/codex-agent')).toHaveLength(1)
+  })
 
   it('rejects prompt overrides before local Codex, filesystem reads, or kubectl', async () => {
     const client = await fixture('rejected', {})

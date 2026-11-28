@@ -13,11 +13,13 @@ import {
   readRunWorkloads,
   type RunObservation,
   runtimeType,
+  STEP_INDEX,
   timestamp,
 } from '../kube/runs'
-import { outputResource, parseJson, readNestedValue } from '../runtime'
-import { asAgentctlError } from './errors'
+import { outputResource, parseJson, readNestedValue, RESOURCE_SPECS } from '../runtime'
+import { asAgentctlError, validationError } from './errors'
 import { renderRunRows } from './run-list'
+import { redactRunText } from './run-redaction'
 
 export const DEFAULT_RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000
 export const DEFAULT_RUN_INTERVAL_MS = 2000
@@ -85,13 +87,7 @@ const readPrompt = async (
 
 // Only render the bounded preview, never the run payload, environment, or projected credential.
 const preview = (value: string, max = 240) => {
-  const text = value
-    .replace(/\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis(?:s)?):\/\/\S+/gi, '[redacted URL]')
-    .replace(/\bhttps?:\/\/[^\s/]+:[^\s/]+@\S+/gi, '[redacted URL]')
-    .replace(/\b(?:bearer\s+|(?:password|(?:api[-_ ]?key)|token|secret)\s*[:=]\s*)\S+/gi, '[redacted credential]')
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const text = redactRunText(value).replace(/\s+/g, ' ').trim()
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
@@ -256,12 +252,40 @@ export const waitForRunCompletion = (
     catch: (error) => asAgentctlError(error, 'GrpcError'),
   })
 
-export type Verification = {
-  prompt: string
-  serviceAccountName: string
-  audience: string
-  mountPath: string
-}
+export const readVerificationIdentity = (backend: KubeBackend, namespace: string, agentName: string) =>
+  Effect.gen(function* () {
+    const agent = yield* kubeCall((signal) =>
+      backend.getCustomObject(RESOURCE_SPECS.agent, namespace, agentName, signal),
+    )
+    const providerName = readNestedValue(agent, ['spec', 'providerRef', 'name'])
+    if (typeof providerName !== 'string' || !providerName) {
+      return yield* Effect.fail(validationError('--verify requires an Agent with an AgentProvider reference.'))
+    }
+    const provider = yield* kubeCall((signal) =>
+      backend.getCustomObject(RESOURCE_SPECS.provider, namespace, providerName, signal),
+    )
+    const serviceAccountName = readNestedValue(provider, ['spec', 'workload', 'serviceAccountName'])
+    const audience = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'audience'])
+    const mountPath = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'mountPath'])
+    if (
+      typeof serviceAccountName !== 'string' ||
+      !serviceAccountName ||
+      typeof audience !== 'string' ||
+      !audience ||
+      typeof mountPath !== 'string' ||
+      !mountPath
+    ) {
+      return yield* Effect.fail(
+        validationError('--verify requires an AgentProvider with a service account and MCP token projection.'),
+      )
+    }
+    return { serviceAccountName, audience, mountPath }
+  })
+
+export type Verification = { serviceAccountName: string; audience: string; mountPath: string } & (
+  | { prompt: string; stepPrompts?: never }
+  | { prompt?: never; stepPrompts: readonly string[] }
+)
 
 export const verifyRun = (
   backend: KubeBackend,
@@ -290,15 +314,18 @@ export const verifyRun = (
         }
         const payload = yield* kubeCall((signal) => readPrompt(backend, namespace, observation, signal, true))
         if (payload) {
-          if (payload.prompt.trim() !== expected.prompt.trim()) {
+          const index = Number(
+            observation.pod?.metadata.labels?.[STEP_INDEX] ?? observation.job?.metadata.labels?.[STEP_INDEX],
+          )
+          const prompt =
+            expected.prompt ??
+            (expected.stepPrompts.length === 1 ? expected.stepPrompts[0] : expected.stepPrompts[index - 1])
+          if (!prompt || payload.prompt.trim() !== prompt.trim()) {
             return yield* Effect.fail(
               kubeError(`AgentRun ${name}: ${payload.name} run.json.prompt does not match the task text.`),
             )
           }
-          console.error(
-            `Verified AgentRun ${name}: ${payload.name} run.json.prompt, inherited SA ${account}, and projected MCP token mount.`,
-          )
-          return
+          return { configMap: payload.name, account, node: observation.node }
         }
       }
       if (isTerminalPhase(observation.phase)) {
