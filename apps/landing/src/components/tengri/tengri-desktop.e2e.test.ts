@@ -7421,11 +7421,12 @@ test('stops idle chat polling while retaining minute-level connection checks', a
   await page.getByRole('textbox', { name: 'Message your agent' }).fill('An unsent draft')
   // Wait for the initial chat recovery before advancing its timers.
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
-  await page.clock.runFor(59_000)
+  expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
+  await page.clock.runFor(30_000)
   expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
   // ReadyDesktop independently checks all conversations once per minute before
   // renewing platform connections, including when chat windows are closed.
-  await page.clock.runFor(1_100)
+  await page.clock.runFor(31_000)
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(2)
   await page.clock.runFor(60_000)
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(3)
