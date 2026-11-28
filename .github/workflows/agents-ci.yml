@@ -223,6 +223,7 @@ jobs:
             packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
             packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
+            packages/scripts/src/agents/__tests__/cluster-agent-capacity.test.ts \
             packages/scripts/src/agents/__tests__/curate-ontology-deltas.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
             packages/scripts/src/agents/__tests__/workspace-cache.test.ts \

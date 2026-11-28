@@ -1,0 +1,155 @@
+{
+  "capturedAt": "2026-11-28T03:47:26Z",
+  "assumptions": {
+    "workload": {
+      "namespaces": [
+        {
+          "name": "agents",
+          "agents": ["codex-agent"]
+        },
+        {
+          "name": "synthesis",
+          "agents": []
+        }
+      ],
+      "repository": "proompteng/lab",
+      "requests": {
+        "cpu": "1",
+        "memory": "4Gi",
+        "ephemeral-storage": "8Gi"
+      },
+      "p95PodWorkingSet": "18690637824",
+      "osReservePercent": 15,
+      "meanRunSeconds": 1754,
+      "jobTtlSecondsAfterFinished": 86400
+    },
+    "controller": {
+      "concurrency": {
+        "perAgent": 32,
+        "perNamespace": 40,
+        "cluster": 100
+      },
+      "rate": {
+        "perRepo": 30,
+        "perNamespace": 120,
+        "cluster": 600,
+        "windowSeconds": 60
+      },
+      "repoConcurrency": 0
+    },
+    "cni": {
+      "reservedIpsPerNode": 2,
+      "extraLeases": []
+    },
+    "database": {
+      "maxConnections": 100,
+      "reservedConnections": 3,
+      "otherConnections": 10,
+      "safeReserveConnections": 10,
+      "connectionsPerRun": 0,
+      "pools": {
+        "controllers": {
+          "replicas": 2,
+          "maxPerReplica": 8,
+          "surge": 1
+        },
+        "controlPlane": {
+          "replicas": 1,
+          "maxPerReplica": 8,
+          "surge": 1
+        },
+        "audit": {
+          "replicas": 0,
+          "maxPerReplica": 0,
+          "surge": 0
+        }
+      }
+    },
+    "github": {
+      "requestsPerHour": 5000,
+      "otherRequestsPerHour": 1000,
+      "safeUtilizationPercent": 80,
+      "uncachedRequestsPerRun": 10,
+      "cachedRequestsPerRun": 10,
+      "cacheEnabled": false
+    },
+    "arc": {
+      "scaleSet": "arc-amd64",
+      "maxRunners": 10,
+      "otherRunnerSlots": 2,
+      "safeUtilizationPercent": 75,
+      "runnerSecondsPerRun": 120
+    }
+  },
+  "observations": {
+    "nodes": [
+      {
+        "name": "talos-192-168-1-85",
+        "architecture": "arm64",
+        "physicalMemoryBytes": 809264693248,
+        "allocatable": {
+          "cpu": 127950,
+          "memory": 808622964736,
+          "ephemeral-storage": 268974865987
+        },
+        "requested": {
+          "cpu": 117165,
+          "memory": 312498716672,
+          "ephemeral-storage": 191260262400
+        },
+        "workingSetBytes": 152747687936,
+        "metricsAt": "2026-11-28T03:47:16Z",
+        "maxPods": 500,
+        "allocatablePods": 500,
+        "podCidr": "10.244.4.0/23",
+        "pods": {
+          "active": 179,
+          "activeNetworked": 164,
+          "succeeded": 20,
+          "failed": 2,
+          "terminalIpClaims": 22
+        }
+      },
+      {
+        "name": "turin",
+        "architecture": "amd64",
+        "physicalMemoryBytes": 1114816253952,
+        "allocatable": {
+          "cpu": 383950,
+          "memory": 1114174525440,
+          "ephemeral-storage": 3682977987016
+        },
+        "requested": {
+          "cpu": 181918,
+          "memory": 628873367232,
+          "ephemeral-storage": 396327841920
+        },
+        "workingSetBytes": 271624790016,
+        "metricsAt": "2026-11-28T03:47:07Z",
+        "maxPods": 500,
+        "allocatablePods": 500,
+        "podCidr": "10.244.0.0/23",
+        "pods": {
+          "active": 350,
+          "activeNetworked": 336,
+          "succeeded": 54,
+          "failed": 2,
+          "terminalIpClaims": 3
+        }
+      }
+    ],
+    "excluded": [
+      {
+        "name": "talos-192-168-1-194",
+        "reason": "outside Galactic build pool"
+      }
+    ],
+    "running": [
+      {
+        "namespace": "agents",
+        "agent": "codex-agent",
+        "count": 6
+      }
+    ]
+  }
+}
