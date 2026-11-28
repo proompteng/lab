@@ -647,6 +647,43 @@ describe('AgentRun prompt and verification boundary', () => {
     expect((await client.requests()).filter(({ manifest }) => manifest)).toHaveLength(1)
   })
 
+  it('renders parameterized ImplementationSpec placeholders before verifying run.json.prompt', async () => {
+    const renderedPrompt = 'Compile owner/project on codex/branch for #42'
+    const implData = {
+      ...data,
+      'get implementationspecs.agents.proompteng.ai/parameterized-impl': {
+        spec: {
+          text: 'Compile ${repository} on {{parameters.head}} for #${issueNumber}',
+          source: { provider: 'github', externalId: 'owner/project#42' },
+        },
+      },
+      'get configmap/verification-spec-step-1-attempt-1': {
+        metadata: { name: 'verification-spec-step-1-attempt-1' },
+        data: { 'run.json': JSON.stringify({ prompt: renderedPrompt }) },
+      },
+    }
+    const client = await fixture('verify-parameterized-impl', implData)
+    const result = await client.run([
+      'run',
+      'submit',
+      '--agent',
+      'codex-agent',
+      '--impl',
+      'parameterized-impl',
+      '--runtime',
+      'job',
+      '--repo',
+      'owner/project',
+      '--head',
+      'codex/branch',
+      '--verify',
+      '-o',
+      'json',
+    ])
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toContain('Verified AgentRun verification')
+  })
+
   it('describes workload identity, mounted prompt and scoped Events but keeps -o json/yaml raw', async () => {
     const client = await fixture('description', data)
     const result = await client.run(['describe', 'run', 'verification'])

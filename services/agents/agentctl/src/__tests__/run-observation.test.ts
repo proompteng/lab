@@ -139,6 +139,69 @@ describe('fleet workload evidence', () => {
       expect(observe([attempt], [], cr).observedPhase).toBeUndefined()
     }
   })
+
+  it('prefers the UID-validated runtimeRef attempt over an older timed-out live Job', () => {
+    const olderTimedOutJob: Job = {
+      metadata: {
+        name: 'run-step-1-attempt-1',
+        uid: 'attempt-1-uid',
+        namespace,
+        creationTimestamp: '2026-07-01T00:00:00Z',
+        labels: { ...labels, 'agents.proompteng.ai/step-index': '1' },
+      },
+      status: { active: 1 },
+    }
+    const replacementCompletedJob: Job = {
+      metadata: {
+        name: 'run-step-1-attempt-2',
+        uid: 'attempt-2-uid',
+        namespace,
+        creationTimestamp: '2026-07-01T00:05:00Z',
+        labels: { ...labels, 'agents.proompteng.ai/step-index': '1' },
+      },
+      status: { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] },
+    }
+    const olderPod: Pod = {
+      metadata: {
+        name: 'run-step-1-attempt-1-pod',
+        namespace,
+        creationTimestamp: '2026-07-01T00:00:01Z',
+        ownerReferences: [{ kind: 'Job', name: olderTimedOutJob.metadata.name, uid: olderTimedOutJob.metadata.uid }],
+        labels,
+      },
+      spec: { nodeName: 'turin', serviceAccountName: 'codex-auto-ontology-runner' },
+      status: { phase: 'Running' },
+    }
+    const replacementPod: Pod = {
+      metadata: {
+        name: 'run-step-1-attempt-2-pod',
+        namespace,
+        creationTimestamp: '2026-07-01T00:05:01Z',
+        ownerReferences: [
+          { kind: 'Job', name: replacementCompletedJob.metadata.name, uid: replacementCompletedJob.metadata.uid },
+        ],
+        labels,
+      },
+      spec: { nodeName: 'node-arm', serviceAccountName: 'codex-auto-ontology-runner' },
+      status: { phase: 'Succeeded' },
+    }
+    const workflowRun = {
+      ...run,
+      spec: { ...run.spec, runtime: { type: 'workflow' }, workflow: { steps: [{ name: 'implement', retries: 1 }] } },
+      status: {
+        phase: 'Succeeded',
+        runtimeRef: {
+          type: 'workflow',
+          name: replacementCompletedJob.metadata.name,
+          uid: replacementCompletedJob.metadata.uid,
+        },
+      },
+    }
+    const observed = observe([olderTimedOutJob, replacementCompletedJob], [olderPod, replacementPod], workflowRun)
+    expect(observed.job?.metadata.name).toBe('run-step-1-attempt-2')
+    expect(observed.pod?.metadata.name).toBe('run-step-1-attempt-2-pod')
+    expect(observed.observedPhase).toBe('Succeeded')
+  })
 })
 
 describe('MCP identity', () => {

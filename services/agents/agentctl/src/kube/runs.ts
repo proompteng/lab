@@ -129,7 +129,9 @@ export const observeRuns = (
         ? jobsByName.get(ref.name)
         : undefined
     const referencedJob = refJob && ref?.uid && refJob.metadata.uid === ref.uid ? refJob : undefined
-    const ownedJobs = [...new Set([...(jobsByRun.get(name) ?? []), ...(referencedJob ? [referencedJob] : [])])]
+    const currentRefJob =
+      referencedJob && matchesRun(referencedJob.metadata, run, namespace) ? referencedJob : undefined
+    const ownedJobs = [...new Set([...(jobsByRun.get(name) ?? []), ...(currentRefJob ? [currentRefJob] : [])])]
       .filter((job) => matchesRun(job.metadata, run, namespace))
       .sort(newest)
     const ownedPods = new Set<Pod>()
@@ -149,7 +151,12 @@ export const observeRuns = (
     const liveJob = nonDeletingJobs.find(
       (job) => !jobTerminalPhase(job) && ((job.status?.active ?? 0) > 0 || jobsWithLivePods.has(job.metadata.name)),
     )
-    const job = liveJob ?? nonDeletingJobs[0] ?? ownedJobs[0]
+    const job =
+      (currentRefJob && !currentRefJob.metadata.deletionTimestamp ? currentRefJob : undefined) ??
+      liveJob ??
+      nonDeletingJobs[0] ??
+      currentRefJob ??
+      ownedJobs[0]
     const terminalJob = job && jobTerminalPhase(job)
     const pod = [...ownedPods]
       .filter((pod) => !job || matchesJob(pod, job))

@@ -7,6 +7,7 @@ import * as Option from 'effect/Option'
 import YAML from 'yaml'
 
 import { normalizeKubernetesLabelValue } from '../../../../src/kubernetes-labels'
+import { createImplementationContractTools } from '../../../../src/server/agents-controller/implementation-contract'
 import { runCodex } from '../../codex'
 import type { KubeBackend } from '../../kube/backend'
 import {
@@ -176,6 +177,14 @@ const readInputs = (flags: CommonFlags, transport: Transport, implementationRef?
 const grpcCall = <T>(tryCall: (signal: AbortSignal) => Promise<T>) =>
   Effect.tryPromise({ try: tryCall, catch: (error) => asAgentctlError(error, 'GrpcError') })
 
+const { buildEventContext } = createImplementationContractTools((params, keys) => {
+  for (const key of keys) {
+    const value = params[key]
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+  }
+  return ''
+})
+
 const readName = (resource: unknown) => {
   const name = readNestedValue(resource, ['metadata', 'name'])
   return typeof name === 'string' && name ? name : undefined
@@ -204,12 +213,16 @@ const readVerification = (backend: KubeBackend, namespace: string, input: AgentR
         validationError('--verify requires an AgentProvider with a service account and MCP token projection.'),
       )
     }
-    let prompt: unknown = input.implementationText
-    if (input.implName && prompt === undefined) {
+    let implementationSpec: Record<string, unknown> =
+      input.implementationText !== undefined ? { text: input.implementationText } : {}
+    if (input.implName && input.implementationText === undefined) {
       const impl = yield* kubeCall(() => backend.getCustomObject(RESOURCE_SPECS.impl, namespace, input.implName))
-      const text = readNestedValue(impl, ['spec', 'text'])
-      prompt = typeof text === 'string' && text.trim() ? text : readNestedValue(impl, ['spec', 'summary'])
+      const spec = readNestedValue(impl, ['spec'])
+      if (spec && typeof spec === 'object' && !Array.isArray(spec)) {
+        implementationSpec = spec as Record<string, unknown>
+      }
     }
+    const prompt = buildEventContext(implementationSpec, input.parameters ?? {}).payload.prompt
     if (typeof prompt !== 'string' || !prompt.trim()) {
       return yield* Effect.fail(validationError('--verify requires non-empty implementation text.'))
     }
