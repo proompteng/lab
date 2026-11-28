@@ -25,9 +25,9 @@ resources:
   - codex-smoke-implspec.yaml
   - anypi-agentprovider.yaml
   - anypi-agent.yaml
-  - gemini-neon-secretbinding.yaml
-  - gemini-neon-agentprovider.yaml
-  - gemini-neon-agent.yaml
+  - google-secretbinding.yaml
+  - google-agentprovider.yaml
+  - google-agent.yaml
   - codex-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml

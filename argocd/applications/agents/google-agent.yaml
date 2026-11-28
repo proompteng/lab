@@ -1,10 +1,10 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
-  name: gemini-neon-agent
+  name: google-agent
 spec:
   providerRef:
-    name: gemini-neon
+    name: google
   defaults:
     systemPrompt: |
       Implement the requested task end to end following repository instructions in AGENTS.md.

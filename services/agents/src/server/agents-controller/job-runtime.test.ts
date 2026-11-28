@@ -808,10 +808,10 @@ describe('agents controller job-runtime module', () => {
 
     await submitJobRun(
       kube as never,
-      { metadata: { name: 'neon-run-1', uid: 'neon-uid-1', namespace: 'agents' }, spec: {} },
-      { metadata: { name: 'gemini-neon-agent' }, spec: {} },
+      { metadata: { name: 'google-run-1', uid: 'google-uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'google-agent' }, spec: {} },
       {
-        metadata: { name: 'gemini-neon' },
+        metadata: { name: 'google' },
         spec: {
           binary: '/usr/local/bin/agent-runner',
           adapter: {
@@ -875,7 +875,7 @@ describe('agents controller job-runtime module', () => {
     expect(container.env.find((entry) => entry.name === 'CODEX_HOME')).toBeUndefined()
     expect(container.env.find((entry) => entry.name === 'CODEX_AUTH')).toBeUndefined()
     expect(container.env).toContainEqual({ name: 'AGENT_RUN_NAMESPACE', value: 'agents' })
-    expect(container.env).toContainEqual({ name: 'AGENT_RUN_UID', value: 'neon-uid-1' })
+    expect(container.env).toContainEqual({ name: 'AGENT_RUN_UID', value: 'google-uid-1' })
     expect(container.env).toContainEqual({
       name: 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
       valueFrom: { secretKeyRef: { name: 'google-adc-auth', key: 'credentials.json' } },

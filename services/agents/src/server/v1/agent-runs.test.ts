@@ -1015,15 +1015,15 @@ describe('AgentRun v1 API', () => {
     const store = createStoreMock()
     const kube = createKubeMock()
     vi.mocked(kube.get).mockImplementation(async (resource, name, namespace) => {
-      if (resource === RESOURCE_MAP.Agent && name === 'gemini-neon-agent' && namespace === 'agents') {
+      if (resource === RESOURCE_MAP.Agent && name === 'google-agent' && namespace === 'agents') {
         return {
           spec: {
-            providerRef: { name: 'gemini-neon' },
+            providerRef: { name: 'google' },
             security: { allowedSecrets: ['google-adc-auth'] },
           },
         }
       }
-      if (resource === RESOURCE_MAP.AgentProvider && name === 'gemini-neon' && namespace === 'agents') {
+      if (resource === RESOURCE_MAP.AgentProvider && name === 'google' && namespace === 'agents') {
         return {
           spec: {
             binary: '/usr/local/bin/agent-runner',
@@ -1040,7 +1040,7 @@ describe('AgentRun v1 API', () => {
     const validatePolicies = vi.fn(async () => {})
     const blocked = await postAgentRunsHandler(
       buildRequest({
-        agentRef: { name: 'gemini-neon-agent' },
+        agentRef: { name: 'google-agent' },
         namespace: 'agents',
         secrets: [],
         implementation: { text: 'Test literal prompt' },
@@ -1062,10 +1062,10 @@ describe('AgentRun v1 API', () => {
 
     const allowed = await postAgentRunsHandler(
       buildRequest({
-        agentRef: { name: 'gemini-neon-agent' },
+        agentRef: { name: 'google-agent' },
         namespace: 'agents',
         secrets: [],
-        policy: { secretBindingRef: 'gemini-neon-secrets' },
+        policy: { secretBindingRef: 'google-secrets' },
         implementation: { text: 'Test literal prompt' },
         runtime: { type: 'job', config: {} },
       }),
@@ -1080,7 +1080,7 @@ describe('AgentRun v1 API', () => {
     expect(validatePolicies).toHaveBeenCalledWith(
       'agents',
       expect.objectContaining({
-        secretBindingRef: 'gemini-neon-secrets',
+        secretBindingRef: 'google-secrets',
         requiredSecrets: ['google-adc-auth'],
       }),
       kube,

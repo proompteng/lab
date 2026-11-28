@@ -158,7 +158,7 @@ console.log(JSON.stringify({ event: 'result', result: { conversation_id: 'conv-n
 
     const exitCode = await runAgyCliAdapter(
       {
-        provider: 'gemini-neon',
+        provider: 'google',
         payloads: { eventFilePath: runPath },
         artifacts: { resultPath, statusPath, logPath },
         providerSpec: {
@@ -228,7 +228,7 @@ console.log(JSON.stringify({ event: 'result', result: { conversation_id: 'conv-n
 
     const status = JSON.parse(await readFile(statusPath, 'utf8'))
     expect(status).toMatchObject({
-      provider: 'gemini-neon',
+      provider: 'google',
       adapter: 'agy-cli',
       status: 'succeeded',
       exitCode: 0,
@@ -274,7 +274,7 @@ process.exit(1)
     await expect(
       runAgyCliAdapter(
         {
-          provider: 'gemini-neon',
+          provider: 'google',
           payloads: { eventFilePath: runPath },
           artifacts: { statusPath, logPath },
         },
@@ -340,7 +340,7 @@ process.stdout.write(
 
     const exitCode = await runAgyCliAdapter(
       {
-        provider: 'gemini-neon',
+        provider: 'google',
         payloads: { eventFilePath: runPath },
         artifacts: { resultPath, statusPath, logPath },
       },
@@ -380,7 +380,7 @@ done
     const abortController = new AbortController()
     const runPromise = runAgyCliAdapter(
       {
-        provider: 'gemini-neon',
+        provider: 'google',
         payloads: { eventFilePath: runPath },
         artifacts: { statusPath, logPath },
       },
@@ -435,7 +435,7 @@ console.log(JSON.stringify({ event: 'result', result: { conversation_id: 'conv-l
 
     const exitCode = await runAgyCliAdapter(
       {
-        provider: 'gemini-neon',
+        provider: 'google',
         payloads: { eventFilePath: runPath },
         artifacts: { statusPath, logPath },
       },
@@ -488,7 +488,7 @@ console.log('{malformed-json-terminal-line')
     await expect(
       runAgyCliAdapter(
         {
-          provider: 'gemini-neon',
+          provider: 'google',
           payloads: { eventFilePath: runPath },
           artifacts: { resultPath, statusPath, logPath },
         },

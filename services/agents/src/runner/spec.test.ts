@@ -45,7 +45,7 @@ describe('agent-runner spec', () => {
 
   it('resolves the agy-cli adapter with normalized configuration', () => {
     const adapter = resolveAdapter({
-      provider: 'gemini-neon',
+      provider: 'google',
       adapter: {
         type: 'agy-cli',
         agy: {
