@@ -7,6 +7,12 @@ import { initialWindowState, MAX_DESKTOP_WINDOWS, resizeBounds, windowIdForOpen,
 
 const viewport = { x: 0, y: 0, width: 1440, height: 870 }
 
+function findWindow(state: ReturnType<typeof initialWindowState>, id: string) {
+  const window = state.windows.find((window) => window.id === id)
+  if (!window) throw new Error(`Window ${id} is missing`)
+  return window
+}
+
 describe('Tengri desktop window manager', () => {
   test('clicking the active window preserves state while focusing another window raises it once', () => {
     const state = initialWindowState(viewport)
@@ -20,7 +26,7 @@ describe('Tengri desktop window manager', () => {
     expect(windowReducer(focused, { type: 'focus', id: 'finder-1' })).toBe(focused)
   })
 
-  test('boots with Finder behind frontmost Chrome', () => {
+  test('boots with Finder behind frontmost Tengri', () => {
     const state = initialWindowState(viewport)
     expect(state.windows.map((window) => window.app)).toEqual(['finder', 'tengri'])
     expect(state.activeApp).toBe('tengri')
@@ -29,18 +35,26 @@ describe('Tengri desktop window manager', () => {
   test('preserves zoom and normal geometry through minimize, hydration, and app switching', () => {
     let state = initialWindowState(viewport)
     const id = state.activeWindowId
-    const normalBounds = state.windows.find((window) => window.id === id)!.bounds
+    const normalBounds = findWindow(state, id).bounds
     state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
-    const zoomedBounds = state.windows.find((window) => window.id === id)!.bounds
+    const zoomedBounds = findWindow(state, id).bounds
     state = windowReducer(state, { type: 'minimize', id })
     state = windowReducer(state, { type: 'hydrate', state, viewport })
     state = windowReducer(state, { type: 'open', app: 'tengri', title: 'Tengri', viewport })
-    expect(state.windows.find((window) => window.id === id)).toMatchObject({ mode: 'maximized', bounds: zoomedBounds })
+    expect(findWindow(state, id)).toMatchObject({
+      mode: 'maximized',
+      bounds: zoomedBounds,
+      restoredBounds: normalBounds,
+    })
     state = windowReducer(state, { type: 'focus', id: 'finder-1' })
     state = windowReducer(state, { type: 'restore', id, viewport })
-    expect(state.windows.find((window) => window.id === id)).toMatchObject({ mode: 'maximized', bounds: zoomedBounds })
+    expect(findWindow(state, id)).toMatchObject({
+      mode: 'maximized',
+      bounds: zoomedBounds,
+      restoredBounds: normalBounds,
+    })
     state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
-    expect(state.windows.find((window) => window.id === id)).toMatchObject({ mode: 'normal', bounds: normalBounds })
+    expect(findWindow(state, id)).toMatchObject({ mode: 'normal', bounds: normalBounds })
   })
 
   test('raises a restored active window when persisted stacking order puts another window above it', () => {
@@ -268,48 +282,19 @@ describe('Tengri desktop window manager', () => {
     expect(state.activeWindowId).toBe('')
   })
 
-  test('retains original bounds for unzooming after minimizing a maximized window', () => {
+  test.each(['viewport', 'hydrate'] as const)('preserves restore bounds across compact %s while maximized', (kind) => {
+    const compact = { x: 0, y: 0, width: 300, height: 200 }
     let state = initialWindowState(viewport)
     const id = state.activeWindowId
-    const original = state.windows.find((window) => window.id === id)?.bounds
+    const original = findWindow(state, id).bounds
     state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
-    state = windowReducer(state, { type: 'minimize', id })
-    state = windowReducer(state, { type: 'restore', id, viewport })
-    expect(state.windows.find((window) => window.id === id)).toMatchObject({
-      restoredBounds: original,
-      mode: 'maximized',
-    })
-    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
-    expect(state.windows.find((window) => window.id === id)).toMatchObject({ bounds: original, mode: 'normal' })
-  })
-
-  test('preserves restore bounds across temporary compact viewports while maximized', () => {
-    let state = initialWindowState(viewport)
-    const id = state.activeWindowId
-    const original = state.windows.find((window) => window.id === id)!.bounds
-    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
-    state = windowReducer(state, { type: 'viewport', viewport: { x: 0, y: 0, width: 300, height: 200 } })
+    state = windowReducer(
+      state,
+      kind === 'hydrate' ? { type: 'hydrate', state, viewport: compact } : { type: 'viewport', viewport: compact },
+    )
     state = windowReducer(state, { type: 'viewport', viewport })
     state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
-
-    expect(state.windows.find((window) => window.id === id)).toMatchObject({
-      bounds: original,
-      restoredBounds: original,
-      mode: 'normal',
-    })
-
-    let hydrated = initialWindowState(viewport)
-    const hydratedId = hydrated.activeWindowId
-    const hydratedOriginal = hydrated.windows.find((window) => window.id === hydratedId)!.bounds
-    hydrated = windowReducer(hydrated, { type: 'toggle-maximize', id: hydratedId, viewport })
-    hydrated = windowReducer(hydrated, {
-      type: 'hydrate',
-      state: hydrated,
-      viewport: { x: 0, y: 0, width: 300, height: 200 },
-    })
-    hydrated = windowReducer(hydrated, { type: 'viewport', viewport })
-    hydrated = windowReducer(hydrated, { type: 'toggle-maximize', id: hydratedId, viewport })
-    expect(hydrated.windows.find((window) => window.id === hydratedId)?.bounds).toEqual(hydratedOriginal)
+    expect(findWindow(state, id)).toMatchObject({ bounds: original, restoredBounds: original, mode: 'normal' })
   })
 
   test('keeps maximized windows inside compact viewports', () => {
@@ -318,14 +303,14 @@ describe('Tengri desktop window manager', () => {
     const id = state.activeWindowId
 
     state = windowReducer(state, { type: 'toggle-maximize', id, viewport: compact })
-    expectInsideViewport(state.windows.find((window) => window.id === id)!.bounds, compact)
+    expectInsideViewport(findWindow(state, id).bounds, compact)
 
     const smaller = { x: 0, y: 0, width: 300, height: 200 }
     state = windowReducer(state, { type: 'viewport', viewport: smaller })
-    expectInsideViewport(state.windows.find((window) => window.id === id)!.bounds, smaller)
+    expectInsideViewport(findWindow(state, id).bounds, smaller)
 
     state = windowReducer(state, { type: 'hydrate', state, viewport: compact })
-    expectInsideViewport(state.windows.find((window) => window.id === id)!.bounds, compact)
+    expectInsideViewport(findWindow(state, id).bounds, compact)
   })
 
   test('fits normal windows inside compact viewports', () => {
@@ -468,14 +453,8 @@ describe('Tengri desktop window manager', () => {
   })
 })
 
-function expectInsideViewport(
-  bounds: { x: number; y: number; width: number; height: number },
-  target: typeof viewport,
-) {
-  expect(bounds.x).toBeGreaterThanOrEqual(0)
-  expect(bounds.y).toBeGreaterThanOrEqual(0)
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(target.width)
-  expect(bounds.y + bounds.height).toBeLessThanOrEqual(target.height)
+function expectInsideViewport(bounds: typeof viewport, target: typeof viewport) {
+  expect({ bounds, inside: isInsideViewport(bounds, target) }).toMatchObject({ inside: true })
 }
 
 function isInsideViewport(bounds: { x: number; y: number; width: number; height: number }, target: typeof viewport) {
