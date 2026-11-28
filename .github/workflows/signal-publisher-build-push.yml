@@ -4,6 +4,7 @@ permissions:
   contents: read
 
 on:
+  workflow_call:
   push:
     branches:
       - main
@@ -88,11 +89,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: signal-publisher-build-push-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   changes:
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
@@ -109,11 +111,10 @@ jobs:
 
   dependency-closure:
     needs: changes
-    if: needs.changes.outputs.changed == 'true'
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (needs.changes.result == 'success' && needs.changes.outputs.changed == 'true')) }}
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: signal-publisher
-    secrets: inherit
 
   image:
     needs: dependency-closure
@@ -122,8 +123,10 @@ jobs:
       image_name: signal-publisher
       package_attr: signal-publisher-image
       tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
+      source_revision: ${{ github.event_name == 'merge_group' && github.sha || '' }}
       publish_kargo_tag: true
       pr_number: ''
       latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       publish_on_dispatch: true
-    secrets: inherit
+    secrets:
+      ATTIC_TOKEN: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && secrets.ATTIC_TOKEN || '' }}
