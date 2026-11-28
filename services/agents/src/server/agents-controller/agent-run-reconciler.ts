@@ -16,6 +16,7 @@ import {
   validateAuthSecretPolicy,
   validateImagePolicy,
   validateLabelPolicy,
+  validateProviderModelEffortOverrides,
   validateProviderSecretEnvPolicy,
 } from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
@@ -841,6 +842,26 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           provider: providerName,
           reason: providerBlock.reason,
           message: providerBlock.message,
+        })
+        return
+      }
+
+      const modelEffortPolicy = validateProviderModelEffortOverrides(resolvedProvider, parameters)
+      if (!modelEffortPolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: modelEffortPolicy.reason,
+          message: modelEffortPolicy.message,
+        })
+        logInvalidSpec(modelEffortPolicy.reason, modelEffortPolicy.message)
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          phase: 'Failed',
+          reason: modelEffortPolicy.reason,
+          message: modelEffortPolicy.message,
+          finishedAt: nowIso(),
+          conditions: updated,
         })
         return
       }

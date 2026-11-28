@@ -6,7 +6,12 @@ import { asRecord, asString, readNested } from '../primitives'
 import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
 import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../../workspace-cache'
-import { providerUsesControllerAuthSecret, resolveProviderSecretEnv } from './policy'
+import {
+  providerUsesControllerAuthSecret,
+  resolveProviderAdapterType,
+  resolveProviderSecretEnv,
+  validateProviderModelEffortOverrides,
+} from './policy'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
@@ -400,17 +405,6 @@ const createRunSpecConfigMap = async (
   return configName
 }
 
-const isAgentRunnerBinary = (binary: string | null) =>
-  !binary || binary === '/usr/local/bin/agent-runner' || binary.endsWith('/agent-runner')
-
-const resolveProviderAdapterType = (providerSpec: Record<string, unknown>): 'codex-app-server' | 'agy-cli' | 'exec' => {
-  const explicitType = asString(readNested(providerSpec, ['adapter', 'type']))
-  if (explicitType === 'exec') return 'exec'
-  if (explicitType === 'agy-cli') return 'agy-cli'
-  if (explicitType === 'codex-app-server') return 'codex-app-server'
-  return isAgentRunnerBinary(asString(providerSpec.binary)) ? 'codex-app-server' : 'exec'
-}
-
 const sanitizeProviderAdapterForRunner = (adapter: Record<string, unknown>) => {
   const { secretEnv: _secretEnv, codex, agy, ...rest } = adapter
   const codexRecord = asRecord(codex)
@@ -482,15 +476,30 @@ const resolveCodexPrompt = (
   return JSON.stringify(runSpec, null, 2)
 }
 
+const resolveValidatedModelEffortOverrides = (
+  providerSpec: Record<string, unknown>,
+  parameters: Record<string, string>,
+  providerName?: string,
+) => {
+  const provider = providerName ? { metadata: { name: providerName }, spec: providerSpec } : providerSpec
+  const result = validateProviderModelEffortOverrides(provider, parameters)
+  if (!result.ok) {
+    throw new Error(`${result.reason}: ${result.message}`)
+  }
+  return result
+}
+
 const buildCodexAppServerAdapterForRunner = (
   runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
   providerSpec: Record<string, unknown>,
+  providerName: string,
   options: {
     systemPromptPath?: string
     systemPromptExpectedHash?: string | null
   } = {},
 ) => {
+  const overrides = resolveValidatedModelEffortOverrides(providerSpec, parameters, providerName)
   const explicitAdapter = asRecord(providerSpec.adapter) ?? {}
   const codex = asRecord(explicitAdapter.codex) ?? {}
   const context = buildRunnerTemplateContext(runSpec, parameters)
@@ -503,8 +512,8 @@ const buildCodexAppServerAdapterForRunner = (
       binaryPath: renderOptionalString(codex.binaryPath, context),
       cliConfigOverrides: renderOptionalStringArray(codex.cliConfigOverrides, context),
       cwd: renderOptionalString(codex.cwd, context),
-      model: renderOptionalString(codex.model, context) ?? DEFAULT_CODEX_APP_SERVER_MODEL,
-      effort: renderOptionalString(codex.effort, context) ?? DEFAULT_CODEX_APP_SERVER_EFFORT,
+      model: overrides.model ?? renderOptionalString(codex.model, context) ?? DEFAULT_CODEX_APP_SERVER_MODEL,
+      effort: overrides.effort ?? renderOptionalString(codex.effort, context) ?? DEFAULT_CODEX_APP_SERVER_EFFORT,
       sandbox: renderOptionalString(codex.sandbox, context) ?? DEFAULT_CODEX_APP_SERVER_SANDBOX,
       approval: renderOptionalString(codex.approval, context) ?? DEFAULT_CODEX_APP_SERVER_APPROVAL,
       threadId: renderOptionalString(codex.threadId, context),
@@ -526,11 +535,13 @@ const buildAgyCliAdapterForRunner = (
   runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
   providerSpec: Record<string, unknown>,
+  providerName: string,
   options: {
     systemPromptPath?: string
     systemPromptExpectedHash?: string | null
   } = {},
 ) => {
+  const overrides = resolveValidatedModelEffortOverrides(providerSpec, parameters, providerName)
   const explicitAdapter = asRecord(providerSpec.adapter) ?? {}
   const agy = asRecord(explicitAdapter.agy) ?? {}
   const context = buildRunnerTemplateContext(runSpec, parameters)
@@ -544,8 +555,8 @@ const buildAgyCliAdapterForRunner = (
     agy: compactRecord({
       binaryPath: renderOptionalString(agy.binaryPath, context),
       cwd: renderOptionalString(agy.cwd, context),
-      model: renderOptionalString(agy.model, context) ?? DEFAULT_AGY_CLI_MODEL,
-      effort: renderOptionalString(agy.effort, context) ?? DEFAULT_AGY_CLI_EFFORT,
+      model: overrides.model ?? renderOptionalString(agy.model, context) ?? DEFAULT_AGY_CLI_MODEL,
+      effort: overrides.effort ?? renderOptionalString(agy.effort, context) ?? DEFAULT_AGY_CLI_EFFORT,
       agent: renderOptionalString(agy.agent, context),
       mode: renderOptionalString(agy.mode, context),
       printTimeout: renderOptionalString(agy.printTimeout, context),
@@ -579,29 +590,25 @@ const buildAgentRunnerSpec = (
   const binary = asString(providerSpec.binary)
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
   const adapterType = resolveProviderAdapterType(providerSpec)
-  const defaultAdapter =
-    adapterType === 'exec'
-      ? {
-          type: 'exec',
-          exec: {
-            binary,
-            ...(Array.isArray(providerSpec.argsTemplate) ? { argsTemplate: providerSpec.argsTemplate } : {}),
-            ...(asRecord(providerSpec.envTemplate) ? { envTemplate: providerSpec.envTemplate } : {}),
-            ...(Array.isArray(providerSpec.inputFiles) ? { inputFiles: providerSpec.inputFiles } : {}),
-            ...(Array.isArray(providerSpec.outputArtifacts) ? { outputArtifacts: providerSpec.outputArtifacts } : {}),
-          },
-        }
-      : adapterType === 'agy-cli'
-        ? buildAgyCliAdapterForRunner(runSpec, parameters, providerSpec, options)
-        : buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, options)
   const adapter =
     adapterType === 'codex-app-server'
-      ? buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, options)
+      ? buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, providerName, options)
       : adapterType === 'agy-cli'
-        ? buildAgyCliAdapterForRunner(runSpec, parameters, providerSpec, options)
+        ? buildAgyCliAdapterForRunner(runSpec, parameters, providerSpec, providerName, options)
         : explicitAdapter
           ? sanitizeProviderAdapterForRunner(explicitAdapter)
-          : defaultAdapter
+          : {
+              type: 'exec',
+              exec: {
+                binary,
+                ...(Array.isArray(providerSpec.argsTemplate) ? { argsTemplate: providerSpec.argsTemplate } : {}),
+                ...(asRecord(providerSpec.envTemplate) ? { envTemplate: providerSpec.envTemplate } : {}),
+                ...(Array.isArray(providerSpec.inputFiles) ? { inputFiles: providerSpec.inputFiles } : {}),
+                ...(Array.isArray(providerSpec.outputArtifacts)
+                  ? { outputArtifacts: providerSpec.outputArtifacts }
+                  : {}),
+              },
+            }
 
   return {
     schemaVersion: 'agents.proompteng.ai/runner/v1',

@@ -15,6 +15,7 @@ import {
   providerUsesControllerAuthSecret,
   validateAuthSecretPolicy,
   validateImagePolicy,
+  validateProviderModelEffortOverrides,
   validateProviderSecretEnvPolicy,
 } from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
@@ -547,6 +548,50 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     let workflowContractStatus: Record<string, unknown> | undefined
 
     const baseParameters = resolveParameters(agentRun)
+    const baseOverridePolicy = validateProviderModelEffortOverrides(dependencies.provider, baseParameters)
+    if (!baseOverridePolicy.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: baseOverridePolicy.reason,
+        message: baseOverridePolicy.message,
+      })
+      logInvalidSpec(baseOverridePolicy.reason, baseOverridePolicy.message)
+      await deps.setStatus(kube, agentRun, {
+        observedGeneration,
+        phase: 'Failed',
+        reason: baseOverridePolicy.reason,
+        message: baseOverridePolicy.message,
+        finishedAt: deps.nowIso(),
+        conditions: updated,
+      })
+      return
+    }
+    for (const step of workflowSteps) {
+      const stepOverridePolicy = validateProviderModelEffortOverrides(
+        dependencies.provider,
+        { ...baseParameters, ...step.parameters },
+        { context: `workflow step ${step.name}` },
+      )
+      if (!stepOverridePolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: stepOverridePolicy.reason,
+          message: stepOverridePolicy.message,
+        })
+        logInvalidSpec(stepOverridePolicy.reason, stepOverridePolicy.message)
+        await deps.setStatus(kube, agentRun, {
+          observedGeneration,
+          phase: 'Failed',
+          reason: stepOverridePolicy.reason,
+          message: stepOverridePolicy.message,
+          finishedAt: deps.nowIso(),
+          conditions: updated,
+        })
+        return
+      }
+    }
     const allowedSecrets = dependencies.allowedSecrets
     const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
     const systemPromptResolution = await resolveSystemPrompt({
