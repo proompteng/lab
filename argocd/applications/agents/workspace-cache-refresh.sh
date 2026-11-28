@@ -8,7 +8,7 @@ mirror="$root/git/proompteng/lab.git"
 bun_cache="$root/bun-cache"
 worktree="$root/.bun-worktree"
 
-github_auth="Authorization: Basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN:?github-token is required}" | base64 -w0)"
+github_auth="Authorization: Basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN:?github-token is required}" | base64 | tr -d '\n')"
 trap 'rm -rf -- "$worktree"' EXIT
 
 # One writer per node. Alternate between two slots so interruptions cannot change the
@@ -25,7 +25,8 @@ inactive_slot() {
 publish() {
   local staged="$1" live="$2"
   ln -sfn "${staged##*/}" "$live.next"
-  mv -Tf "$live.next" "$live"
+  # Rename the link itself in place instead of following the live symlink into its directory.
+  bun -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' "$live.next" "$live"
 }
 
 git_cache() {
