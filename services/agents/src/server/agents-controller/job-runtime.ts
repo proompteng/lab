@@ -5,6 +5,7 @@ import { quantityToScalar } from '@kubernetes/client-node/dist/util.js'
 import { asRecord, asString, readNested } from '../primitives'
 import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
+import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../../workspace-cache'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
@@ -1035,6 +1036,26 @@ export const submitJobRun = async (
       name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH',
       value: `${serviceAccountToken.mountPath}/token`,
     })
+  }
+
+  const sharedCacheHostPath = runnerDefaultsConfig.sharedCacheHostPath
+  if (
+    sharedCacheHostPath &&
+    usesStandardRunner &&
+    agentRunnerSpec?.adapter?.type === 'codex-app-server' &&
+    vcsContext?.repository === LAB_REPOSITORY &&
+    isGitHubCloneBaseUrl(asString(vcsContext.cloneBaseUrl))
+  ) {
+    const name = makeName(runName, 'shared-workspace-cache')
+    if (
+      !volumes.some((volume) => volume.name === name) &&
+      !hasVolumeMountAtPath(volumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH) &&
+      !hasVolumeMountAtPath(configVolumeMounts, SHARED_WORKSPACE_CACHE_MOUNT_PATH)
+    ) {
+      // On nodes without the refresher, kubelet can mount an empty cache instead of blocking the Job.
+      volumes.push({ name, spec: { hostPath: { path: sharedCacheHostPath, type: 'DirectoryOrCreate' } } })
+      volumeMounts.push({ name, mountPath: SHARED_WORKSPACE_CACHE_MOUNT_PATH, readOnly: true })
+    }
   }
 
   const jobPodSpec: Record<string, unknown> = {

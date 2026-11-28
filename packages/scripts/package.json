@@ -6,12 +6,17 @@
   "scripts": {
     "lint": "bun run lint:oxlint && bunx oxfmt --check .",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json . && oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.jangar.json src/jangar src/shared"
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json . && oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.jangar.json src/jangar src/shared",
+    "typecheck:ontology": "tsc --project tsconfig.ontology.json"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.4.5",
     "@proompteng/bumba": "workspace:*",
     "@proompteng/temporal-bun-sdk": "workspace:*",
+    "kysely": "0.28.17",
     "libpg-query": "18.3.0",
+    "oxc-parser": "0.152.0",
+    "oxfmt": "^0.48.0",
     "yaml": "^2.8.4",
     "zod": "^4.4.3"
   },

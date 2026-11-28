@@ -19,6 +19,12 @@ const readJobPodSpec = (job: Record<string, unknown> | undefined) => {
 
 describe('agents controller job-runtime module', () => {
   let previousEnv: Record<string, string | undefined>
+  const savedEnv = new Map<string, string | undefined>()
+  const setEnv = (key: string, value: string | undefined) => {
+    if (!savedEnv.has(key)) savedEnv.set(key, process.env[key])
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
 
   beforeEach(() => {
     previousEnv = {
@@ -31,6 +37,11 @@ describe('agents controller job-runtime module', () => {
   })
 
   afterEach(() => {
+    for (const [key, value] of savedEnv) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    savedEnv.clear()
     for (const [name, value] of Object.entries(previousEnv)) {
       if (value === undefined) delete process.env[name]
       else process.env[name] = value
@@ -53,7 +64,7 @@ describe('agents controller job-runtime module', () => {
   })
 
   it('resolves runner service account from runtime, provider, then env default', () => {
-    process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT = 'runner-default'
+    setEnv('AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT', 'runner-default')
     expect(resolveRunnerServiceAccount({ serviceAccount: 'runtime-sa' })).toBe('runtime-sa')
     expect(resolveRunnerServiceAccount({ serviceAccountName: 'runtime-sa-name' })).toBe('runtime-sa-name')
     expect(resolveRunnerServiceAccount({}, { spec: { workload: { serviceAccountName: 'provider-sa' } } })).toBe(
@@ -152,6 +163,56 @@ describe('agents controller job-runtime module', () => {
       }),
     )
   })
+
+  it.each([
+    { enabled: true, hostPath: '/var/lib/agents-workspace-cache', standard: true, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: undefined, standard: true, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: '/var/lib/..', standard: true, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: '/var/lib/agents-workspace-cache', standard: false, repository: 'proompteng/lab' },
+    { enabled: false, hostPath: '/var/lib/agents-workspace-cache', standard: true, repository: 'org/other' },
+  ])(
+    'mounts the host workspace cache only for opted-in standard lab runs ($enabled, $hostPath, $standard, $repository)',
+    async ({ enabled, hostPath, standard, repository }) => {
+      const standardImage = 'registry.example/agents-codex-runner:standard'
+      setEnv('AGENTS_AGENT_RUNNER_IMAGE', standardImage)
+      setEnv('AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH', hostPath)
+      const kube = {
+        get: vi.fn(async () => null),
+        apply: vi.fn(async (resource: Record<string, unknown>) => resource),
+      }
+      await submitJobRun(
+        kube as never,
+        { metadata: { name: 'cache-run', namespace: 'agents' } },
+        { metadata: { name: 'codex-agent' } },
+        { metadata: { name: 'codex' }, spec: { adapter: { type: 'codex-app-server' } } },
+        { summary: 'Run summary' },
+        null,
+        'agents',
+        standard ? standardImage : 'registry.example/custom-runner:tag',
+        'job',
+        {
+          vcs: {
+            ok: true,
+            skip: false,
+            mode: 'read-only',
+            requiredSecrets: [],
+            context: { repository, cloneBaseUrl: 'https://github.com' },
+          },
+        },
+      )
+
+      const podSpec = readJobPodSpec(kube.apply.mock.calls.find(([resource]) => resource.kind === 'Job')?.[0])
+      const volumes = podSpec.volumes as Record<string, unknown>[]
+      const [container] = podSpec.containers as { volumeMounts: Record<string, unknown>[] }[]
+      const name = 'cache-run-shared-workspace-cache'
+      expect(volumes.filter((volume) => volume.hostPath)).toEqual(
+        enabled ? [{ name, hostPath: { path: hostPath, type: 'DirectoryOrCreate' } }] : [],
+      )
+      expect(container.volumeMounts.filter((mount) => mount.mountPath === '/var/cache/agents-shared')).toEqual(
+        enabled ? [{ name, mountPath: '/var/cache/agents-shared', readOnly: true }] : [],
+      )
+    },
+  )
 
   it('builds run spec with rendered event payload and optional vcs/system prompt', () => {
     const runSpec = buildRunSpec(
@@ -330,10 +391,10 @@ describe('agents controller job-runtime module', () => {
   ])('bounds the generated tmpfs volumes for $name', async (testCase) => {
     const { customImage, persistentWorkspace, memoryLimit, sizeLimits } = testCase
     const standardImage = 'registry.example/agents-codex-runner:standard'
-    process.env.AGENTS_AGENT_RUNNER_IMAGE = standardImage
-    process.env.AGENTS_AGENT_RUNNER_RESOURCES = JSON.stringify({ limits: { memory: '32Gi' } })
-    process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
-    process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
+    setEnv('AGENTS_AGENT_RUNNER_IMAGE', standardImage)
+    setEnv('AGENTS_AGENT_RUNNER_RESOURCES', JSON.stringify({ limits: { memory: '32Gi' } }))
+    setEnv('AGENTS_CONTROLLER_AUTH_SECRET_NAME', 'codex-auth')
+    setEnv('AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH', '/root/.codex')
     const kube = {
       get: vi.fn(async () => null),
       apply: vi.fn(async (resource: Record<string, unknown>) => resource),

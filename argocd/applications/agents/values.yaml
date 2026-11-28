@@ -210,6 +210,9 @@ argocdHooks:
 controllers:
   enabled: true
   replicaCount: 2
+  env:
+    vars:
+      AGENTS_AGENT_RUNNER_SHARED_CACHE_HOST_PATH: /var/lib/agents-workspace-cache
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
     tag: sha-1cabb3c79880542f44f4a7195cb938879df3f648

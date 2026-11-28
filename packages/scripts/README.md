@@ -43,6 +43,11 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | `src/torghut/storage-stability-gate.ts`               | Collects a read-only 30-minute clean observation window from Talos, Ceph/current SMART health, Kafka, Torghut and Jangar PostgreSQL, Argo CD, and contained Torghut write workloads; exits non-zero unless current storage, quorum, durability, WAL budgets, and runtime evidence prove staged activation is safe. | `kubectl`, `talosctl`              | `bun run gate:torghut-storage-stability --observation-start 2026-07-15T11:00:00Z --output json`                                   |
 | `src/torghut/generate-whitepaper-replay-workflows.ts` | Fetches closed whitepaper issues from GitHub, deduplicates them by source PDF, writes one direct-intake payload per unique paper under `docs/whitepapers/replay-workflows/`, and can optionally POST them to Torghut.                                                                                              | `gh`                               | `bun run whitepapers:replay --post --base-url http://localhost:8181`                                                              |
 
+## Agents collective knowledge
+
+`src/agents/curate-ontology-deltas.ts` validates AgentRun proposals against an in-memory copy of the Agents schema and
+updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
+
 ## Registry maintenance
 
 The Python 3.14 controller `src/registry/run.py` runs one cleanup worker inside the existing registry Pod.

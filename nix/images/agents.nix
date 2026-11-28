@@ -318,6 +318,7 @@ let
     "services/agents/src/runner-result.ts"
     "services/agents/src/runner-status.ts"
     "services/agents/src/runner-telemetry.ts"
+    "services/agents/src/workspace-cache.ts"
     "services/agents/src/artifact-storage.ts"
     "services/agents/tsconfig.json"
   ];
