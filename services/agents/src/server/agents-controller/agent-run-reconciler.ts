@@ -5,7 +5,13 @@ import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
-import { buildRunSpecContext, renderProviderOutputArtifacts, verifyJobConfigMaps } from './job-runtime'
+import {
+  buildRunSpecContext,
+  isJobOwnedByAgentRun,
+  makeName,
+  renderProviderOutputArtifacts,
+  verifyJobConfigMaps,
+} from './job-runtime'
 import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
@@ -22,12 +28,16 @@ import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from '.
 import { type AgentRunIndex, type RepoConcurrencyConfig, resolveRepoConcurrencyLimit } from './queue-state'
 import {
   type ControllerRateState,
-  checkControllerRateLimits as evaluateControllerRateLimits,
+  type RateLimitBlock,
+  type RateLimitDecision,
   type RateLimits,
+  getControllerRateLimitBlock,
+  reserveControllerRateLimit,
 } from './rate-limits'
 import {
   applyVcsMetadataToParameters,
   isAgentRunTerminalPhase,
+  isQueuedRun,
   normalizeRepository,
   resolveImplementation,
   resolveParameters,
@@ -41,7 +51,7 @@ import {
   runnerStatusOutputArtifacts,
   runnerStatusToTerminalOutcome,
 } from './runner-status'
-import { cancelRuntime, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
+import { buildRuntimeRef, cancelRuntime, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
 import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } from './vcs-context'
 import { validateParameters } from './workflow'
@@ -85,8 +95,8 @@ type AgentRunReconcilerDependencies = {
     agentRun: Record<string, unknown>,
     namespace: string,
     memories: Record<string, unknown>[],
-    options?: { initialSubmit?: boolean },
-  ) => Promise<void>
+    options?: { initialSubmit?: boolean; reserveStart?: () => Promise<RateLimitDecision> },
+  ) => Promise<number | void>
   submitJobRun: (
     kube: KubeClient,
     agentRun: Record<string, unknown>,
@@ -237,8 +247,9 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const hasFinalizer = finalizers.includes(finalizer)
     const deleting = Boolean(metadata.deletionTimestamp)
     const runtimeType = asString(readNested(spec, ['runtime', 'type']))
-    const runtimeRef = parseRuntimeRef(status.runtimeRef)
+    let runtimeRef = parseRuntimeRef(status.runtimeRef)
     const isWorkflowRun = runtimeType === 'workflow' || runtimeRef?.type === 'workflow'
+    const resourceVersion = asString(metadata.resourceVersion)
 
     let conditions = buildConditions(agentRun)
     const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
@@ -299,7 +310,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             phase,
             conditions,
           })
-          if (isWorkflowRun) return
+          return
         }
       }
     }
@@ -369,6 +380,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       status,
       finalizer,
       finalizers,
+      resourceVersion,
       logContext,
       isKubeNotFoundError,
       getTemporalClient,
@@ -392,7 +404,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     if (!hasFinalizer) {
       try {
-        const resourceVersion = isWorkflowRun ? asString(metadata.resourceVersion) : null
         await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
           metadata: { finalizers: [...finalizers, finalizer], ...(resourceVersion ? { resourceVersion } : {}) },
         })
@@ -400,8 +411,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         if (isKubeNotFoundError(error)) return
         throw error
       }
-      // Workflow status writes use the observed resourceVersion. Reconcile the updated object from the watch.
-      if (isWorkflowRun) return
+      // Reconcile the watch observation with the new version before writing status.
+      if (resourceVersion) return
     }
 
     if (isAgentRunTerminalPhase(phase)) {
@@ -422,14 +433,25 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       phase,
     })
 
-    const shouldSubmit =
-      !runtimeRef && phase !== 'Running' && phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
+    let recoveredJob: Record<string, unknown> | null = null
+    if (!runtimeRef && runtimeType === 'job' && asString(metadata.uid)) {
+      // A previous reconcile can create the deterministic Job without committing its reference.
+      const jobName = makeName(name, 'job')
+      const job = await kube.get('job', jobName, namespace)
+      if (job && isJobOwnedByAgentRun(job, agentRun)) {
+        recoveredJob = job
+        runtimeRef = buildRuntimeRef('job', jobName, namespace, { uid: asString(readNested(job, ['metadata', 'uid'])) })
+      }
+    }
+
+    const shouldSubmit = !runtimeRef && phase !== 'Running'
 
     if (shouldSubmit && isAgentRunIdempotencyEnabled()) {
       const idempotencyKey = asString(readNested(spec, ['idempotencyKey']))
       if (idempotencyKey && agentName) {
         const store = await getPrimitivesStore()
         if (store) {
+          let duplicate: { reason: string; message: string } | null = null
           try {
             const reservation = await store.reserveAgentRunIdempotencyKey({
               namespace,
@@ -469,27 +491,26 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
             if (canonicalRunName && canonicalRunName !== name) {
               const existingPhase = asString(readNested(canonicalRun, ['status', 'phase'])) ?? 'Pending'
-              const duplicateReason =
-                canonicalRun &&
-                (existingPhase === 'Succeeded' || existingPhase === 'Failed' || existingPhase === 'Cancelled')
-                  ? 'IdempotencyKeyCompleted'
-                  : 'IdempotencyKeyInUse'
-              const updated = upsertCondition(conditions, {
-                type: 'Duplicate',
-                status: 'True',
-                reason: duplicateReason,
+              duplicate = {
+                reason: isAgentRunTerminalPhase(existingPhase) ? 'IdempotencyKeyCompleted' : 'IdempotencyKeyInUse',
                 message: `AgentRun ${canonicalRunName} already claimed idempotencyKey ${idempotencyKey}`,
-              })
-              await setStatus(kube, agentRun, {
-                observedGeneration,
-                phase: 'Failed',
-                finishedAt: nowIso(),
-                conditions: updated,
-              })
-              return
+              }
             }
           } catch (error) {
             console.warn('[agents] failed to enforce AgentRun idempotency', error)
+          }
+          if (duplicate) {
+            await setStatus(kube, agentRun, {
+              observedGeneration,
+              phase: 'Failed',
+              finishedAt: nowIso(),
+              conditions: upsertCondition(conditions, {
+                type: 'Duplicate',
+                status: 'True',
+                ...duplicate,
+              }),
+            })
+            return
           }
         }
       }
@@ -599,32 +620,33 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
 
-      const rateDecision = evaluateControllerRateLimits({
+      const rateInputs = {
         namespace,
         repository: repository || null,
         state: getControllerRateState(),
         limits: parseRateLimits(),
-        now: Date.now(),
-      })
-      if (!rateDecision.ok) {
-        const rateAttributes: Record<string, string> = { namespace }
-        if (normalizedRepo) {
-          rateAttributes.repository = normalizedRepo
-        }
-        recordAgentRateLimitRejection(rateDecision.scope, rateAttributes)
+      }
+      const blockForRateLimit = async ({ scope, message, retryAt }: RateLimitBlock) => {
+        recordAgentRateLimitRejection(scope, { namespace, ...(normalizedRepo ? { repository: normalizedRepo } : {}) })
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
           status: 'True',
           reason: 'RateLimit',
-          message: `${rateDecision.message} (retry after ${rateDecision.retryAfterSeconds}s)`,
+          message,
         })
-        logBlocked('RateLimit', `${rateDecision.message} (retry after ${rateDecision.retryAfterSeconds}s)`)
+        logBlocked('RateLimit', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
-        return
+        return retryAt
       }
-    }
+      // Avoid dependency lookups for already-throttled runs. Admission still reserves against current limits.
+      const rateBlock = getControllerRateLimitBlock({ ...rateInputs, now: Date.now() })
+      if (rateBlock) return blockForRateLimit(rateBlock)
+      const reserveStart = async () => {
+        const reservation = reserveControllerRateLimit({ ...rateInputs, now: Date.now() })
+        if (!reservation.ok) await blockForRateLimit(reservation)
+        return reservation
+      }
 
-    if (shouldSubmit) {
       if (!runtimeType) {
         const message = 'spec.runtime.type is required'
         const updated = upsertCondition(conditions, {
@@ -775,8 +797,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
 
       if (runtimeType === 'workflow') {
-        await reconcileWorkflowRun(kube, agentRun, namespace, memories, { initialSubmit: true })
-        return
+        return reconcileWorkflowRun(kube, agentRun, namespace, memories, { initialSubmit: true, reserveStart })
       }
 
       const loaded = agentProvider ?? (await loadAgentProvider())
@@ -1122,7 +1143,9 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         buildRunSpecContext(agentRun, resolvedAgent, implResource, resolvedParameters, memory, vcsContext),
       )
 
-      let newRuntimeRef: RuntimeRef | null = null
+      const reservation = await reserveStart()
+      if (!reservation.ok) return reservation.retryAt
+      let newRuntimeRef: RuntimeRef
       try {
         if (runtimeType === 'job') {
           newRuntimeRef = await submitJobRun(
@@ -1165,28 +1188,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         } else {
           throw new Error(`unknown runtime type: ${runtimeType}`)
         }
-
-        const updated = upsertCondition(baseConditions, {
-          type: 'Accepted',
-          status: 'True',
-          reason: 'Submitted',
-        })
-        logSubmitted(newRuntimeRef)
-        await setStatus(kube, agentRun, {
-          observedGeneration,
-          runtimeRef: newRuntimeRef,
-          phase: 'Running',
-          startedAt: nowIso(),
-          conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
-          vcs: vcsStatus ?? undefined,
-          ...(declaredArtifacts.length > 0 ? { artifacts: declaredArtifacts } : {}),
-          contract: contractStatus,
-          specHash: hashAgentRunImmutableSpec(agentRun),
-          ...(systemPromptResolution.systemPromptHash
-            ? { systemPromptHash: systemPromptResolution.systemPromptHash }
-            : {}),
-        })
       } catch (error) {
+        reservation.release()
         const message = error instanceof Error ? error.message : String(error)
         const updated = upsertCondition(baseConditions, {
           type: 'Failed',
@@ -1203,13 +1206,31 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           vcs: vcsStatus ?? undefined,
           contract: contractStatus,
         })
+        return
       }
+      // A rejected status write does not undo the start. Reconcile the already-created runtime instead.
+      const updated = upsertCondition(baseConditions, { type: 'Accepted', status: 'True', reason: 'Submitted' })
+      logSubmitted(newRuntimeRef)
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        runtimeRef: newRuntimeRef,
+        phase: 'Running',
+        startedAt: nowIso(),
+        conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
+        vcs: vcsStatus ?? undefined,
+        ...(declaredArtifacts.length > 0 ? { artifacts: declaredArtifacts } : {}),
+        contract: contractStatus,
+        specHash: hashAgentRunImmutableSpec(agentRun),
+        ...(systemPromptResolution.systemPromptHash
+          ? { systemPromptHash: systemPromptResolution.systemPromptHash }
+          : {}),
+      })
       return
     }
 
-    if (phase !== 'Running') return
+    if (phase !== 'Running' && !isQueuedRun(agentRun)) return
 
-    if (isWorkflowRun) {
+    if (isWorkflowRun && (phase === 'Running' || runtimeRef?.type === 'workflow')) {
       await reconcileWorkflowRun(kube, agentRun, namespace, memories)
       return
     }
@@ -1219,11 +1240,12 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     if (runtimeRef.type === 'job') {
       const jobName = asString(runtimeRef.name) ?? ''
       const jobNamespace = asString(runtimeRef.namespace) ?? namespace
-      const job = await kube.get('job', jobName, jobNamespace)
-      const runtimeRefRecord = asRecord(status.runtimeRef) ?? {}
-      const jobObservedAt = asString(runtimeRefRecord.jobObservedAt)
+      const existingJob = recoveredJob ?? (await kube.get('job', jobName, jobNamespace))
+      const expectedJobUid = asString(runtimeRef.uid)
+      const job = expectedJobUid && readNested(existingJob, ['metadata', 'uid']) !== expectedJobUid ? null : existingJob
+      const jobObservedAt = asString(runtimeRef.jobObservedAt)
       if (!job) {
-        if (jobObservedAt) {
+        if (jobObservedAt || phase !== 'Running') {
           const message = `job ${jobName || 'unknown'} not found`
           const warningConditions = upsertCondition(conditions, {
             type: 'Warning',
@@ -1290,10 +1312,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
       const jobStatus = asRecord(job.status) ?? {}
       const succeeded = Number(jobStatus.succeeded ?? 0)
-      const failed = Number(jobStatus.failed ?? 0)
       if (succeeded > 0 || isJobComplete(job)) {
-        const jobName = asString(runtimeRef.name) ?? ''
-        const jobNamespace = asString(runtimeRef.namespace) ?? namespace
         const runnerStatus = jobName
           ? await extractRunnerStatusFromJobPods(kube, jobNamespace, jobName, ['succeeded', 'failed', 'cancelled'])
           : null
@@ -1328,10 +1347,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             ? { artifacts: mergeAgentRunArtifacts(status.artifacts, runnerArtifacts) }
             : {}),
         })
-        await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
-      } else if (failed > 0 && isJobFailed(job)) {
-        const jobName = asString(runtimeRef.name) ?? ''
-        const jobNamespace = asString(runtimeRef.namespace) ?? namespace
+        await applyJobTtlAfterStatus(kube, job, jobNamespace, runtimeConfig)
+      } else if (isJobFailed(job)) {
         const runnerStatus = jobName
           ? await extractRunnerStatusFromJobPods(kube, jobNamespace, jobName, ['failed', 'cancelled'])
           : null
@@ -1367,8 +1384,12 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             ? { artifacts: mergeAgentRunArtifacts(status.artifacts, runnerArtifacts) }
             : {}),
         })
-        await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
+        await applyJobTtlAfterStatus(kube, job, jobNamespace, runtimeConfig)
       } else {
+        if (phase !== 'Running' && acceptedCondition?.status !== 'True') {
+          conditions = upsertCondition(conditions, { type: 'Accepted', status: 'True', reason: 'JobAdopted' })
+        }
+        const startedAt = asString(status.startedAt) ?? asString(jobStatus.startTime) ?? nowIso()
         const configMapVerification = await verifyJobConfigMaps(kube, job, jobNamespace)
         if (!configMapVerification.ok) {
           const message = `job ${jobName || 'unknown'} is missing mounted ConfigMaps: ${configMapVerification.missing.join(', ')}`
@@ -1390,23 +1411,23 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           await setStatus(kube, agentRun, {
             observedGeneration,
             phase: 'Running',
-            startedAt: asString(status.startedAt) ?? nowIso(),
+            startedAt,
             runtimeRef,
             conditions: updated,
             vcs: asRecord(status.vcs) ?? undefined,
           })
           return
         }
-        if (!jobObservedAt) {
+        if (phase !== 'Running' || recoveredJob || !jobObservedAt) {
           await setStatus(kube, agentRun, {
             observedGeneration,
             phase: 'Running',
             reason: undefined,
             message: undefined,
-            startedAt: asString(status.startedAt) ?? nowIso(),
+            startedAt,
             runtimeRef: {
               ...runtimeRef,
-              jobObservedAt: nowIso(),
+              jobObservedAt: jobObservedAt ?? nowIso(),
             },
             conditions,
             vcs: asRecord(status.vcs) ?? undefined,

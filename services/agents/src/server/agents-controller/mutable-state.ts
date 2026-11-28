@@ -60,6 +60,7 @@ export type AgentsControllerMutableState<TControllerState> = {
   watchHandles: Array<{ stop: () => void }>
   controllerSnapshot: TControllerState | null
   namespaceQueues: Map<string, NamespaceQueue>
+  runRetries: Map<string, { retryAt: number; timer: ReturnType<typeof setTimeout> }>
   githubAppTokenCache: Map<string, { token: string; expiresAt: number; refreshAfter: number }>
   primitivesStoreRef: AgentsPrimitivesStoreRef | null
   lastIdempotencyPruneAtMs: number
@@ -81,6 +82,7 @@ export const createMutableState = <TControllerState>(input: {
   watchHandles: [],
   controllerSnapshot: null,
   namespaceQueues: new Map<string, NamespaceQueue>(),
+  runRetries: new Map(),
   githubAppTokenCache: new Map<string, { token: string; expiresAt: number; refreshAfter: number }>(),
   primitivesStoreRef: null,
   lastIdempotencyPruneAtMs: 0,

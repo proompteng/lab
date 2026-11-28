@@ -130,6 +130,11 @@ const isNotFound = (error: unknown) => {
   return message.includes('not found') || message.includes('notfound')
 }
 
+export const isKubeConflict = (error: unknown) => {
+  const response = asRecord(error)
+  return response?.code === 409 || response?.statusCode === 409
+}
+
 const parseJson = (raw: string, context: string) => {
   try {
     return JSON.parse(raw) as Record<string, unknown>
@@ -454,6 +459,10 @@ const applyStatusResource = async (clients: KubeClients, resource: Record<string
 
   let resourceVersion = asString(asRecord(resource.metadata)?.resourceVersion)
   if (!resourceVersion) {
+    if (target.kind === 'AgentRun') {
+      // A fresh version cannot make status computed from a stale observation safe to write.
+      throw new Error('AgentRun status patches require the reconciled resourceVersion')
+    }
     const current = customTarget
       ? await readCustomObject(clients.customObjects, resourceKey, target.name, target.namespace ?? 'default')
       : await readObject(clients.objects, resourceKey, target.name, target.namespace ?? 'default')
@@ -586,6 +595,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
         PatchStrategy.MergePatch,
       )) as Record<string, unknown>
     } catch (error) {
+      if (isKubeConflict(error)) throw error
       throw new Error(`kubernetes patch failed: ${normalizeKubeErrorMessage(error)}`)
     }
   },

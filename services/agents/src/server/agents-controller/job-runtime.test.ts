@@ -673,7 +673,7 @@ describe('agents controller job-runtime module', () => {
         name: 'run-1-step-1-attempt-1',
         namespace: 'agents',
         uid: 'job-uid-1',
-        labels: { 'agents.proompteng.ai/agent-run': 'run-1' },
+        labels: { 'agents.proompteng.ai/agent-run': 'run-1', 'agents.proompteng.ai/run-uid': 'run-uid-1' },
       },
     }
     const kube = {
@@ -719,13 +719,16 @@ describe('agents controller job-runtime module', () => {
     expect(applied).not.toContainEqual(expect.objectContaining({ kind: 'Job' }))
   })
 
-  it('adopts an existing deterministic job after a stale apply replay hits immutable fields', async () => {
+  it.each([
+    'Job.batch "run-1-step-1-attempt-1" is invalid: spec.template: field is immutable',
+    'connection closed before the create response arrived',
+  ])('recovers the deterministic Job after an apply error: %s', async (message) => {
     const existingJob = {
       metadata: {
         name: 'run-1-step-1-attempt-1',
         namespace: 'agents',
         uid: 'job-uid-1',
-        labels: { 'agents.proompteng.ai/agent-run': 'run-1' },
+        labels: { 'agents.proompteng.ai/agent-run': 'run-1', 'agents.proompteng.ai/run-uid': 'run-uid-1' },
       },
     }
     let jobLookupCount = 0
@@ -737,7 +740,7 @@ describe('agents controller job-runtime module', () => {
       }),
       apply: vi.fn(async (resource: Record<string, unknown>) => {
         if (resource.kind === 'Job') {
-          throw new Error('Job.batch "run-1-step-1-attempt-1" is invalid: spec.template: field is immutable')
+          throw new Error(message)
         }
         return resource
       }),
