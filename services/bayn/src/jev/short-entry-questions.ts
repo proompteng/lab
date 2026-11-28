@@ -54,13 +54,27 @@ export const shortEntryJudgmentPolicy = {
   },
 } as const
 
+export const symmetricShortEntryJudgmentPolicy = {
+  ...shortEntryJudgmentPolicy,
+  stateDefinition: 'bayn.jev-long-short-proposal-evidence.v2',
+  instructions:
+    'Use the named proposal evidence and completedSourceBars in state. calculatedFacts are exact comparisons computed by code from these source bars and proposal terms. They do not prove that the identified structure is meaningful. chartAssessment contains model judgments about these same source bars, not independent observations. Assess resistance rejection and downside consolidation breaks symmetrically with long setups at observed prices. Short entries sell at the bid; covers buy at the ask. A short stop is above entry and a target is below entry. Proposed order prices are conditional terms, not observed or promised future prices. Answer only the individual question supplied here. Use available webullContext as an independent completed-minute observation for the same symbol and window. Keep its prices and volume separate from completedSourceBars. It is supplemental context, not an executable quote or proof of consolidated coverage.',
+} as const
+
 export const makeNativeEntryJudgmentRequest = (
   input: Omit<Parameters<typeof makeEntryJudgmentRequest>[0], 'proposals'> & {
     readonly proposals: readonly NativeEntryProposal[]
+    readonly symmetric?: boolean
   },
 ) =>
   Result.gen(function* () {
-    const long = yield* makeEntryJudgmentRequest({ ...input, proposals: input.proposals.filter(isLongEntryProposal) })
+    const symmetric = input.symmetric === true
+    const policy = symmetric ? symmetricShortEntryJudgmentPolicy : shortEntryJudgmentPolicy
+    const long = yield* makeEntryJudgmentRequest({
+      ...input,
+      includeEquityObstruction: symmetric,
+      proposals: input.proposals.filter(isLongEntryProposal),
+    })
     const shorts = input.proposals.filter(isShortEntryProposal)
     if (shorts.length === 0) return long
     const candidate = yield* Schema.decodeUnknownResult(Schema.Struct({ symbol: Schema.String }))(
@@ -109,27 +123,44 @@ export const makeNativeEntryJudgmentRequest = (
       const after = input.chart.bars.filter((bar) => bar.id > end)
       const low = Math.min(...structure.map((bar) => bar.low))
       const high = Math.max(...structure.map((bar) => bar.high))
-      const below = after.map((bar) =>
-        BigDecimal.isLessThan(BigDecimal.fromNumberUnsafe(bar.close), BigDecimal.fromNumberUnsafe(low)),
-      )
+      const lowPrice = BigDecimal.fromNumberUnsafe(low)
+      const highPrice = BigDecimal.fromNumberUnsafe(high)
+      const completedCloses = after.map((bar) => ({
+        barId: bar.id,
+        closeRelativeToStructure: BigDecimal.isLessThan(BigDecimal.fromNumberUnsafe(bar.close), lowPrice)
+          ? ('BELOW' as const)
+          : BigDecimal.isGreaterThan(BigDecimal.fromNumberUnsafe(bar.close), highPrice)
+            ? ('ABOVE' as const)
+            : ('INSIDE' as const),
+      }))
       let consecutiveBelow = 0
-      for (const value of below.toReversed()) {
-        if (!value) break
+      for (const close of completedCloses.toReversed()) {
+        if (close.closeRelativeToStructure !== 'BELOW') break
         consecutiveBelow++
       }
       const stop = BigDecimal.make(BigInt(proposal.stopPriceMicros), 6)
       proposals[source.setup] = {
+        ...(symmetric
+          ? {}
+          : {
+              structureBars: structure,
+              completedBarsAfterStructure: after,
+            }),
         sourceEvidence: input.chart.bars.filter((b) => selectedIds.includes(b.id)),
-        structureBars: structure,
-        completedBarsAfterStructure: after,
         calculatedFacts: {
           structureLowUsd: low,
           structureHighUsd: high,
-          stopIsAboveStructureHigh: BigDecimal.isGreaterThan(stop, BigDecimal.fromNumberUnsafe(high)),
+          stopIsAboveStructureHigh: BigDecimal.isGreaterThan(stop, highPrice),
           entryIsBelowStructureLow: BigDecimal.isLessThan(
             BigDecimal.make(BigInt(proposal.minimumEntryPriceMicros), 6),
-            BigDecimal.fromNumberUnsafe(low),
+            lowPrice,
           ),
+          ...(symmetric
+            ? {
+                completedBarsAfterStructure: after.length,
+                completedClosesAfterStructure: completedCloses,
+              }
+            : {}),
           consecutiveNewestClosesBelowStructure: consecutiveBelow,
           stopTouchedInCompletedBarsAfterStructure: after.some((bar) =>
             BigDecimal.isGreaterThanOrEqualTo(BigDecimal.fromNumberUnsafe(bar.high), stop),
@@ -139,6 +170,7 @@ export const makeNativeEntryJudgmentRequest = (
           ? { support: input.assessments.support, resistance: input.assessments.resistance }
           : { base: input.assessments.base, support: input.assessments.support },
         terms: {
+          ...(symmetric ? { setup: source.setup, targetBasis: source.targetBasis } : {}),
           positionSide: 'SHORT',
           source,
           minimumEntryPriceUsd: Number(proposal.minimumEntryPriceMicros) / 1e6,
@@ -152,16 +184,12 @@ export const makeNativeEntryJudgmentRequest = (
       const names = shortQuestionNames(source.setup)
       for (const key of ['setup', 'stop', 'obstruction'] as const) {
         const definition =
-          key === 'setup'
-            ? resistance
-              ? shortEntryJudgmentPolicy.resistanceRejection
-              : shortEntryJudgmentPolicy.baseBreakdown
-            : shortEntryJudgmentPolicy[key]
+          key === 'setup' ? (resistance ? policy.resistanceRejection : policy.baseBreakdown) : policy[key]
         questions[names[key]] = {
           type: 'noul',
           instructions: {
             question: definition.question,
-            evidence: shortEntryJudgmentPolicy.instructions,
+            evidence: policy.instructions,
             proposalEvidencePath: `proposals.${source.setup}`,
           },
           criteria: definition.criteria,
@@ -172,7 +200,7 @@ export const makeNativeEntryJudgmentRequest = (
       model: input.model ?? 'jev-1.14.0',
       state: {
         ...longState,
-        schemaVersion: shortEntryJudgmentPolicy.stateDefinition,
+        schemaVersion: policy.stateDefinition,
         symbol: input.chart.symbol,
         windowEndAt: input.chart.windowEndAt,
         completedSourceBars: input.chart.bars,

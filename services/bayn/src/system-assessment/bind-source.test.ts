@@ -4,7 +4,12 @@ import { Result, Schema } from 'effect'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { bindSystemSourceCut } from './bind-source'
 import { mutationObligations } from './operational-obligations'
-import { testHash } from './fixtures.test-support'
+import {
+  nativeRegistrationFixture,
+  registrationFixture,
+  supportedAssessmentFixture,
+  testHash,
+} from './fixtures.test-support'
 import { evaluateSystemAssessment, ProfitabilityStatus, QualificationVerdict } from './assessment'
 import { ObligationClass } from './reliability'
 import { assessSession } from './session'
@@ -17,6 +22,9 @@ import { makeJevResolution, JevResolutionStatus } from '../jev/resolution'
 import { InferenceUsageStatus } from '../inference-costs'
 import { costReportFromEvidence } from '../inference-expense.test-support'
 import { SystemSourceCutSchema } from './source-cut'
+import { cashInventoryTradingPnl, markedRisk } from './economics'
+import { equityFeeCashFixture } from './equity-fee-cash.test-support'
+import { JevResearchPolicy } from '../jev/acceptance'
 
 const event = (sequence: number, eventType: string, occurredAt: string) =>
   Schema.decodeUnknownSync(MutationEventSchema)({
@@ -33,6 +41,251 @@ const event = (sequence: number, eventType: string, occurredAt: string) =>
   })
 
 describe('immutable source binding', () => {
+  test('native assessment derives fees and marked cash from retained witnesses', () => {
+    const registration = nativeRegistrationFixture(registrationFixture(undefined, 1))
+    const { input, cut, verifiedSources } = capturedAccountsFixture(supportedAssessmentFixture(1, registration))
+    const session = registration.calendar.sessions[0]!
+    const provider = registration.calendar.marketCalendar.providerSessions[0]!
+    const definition = registration.policies.find((p) => p.policy === 'JEV')!
+    const captured = cut.financial.find((a) => a.policy === 'JEV')!
+    const { identity, forward, evidence, accountHash, openFill, closeFill, statement } = equityFeeCashFixture(
+      { ...session, recoveryCloseAt: provider.sessionCloseAt },
+      definition.riskPolicy.accountId,
+    )
+    expect(accountHash).toBe(definition.accountBindingHash)
+    const positions = [
+      {
+        symbol: 'AAPL',
+        quantityAtoms: '1000000000',
+        costBasisMicros: '100000000',
+        bidPriceMicros: '96000000',
+        quoteSourceHash: testHash('intraday quote'),
+      },
+    ]
+    const marks = [
+      { at: session.openAt, cashMicros: '1000000000', positions: [] },
+      { at: openFill, cashMicros: null, positions },
+      { at: session.closeAt, cashMicros: '1007000000', positions: [] },
+    ].map(({ positions, ...mark }) => ({
+      ...mark,
+      availableAt: mark.at,
+      accountBindingHash: accountHash,
+      sourceHash: testHash(mark),
+      valuation: { inventorySourceHash: testHash('positions'), positions },
+    }))
+    const account = {
+      policy: definition.policy,
+      identity,
+      forward,
+      settlementAnchors: evidence.anchors,
+      brokerNonTradeActivity: statement,
+    }
+    const retained = { accounts: [account] }
+    const withStatement = (brokerNonTradeActivity: unknown) => ({
+      accounts: [{ ...account, brokerNonTradeActivity }],
+    })
+    const bound = (sourceMaterial: unknown) => {
+      const source = {
+        ...cut,
+        sourceMaterial,
+        sourceMaterialHash: testHash(sourceMaterial),
+        accountMarks: marks,
+        financial: [
+          {
+            ...captured,
+            sessions: captured.sessions.map((row) => ({
+              ...row,
+              facts: {
+                ...row.facts!,
+                openingPositionCount: 0,
+                closingPositionCount: 0,
+                grossRealizedPnlMicros: '7000000',
+                executionCostMicros: '20000',
+                cashSettlementRoundingMicros: '0',
+              },
+              // This independently rehashed draft field has no authority over the reconstructed path.
+              feeAdjustedCash: {
+                schemaVersion: 'bayn.fee-adjusted-cash.v1',
+                sourceHash: testHash('substituted cash path'),
+                accountBindingHash: accountHash,
+                sessionDate: session.sessionDate,
+                openAt: session.openAt,
+                closeAt: session.closeAt,
+                availableAt: evidence.statement.observedAt,
+                openingCashMicros: '1000000000',
+                points: [
+                  { at: openFill, tradeCashDeltaMicros: '-96000000', incurredFeesMicros: '10000' },
+                  { at: closeFill, tradeCashDeltaMicros: '7000000', incurredFeesMicros: '20000' },
+                ],
+              },
+            })),
+          },
+        ],
+      }
+      return bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources)
+    }
+    const firstSession = (projection: ReturnType<typeof bound>) =>
+      Result.getOrThrow(projection).input.policies.find((p) => p.policy === 'JEV')?.sessions[0]
+
+    const proved = firstSession(bound(retained))
+    if (proved?.financial == null) throw new Error('Expected exact fee-adjusted evidence')
+    expect(cashInventoryTradingPnl(proved.financial.cashInventory)).toBe('6980000')
+    expect(
+      markedRisk(proved.marks.map((m) => BigInt(m.cashFlowAdjustedTradingEquityMicros))).maximumDrawdownMicros,
+    ).toBe('4010000')
+
+    const absent = firstSession(bound({}))
+    expect(absent?.financial).toBeNull()
+    expect(absent?.marks).toEqual([])
+
+    const fills = forward.accountTransactions ?? []
+    const changed = {
+      ...account,
+      forward: {
+        ...forward,
+        accountTransactions: fills.map((fill) => ({
+          ...fill,
+          cashDeltaMicros: fill.side === 'BUY' ? '-96000000' : '103000000',
+        })),
+      },
+    }
+    expect(firstSession(bound({ ...retained, accounts: [changed] }))?.financial).toBeNull()
+    expect(Result.isFailure(bound(withStatement({ ...statement, secondPass: statement.secondPass.slice(0, 1) })))).toBe(
+      true,
+    )
+
+    const movements = [
+      {
+        id: `${session.sessionDate}::d7a201b7-679b-44d8-b76b-d352a25de736`,
+        activity_type: 'CSD',
+        date: session.sessionDate,
+        net_amount: '25.00',
+      },
+      {
+        id: `${session.sessionDate}::d7a201b7-679b-44d8-b76b-d352a25de737`,
+        activity_type: 'CSW',
+        date: session.sessionDate,
+        net_amount: '-25.00',
+      },
+    ]
+    const withMovements = (pass: typeof statement.firstPass, descending: boolean) => {
+      const body = descending ? [...movements.toReversed(), ...pass[0].body] : [...pass[0].body, ...movements]
+      return [
+        { ...pass[0], body, evidence: { ...pass[0].evidence, contentHash: testHash(body) } },
+        { ...pass[1], pageToken: descending ? pass[1].pageToken : movements[1]!.id },
+      ] as const
+    }
+    const original = {
+      ...statement,
+      firstPass: withMovements(statement.firstPass, false),
+      secondPass: withMovements(statement.secondPass, true),
+    }
+    expect(firstSession(bound(withStatement(original)))?.financial).toBeNull()
+    const withoutMovements = {
+      ...statement,
+      firstPass: [{ ...statement.firstPass[0], evidence: original.firstPass[0].evidence }, statement.firstPass[1]],
+      secondPass: [{ ...statement.secondPass[0], evidence: original.secondPass[0].evidence }, statement.secondPass[1]],
+    }
+    const omitted = bound(withStatement(withoutMovements))
+    if (Result.isSuccess(omitted)) throw new Error('Expected omitted activity to fail source verification')
+    expect(omitted.failure).toMatchObject({ message: 'Alpaca activity page body differs from its recorded response' })
+  })
+
+  test('native paired accounts require their own authenticated statements and exact cash scope', () => {
+    const registration = nativeRegistrationFixture(registrationFixture(undefined, 1))
+    const { input, cut, verifiedSources } = capturedAccountsFixture(supportedAssessmentFixture(1, registration))
+    const session = registration.calendar.sessions[0]!
+    const provider = registration.calendar.marketCalendar.providerSessions[0]!
+    const books = registration.policies
+      .filter((definition) => [JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent].includes(definition.policy))
+      .map((definition) => {
+        const { identity, forward, evidence, accountHash, statement } = equityFeeCashFixture(
+          { ...session, recoveryCloseAt: provider.sessionCloseAt },
+          definition.riskPolicy.accountId,
+        )
+        const marks = [session.openAt, session.closeAt].map((at) => ({
+          at,
+          availableAt: at,
+          accountBindingHash: accountHash,
+          cashMicros: null,
+          sourceHash: testHash([definition.policy, at]),
+          valuation: { inventorySourceHash: testHash([definition.policy, 'flat']), positions: [] },
+        }))
+        return {
+          marks,
+          account: {
+            policy: definition.policy,
+            identity,
+            forward,
+            settlementAnchors: evidence.anchors,
+            brokerNonTradeActivity: statement,
+          },
+        }
+      })
+    const candidate = books.find(({ account }) => account.policy === JevResearchPolicy.Candidate)!.account
+    const incumbent = books.find(({ account }) => account.policy === JevResearchPolicy.Incumbent)!.account
+    const bound = (accounts: unknown[]) => {
+      const sourceMaterial = { accounts }
+      const source = {
+        ...cut,
+        sourceMaterial,
+        sourceMaterialHash: testHash(sourceMaterial),
+        accountMarks: books.flatMap(({ marks }) => marks),
+        financial: cut.financial.map((captured) => ({
+          ...captured,
+          sessions: captured.sessions.map((row) => ({
+            ...row,
+            facts: {
+              ...row.facts!,
+              openingPositionCount: 0,
+              closingPositionCount: 0,
+              grossRealizedPnlMicros: '7000000',
+              executionCostMicros: '20000',
+              cashSettlementRoundingMicros: '0',
+            },
+          })),
+        })),
+      }
+      return bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources)
+    }
+    const financial = (projection: ReturnType<typeof bound>, policy: JevResearchPolicy) =>
+      Result.getOrThrow(projection).input.policies.find((p) => p.policy === policy)?.sessions[0]?.financial
+
+    const paired = bound([candidate, incumbent])
+    for (const { policy } of [candidate, incumbent]) {
+      const proved = financial(paired, policy)
+      if (proved == null) throw new Error(`Expected verified financial evidence for ${policy}`)
+      expect(cashInventoryTradingPnl(proved.cashInventory)).toBe('6980000')
+    }
+    expect(financial(paired, candidate.policy)?.sourceHash).not.toBe(financial(paired, incumbent.policy)?.sourceHash)
+
+    const { brokerNonTradeActivity: _missing, ...missing } = incumbent
+    const unpaired = bound([candidate, missing])
+    expect(financial(unpaired, candidate.policy)?.cashInventory.closingEquityMicros).toBe('1006980000')
+    expect(financial(unpaired, incumbent.policy)).toBeNull()
+    expect(
+      bound([candidate, { ...incumbent, brokerNonTradeActivity: candidate.brokerNonTradeActivity }]),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { message: 'Broker activity statement differs from its account or evidence cut' },
+    })
+    expect(
+      bound([
+        candidate,
+        {
+          ...incumbent,
+          brokerNonTradeActivity: {
+            ...candidate.brokerNonTradeActivity,
+            accountIdentityHash: incumbent.identity.identityHash,
+          },
+        },
+      ]),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { message: 'Alpaca account body differs from its recorded response or registered account' },
+    })
+  })
+
   test('packet financial claims cannot supply an uncaptured control account', () => {
     const { input, cut, verifiedSources } = fixture()
     const bound = Result.getOrThrow(bindSystemSourceCut(input, cut, verifiedSources))

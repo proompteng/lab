@@ -43,6 +43,9 @@ export interface CycleQueries {
   readonly selectOldestUnfinishedCycle: (
     scope: CycleRecoveryScope,
   ) => Effect.Effect<readonly AutonomousCycle[], CycleStoreInternalError>
+  readonly selectUnfinishedCycles: (
+    scope: CycleRecoveryScope,
+  ) => Effect.Effect<readonly AutonomousCycle[], CycleStoreInternalError>
   readonly decisionEvidenceMismatch: (
     document: CycleDecisionDocument,
   ) => Effect.Effect<DecisionEvidenceMismatch | null, CycleStoreInternalError>
@@ -197,7 +200,7 @@ export const makeCycleQueries = (
       withObservedStage('bayn.cycle.decision-read', { dependency: 'postgresql', operation: 'read-decision-document' }),
     )
 
-  const selectOldestUnfinishedCycle: CycleQueries['selectOldestUnfinishedCycle'] = (scope) =>
+  const selectUnfinishedCycles: CycleQueries['selectUnfinishedCycles'] = (scope) =>
     sql<Record<string, unknown>>`
       WITH cycle_candidates AS (
         SELECT
@@ -309,9 +312,12 @@ export const makeCycleQueries = (
           ELSE 2
         END ASC,
         cycle.execution_session_date ASC,
+        cycle.entry_attempt_ordinal ASC,
         cycle.cycle_id ASC
-      LIMIT 1
     `.pipe(Effect.flatMap(decodeStoredCycles))
+
+  const selectOldestUnfinishedCycle: CycleQueries['selectOldestUnfinishedCycle'] = (scope) =>
+    selectUnfinishedCycles(scope).pipe(Effect.map((rows) => rows.slice(0, 1)))
 
   const decisionEvidenceMismatch: CycleQueries['decisionEvidenceMismatch'] = (document) => {
     const executionMarketData = document.bindings.executionMarketData
@@ -443,7 +449,8 @@ export const makeCycleQueries = (
         : undefined
     const momentum =
       document.mode === legacyExecutionAuthorityToken &&
-      document.strategyDecision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
+      (document.strategyDecision?.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
+        document.strategyDecision?.schemaVersion === 'bayn.intraday-alpha-target.v2')
         ? document.strategyDecision.evidence.observation
         : undefined
     const momentumEvidence =
@@ -524,6 +531,7 @@ export const makeCycleQueries = (
     selectCycleByAuthoritySlot,
     selectDecisionDocuments,
     selectOldestUnfinishedCycle,
+    selectUnfinishedCycles,
     decisionEvidenceMismatch,
     executionCompletionEvidenceMatches,
     executionGenerationIsSuperseded,

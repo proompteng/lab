@@ -40,6 +40,7 @@ const service = (
   decision: (row: typeof CycleDecisionJsonRow.Type) => Effect.Effect<ReportDecisionProjection, ReportVerificationError>,
 ) => ({
   decision,
+  alphaDecision: () => Effect.die('unexpected alpha decision'),
   inference: () => Effect.die('unexpected inference'),
   coverage: () => Effect.die('unexpected coverage'),
   volume: () => Effect.die('unexpected volume'),

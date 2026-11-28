@@ -31,7 +31,6 @@ afterAll(async () => {
 })
 
 const options: ProjectionWorkerOptions = {
-  controllerKey: 'a'.repeat(64),
   kafka: {
     brokers: ['unused:9092'],
     username: 'test',
@@ -41,8 +40,7 @@ const options: ProjectionWorkerOptions = {
     bootstrapTimeoutMs: 5000,
     timestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
   },
-  database: { postgres: { url: 'postgres://unused/unused', tls: false, caPath: '' }, operationTimeoutMs: 500 },
-  build: nativeArrivalEpochFixture.build,
+  sourceRevision: nativeArrivalEpochFixture.build.sourceRevision,
   sources: nativeArrivalEpochFixture.sources,
 }
 const setup = (

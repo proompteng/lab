@@ -1,6 +1,6 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Context, Effect, Layer, Redacted, Result, type Schema, Scope } from 'effect'
+import { Cause, Context, Effect, Layer, Redacted, Result, Schema, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
@@ -32,6 +32,8 @@ import {
   decodeFillActivities,
   decodeFeeActivities,
   decodeFeeActivitiesQuery,
+  decodeNonTradeActivityPage,
+  decodeNonTradeActivityWindow,
   decodeFillActivitiesQuery,
   decodeMarketCalendar,
   decodeMarketCalendarQuery,
@@ -41,7 +43,11 @@ import {
   decodeOrdersQuery,
   decodePositions,
   redactedHeaders,
+  NonTradeActivityStatementSchema,
+  nonTradeActivityInScope,
+  verifyNonTradeActivityStatement,
   responseParseOptions,
+  SortDirection,
   type BrokerReadShape,
   type Decoder,
   type FillActivitiesQuery,
@@ -160,7 +166,7 @@ export const alpacaHttpLayer = (
     ),
   )
 
-export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
+export const make = (connection: BrokerConnection) =>
   Effect.gen(function* () {
     const key = Redacted.value(connection.key)
     const secret = Redacted.value(connection.secret)
@@ -315,10 +321,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       )
     }
 
-    const account = readResponse('account', accountUrl(connection), decodeAccount).pipe(
+    const accountWithBody = readResponse('account', accountUrl(connection), (body) =>
+      Result.map(decodeAccount(body), (account) => ({ account, body })),
+    ).pipe(
       Effect.flatMap((result) => {
         const normalized = normalizeAccountResult(
-          result.value,
+          result.value.account,
           connection.expectedAccountId,
           result.evidence.observedAt,
         )
@@ -327,7 +335,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             new BrokerReadError({
               operation: 'account',
               kind: BrokerReadErrorKind.AccountMismatch,
-              message: `Alpaca credential resolved account ${result.value.id}, expected ${connection.expectedAccountId}`,
+              message: `Alpaca credential resolved account ${result.value.account.id}, expected ${connection.expectedAccountId}`,
               retryable: false,
               status: result.evidence.status,
               requestId: result.evidence.requestId,
@@ -339,9 +347,11 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         }
         return normalizeRead('account', result.evidence, normalized).pipe(
           Effect.tap(() => observeDiagnostic(result.diagnostic, result.evidence)),
+          Effect.map((read) => ({ ...read, body: result.value.body })),
         )
       }),
     )
+    const account = accountWithBody.pipe(Effect.map(({ body: _body, ...read }) => read))
 
     const accountConfiguration = readResponse(
       'account-configuration',
@@ -510,6 +520,73 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         ),
       )
 
+    const nonTradeActivityStatement = Effect.fn('bayn.alpaca.non-trade-activity-statement')(function* (window: {
+      readonly after: string
+      readonly until: string
+    }) {
+      const operation = 'non-trade-activities'
+      const bounds = yield* decodeInput(operation, decodeNonTradeActivityWindow, window, 'Invalid activity window')
+      const now = yield* currentUtcInstant
+      if (connection.environment !== BrokerEnvironment.Sandbox || bounds.until > now) {
+        return yield* invalidRequest(operation, 'Financial activity capture requires a historical PAPER window', null)
+      }
+      const verifiedAccount = yield* accountWithBody
+      const readDirection = (direction: SortDirection) =>
+        Effect.gen(function* () {
+          const pages = []
+          const seen = new Set<string>()
+          let pageToken: string | undefined
+          for (let index = 0; index < 100; index++) {
+            const request = fillActivitiesRequest(connection, {
+              ...bounds,
+              direction,
+              ...(pageToken === undefined ? {} : { pageToken }),
+            })
+            request.url.pathname = '/v2/account/activities'
+            request.url.searchParams.set('category', 'non_trade_activity')
+            const { value, evidence } = yield* readResponse(operation, request.url, decodeNonTradeActivityPage)
+            for (const row of value.rows) {
+              if (seen.has(row.id) || !nonTradeActivityInScope(row, verifiedAccount.value.id, bounds)) {
+                return yield* invalidResponse({
+                  operation,
+                  message: 'Alpaca returned an out-of-scope or repeated activity',
+                  evidence,
+                })
+              }
+              seen.add(row.id)
+            }
+            pages.push({ pageToken: pageToken ?? null, evidence, body: value.body })
+            const lastItem = value.rows.at(-1)
+            if (lastItem === undefined) return pages
+            pageToken = lastItem.id
+          }
+          return yield* invalidResponse({
+            operation,
+            message: 'Alpaca non-trade activity pagination exceeded its bound',
+          })
+        })
+      const firstPass = yield* readDirection(SortDirection.Ascending)
+      const secondPass = yield* readDirection(SortDirection.Descending)
+      const statement = yield* Schema.decodeUnknownEffect(NonTradeActivityStatementSchema)({
+        schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v2' as const,
+        accountIdentityHash: connection.identity.identityHash,
+        window: bounds,
+        accountRead: verifiedAccount.evidence,
+        accountBody: verifiedAccount.body,
+        firstPass,
+        secondPass,
+        observedAt: yield* currentUtcInstant,
+      }).pipe(
+        Effect.mapError(() =>
+          invalidResponse({ operation, message: 'Alpaca activity statement has invalid structure' }),
+        ),
+      )
+      yield* Effect.fromResult(verifyNonTradeActivityStatement(statement, verifiedAccount.value.id)).pipe(
+        Effect.mapError((message) => invalidResponse({ operation, message })),
+      )
+      return statement
+    })
+
     return {
       account,
       accountConfiguration,
@@ -521,5 +598,6 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       fillActivities,
       feeActivities,
       marketCalendar,
-    }
+      nonTradeActivityStatement,
+    } satisfies BrokerReadShape & { readonly nonTradeActivityStatement: typeof nonTradeActivityStatement }
   })

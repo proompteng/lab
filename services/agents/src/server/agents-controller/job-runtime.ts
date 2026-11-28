@@ -770,6 +770,7 @@ export const submitJobRun = async (
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig, provider)
   const serviceAccountToken = resolveProviderServiceAccountToken(provider)
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
+  const usesStandardRunner = workloadImage === runnerDefaultsConfig.defaultRunnerImage
   const nodeSelector =
     asRecord(runtimeConfig.nodeSelector) ??
     runnerDefaultsConfig.nodeSelector ??
@@ -855,6 +856,28 @@ export const submitJobRun = async (
   const configVolumeMounts = [] as Record<string, unknown>[]
   const volumes = [...volumeSpecs]
 
+  if (usesStandardRunner) {
+    const declaredMounts = [...volumeMounts, ...(vcsRuntime?.volumeMounts ?? [])]
+    for (const [suffix, mountPath] of [
+      ['scratch-workspace', '/workspace'],
+      ['scratch-tmp', '/tmp'],
+      ['scratch-bun-cache', '/opt/bun/install/cache'],
+    ] as const) {
+      const name = makeName(runName, suffix)
+      if (
+        declaredMounts.some((mount) => {
+          const path = asString(mount.mountPath)?.replace(/\/+$/, '')
+          return path !== undefined && (path === mountPath || mountPath.startsWith(`${path}/`))
+        }) ||
+        volumes.some((volume) => volume.name === name)
+      ) {
+        continue
+      }
+      volumes.push({ name, spec: { emptyDir: { medium: 'Memory' } } })
+      volumeMounts.push({ name, mountPath })
+    }
+  }
+
   if (inputsConfig) {
     const volumeName = makeName(inputsConfig.name, 'vol')
     volumes.push({ name: volumeName, spec: { configMap: { name: inputsConfig.name } } })
@@ -922,7 +945,7 @@ export const submitJobRun = async (
     )
     volumes.push({
       name: codexHomeVolumeName,
-      spec: { emptyDir: {} },
+      spec: { emptyDir: usesStandardRunner ? { medium: 'Memory' } : {} },
     })
     configVolumeMounts.push({
       name: codexHomeVolumeName,

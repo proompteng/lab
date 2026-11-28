@@ -6,6 +6,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-2"
 data:
   PAPERLESS_URL: https://paperless.ide-newton.ts.net
+  PAPERLESS_ALLOWED_HOSTS: localhost,paperless.ide-newton.ts.net,paperless.paperless.svc.cluster.local
   PAPERLESS_DBENGINE: postgresql
   PAPERLESS_DBHOST: paperless-db-rw.paperless.svc.cluster.local
   PAPERLESS_DBNAME: paperless

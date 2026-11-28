@@ -41,6 +41,19 @@ patches:
         path: /metadata/annotations/argocd.argoproj.io~1sync-options
         value: Prune=false,Delete=false
   - target:
+      kind: CustomResourceDefinition
+      name: valkeys.rds.valkey.buf.red
+    patch: |-
+      - op: test
+        path: /spec/versions/0/name
+        value: v1alpha1
+      - op: add
+        path: /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/version/enum/-
+        value: "9.2"
+      - op: replace
+        path: /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/version/description
+        value: Valkey major and minor version.
+  - target:
       kind: Deployment
       name: valkey-operator
     patch: |-
@@ -57,8 +70,8 @@ patches:
               # Also parsed as semantic version for actor selection. Image
               # digests belong in image references, never in this field.
               operatorVersion: v2.1.1
-              valkeyVersionMap: '{"9.1":"9.1.4","9.2":"9.2.0"}'
-              defaultExporterVersion: v1.97.0-alpine
+              valkeyVersionMap: '{"9.2":"9.2.0"}'
+              defaultExporterVersion: v1.99.0-alpine
           spec:
             securityContext:
               runAsNonRoot: true

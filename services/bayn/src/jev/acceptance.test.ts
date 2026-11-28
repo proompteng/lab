@@ -10,6 +10,7 @@ import {
   jevAcceptanceProtocolHash,
   JevNumericalVerdict,
   JevResearchPolicy,
+  retainedJevResearchPolicies,
   type JevAcceptanceInput,
 } from './acceptance'
 
@@ -54,7 +55,7 @@ const inputFixture = (
       closeAt: `${sessionDate}T20:00:00.000Z`,
     })),
   },
-  policies: Object.values(JevResearchPolicy).map((policy, policyIndex) => {
+  policies: retainedJevResearchPolicies.map((policy, policyIndex) => {
     let equity = 100_000
     return {
       policy,

@@ -447,7 +447,7 @@ const hashAccountingLedgerPlan = (plan: LedgerPlan): Result.Result<string, Accou
     cause,
   }))
 
-const requireContentHash = (
+export const verifyAccountingTransactionContent = (
   transaction: AccountingTransaction,
 ): Result.Result<AccountingTransaction, AccountingFailure> => {
   const { contentHash, ...material } = transaction
@@ -488,7 +488,7 @@ export const rebuildAccountingLedger = (input: unknown, ledger: number): Result.
   pipe(
     decodeAccountingTransaction(input),
     Result.mapError((cause): AccountingFailure => ({ _tag: 'AccountingTransactionDecodeFailed', cause })),
-    Result.flatMap(requireContentHash),
+    Result.flatMap(verifyAccountingTransactionContent),
     Result.flatMap((transaction) =>
       requireLedgerPlanHash(
         transaction,

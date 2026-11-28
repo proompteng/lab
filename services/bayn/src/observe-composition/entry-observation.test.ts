@@ -107,6 +107,7 @@ test('native completion preserves admitted evidence without discarded broker eli
   const resumed = Result.getOrThrow(await runObservation(observeNativeEntry(context)))
   expect(resumed.snapshot).toBe(restored.snapshot)
   expect<unknown>(resumed.decision.evidence.observation).toEqual(restored.observation)
+  if (resumed.decision.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected Jev entry target')
   expect(resumed.decision.evidence.batchPlan).toEqual(saved.plan)
   expect(resumed.decision.evidence.batchResult).toEqual(saved.result)
 })
@@ -179,7 +180,10 @@ test('new native source obtains fresh eligibility before sampling its observatio
   )
   expect(Result.isFailure(outcome)).toBe(true)
   if (Result.isFailure(outcome) && outcome.failure._tag === 'JevAwaitingEvidence')
-    expect(outcome.failure.readiness).toBe(DecisionReadinessReason.InferenceUnavailable)
+    expect(outcome.failure).toMatchObject({
+      readiness: DecisionReadinessReason.DecisionPending,
+      availableAt: new Date(Date.parse(eligibilityAt) + fresh.protocol.inferenceValidityMs).toISOString(),
+    })
   else throw new Error('Expected a durably admitted batch awaiting inference')
   expect(admitted).toHaveLength(1)
   const admission = admitted[0]!

@@ -95,7 +95,7 @@ describe('intraday calendar decisions', () => {
       closeAt: new Date(Date.parse('2026-11-27T14:30:00.000Z') + durationMs).toISOString(),
     }
     const selected = selectIntradayExecutionSession(
-      { ...observation, sessions: [session] },
+      withProviderSessions({ ...observation, sessions: [session] }),
       { ...policy, warmupAfterOpenMs: warmupMinutes * 60_000, submissionCutoffBeforeCloseMs: 5 * 60_000 },
       session.openAt,
     )

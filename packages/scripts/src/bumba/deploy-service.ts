@@ -32,10 +32,6 @@ if (import.meta.main) {
   main().catch((error) => fatal('Failed to build and deploy bumba', error))
 }
 
-export const __private = {
-  execGit,
-}
-
 type ManifestUpdateOptions = {
   imageDigest: string
   rolloutTimestamp: string

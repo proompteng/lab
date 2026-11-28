@@ -8,6 +8,7 @@ import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, type PositionEpisodeEvidence } from './position-episodes'
 import type { SystemAssessment } from '../system-assessment/assessment'
 import { forwardCostDiagnostics } from './cost-diagnostics'
+import { measureNativeAlphaAttribution, type NativeAlphaAttribution } from './alpha-attribution'
 
 export enum ForwardPerformanceScopeKind {
   Account = 'ACCOUNT',
@@ -22,7 +23,7 @@ export type ForwardPerformanceReportScope =
     }
 
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v8'
+  readonly schemaVersion: 'bayn.forward-performance-report.v9'
   /** Requested query scope; this does not supply missing financial source or strategy evidence. */
   readonly scope: ForwardPerformanceReportScope
   readonly receipt: ForwardPerformanceReceipt
@@ -31,6 +32,7 @@ export interface ForwardPerformanceReport {
   readonly costDiagnostics: ReturnType<typeof forwardCostDiagnostics>
   readonly executionDiagnostics: ForwardPerformanceExecutionDiagnostics
   readonly positionEpisodes: PositionEpisodeEvidence
+  readonly nativeAlpha: NativeAlphaAttribution
   readonly inferenceExpenses: readonly ForwardInferenceExpenseSession[]
   readonly operatingCostCoverage: 'COMPLETE' | 'INCOMPLETE'
   readonly operatingCostScope: {
@@ -59,19 +61,29 @@ export const makeForwardPerformanceReport = (
         }),
       ),
     )
+    const nativeAlpha = yield* measureNativeAlphaAttribution(input, receipt, positionEpisodes).pipe(
+      Result.mapError(
+        (cause): ForwardPerformanceDomainFailure => ({
+          _tag: 'ForwardPerformanceDomainFailure',
+          operation: 'hash-native-alpha-attribution',
+          cause,
+        }),
+      ),
+    )
     const scope: ForwardPerformanceReportScope =
       authorityGenerationHash === undefined
         ? { kind: ForwardPerformanceScopeKind.Account }
         : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
     const costDiagnostics = forwardCostDiagnostics(receipt, inferenceExpenses, systemAssessment)
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v8' as const,
+      schemaVersion: 'bayn.forward-performance-report.v9' as const,
       scope,
       receipt,
       receiptPersistence: 'NOT_CHECKED' as const,
       costDiagnostics,
       executionDiagnostics,
       positionEpisodes,
+      nativeAlpha,
       inferenceExpenses,
       operatingCostCoverage:
         costDiagnostics.assessmentOperatingCosts.coverage === 'COMPLETE'

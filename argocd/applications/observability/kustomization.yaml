@@ -44,35 +44,35 @@ resources:
 helmCharts:
   - name: loki
     repo: https://grafana-community.github.io/helm-charts
-    version: 18.12.1
+    version: 21.4.3
     releaseName: observability-loki-v3
     namespace: observability
     includeCRDs: true
     valuesFile: loki-v3-values.yaml
   - name: kube-state-metrics
     repo: https://prometheus-community.github.io/helm-charts
-    version: 8.4.2
+    version: 9.1.0
     releaseName: observability-kube-state-metrics
     namespace: observability
     includeCRDs: true
     valuesFile: kube-state-metrics-values.yaml
   - name: mimir-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 6.2.0
+    version: 6.2.2
     releaseName: observability-mimir
     namespace: observability
     includeCRDs: true
     valuesFile: mimir-values.yaml
   - name: tempo-distributed
     repo: https://grafana-community.github.io/helm-charts
-    version: 3.5.1
+    version: 3.29.1
     releaseName: observability-tempo-v3
     namespace: observability
     includeCRDs: true
     valuesFile: tempo-v3-values.yaml
   - name: grafana
     repo: https://grafana-community.github.io/helm-charts
-    version: 13.2.2
+    version: 14.5.1
     releaseName: observability-grafana
     namespace: observability
     valuesFile: grafana-values.yaml

@@ -215,7 +215,7 @@ const main = Effect.scoped(
         tape,
       )
     const replay =
-      prepared.input.inference.mode === 'retained-responses' || prepared.input.policy === JevResearchPolicy.Momentum
+      prepared.input.inference.mode === 'retained-responses' || !prepared.requiresInference
         ? execute(null)
         : Effect.gen(function* () {
             const proxy = yield* Config.NonEmptyString('BAYN_EGRESS_PROXY')

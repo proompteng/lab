@@ -34,7 +34,7 @@ import {
   latencyReplayExecutionModelHash,
   latencyReplayPolicyMaterial,
 } from '../system-assessment/latency-replay'
-import { registrationFixture, testHash } from '../system-assessment/fixtures.test-support'
+import { nativeRegistrationFixture, registrationFixture, testHash } from '../system-assessment/fixtures.test-support'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { jevModel, prepareJevRequest } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
@@ -45,7 +45,9 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { MarketSourcesSchema } from '../market-data/streaming/raw-events'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { nativeReplayPolicyIdentity } from './native-policy'
-import { loadActiveStrategyProtocol } from '../strategy'
+import { loadSharedJevProtocol, isIntradayAlphaRuntime } from '../strategy'
+import { alphaReplayBaselineFixture } from './alpha-replay.test-support'
+import { preparedReplayAlphaBaselineFixture } from './alpha-prepared-baseline.test-support'
 const fixture = () => {
   const source = currentJevReplayFixture()
   const { verification: _verification, ...build } = config.build
@@ -112,6 +114,69 @@ const fixture = () => {
     },
   }
 }
+test.each([JevResearchPolicy.Candidate, JevResearchPolicy.Incumbent])(
+  'explicit %s alpha preparation selects the real engine and no provider capability',
+  (policy) => {
+    const retained = alphaReplayBaselineFixture()
+    const old = fixture()
+    const input = {
+      ...old,
+      schemaVersion: 'bayn.backtest.v12',
+      policy,
+      strategyBinding: retained.binding,
+      alphaBaselineSources: [retained.source],
+      build: {
+        ...old.build,
+        strategyBehaviorHash: retained.binding.strategy.behaviorHash,
+        strategyParameterHash: retained.binding.strategy.parameterHash,
+      },
+    }
+    const prepared = Result.getOrThrow(prepareBacktest(input))
+    expect(isIntradayAlphaRuntime(prepared.strategy)).toBe(true)
+    expect(Result.getOrThrow(canonicalHashV1Result(prepared.strategy.definition.parameters))).toBe(
+      Result.getOrThrow(canonicalHashV1Result(retained.binding.parameters)),
+    )
+    expect(prepared.policyIdentity.protocolHash).toBe(retained.binding.protocolHash)
+    expect(prepared.requiresInference).toBe(false)
+    expect(prepared.input.inference.costs.rates).toEqual([])
+    expect(prepared.alphaBaselineSources).toEqual([retained.source])
+    expect(Result.isFailure(prepareBacktest({ ...input, build: old.build }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v11' }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, alphaBaselineSources: undefined }))).toBe(true)
+    expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Momentum }))).toBe(true)
+    const legacy = Result.getOrThrow(prepareBacktest(old))
+    expect(isIntradayAlphaRuntime(legacy.strategy)).toBe(false)
+    expect(legacy.policyIdentity.strategy.parameterSchemaVersion).toBe('bayn.jev.protocol.v44')
+  },
+)
+test('v13 preparation uses its explicit prospective source contract without accepting a v12 source fallback', () => {
+  const retained = preparedReplayAlphaBaselineFixture()
+  const old = fixture()
+  const input = {
+    ...old,
+    schemaVersion: 'bayn.backtest.v13',
+    strategyBinding: retained.binding,
+    alphaBaselinePreparations: [retained.source],
+    build: {
+      ...old.build,
+      strategyBehaviorHash: retained.binding.strategy.behaviorHash,
+      strategyParameterHash: retained.binding.strategy.parameterHash,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(input))
+  expect(isIntradayAlphaRuntime(prepared.strategy)).toBe(true)
+  expect(prepared.requiresInference).toBe(false)
+  expect(prepared.input.schemaVersion).toBe('bayn.backtest.v13')
+  expect(prepared.alphaBaselinePreparations).toEqual([retained.source])
+  expect(prepared.alphaBaselineSources).toEqual([])
+  expect(Result.isSuccess(prepareBacktest({ ...input, alphaBaselinePreparations: [] }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, alphaBaselinePreparations: undefined }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v12' }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, build: old.build }))).toBe(true)
+  expect(
+    Result.isFailure(prepareBacktest({ ...input, alphaBaselineSources: [alphaReplayBaselineFixture().source] })),
+  ).toBe(true)
+})
 test('session preparation freezes the unchanged strategy and complete calendar interval', () => {
   const input = fixture()
   const first = Result.getOrThrow(prepareBacktest(input))
@@ -164,7 +229,7 @@ test('preparation retains the configured Webull topic only with its independentl
 test('momentum selects its own source-defined policy without an inference batch identity', () => {
   const input = fixture()
   const identity = Result.getOrThrow(
-    nativeReplayPolicyIdentity(JevResearchPolicy.Momentum, Result.getOrThrow(loadActiveStrategyProtocol())),
+    nativeReplayPolicyIdentity(JevResearchPolicy.Momentum, Result.getOrThrow(loadSharedJevProtocol())),
   )
   const declared = {
     ...input,
@@ -188,7 +253,7 @@ test('ablation replay has its own identity and cannot be selected with candidate
   const input = fixture()
   const candidate = Result.getOrThrow(prepareBacktest(input))
   const ablation = Result.getOrThrow(
-    nativeReplayPolicyIdentity(JevResearchPolicy.Ablation, Result.getOrThrow(loadActiveStrategyProtocol())),
+    nativeReplayPolicyIdentity(JevResearchPolicy.Ablation, Result.getOrThrow(loadSharedJevProtocol())),
   )
   const declared = {
     ...input,
@@ -475,6 +540,33 @@ test('registered latency replay preserves every equity session and the exact can
     { ...input, calendar: input.calendar.map((day) => ({ ...day, close: '15:00' })) },
   ])
     expect(Result.isFailure(bindLatencyReplayInput(changed, registration, identity))).toBe(true)
+
+  const nativeCalendar = rawCalendar.map((day) => ({ ...day, session_open: '0400', session_close: '2000' }))
+  const native = nativeRegistrationFixture(
+    registration,
+    Result.getOrThrow(normalizeMarketCalendarResult(nativeCalendar, { start: firstDate, end: lastDate })),
+  )
+  const incumbent = native.policies.find((p) => p.policy === JevResearchPolicy.Incumbent)
+  const nativeFirst = native.calendar.sessions[0]
+  const nativeLast = native.calendar.sessions.at(-1)
+  if (incumbent === undefined || nativeFirst === undefined || nativeLast === undefined)
+    throw new Error('Missing independent incumbent or native calendar')
+  const incumbentInput = {
+    ...input,
+    policy: JevResearchPolicy.Incumbent as const,
+    calendar: nativeCalendar,
+    interval: { startAt: nativeFirst.openAt, endAt: nativeLast.closeAt },
+    build: { ...input.build, sourceRevision: incumbent.sourceRevision, imageDigest: `sha256:${incumbent.imageDigest}` },
+  }
+  expect(Result.getOrThrow(bindLatencyReplayInput(incumbentInput, native, identity))).toEqual(
+    native.calendar.sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })),
+  )
+  for (const changed of [
+    { ...incumbentInput, calendar: rawCalendar },
+    { ...incumbentInput, build: input.build },
+    { ...incumbentInput, inference: { ...input.inference, costs: { ...input.inference.costs, rates: [] } } },
+  ])
+    expect(Result.isFailure(bindLatencyReplayInput(changed, native, identity))).toBe(true)
 })
 
 test('retained replay binds the recording to its exact source, source revision and policy', () => {
@@ -501,7 +593,11 @@ test('retained replay binds the recording to its exact source, source revision a
       recordingHash: Result.getOrThrow(canonicalHashV1Result(retained)),
     },
   })
-  expect(Result.isSuccess(prepareBacktest(input(recording)))).toBe(true)
+  const candidate = Result.getOrThrow(prepareBacktest(input(recording)))
+  const incumbent = Result.getOrThrow(prepareBacktest({ ...input(recording), policy: JevResearchPolicy.Incumbent }))
+  expect(incumbent.policyIdentity.policy).toBe(JevResearchPolicy.Incumbent)
+  expect(incumbent.strategy.provenance).toEqual(candidate.strategy.provenance)
+  expect(incumbent.runId).not.toBe(candidate.runId)
   for (const field of [
     'sourceManifestHash',
     'sourceRevision',
@@ -553,7 +649,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v41')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v44')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)

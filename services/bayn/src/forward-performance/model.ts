@@ -383,6 +383,9 @@ export interface ForwardPerformanceEvidenceInput {
     readonly inventoryCostMicros?: string
   })[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
+  /** Undefined is an older/unavailable capture; an empty array is a verified empty native-alpha selection. */
+  readonly alphaDecisions?: readonly import('./alpha-decisions').NativeAlphaDecisionEvidence[]
+  readonly unverifiedAlphaDecisionHashes?: readonly string[]
   readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeEvidence?: readonly ForwardPerformanceMarketVolumeEvidence[]
   readonly ledgerTotals?: ForwardPerformanceLedgerTotals

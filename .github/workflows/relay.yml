@@ -18,8 +18,7 @@ on:
       - 'nix/images/relay.nix'
       - 'nix/images/ofz-fixture-tools.nix'
       - 'nix/images/agentrun-tools.nix'
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches: [main]
     paths:

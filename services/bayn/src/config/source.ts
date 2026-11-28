@@ -27,7 +27,7 @@ const OperationalThresholdMs = Schema.Int.check(
   Schema.isBetween({ minimum: minimumOperationalThresholdMs, maximum: maximumOperationalThresholdMs }),
 )
 
-const ReplicaAddresses = Schema.Trim.pipe(
+export const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
     Schema.Array(NonEmptyString).check(Schema.isMinLength(1)),
     SchemaTransformation.transform<readonly string[], string>({
