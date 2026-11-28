@@ -36,6 +36,10 @@ resources:
   - bayn-audit-ro-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
+  - macro-daily-sleeves-receipts.yaml
+  - macro-daily-sleeves-cronjob.yaml
+  - daily-scorecard-cronjob.yaml
+  - daily-jobs-networkpolicy.yaml
   - opencode-retained-state.yaml
   - research-networkpolicy.yaml
 configMapGenerator:

@@ -1,10 +1,10 @@
 import { dirname } from 'node:path'
 
 import { NodeFileSystem, NodeRuntime } from '@effect/platform-node'
-import { Config, Console, Effect, FileSystem, Layer, Logger } from 'effect'
+import { Console, Effect, FileSystem, Layer, Logger } from 'effect'
 import { FetchHttpClient } from 'effect/http'
 
-import { makeAlpaca, paperOrigin } from './macro-canary-runner/alpaca'
+import { makeRunnerAlpaca } from './macro-canary-runner/alpaca'
 import { Mode } from './macro-canary-runner/contract'
 import {
   hashEvidence,
@@ -19,12 +19,13 @@ import { prepareMacroEtfCoreRebalance } from './macro-etf-core-runner/rebalance'
 
 export const runRebalance = Effect.fn('macro-etf-core.rebalance')(function* (args: readonly string[]) {
   const options = yield* Effect.fromResult(parseOptions(args))
-  const origin = yield* Config.String('BAYN_ALPACA_BASE_URL').pipe(Config.withDefault(paperOrigin))
-  const key = yield* Config.Redacted('BAYN_ALPACA_KEY_ID')
-  const secret = yield* Config.Redacted('BAYN_ALPACA_SECRET_KEY')
-  const alpaca = yield* makeAlpaca(origin, key, secret)
+  const { alpaca, expectedAccountId } = yield* makeRunnerAlpaca(
+    'CORE',
+    options.mode,
+    options.excludeSymbols.length === 0,
+  )
   const fs = yield* FileSystem.FileSystem
-  const snapshot = yield* readSnapshot(alpaca, options.confirmPaperAccount)
+  const snapshot = yield* readSnapshot(alpaca, expectedAccountId ?? options.confirmPaperAccount)
   const { material, timestamp, window } = yield* prepareMacroEtfCoreRebalance(alpaca, snapshot, options)
   const retainedMaterial = { ...material, reconciliation: snapshot }
   const receipt = {
