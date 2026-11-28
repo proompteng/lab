@@ -857,6 +857,7 @@ export const submitJobRun = async (
   const volumes = [...volumeSpecs]
 
   if (usesStandardRunner) {
+    const declaredMounts = [...volumeMounts, ...(vcsRuntime?.volumeMounts ?? [])]
     for (const [suffix, mountPath] of [
       ['scratch-workspace', '/workspace'],
       ['scratch-tmp', '/tmp'],
@@ -864,8 +865,10 @@ export const submitJobRun = async (
     ] as const) {
       const name = makeName(runName, suffix)
       if (
-        hasVolumeMountAtPath(volumeMounts, mountPath) ||
-        hasVolumeMountAtPath(vcsRuntime?.volumeMounts, mountPath) ||
+        declaredMounts.some((mount) => {
+          const path = asString(mount.mountPath)?.replace(/\/+$/, '')
+          return path !== undefined && (path === mountPath || mountPath.startsWith(`${path}/`))
+        }) ||
         volumes.some((volume) => volume.name === name)
       ) {
         continue

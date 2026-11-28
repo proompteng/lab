@@ -300,10 +300,10 @@ describe('agents controller job-runtime module', () => {
       mounts: ['/workspace', '/tmp', '/opt/bun/install/cache', '/root/.codex'],
     },
     {
-      name: 'persistent workspace override',
+      name: 'declared workspace and Bun install mounts',
       customImage: false,
       persistentWorkspace: true,
-      mounts: ['/tmp', '/opt/bun/install/cache', '/root/.codex'],
+      mounts: ['/tmp', '/root/.codex'],
     },
     { name: 'custom runner image', customImage: true, persistentWorkspace: false, mounts: [] },
   ])('mounts the expected tmpfs paths for $name', async ({ customImage, persistentWorkspace, mounts }) => {
@@ -321,7 +321,12 @@ describe('agents controller job-runtime module', () => {
         metadata: { name: 'run-1', namespace: 'agents' },
         spec: {
           workload: persistentWorkspace
-            ? { volumes: [{ type: 'pvc', name: 'worktree', claimName: 'worktree-pvc', mountPath: '/workspace' }] }
+            ? {
+                volumes: [
+                  { type: 'pvc', name: 'worktree', claimName: 'worktree-pvc', mountPath: '/workspace' },
+                  { type: 'pvc', name: 'bun-install', claimName: 'bun-install-pvc', mountPath: '/opt/bun/install' },
+                ],
+              }
             : {},
         },
       },
