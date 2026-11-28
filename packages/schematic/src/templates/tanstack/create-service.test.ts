@@ -28,6 +28,18 @@ test('keeps oxlint scripts when Postgres scripts are enabled', () => {
   )
 })
 
+test('scaffolds an image build script without a direct cluster deploy path', async () => {
+  const files = await buildTanstackStartService(
+    { name: 'gitops', imageRegistry: 'registry.example.com', includeScripts: true },
+    { scaffold: stubScaffold },
+  )
+
+  const scripts = files.filter(({ path }) => path.startsWith('packages/scripts/'))
+  expect(asPaths(scripts)).toEqual(['packages/scripts/src/gitops/build-image.ts'])
+  expect(asPaths(files)).toContain('argocd/applications/gitops/overlays/cluster/kustomization.yaml')
+  expect(files.map(({ contents }) => contents).join('\n')).not.toContain('kubectl')
+})
+
 test('includes domain mapping and cluster-domain-claim when exposure is external-dns', async () => {
   const files = await buildTanstackStartService(
     {
