@@ -3,15 +3,15 @@ import { parseArgs } from 'node:util'
 import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect, Result } from 'effect'
 
-import { canonicalHashV1Result, sha256 } from '../../src/hash'
+import { sha256 } from '../../src/hash'
 import { decodeMacroEtfCorePolicy, Profile } from '../../src/strategy/macro-etf-core/policy'
-import { closeSnapshotSchema, replayMacroEtfCoreSignals } from '../../src/strategy/macro-etf-core/signals'
+import { replayMacroEtfCoreSignals } from '../../src/strategy/macro-etf-core/signals'
 import { foldBounds, requireAlignedSessions } from '../research-lib/calendar'
 import { stationaryBootstrap, type StationaryPlan, sum } from '../research-lib/statistics'
 import { costs, initialUsd, mixes, noiseIdentity, replayAccount, toMarks } from './macro-etf-core-dual-horizon-account'
 import { receipts } from '../pure-etf-dual-horizon-data'
 import { noiseOrders } from '../pure-etf-dual-horizon-noise'
-import { type DailyFrame, loadFrozenFrames } from './macro-etf-core-dual-horizon-data'
+import { closeEvidence, type DailyFrame, loadFrozenFrames } from './macro-etf-core-dual-horizon-data'
 import {
   bootstrap,
   type Day,
@@ -47,27 +47,6 @@ const requireOracle = (name: keyof typeof frozen, rows: readonly unknown[]) => {
   if (digest !== frozen[name].sha256 || rows.length !== frozen[name].count)
     throw new Error(`Frozen ${name} replay mismatch: ${rows.length} reviews / ${digest}`)
   return digest
-}
-
-const closeEvidence = (daily: readonly DailyFrame[]) => {
-  const calendar = daily.map(({ date, openAt, closeAt }) => ({ date, openAt, closeAt }))
-  const bars = daily
-    .slice(0, -1)
-    .map(({ date, closeAt, bars }) =>
-      [...bars].map(([symbol, bar]) => ({ date, symbol, availableAt: closeAt, ...bar })),
-    )
-  const snapshot = {
-    schema: closeSnapshotSchema,
-    datasetVersion: 'alpacav2-sip-10yr-sp100-with-dia-uup-2026-11-27',
-    adjustment: 'all',
-    calendar,
-    bars,
-  }
-  return {
-    asOf: daily[daily.length - 1].openAt,
-    snapshot,
-    snapshotHash: Result.getOrThrow(canonicalHashV1Result(snapshot)),
-  }
 }
 
 const prepareMacro = (evidence: ReturnType<typeof closeEvidence>, profile: Profile) => {
