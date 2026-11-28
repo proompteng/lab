@@ -11,10 +11,10 @@ import ./bun-workspace-service.nix {
   serviceName = "app";
   packageName = "app";
   depsHash = {
-    x86_64-linux = "sha256-6jsxyrdQYGUuFHMN9iatlUNz+hDhQ76yyW7rq2yv3ZE=";
-    aarch64-linux = "sha256-23qfBIEoMTH7I7MR0GN2sd6mqO1q/d7IVcvP50RFh2M=";
+    x86_64-linux = "sha256-gVMY02FtkZ2A9fjhvW65Qef7byR54RBaHvvuwuj1voI=";
+    aarch64-linux = "sha256-p8UnqGrqAS46Uhnj23wWeVXASTNoDzqtlqzGtg2pWAw=";
   };
-  dependencyClosure = "bunCache";
+  dependencyClosure = "bunCacheArchive";
   installFilters = [
     "@proompteng/source"
     "@proompteng/design"
@@ -25,6 +25,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
   ];
   buildCommands = [
+    ''patchShebangs --build "$(realpath apps/app/node_modules/.bin/vite)"''
     "bun --cwd=apps/app run build"
   ];
   runtimeInstallPhase = ''

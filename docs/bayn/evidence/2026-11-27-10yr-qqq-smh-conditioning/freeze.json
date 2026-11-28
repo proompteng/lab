@@ -1,0 +1,597 @@
+{
+  "schema": "bayn.research.wave-9b.freeze.v1",
+  "source": {
+    "development": {
+      "manifest": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/MANIFEST.json",
+      "manifestSha256": "c18d9c4d537ae17a6322dc8a2d5a9338b8851706d58c5ea62f02a31b37ea0eb0",
+      "calendar": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/calendar_2016_2023.json",
+      "calendarSha256": "0165400d9544973b0971a2397969e65bd2543beff5d8bd47510f09b015ef7f86",
+      "bars": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/alpaca_sip_5m_rth_exact62_20160104_20231229.tsv.gz",
+      "rows": 8641719,
+      "memberBytes": 174597176
+    },
+    "holdout": {
+      "manifest": "bayn-research-datasets/2026-11-27-sip-multiyear/MANIFEST.json",
+      "manifestSha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead",
+      "calendar": "bayn-research-datasets/2026-11-27/calendar_2024_2026.json",
+      "calendarSha256": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71",
+      "bars": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+      "rows": 3923737
+    },
+    "shy": {
+      "manifest": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/MANIFEST.json",
+      "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+      "bars": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz",
+      "rows": 450712
+    }
+  },
+  "files": {
+    "docs/bayn/evidence/2026-11-27-10yr-qqq-smh-conditioning/protocol.md": "b600b6e5ffb833a74f7c85e40081fd290b5857d8ad5e4bd66763c0eaddff78b8",
+    "services/bayn/tools/research-10yr-qqq-smh-conditioning.ts": "ac6e24d74b11307faf82500605ce3af32a054589617ffef3e0c7c5d93f747d0f",
+    "services/bayn/tools/noise-area-study-data.ts": "c25ff53fb943c26c7ab87ddab8ad39d8e1e7a3214805e8cb6c37e3d89e626713",
+    "services/bayn/tools/noise-area-study-replay.ts": "f8cde5dc3f1aa2eac703f7340dce3aca4600090cb70f2baefbf7d6016e827ae8",
+    "services/bayn/tools/noise-area-study-statistics.ts": "ace4768d89f81b208194fb91f88f22a26318ae3b58bfbd0c2af74c2bdc9259e5",
+    "services/bayn/tools/research-orb-zab-data.ts": "2128021f73ed208e8937dadead6b9cae679bd3f45f519f40ff8f689e4cbf18d3",
+    "services/bayn/tools/midday-research-statistics.ts": "d643c4ad1f05086b924c11285d6254a794b4a25e68004eb35a639a22a077e1e1"
+  },
+  "splits": {
+    "train": {
+      "first": "2016-01-04",
+      "last": "2021-12-31",
+      "count": 1511
+    },
+    "validation": {
+      "first": "2022-01-03",
+      "last": "2023-12-29",
+      "count": 501
+    },
+    "holdout": {
+      "first": "2024-01-02",
+      "last": "2026-11-25",
+      "count": 729
+    }
+  },
+  "grid": [
+    {
+      "id": "B0_base",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "none",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V0/R0/X1",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "none",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V0/R0/X2",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "none",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V0/R1/X0",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "rvol",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V0/R1/X1",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "rvol",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V0/R1/X2",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "rvol",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V0/R2/X0",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "vwap",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V0/R2/X1",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "vwap",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V0/R2/X2",
+      "conditioning": {
+        "volatility": "none",
+        "confirmation": "vwap",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V1/R0/X0",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "none",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V1/R0/X1",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "none",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V1/R0/X2",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "none",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V1/R1/X0",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "rvol",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V1/R1/X1",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "rvol",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V1/R1/X2",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "rvol",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V1/R2/X0",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "vwap",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V1/R2/X1",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "vwap",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V1/R2/X2",
+      "conditioning": {
+        "volatility": "min-vol",
+        "confirmation": "vwap",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V2/R0/X0",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "none",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V2/R0/X1",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "none",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V2/R0/X2",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "none",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V2/R1/X0",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "rvol",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V2/R1/X1",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "rvol",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V2/R1/X2",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "rvol",
+        "stop": "breakeven"
+      }
+    },
+    {
+      "id": "V2/R2/X0",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "vwap",
+        "stop": "none"
+      }
+    },
+    {
+      "id": "V2/R2/X1",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "vwap",
+        "stop": "atr"
+      }
+    },
+    {
+      "id": "V2/R2/X2",
+      "conditioning": {
+        "volatility": "target-vol",
+        "confirmation": "vwap",
+        "stop": "breakeven"
+      }
+    }
+  ],
+  "diagnosticExcludedFromSelection": {
+    "id": "3-ETF Tech",
+    "members": ["QQQ", "SMH", "XLK"]
+  },
+  "developmentSessions": 2012,
+  "baselineParity": {
+    "train": {
+      "expectedUsd": [33107.45, 14806],
+      "observedUsd": [33107.45121501245, 14805.996916990422]
+    },
+    "validation": {
+      "expectedUsd": [29982.77, 23345.9],
+      "observedUsd": [29982.766727238853, 23345.89505536258]
+    }
+  },
+  "bootstrap": {
+    "draws": 10000,
+    "meanBlockSessions": 5,
+    "seed": 1780491793
+  },
+  "developmentLedgerSha256": "3e9cc97b2ae7165203ca44dbeab393f384046b0205072bd9d3f41661eafde4e1",
+  "dsrBenchmarkDaily": [0.008586929978251771, 0.012620978044933995],
+  "selection": {
+    "finalists": ["V0/R1/X2", "V1/R1/X2", "V0/R1/X1"],
+    "selected": "V0/R1/X1"
+  },
+  "rankings": [
+    {
+      "id": "B0_base",
+      "train": {
+        "dailySharpe": 0.021362740142653682,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.0707815990338106,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R0/X1",
+      "train": {
+        "dailySharpe": 0.018394436573396192,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07121553214364354,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R0/X2",
+      "train": {
+        "dailySharpe": 0.0202813088364485,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07221888628414658,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R1/X0",
+      "train": {
+        "dailySharpe": 0.021960109627624343,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.09609812651826424,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R1/X1",
+      "train": {
+        "dailySharpe": 0.02300141635628046,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.09672592974368921,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R1/X2",
+      "train": {
+        "dailySharpe": 0.025140153578648898,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.09317559277259636,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R2/X0",
+      "train": {
+        "dailySharpe": 0.023976892730389793,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.06944678216105155,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R2/X1",
+      "train": {
+        "dailySharpe": 0.020333673599109325,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.0698792069352001,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V0/R2/X2",
+      "train": {
+        "dailySharpe": 0.02226016803439622,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07108407823735939,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R0/X0",
+      "train": {
+        "dailySharpe": 0.024927789215927264,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07223431529893953,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R0/X1",
+      "train": {
+        "dailySharpe": 0.02202471564298588,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07267216952250613,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R0/X2",
+      "train": {
+        "dailySharpe": 0.024122336885003943,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.0736864771834145,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R1/X0",
+      "train": {
+        "dailySharpe": 0.020379956729330937,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.09874020231862042,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R1/X1",
+      "train": {
+        "dailySharpe": 0.021418887521819713,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.09937906247911305,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R1/X2",
+      "train": {
+        "dailySharpe": 0.023754453076690576,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.09580129976913675,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R2/X0",
+      "train": {
+        "dailySharpe": 0.027844032782948343,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07088998880818978,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R2/X1",
+      "train": {
+        "dailySharpe": 0.02421647320481439,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07132630276589402,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V1/R2/X2",
+      "train": {
+        "dailySharpe": 0.02636719841217008,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.07254341014569336,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R0/X0",
+      "train": {
+        "dailySharpe": 0.007603807853641312,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.06406253569959235,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R0/X1",
+      "train": {
+        "dailySharpe": 0.007480629987243086,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.06447497082437428,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R0/X2",
+      "train": {
+        "dailySharpe": 0.009109449708602627,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.06476709947811217,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R1/X0",
+      "train": {
+        "dailySharpe": 0.01607345769292917,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.08776656833094691,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R1/X1",
+      "train": {
+        "dailySharpe": 0.01771376748462174,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.08830796312329801,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R1/X2",
+      "train": {
+        "dailySharpe": 0.019558726690319935,
+        "eligible": true
+      },
+      "validation": {
+        "dailySharpe": 0.08467293051587174,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R2/X0",
+      "train": {
+        "dailySharpe": 0.009347780495404393,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.062191872449536334,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R2/X1",
+      "train": {
+        "dailySharpe": 0.00886963002965337,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.06260213649191097,
+        "eligible": true
+      }
+    },
+    {
+      "id": "V2/R2/X2",
+      "train": {
+        "dailySharpe": 0.010526623920627575,
+        "eligible": false
+      },
+      "validation": {
+        "dailySharpe": 0.06317675142803535,
+        "eligible": true
+      }
+    }
+  ]
+}

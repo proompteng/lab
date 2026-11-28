@@ -190,7 +190,7 @@ describe('execution contracts', () => {
     const events = [
       { _tag: 'Account' as const, ...source, account },
       { _tag: 'Position' as const, ...source, position },
-      { _tag: 'Order' as const, ...source, order },
+      { _tag: 'Order' as const, ...source, sourceTimestamp: '2026-07-22T06:00:00.000000000Z', order },
       { _tag: 'Fill' as const, ...source, sourceTimestamp: '2026-07-22T06:00:00.000000000Z', fill },
     ]
     for (const event of events) expect(await Effect.runPromise(decodeBrokerEvent(event))).toEqual(event)

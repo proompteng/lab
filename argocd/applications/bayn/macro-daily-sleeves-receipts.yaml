@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bayn-macro-daily-sleeves-receipts
+  labels:
+    app.kubernetes.io/part-of: bayn
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: rook-cephfs
+  resources:
+    requests:
+      storage: 1Gi

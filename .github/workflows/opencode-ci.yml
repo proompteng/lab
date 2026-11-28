@@ -4,6 +4,8 @@ permissions:
 on:
   pull_request:
     paths:
+      - '.github/workflows/opencode-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
       - 'services/opencode/**'
       - 'services/relay/**'
       - 'packages/platform-client/**'
@@ -18,6 +20,10 @@ on:
       - 'flake.nix'
       - 'flake.lock'
       - 'argocd/applications/opencode/**'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   migration:
     runs-on: ubuntu-latest
@@ -36,4 +42,3 @@ jobs:
       tag: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
       source_revision: ${{ github.event.pull_request.head.sha }}
       pr_number: '${{ github.event.pull_request.number }}'
-    secrets: inherit

@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 
 	"google.golang.org/grpc"
 )
@@ -104,6 +106,8 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	}
 	if config.startCodex {
 		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
+		server.codex.bootID = config.evidence.BootID
+		server.codex.retainedBoot = retainedGuestWasReplaced()
 		server.codex.browserMCP = server.browser != nil
 		server.codex.relayRoot = filepath.Join(config.homeRoot, ".tengri", "relay")
 		server.codex.start()
@@ -111,6 +115,16 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	server.evidence.GuestProtocolVersion = guestProtocolVersion
 	server.rpc = server.newRPCServer()
 	return server, nil
+}
+
+func retainedGuestWasReplaced() bool {
+	// The runner writes this only while replacing the stopped guest's binary.
+	info, err := os.Lstat("/etc/tengri-agent-replaced")
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0444 {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == 0
 }
 
 func (server *apiServer) close() {

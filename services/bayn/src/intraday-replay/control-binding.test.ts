@@ -18,18 +18,26 @@ test('binding inherits native cash and the used drawdown without pricing unknown
   expect(input.backtest.assumptions).toEqual(plan.controlTemplate.backtest.assumptions)
 })
 
-test.each(['retained', 'current'] as const)(
+test.each(['retained-v4', 'retained-v5', 'current'] as const)(
   'binding and preparation preserve the exact %s sandbox policy',
   (version) => {
     const { plan, opening, exported, source, receipt } = controlBindingFixture()
     const policy =
       version === 'current'
         ? plan.candidate.riskPolicy
-        : {
-            ...plan.candidate.riskPolicy,
-            schemaVersion: 'bayn.execution-risk-policy.v4' as const,
-            maxDailyTradedNotionalMicros: '1000000000000',
-          }
+        : version === 'retained-v5'
+          ? {
+              ...plan.candidate.riskPolicy,
+              schemaVersion: 'bayn.execution-risk-policy.v5' as const,
+              maxGrossExposureMicros: '100000000000',
+              maxDailyTradedNotionalMicros: null,
+            }
+          : {
+              ...plan.candidate.riskPolicy,
+              schemaVersion: 'bayn.execution-risk-policy.v4' as const,
+              maxGrossExposureMicros: '100000000000',
+              maxDailyTradedNotionalMicros: '1000000000000',
+            }
     const bound = Result.getOrThrow(
       bindControlStudyInput(
         { ...plan, candidate: { ...plan.candidate, riskPolicy: policy } },

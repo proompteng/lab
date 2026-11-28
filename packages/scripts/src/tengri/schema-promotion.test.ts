@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import YAML from 'yaml'
+import { matchesPaths } from '../ci/affected-inputs'
 
 const source = 'a'.repeat(40)
 const schema = '1'.repeat(64)
@@ -115,6 +116,24 @@ describe('Tengri ordered release cohort', () => {
     const pushPaths = product.getIn(['on', 'push', 'paths'])
     if (!YAML.isSeq(pushPaths)) throw new Error('Missing product production triggers')
     for (const path of ofzPaths.toJSON()) expect(pushPaths.toJSON()).toContain(path)
+    for (const path of [
+      'apps/landing/README.md',
+      'services/ofz/README.md',
+      'services/tengri/README.md',
+      'services/nanoagent/README.md',
+    ]) {
+      expect(matchesPaths(path, ofzPaths.toJSON()), path).toBe(false)
+      expect(matchesPaths(path, pushPaths.toJSON()), path).toBe(false)
+    }
+    for (const path of [
+      'apps/landing/src/app/layout.tsx',
+      'services/ofz/src/main.rs',
+      'services/tengri/src/runs.rs',
+      'services/nanoagent/codex.go',
+    ]) {
+      expect(matchesPaths(path, ofzPaths.toJSON()), path).toBe(true)
+      expect(matchesPaths(path, pushPaths.toJSON()), path).toBe(true)
+    }
     for (const name of ['app', 'synthesis', 'docs']) {
       expect(filters.getIn([name]).toJSON()).not.toContain('services/ofz/**')
       expect(filters.getIn([name]).toJSON()).not.toContain('services/nanoagent/**')

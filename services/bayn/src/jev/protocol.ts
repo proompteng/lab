@@ -28,8 +28,8 @@ import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import { stagedChartQuestionPolicy as retainedJevChartPolicy } from './retained-jev-staged-chart-questions'
 import { stagedChartQuestionPolicy as observedChartQuestionPolicy } from './retained-observed-staged-chart-questions'
 import { stagedChartQuestionPolicy as retainedFilteredChartQuestionPolicy } from './retained-filtered-staged-chart-questions'
-import { entryJudgmentPolicy, retainedEntryJudgmentPolicy } from './entry-questions'
-import { shortEntryJudgmentPolicy } from './short-entry-questions'
+import { entryJudgmentPolicy, retainedEntryJudgmentPolicy, symmetricEntryJudgmentPolicy } from './entry-questions'
+import { shortEntryJudgmentPolicy, symmetricShortEntryJudgmentPolicy } from './short-entry-questions'
 import { retainedMarketEntryJudgmentPolicy } from './retained-market-entry-questions'
 
 const entryQuestionPolicyHash = Result.getOrThrow(
@@ -40,6 +40,13 @@ const longShortQuestionPolicyHash = Result.getOrThrow(
     chart: stagedChartQuestionPolicy,
     jev: entryJudgmentPolicy,
     short: shortEntryJudgmentPolicy,
+  }),
+)
+export const symmetricQuestionPolicyHash = Result.getOrThrow(
+  canonicalHashV1Result({
+    chart: stagedChartQuestionPolicy,
+    jev: symmetricEntryJudgmentPolicy,
+    short: symmetricShortEntryJudgmentPolicy,
   }),
 )
 const observedQuestionPolicyHash = Result.getOrThrow(
@@ -104,10 +111,14 @@ type ProtocolFields = Omit<
   | 'model'
   | 'positionPolicy'
   | 'entryQuestionPolicyHash'
+  | 'maximumEntryQuoteDriftBps'
+  | 'maximumEntryLimitSlippageBps'
 > & {
   readonly model: typeof jevModel | typeof retainedJevModel
   readonly positionPolicy: 'long-only' | 'equity-long-short'
   readonly entryQuestionPolicyHash: string
+  readonly maximumEntryQuoteDriftBps: 5 | 10
+  readonly maximumEntryLimitSlippageBps: 5 | 10
 }
 const validateProtocol = (
   protocol: ProtocolFields,
@@ -185,9 +196,21 @@ export const jevProtocolSchemaForQuestionPolicy = <
 
 export const JevProtocolSchema = Schema.Struct({
   ...CurrentProtocol.fields,
-  schemaVersion: Schema.Literals(['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41']),
+  schemaVersion: Schema.Literals([
+    'bayn.jev.protocol.v40',
+    'bayn.jev.protocol.v41',
+    'bayn.jev.protocol.v42',
+    'bayn.jev.protocol.v43',
+    'bayn.jev.protocol.v44',
+  ]),
+  maximumEntryQuoteDriftBps: Schema.Literals([5, 10]),
+  maximumEntryLimitSlippageBps: Schema.Literals([5, 10]),
   positionPolicy: Schema.Literals(['long-only', 'equity-long-short']),
-  entryQuestionPolicyHash: Schema.Literals([entryQuestionPolicyHash, longShortQuestionPolicyHash]),
+  entryQuestionPolicyHash: Schema.Literals([
+    entryQuestionPolicyHash,
+    longShortQuestionPolicyHash,
+    symmetricQuestionPolicyHash,
+  ]),
   marketProfiles: Schema.Union([JevMarketProfilesSchema, CurrentJevMarketProfilesSchema]),
 }).check(
   Schema.makeFilter((protocol) => [
@@ -196,17 +219,28 @@ export const JevProtocolSchema = Schema.Struct({
       Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
       IntradayCandidateEvidencePolicy.MarketQuotesV2,
       true,
-      protocol.schemaVersion === 'bayn.jev.protocol.v41' ? currentJevUniverse : jevUniverse,
+      protocol.schemaVersion === 'bayn.jev.protocol.v40' ? jevUniverse : currentJevUniverse,
     ),
     ...((
-      protocol.schemaVersion === 'bayn.jev.protocol.v41'
+      hasRiskSymmetryProtocol(protocol)
         ? protocol.positionPolicy === 'equity-long-short' &&
-          protocol.entryQuestionPolicyHash === longShortQuestionPolicyHash &&
+          protocol.entryQuestionPolicyHash === symmetricQuestionPolicyHash &&
+          protocol.maximumEntryQuoteDriftBps === 5 &&
+          protocol.maximumEntryLimitSlippageBps === 5 &&
           Schema.is(CurrentJevMarketProfilesSchema)(protocol.marketProfiles) &&
           protocol.candidateSymbols.every((symbol) => currentJevCandidateSymbols.includes(symbol))
-        : protocol.positionPolicy === 'long-only' &&
-          protocol.entryQuestionPolicyHash === entryQuestionPolicyHash &&
-          Schema.is(JevMarketProfilesSchema)(protocol.marketProfiles)
+        : protocol.schemaVersion === 'bayn.jev.protocol.v41'
+          ? protocol.positionPolicy === 'equity-long-short' &&
+            protocol.entryQuestionPolicyHash === longShortQuestionPolicyHash &&
+            protocol.maximumEntryQuoteDriftBps === 10 &&
+            protocol.maximumEntryLimitSlippageBps === 10 &&
+            Schema.is(CurrentJevMarketProfilesSchema)(protocol.marketProfiles) &&
+            protocol.candidateSymbols.every((symbol) => currentJevCandidateSymbols.includes(symbol))
+          : protocol.positionPolicy === 'long-only' &&
+            protocol.entryQuestionPolicyHash === entryQuestionPolicyHash &&
+            protocol.maximumEntryQuoteDriftBps === 10 &&
+            protocol.maximumEntryLimitSlippageBps === 10 &&
+            Schema.is(JevMarketProfilesSchema)(protocol.marketProfiles)
     )
       ? []
       : [{ path: ['positionPolicy'], issue: 'direction and question policy must match the protocol version' }]),
@@ -319,6 +353,9 @@ export const RetainedJevProtocolV36Schema = Schema.Struct({
   ),
 )
 
+// Original default at 4467bce540bb135b96a59b1ee37396885914df0a; retained readers cannot substitute new parameters.
+export const retainedJevProtocolV37ParameterHash = '4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6'
+
 export const RetainedJevProtocolV37Schema = Schema.Struct({
   ...CurrentProtocol.fields,
   ...protocolFields(
@@ -422,15 +459,18 @@ export type JevProtocolMaterial =
         | 'bayn.jev.protocol.v29'
     })
 
+export const hasRiskSymmetryProtocol = (protocol: { readonly schemaVersion: string }): boolean =>
+  protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v44'
+
 export const usesJevOnlyInference = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>) =>
+  hasRiskSymmetryProtocol(protocol) ||
   protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v37'
-
-export const usesBoxChartInference = (protocol: { readonly schemaVersion: string }): boolean =>
-  protocol.schemaVersion === 'bayn.jev.protocol.v40' || protocol.schemaVersion === 'bayn.jev.protocol.v41'
 
 export const retainedJevProtocolV40Document = Object.freeze({
   schemaVersion: 'bayn.jev.protocol.v40',
@@ -469,7 +509,7 @@ export const retainedJevProtocolV40Document = Object.freeze({
   executionModel: intradayExecutionModel,
 } as const)
 
-export const defaultJevProtocolDocument = Object.freeze({
+export const retainedJevProtocolV41Document = Object.freeze({
   ...retainedJevProtocolV40Document,
   schemaVersion: 'bayn.jev.protocol.v41',
   positionPolicy: 'equity-long-short',
@@ -477,6 +517,24 @@ export const defaultJevProtocolDocument = Object.freeze({
   marketProfiles: currentJevMarketProfiles,
   universe: currentJevUniverse,
   candidateSymbols: currentJevCandidateSymbols,
+} as const)
+
+export const retainedJevProtocolV42Document = Object.freeze({
+  ...retainedJevProtocolV41Document,
+  schemaVersion: 'bayn.jev.protocol.v42',
+  maximumEntryQuoteDriftBps: 5,
+  maximumEntryLimitSlippageBps: 5,
+  entryQuestionPolicyHash: symmetricQuestionPolicyHash,
+} as const)
+
+export const retainedJevProtocolV43Document = Object.freeze({
+  ...retainedJevProtocolV42Document,
+  schemaVersion: 'bayn.jev.protocol.v43',
+} as const)
+
+export const defaultJevProtocolDocument = Object.freeze({
+  ...retainedJevProtocolV43Document,
+  schemaVersion: 'bayn.jev.protocol.v44',
 } as const)
 
 export const retainedJevProtocolV39Document = Object.freeze({

@@ -7,6 +7,7 @@ import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutErr
 
 import {
   makeValkeyCache,
+  maximumValkeyValueLength,
   ValkeyCache,
   ValkeyCacheError,
   ValkeyCacheInputError,
@@ -689,7 +690,14 @@ describe('Valkey command boundary', () => {
       await rejected((cache) => cache.put({ key: 'bayn:test', value: 'private-value', ttlMs }))
   })
   test('bounds actual broker-sized payloads without raising memory without limit', async () => {
-    await rejected((cache) => cache.put({ key: 'bayn:test', value: 'x'.repeat(4_194_305), ttlMs: 1000 }))
+    const accepted = await runTransport(
+      'write',
+      operation((cache) => cache.put({ key: 'bayn:test', value: 'x'.repeat(4_334_349), ttlMs: 1000 })),
+    )
+    expect(Result.isSuccess(accepted)).toBe(true)
+    await rejected((cache) =>
+      cache.put({ key: 'bayn:test', value: 'x'.repeat(maximumValkeyValueLength + 1), ttlMs: 1000 }),
+    )
   })
   test('validates every bounded batch member before issuing any write', async () => {
     const fixture = await transportFixture('write')
@@ -702,7 +710,7 @@ describe('Valkey command boundary', () => {
             [valid, valid, valid],
             [valid, { ...valid, key: 'foreign:key' }],
             [valid, { ...valid, ttlMs: 0 }],
-            [valid, { ...valid, value: 'x'.repeat(4_194_305) }],
+            [valid, { ...valid, value: 'x'.repeat(maximumValkeyValueLength + 1) }],
           ]) {
             const result = yield* cache.putAll(writes).pipe(Effect.result)
             expect(Result.isFailure(result)).toBe(true)

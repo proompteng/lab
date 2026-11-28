@@ -80,7 +80,8 @@ if [[ "${role}" = trading ]]; then
       exit 1
     fi
   done
-  for command in restate-research-server research-command control-study-command system-assessment-command jev-study-export-command equity-edge-screen; do
+  for command in restate-research-server research-command control-study-command system-assessment-command \
+    jev-study-export-command equity-edge-screen run-macro-etf-core-rebalance run-macro-canary-etf-rebalance bayn-daily-scorecard; do
     if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
       echo "Trading image contains research bundle ${command}." >&2
       exit 1
@@ -107,7 +108,9 @@ else
     test -x "$(resolve_image_entry "/bin/bayn-${command}")"
   done
   for command in restate-research-server system-assessment-command forward-performance-command forward-performance-verification-worker research-command \
-    webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command native-arrival-export-command jev-study-export-command equity-edge-screen; do
+    webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command \
+    native-arrival-export-command jev-study-export-command equity-edge-screen \
+    run-macro-etf-core-rebalance run-macro-canary-etf-rebalance bayn-daily-scorecard; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done
   for receipt in jev-compiler-dependencies frozen-control-compiler; do

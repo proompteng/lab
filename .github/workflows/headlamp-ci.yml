@@ -55,6 +55,7 @@ jobs:
     with:
       image_name: headlamp
       package_attr: headlamp-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
 
@@ -72,6 +73,7 @@ jobs:
     with:
       image_name: headlamp
       package_attr: headlamp-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}

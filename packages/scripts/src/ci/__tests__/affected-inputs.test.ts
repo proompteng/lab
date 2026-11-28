@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
-import { changedRange, matchesPaths, parseTargets, selectAffectedInputs } from '../affected-inputs'
+import { changedRange, matchesOnlyPaths, matchesPaths, parseTargets, selectAffectedInputs } from '../affected-inputs'
 import { matchesGlob } from '../impact-router'
 
 const before = {
@@ -38,6 +38,11 @@ const targets = {
   landing: { workspaces: ['', 'apps/landing'], paths: ['apps/landing/**', 'bun.lock', '**/package.json'] },
 }
 const tengriPublisherPath = '.github/workflows/tengri-images.yml'
+const baynPostgresTestHelpers = [
+  'services/bayn/src/testing/postgres-template.test-support.ts',
+  'services/bayn/tools/postgres-file-preload.ts',
+  'services/bayn/tools/postgres-test-databases.ts',
+] as const
 
 const publicationWorkflows = readdirSync('.github/workflows').filter((filename) => {
   if (!/\.ya?ml$/.test(filename)) return false
@@ -73,8 +78,11 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
         (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
           (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath) ||
           (event === 'pull_request' &&
-            filename === 'attic-build-push.yaml' &&
-            file === '.github/workflows/attic-build-push.yaml'),
+            ['attic-build-push.yaml', 'ofz.yaml', 'relay.yml'].includes(filename) &&
+            file === `.github/workflows/${filename}`) ||
+          (event === 'pull_request' &&
+            filename === 'opencode-ci.yml' &&
+            ['.github/workflows/opencode-ci.yml', '.github/workflows/nix-oci-build-common.yml'].includes(file)),
       )
     for (const file of [
       'nix/cache-push.sh',
@@ -91,6 +99,13 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
 
 test('native PR validation preserves image publication and cache warming boundaries', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const indexInput = property(property(property(workflow, 'on'), 'workflow_call'), 'inputs')
+  expect(property(indexInput, 'publish_index')).toEqual({
+    description: 'Publish the index here; disable only when the caller prepares a verified image cohort',
+    required: false,
+    type: 'boolean',
+    default: true,
+  })
   const jobs = property(workflow, 'jobs')
   const steps = property(property(jobs, 'build-platform'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing native build steps')
@@ -101,7 +116,7 @@ test('native PR validation preserves image publication and cache warming boundar
     )
   const conditions = [
     [stepCondition('Push platform image without Docker'), 'publish'],
-    [property(property(jobs, 'publish-index'), 'if'), 'publish'],
+    [property(property(jobs, 'publish-index'), 'if'), 'index'],
     [stepCondition('Warm Nix build outputs in Attic'), 'warm'],
   ] as const
   for (const [event, ref, publishOnDispatch, publish, warm] of [
@@ -113,14 +128,16 @@ test('native PR validation preserves image publication and cache warming boundar
     ['workflow_dispatch', 'refs/heads/feature', false, false, false],
     ['workflow_dispatch', 'refs/heads/feature', true, true, false],
   ] as const) {
-    for (const [condition, boundary] of conditions) {
-      const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
-      expect(
-        runInNewContext(expression, {
-          github: { event_name: event, ref },
-          inputs: { publish_on_dispatch: publishOnDispatch },
-        }),
-      ).toBe(boundary === 'publish' ? publish : warm)
+    for (const publishIndex of [true, false]) {
+      for (const [condition, boundary] of conditions) {
+        const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+        expect(
+          runInNewContext(expression, {
+            github: { event_name: event, ref },
+            inputs: { publish_on_dispatch: publishOnDispatch, publish_index: publishIndex },
+          }),
+        ).toBe(boundary === 'warm' ? warm : publish && (boundary !== 'index' || publishIndex))
+      }
     }
   }
 })
@@ -159,39 +176,93 @@ test('OpenCode CLI changes publish only the owning image', () => {
   }
 })
 
-test('Bayn CI does not run trading qualification for orchestration and documentation changes', () => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
-  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
-  if (!Array.isArray(steps)) throw new Error('Missing Bayn planner')
-  const filters: unknown = Bun.YAML.parse(
-    text(
-      property(
-        property(
-          steps.find((step) => property(step, 'id') === 'filter'),
-          'with',
-        ),
-        'filters',
-      ),
-    ),
+test.each(['bayn-build-push.yml', 'opencode-build-push.yml'])(
+  '%s excludes only the PostgreSQL test helpers from main publication',
+  (filename) => {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
+    if (!Array.isArray(paths)) throw new Error(`Missing publication inputs: ${filename}`)
+    const patterns = paths.map(text)
+    const selected = (files: readonly string[]) => files.some((file) => matchesPaths(file, patterns))
+    const helpers = baynPostgresTestHelpers
+    expect(selected(helpers)).toBe(false)
+    for (const helper of helpers) {
+      expect(patterns).toContain(`!${helper}`)
+      expect(selected([helper])).toBe(false)
+      expect(selected([helper.replace(/\.ts$/, '.runtime.ts')])).toBe(true)
+    }
+    for (const runtime of [
+      'services/bayn/src/execution/controller.ts',
+      'services/bayn/tools/compile-frozen-control.ts',
+      'services/bayn/package.json',
+      'nix/images/bayn-runtime-root.nix',
+      'patches/effect@4.1.4.patch',
+      ...(filename === 'opencode-build-push.yml'
+        ? ['services/opencode/start.sh', 'nix/images/opencode.nix', 'nix/oci-push.sh']
+        : ['nix/images/bayn.nix', 'argocd/applications/bayn/configmap.yaml']),
+    ]) {
+      expect(selected([runtime])).toBe(true)
+      expect(selected([...helpers, runtime])).toBe(true)
+      expect(selected([runtime, ...helpers])).toBe(true)
+    }
+    for (const orchestration of [`.github/workflows/${filename}`, '.github/workflows/nix-oci-build-common.yml'])
+      expect(selected([...helpers, orchestration])).toBe(false)
+  },
+)
+
+test('OpenCode PR validation selects the PR head without publication secrets', () => {
+  const validation: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-ci.yml', 'utf8'))
+  const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-build-push.yml', 'utf8'))
+  const image = property(property(validation, 'jobs'), 'image')
+  expect(property(image, 'secrets')).toBeUndefined()
+  expect(property(image, 'if')).toBeUndefined()
+  expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
+  expect(property(property(validation, 'permissions'), 'contents')).toBe('read')
+  const source = text(property(property(image, 'with'), 'source_revision')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  expect(
+    runInNewContext(source, {
+      github: { sha: 'merge-commit', event: { pull_request: { head: { sha: 'reviewed-pr-head' } } } },
+    }),
+  ).toBe('reviewed-pr-head')
+
+  const selected = (workflow: unknown, event: string, ref: string, file: string) => {
+    const trigger = property(property(workflow, 'on'), event)
+    if (trigger === undefined) return false
+    const paths = property(trigger, 'paths')
+    const branches = property(trigger, 'branches')
+    if (!Array.isArray(paths)) throw new Error('Missing OpenCode input paths')
+    return (
+      matchesPaths(file, paths.map(text)) &&
+      (!Array.isArray(branches) || matchesPaths(ref.replace(/^refs\/heads\//, ''), branches.map(text)))
+    )
+  }
+  for (const [event, ref, file, validate, publish] of [
+    ['pull_request', 'refs/pull/42/merge', '.github/workflows/opencode-ci.yml', true, false],
+    ['pull_request', 'refs/pull/42/merge', '.github/workflows/nix-oci-build-common.yml', true, false],
+    ['pull_request', 'refs/pull/42/merge', 'services/opencode/start.sh', true, false],
+    ['pull_request_target', 'refs/heads/main', 'services/opencode/start.sh', false, false],
+    ['push', 'refs/heads/main', 'services/opencode/start.sh', false, true],
+    ['push', 'refs/heads/feature', 'services/opencode/start.sh', false, false],
+    ['push', 'refs/heads/main', '.github/workflows/nix-oci-build-common.yml', false, false],
+    ['workflow_dispatch', 'refs/heads/main', 'services/opencode/start.sh', false, false],
+  ] as const) {
+    expect(selected(validation, event, ref, file)).toBe(validate)
+    expect(selected(publication, event, ref, file)).toBe(publish)
+  }
+  for (const helper of baynPostgresTestHelpers)
+    expect(selected(validation, 'pull_request', 'refs/pull/42/merge', helper)).toBe(false)
+})
+
+test('Bayn push triggers cover exactly the installed Bun workspace manifests', () => {
+  const { image } = parseTargets("image: ['', 'services/bayn']", '', '.github/workflows/bayn-build-push.yml', 'push')
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8'))
+  const manifests = Object.keys(lock.workspaces).map((path) => (path ? `${path}/package.json` : 'package.json'))
+  const dependencies = { image: { workspaces: image.workspaces, paths: [] } }
+
+  expect(manifests.filter((file) => matchesPaths(file, image.paths))).toEqual(
+    manifests.filter((file) => selectAffectedInputs([file], dependencies, lock, lock).image),
   )
-  const paths = property(filters, 'bayn')
-  if (!Array.isArray(paths)) throw new Error('Missing Bayn validation inputs')
-  for (const file of [
-    'services/bayn/README.md',
-    'argocd/applications/bayn/README.md',
-    '.github/workflows/bayn-ci.yml',
-    '.github/workflows/bayn-build-push.yml',
-    '.github/workflows/common-monorepo.yml',
-    '.github/workflows/nix-oci-build-common.yml',
-    '.github/actions/setup-nix-toolchain/action.yml',
-    'nix/cache-push.sh',
-    'nix/ci-run-timed.sh',
-    'nix/oci-push.sh',
-    'nix/images/opencode-cli.nix',
-  ])
-    expect(matchesPaths(file, paths.map(text))).toBe(false)
-  expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)
-  expect(matchesPaths('nix/images/bayn.nix', paths.map(text))).toBe(true)
+  expect(matchesPaths('bun.lock', image.paths)).toBe(true)
 })
 
 test('Bayn publication ignores Froussard-only dependencies and still selects Bayn runtime changes', () => {
@@ -423,6 +494,48 @@ test('Ofz publication helpers use script CI without waking service qualification
   }
 })
 
+test('Ofz PR validation selects its identity fixture dependency changes', () => {
+  const filename = '.github/workflows/ofz.yaml'
+  const workflow: unknown = Bun.YAML.parse(readFileSync(filename, 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'validate'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing Ofz validation steps')
+  const planning = steps.find((step) => property(step, 'id') === 'inputs')
+  expect(property(planning, 'uses')).toBe('./.github/actions/affected-inputs')
+  expect(property(planning, 'if')).toBe("github.event_name == 'pull_request'")
+  const inputs = property(planning, 'with')
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    '{}',
+    text(property(inputs, 'workflow')),
+    'pull_request',
+  )
+  const base = {
+    ...before,
+    workspaces: {
+      ...before.workspaces,
+      'packages/backend': { name: '@proompteng/backend' },
+      'packages/design': { name: '@proompteng/design' },
+      'services/golink': { name: '@proompteng/golink', dependencies: { dayjs: '^1.0.0' } },
+    },
+  }
+  const unrelated = {
+    ...base,
+    workspaces: { ...base.workspaces, 'services/golink': { name: '@proompteng/golink', dependencies: {} } },
+  }
+  const identity = {
+    ...base,
+    workspaces: { ...base.workspaces, 'apps/landing': after.workspaces['apps/landing'] },
+    packages: after.packages,
+  }
+  expect(selectAffectedInputs(['bun.lock'], configured, base, unrelated)).toEqual({ ofz: false })
+  expect(selectAffectedInputs(['bun.lock'], configured, base, identity)).toEqual({ ofz: true })
+  expect(selectAffectedInputs(['services/ofz/src/main.rs'], configured, base, base)).toEqual({ ofz: true })
+  const identityStep = steps.find(
+    (step) => property(step, 'name') === 'Verify real browser identity and shared sessions',
+  )
+  expect(property(identityStep, 'if')).toBe("steps.selection.outputs.run != 'false'")
+})
+
 test('a changed transitive dependency still runs its consumers', () => {
   const upgraded = { ...before, packages: { ...before.packages, dayjs: after.packages.dayjs } }
   expect(selectAffectedInputs(['bun.lock'], targets, before, upgraded)).toEqual({ bayn: true, landing: false })
@@ -528,6 +641,64 @@ const text = (value: unknown): string => {
   if (typeof value !== 'string') throw new Error('Expected workflow text')
   return value
 }
+
+test('Jangar CI selects runtime and dependency changes without taking Agents or observability ownership', () => {
+  const router: unknown = Bun.YAML.parse(readFileSync('.github/workflows/pull-request.yml', 'utf8'))
+  const steps = property(property(property(router, 'jobs'), 'plan'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing CI planner steps')
+  const step = steps.find((candidate) => property(candidate, 'id') === 'jangar')
+  expect(step).toMatchObject({
+    if: "github.event_name == 'pull_request'",
+    uses: './.github/actions/affected-inputs',
+  })
+  const inputs = property(step, 'with')
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters')),
+    '',
+    'pull_request',
+  )
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8')) as { packages: Record<string, unknown[]> }
+  const unrelated = [
+    'argocd/applications/agents/values.yaml',
+    'argocd/applications/agents/agents-primitives-agentprovider.yaml',
+    'charts/agents/templates/deployment.yaml',
+    'argocd/applications/observability/graf-mimir-rules.yaml',
+    'services/agents/src/server/control-plane.ts',
+    'docs/jangar/architecture-inventory.md',
+    'packages/codex/src/app-server-client.test.ts',
+    'packages/temporal-bun-sdk/tests/client.test.ts',
+    'packages/temporal-bun-sdk/README.md',
+  ]
+  for (const file of unrelated) expect(selectAffectedInputs([file], configured, lock, lock).jangar, file).toBe(false)
+
+  for (const file of [
+    'services/jangar/src/server/index.ts',
+    'services/bumba/src/atlas/reconciliation.ts',
+    'packages/agent-contracts/src/index.ts',
+    'packages/codex/src/app-server-client.ts',
+    'packages/cx-tools/src/index.ts',
+    'packages/cx-tools/package.json',
+    'packages/design/src/components/ui/button.tsx',
+    'packages/discord/src/index.ts',
+    'packages/otel/src/index.ts',
+    'packages/temporal-bun-sdk/src/index.ts',
+    'packages/design/package.json',
+    'argocd/applications/jangar/deployment.yaml',
+    'argocd/bootstrap/jangar/kustomization.yaml',
+    '.github/workflows/jangar-ci.yml',
+  ]) {
+    expect(selectAffectedInputs([...unrelated, file], configured, lock, lock).jangar, file).toBe(true)
+  }
+
+  const upgraded = (name: string) => {
+    const entry = lock.packages[name]
+    if (!Array.isArray(entry)) throw new Error(`Missing lock entry for ${name}`)
+    return { ...lock, packages: { ...lock.packages, [name]: [...entry.slice(0, -1), 'new-integrity'] } }
+  }
+  expect(selectAffectedInputs([...unrelated, 'bun.lock'], configured, lock, upgraded('vite')).jangar).toBe(true)
+  expect(selectAffectedInputs([...unrelated, 'bun.lock'], configured, lock, upgraded('nitro')).jangar).toBe(false)
+})
 
 test('planner implementation, action, and map changes retain their owning validation', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
@@ -700,12 +871,14 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
   }
   try {
     git('init', '-b', 'main')
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src/source.ts'), 'export const value = 1\n')
     const initial = commit(before)
     const head = commit(after)
     git('checkout', '-b', 'base', initial)
     const base = commit({ ...before, configVersion: 0 })
-    const run = (event: string, baseSha: string, dependencyAwarePush = 'false') => {
-      const output = join(dir, 'output')
+    const run = (event: string, baseSha: string, dependencyAwarePush = 'false', headSha = head) => {
+      const output = join(dir, '.git', 'test-output')
       writeFileSync(output, '')
       execFileSync(process.execPath, [script], {
         cwd: dir,
@@ -713,32 +886,59 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
           ...process.env,
           GITHUB_EVENT_NAME: event,
           BASE_SHA: baseSha,
-          HEAD_SHA: head,
+          HEAD_SHA: headSha,
           INPUT_WORKSPACES: 'bayn: ["", "services/bayn"]\nlanding: ["", "apps/landing"]',
           INPUT_FILTERS: 'bayn: ["bun.lock"]\nlanding: ["bun.lock"]',
+          INPUT_ONLY_PATHS: '["tools/**", "docs/**"]',
           INPUT_WORKFLOW: '',
           INPUT_DEPENDENCY_AWARE_PUSH: dependencyAwarePush,
           GITHUB_OUTPUT: output,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
-      return JSON.parse(readFileSync(output, 'utf8').trim().slice('affected='.length))
+      const [affected, onlyPaths] = readFileSync(output, 'utf8').trim().split('\n')
+      return {
+        affected: JSON.parse(text(affected).slice('affected='.length)),
+        onlyPaths: text(onlyPaths),
+      }
     }
-    expect(run('pull_request', base)).toEqual({ bayn: false, landing: true })
-    expect(run('push', base)).toEqual({ bayn: true, landing: true })
-    expect(run('push', initial, 'true')).toEqual({ bayn: false, landing: true })
-    expect(run('push', base, 'true')).toEqual({ bayn: true, landing: true })
+    expect(run('pull_request', base)).toEqual({
+      affected: { bayn: false, landing: true },
+      onlyPaths: 'only_paths=false',
+    })
+    expect(run('push', base).affected).toEqual({ bayn: true, landing: true })
+    expect(run('push', initial, 'true').affected).toEqual({ bayn: false, landing: true })
+    expect(run('push', base, 'true').affected).toEqual({ bayn: true, landing: true })
     expect(() => run('push', initial, 'typo')).toThrow()
-    expect(run('workflow_dispatch', '')).toEqual({ bayn: true, landing: true })
+    expect(run('workflow_dispatch', '')).toEqual({
+      affected: { bayn: true, landing: true },
+      onlyPaths: 'only_paths=false',
+    })
     expect(() => changedRange('pull_request', '', head)).toThrow('valid nonzero')
+
+    git('checkout', '-b', 'offline', initial)
+    mkdirSync(join(dir, 'docs'))
+    writeFileSync(join(dir, 'docs/notes.md'), '# Offline notes\n')
+    const docs = commit(before)
+    expect(run('pull_request', base, 'false', docs).onlyPaths).toBe('only_paths=true')
+    expect(run('push', initial, 'false', docs).onlyPaths).toBe('only_paths=false')
+    expect(run('pull_request', docs, 'false', docs).onlyPaths).toBe('only_paths=false')
+    mkdirSync(join(dir, ' docs'))
+    writeFileSync(join(dir, ' docs/outside.md'), '# Outside the allowlist\n')
+    expect(run('pull_request', base, 'false', commit(before)).onlyPaths).toBe('only_paths=false')
+    git('rm', ' docs/outside.md')
+    mkdirSync(join(dir, 'tools'))
+    git('mv', 'src/source.ts', 'tools/source.ts')
+    expect(run('pull_request', base, 'false', commit(before)).onlyPaths).toBe('only_paths=false')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('Bayn separates formal checks from runtime validation and publication', () => {
+test('Bayn selects fast checks only for offline PRs and retains full and independent validation', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
-  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  const changes = property(property(workflow, 'jobs'), 'changes')
+  const steps = property(changes, 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing Bayn change detection')
   const inputs = property(
     steps.find((step) => property(step, 'id') === 'filter'),
@@ -750,43 +950,76 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     '',
     'pull_request',
   )
-  const lock = { ...before, workspaces: { ...before.workspaces, 'packages/scripts': { name: 'scripts' } } }
+  const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8'))
+  const onlyPaths: unknown = Bun.YAML.parse(text(property(inputs, 'only-paths')))
+  if (!Array.isArray(onlyPaths)) throw new Error('Missing Bayn fast path allowlist')
+  const outputNames = ['fast', 'full', 'pr_checks', 'formal', 'gepa']
+  const selected = (paths: string[], event = 'pull_request') => {
+    const outputs =
+      event === 'pull_request'
+        ? {
+            affected: JSON.stringify(selectAffectedInputs(paths, targets, lock, lock)),
+            only_paths: String(matchesOnlyPaths(paths, onlyPaths.map(text))),
+          }
+        : {}
+    return outputNames.filter((key) => {
+      const expression = text(property(property(changes, 'outputs'), key)).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+      return runInNewContext(expression, {
+        fromJSON: JSON.parse,
+        github: { event_name: event },
+        steps: { filter: { outputs } },
+      })
+    })
+  }
+  const full = ['full', 'pr_checks', 'formal', 'gepa']
+  const docs = 'docs/bayn/test-suite-audit-2026-11-27.md'
+  const tool = 'services/bayn/tools/research-10yr-pure-etf-dual-horizon.ts'
+  for (const paths of [[docs], [tool], [docs, tool], ['services/bayn/tools/native-arrival-coverage.md']])
+    expect(selected(paths)).toEqual(['fast'])
+  for (const event of ['merge_group', 'workflow_dispatch', 'push']) expect(selected([tool], event)).toEqual(full)
+
+  for (const path of [
+    'services/bayn/src/execution/controller.ts',
+    'services/bayn/src/risk.test.ts',
+    'services/bayn/src/system-assessment/README.md',
+    'services/bayn/migrations/20261106-cost-evidence.sql',
+    'argocd/applications/bayn/research-networkpolicy.yaml',
+    'argocd/applications/bayn/postgres-monitoring.yaml',
+    'argocd/applications/bayn/README.md',
+    '.github/workflows/bayn-ci.yml',
+    '.github/workflows/bayn-formal.yml',
+    '.github/workflows/common-monorepo.yml',
+    'argocd/applications/torghut/clickhouse/schema/historical-datasets.sql',
+    'nix/images/bayn.nix',
+    'services/bayn/tools/compile-frozen-control.ts',
+    'services/bayn/tools/test-postgres.ts',
+    'services/bayn/tools/test-ledger.ts',
+    'services/bayn/tools/retire-broker-polls.integration.test.ts',
+    'services/bayn/tools/run-macro-etf-core-rebalance.ts',
+    ...baynPostgresTestHelpers,
+    'docs/bayn/jev-migration-acceptance-v2.json',
+  ]) {
+    expect(selected([path])).toEqual(full)
+    expect(selected([docs, tool, path])).toEqual(full)
+  }
+  for (const path of ['nix/ci-run-timed.sh', 'apps/landing/src/index.ts', 'bun.lock'])
+    expect(selected([docs, path])).toEqual(full)
+
   for (const path of [
     'services/bayn/formal/Bayn/Reliability.lean',
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
-    '.github/workflows/bayn-formal.yml',
   ])
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, gepa: false, formal: true })
-  expect(selectAffectedInputs(['services/bayn/src/execution/controller.ts'], targets, lock, lock)).toEqual({
-    bayn: true,
-    gepa: false,
-    formal: true,
-  })
-  expect(selectAffectedInputs(['argocd/applications/bayn/configmap.yaml'], targets, lock, lock)).toEqual({
-    bayn: true,
-    gepa: false,
-    formal: false,
-  })
-  expect(selectAffectedInputs(['apps/landing/src/index.ts'], targets, lock, lock)).toEqual({
-    bayn: false,
-    gepa: false,
-    formal: false,
-  })
-  for (const path of ['services/bayn/src/risk.test.ts', 'services/bayn/tools/history.test.ts'])
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal: false, gepa: false })
-  expect(selectAffectedInputs(['services/bayn/gepa/runner.py'], targets, lock, lock)).toEqual({
-    bayn: true,
-    formal: false,
-    gepa: true,
-  })
-  for (const path of [
-    'services/bayn/src/db/entry-inference-postgres.integration.test.ts',
-    'services/bayn/src/system-assessment/postgres.integration.test.ts',
-    'services/bayn/src/db/risk-clock-rejection.integration.test.ts',
-    'services/bayn/src/db/candidate-observation-window.integration.test.ts',
-  ])
-    expect(selectAffectedInputs([path], targets, lock, lock).formal).toBe(true)
+    expect(selected([path])).toEqual(['formal'])
+  for (const path of ['packages/scripts/src/bayn/verify-egress-proxy-restart.sh', 'packages/scripts/package.json'])
+    expect(selected([path])).toEqual(['pr_checks'])
+  for (const path of ['apps/landing/src/index.ts', 'services/bayn/formal/tla/README.md', 'services/dorvud/README.md'])
+    expect(selected([path])).toEqual([])
+  expect(selected([])).toEqual([])
+  expect(selected(['services/bayn/gepa/runner.py'])).toEqual(['pr_checks', 'gepa'])
+})
+
+test('Bayn publication still watches runtime rather than test or offline inputs', () => {
   const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-build-push.yml', 'utf8'))
   const paths = property(property(property(publication, 'on'), 'push'), 'paths')
   if (!Array.isArray(paths) || !paths.every((path): path is string => typeof path === 'string'))
@@ -796,7 +1029,15 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
     'services/bayn/README.md',
+    'services/bayn/tools/macro-canary-runner/README.md',
+    'services/bayn/tools/benchmark-forward-performance.md',
+    'services/bayn/AGENTS.md',
+    'services/bayn/.gitignore',
+    'services/bayn/tools/research-10yr-pure-etf-dual-horizon.ts',
+    'services/bayn/tools/research-sip-momentum-data.ts',
     'services/bayn/src/jev/entry-economics.test.ts',
+    'services/bayn/src/jev/native.test-support.ts',
+    'services/bayn/src/testing/streaming-market-fixture.ts',
     'services/bayn/tools/test-postgres.ts',
     'services/bayn/tools/test-ledger.ts',
     'services/bayn/tools/ci-unit-timings.json',
@@ -811,19 +1052,17 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/migrations/20261106-cost-evidence.sql',
     'services/bayn/tools/compile-frozen-control.ts',
     'services/bayn/tools/record-jev-compiler-dependencies.ts',
+    'services/bayn/tools/equity-edge-screen.ts',
+    'services/bayn/src/research-command.ts',
+    'services/bayn/gepa/native.py',
+    'services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/BrokerFeedMain.kt',
+    'docs/bayn/jev-migration-acceptance-v2.json',
     'services/bayn/package.json',
     'nix/images/bayn.nix',
     'argocd/applications/bayn/configmap.yaml',
     'bun.lock',
   ])
     expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
-  expect(
-    selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], targets, lock, lock),
-  ).toEqual({
-    bayn: false,
-    gepa: false,
-    formal: false,
-  })
 })
 
 test.each([

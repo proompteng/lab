@@ -5,7 +5,7 @@ import { Cause, Clock, Effect, Exit, Layer, ManagedRuntime, Redacted } from 'eff
 import { TestClock } from 'effect/testing'
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { BrokerEnvironment } from '../broker/identity'
-import type { FillEventInput } from '../broker/observations'
+import { sourceTimestamp, type FillEventInput } from '../broker/observations'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { DecisionConstruction } from '../decision-construction'
@@ -55,7 +55,18 @@ import { CycleObservability, CycleObservabilityLive } from '../cycle/store/obser
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://agent@127.0.0.1:55432/bayn_v41_test'
 const accountId = `replay-${sha256(crypto.randomUUID())}`
-const native = nativeJevFixture(undefined, undefined, accountId)
+const native = nativeJevFixture(
+  undefined,
+  undefined,
+  accountId,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  true,
+)
 const at = native.snapshot.manifest.observedAt
 const generation = native.input.authorityGenerationHash
 
@@ -260,6 +271,7 @@ integration('native equity short PostgreSQL execution', () => {
           }
           yield* insert(target.side, target.quantityAtoms, risk.protection)
           const cancellationAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
+          const providerUpdatedAt = yield* Effect.fromResult(sourceTimestamp(cancellationAt))
           for (const side of [OrderSide.Buy, OrderSide.Sell]) {
             const brokerOrderId = `short-protective-${side}`
             const eventId = yield* Effect.fromResult(canonicalHashV1Result({ intentId, brokerOrderId }))
@@ -268,12 +280,13 @@ integration('native equity short PostgreSQL execution', () => {
                 yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                 source_event_id,source_sequence,occurred_at,observed_at)
                 VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${accountId},
-                  ${brokerOrderId},${side === OrderSide.Buy ? 1 : 2},${cancellationAt},${cancellationAt})`
+                  ${`order:${brokerOrderId}:${providerUpdatedAt}`},${side === OrderSide.Buy ? 1 : 2},${cancellationAt},${cancellationAt})`
                 yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-                symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status)
+                symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status,
+                broker_updated_at)
                 VALUES(${eventId},${accountId},'bayn.order.v3',${brokerOrderId},${brokerOrderId},${intentId},
                   ${target.symbol},${side},'STOP_LIMIT','DAY',${target.quantityAtoms},0,
-                  ${shortProtection.stopLimitPriceMicros},${shortProtection.stopPriceMicros},'NEW')`
+                  ${shortProtection.stopLimitPriceMicros},${shortProtection.stopPriceMicros},'NEW',${providerUpdatedAt})`
               }),
             )
             const store = yield* IntentStore

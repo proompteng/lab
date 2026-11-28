@@ -1,5 +1,15 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -50,6 +60,33 @@ describe('agents-shell pstack installer', () => {
     expect(readlinkSync(join(fixture.home, '.codex', 'prompts', 'poteto-mode.md'))).toBe(
       join(fixture.prompts, 'poteto-mode.md'),
     )
+  })
+
+  it('installs skills without creating a prompts directory when the bundle has none', () => {
+    const { home, pstack, skills, prompts } = makeFixture()
+    rmSync(prompts, { recursive: true })
+
+    runInstaller(home, pstack)
+
+    expect(readlinkSync(join(home, '.agents', 'skills', 'poteto-mode'))).toBe(join(skills, 'poteto-mode'))
+    expect(existsSync(join(home, '.codex', 'prompts'))).toBe(false)
+  })
+
+  it('removes only managed prompt links after the bundle drops the prompts directory', () => {
+    const { home, pstack, prompts } = makeFixture()
+    runInstaller(home, pstack)
+    const promptsTarget = join(home, '.codex', 'prompts')
+    const userPrompt = join(home, 'custom-prompt.md')
+    writeFileSync(userPrompt, 'custom prompt\n')
+    symlinkSync(userPrompt, join(promptsTarget, 'custom.md'))
+    writeFileSync(join(promptsTarget, 'local.md'), 'local prompt\n')
+    rmSync(prompts, { recursive: true })
+
+    runInstaller(home, pstack)
+
+    expect(readdirSync(promptsTarget).sort()).toEqual(['custom.md', 'local.md'])
+    expect(readlinkSync(join(promptsTarget, 'custom.md'))).toBe(userPrompt)
+    expect(readFileSync(join(promptsTarget, 'local.md'), 'utf8')).toBe('local prompt\n')
   })
 
   it('is idempotent and preserves user-managed collisions', () => {

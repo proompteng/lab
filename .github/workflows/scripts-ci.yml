@@ -1,8 +1,7 @@
 name: packages-scripts
 
 on:
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches:
       - main
@@ -138,8 +137,11 @@ on:
       - nix/check-bun-dependency-closure.sh
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: packages-scripts-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:
@@ -159,9 +161,13 @@ jobs:
         echo "62d177feb18c9b6ffd636c8273aa82a6afc75a507d096ff951749df23c3176f9  ${RUNNER_TEMP}/alloy.zip" | sha256sum --check --strict
         unzip -q "${RUNNER_TEMP}/alloy.zip" -d "${RUNNER_TEMP}/alloy"
         sudo install "${RUNNER_TEMP}/alloy/alloy-linux-amd64" /usr/local/bin/alloy
-        bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk
+        bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts --filter @proompteng/agents --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk
         bun run --filter @proompteng/temporal-bun-sdk build
       lint-command: bun run --filter @proompteng/scripts lint
       oxlint-command: bun run --cwd packages/scripts lint:oxlint
       oxlint-type-command: bun run --cwd packages/scripts lint:oxlint:type
-      test-command: bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json && bun test packages/scripts/src && bun test scripts/jangar/validate-primitives.test.ts
+      test-command: >-
+        bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json &&
+        bun run --filter @proompteng/scripts typecheck:ontology &&
+        bun test --isolate --randomize packages/scripts/src &&
+        bun test scripts/jangar/validate-primitives.test.ts

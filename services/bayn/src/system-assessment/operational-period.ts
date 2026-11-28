@@ -13,6 +13,10 @@ import {
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
   retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
+  retainedJevProtocolV37ParameterHash,
   jevBehaviorHash,
 } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
@@ -55,9 +59,6 @@ export const OperationalRegistrationSchema = Schema.Struct({
 })
 export type OperationalRegistration = typeof OperationalRegistrationSchema.Type
 
-// Original v37 default at 4467bce540bb135b96a59b1ee37396885914df0a; retained reads cannot substitute new parameters.
-const retainedOperationalV37ParameterHash = '4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6'
-
 /** Retained periods keep their original strategy binding when receipts are read. */
 export const verifyStoredOperationalRegistration = (input: unknown) =>
   Result.gen(function* () {
@@ -86,15 +87,21 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
     const parameterHash = yield* canonicalHashV1Result(runtime.protocol)
     const expectedParameterHash =
       runtime.protocol.schemaVersion === 'bayn.jev.protocol.v37'
-        ? retainedOperationalV37ParameterHash
+        ? retainedJevProtocolV37ParameterHash
         : yield* canonicalHashV1Result(
-            runtime.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+            runtime.protocol.schemaVersion === 'bayn.jev.protocol.v44'
               ? defaultJevProtocolDocument
-              : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
-                ? retainedJevProtocolV40Document
-                : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
-                  ? retainedJevProtocolV39Document
-                  : retainedJevProtocolV38Document,
+              : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v43'
+                ? retainedJevProtocolV43Document
+                : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v42'
+                  ? retainedJevProtocolV42Document
+                  : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+                    ? retainedJevProtocolV41Document
+                    : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+                      ? retainedJevProtocolV40Document
+                      : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+                        ? retainedJevProtocolV39Document
+                        : retainedJevProtocolV38Document,
           )
     const protocolHash = yield* makeStrategyProtocolHashResult({
       name: 'jev',

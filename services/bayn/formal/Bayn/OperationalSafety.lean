@@ -4,15 +4,6 @@ import Lean.Elab.Tactic.Omega
 @[expose] public section
 namespace Bayn
 
-def nativeSafetyJournalInsertAllowed (triggerDepth : Nat) : Bool := triggerDepth > 1
-
-theorem direct_safety_insert_cannot_manufacture_evidence :
-    nativeSafetyJournalInsertAllowed 1 = false := by decide
-
-theorem native_safety_insert_requires_original_trigger (depth : Nat)
-    (allowed : nativeSafetyJournalInsertAllowed depth = true) : 1 < depth := by
-  simpa [nativeSafetyJournalInsertAllowed] using allowed
-
 def safetyKinds : List String := ["UNAUTHORIZED_ACTION", "DUPLICATE_ECONOMIC_EFFECT",
   "INVALID_LEDGER_ADMISSION", "INVALID_OWNERSHIP", "RISK_LIMIT_VIOLATION", "IDENTITY_MISMATCH"]
 

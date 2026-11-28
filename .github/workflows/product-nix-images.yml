@@ -108,6 +108,10 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!apps/landing/README.md'
+      - '!services/ofz/README.md'
+      - '!services/tengri/README.md'
+      - '!services/nanoagent/README.md'
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -233,6 +237,10 @@ jobs:
               - tsconfig.base.json
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
+              - '!apps/landing/README.md'
+              - '!services/ofz/README.md'
+              - '!services/tengri/README.md'
+              - '!services/nanoagent/README.md'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
@@ -357,6 +365,7 @@ jobs:
     with:
       image_name: synthesis
       package_attr: synthesis-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: true
@@ -369,6 +378,7 @@ jobs:
     with:
       image_name: docs
       package_attr: docs-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: true

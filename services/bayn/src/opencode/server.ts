@@ -147,6 +147,8 @@ export const serveOpenCode = (
           stdin: 'ignore',
           stdout: 'ignore',
           stderr: 'ignore',
+          // Allow the native server's 20-second drain before escalating a stuck shutdown.
+          forceKillAfter: '25 seconds',
         },
       ),
     )
@@ -179,13 +181,16 @@ export const serveOpenCode = (
     })
     // Nix verifies the package; this authenticated response proves the version of the running server.
     yield* info.pipe(
+      // Native listen precedes handler installation; an early accepted request can remain unanswered.
+      Effect.timeout('1 second'),
       Effect.retry({
         schedule: Schedule.spaced('200 millis'),
         times: 100,
         while: (error) =>
-          error._tag === 'HttpClientError' &&
-          (error.reason._tag === 'TransportError' ||
-            (error.reason._tag === 'StatusCodeError' && error.reason.response.status === 503)),
+          error._tag === 'TimeoutError' ||
+          (error._tag === 'HttpClientError' &&
+            (error.reason._tag === 'TransportError' ||
+              (error.reason._tag === 'StatusCodeError' && error.reason.response.status === 503))),
       }),
       Effect.timeout('25 seconds'),
       Effect.raceFirst(exited),

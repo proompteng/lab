@@ -1,5 +1,8 @@
 name: dorvud-ci
 
+permissions:
+  contents: read
+
 on:
   # Run once for PRs targeting main; push runs only on main to avoid double CI for PR branches.
   pull_request:
@@ -7,6 +10,8 @@ on:
     paths:
       - 'services/dorvud/**'
       - 'services/bayn/src/market-data/features/fixtures/**'
+      - '.github/workflows/dorvud.yml'
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -15,7 +20,7 @@ on:
       - '.github/workflows/dorvud.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: dorvud-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

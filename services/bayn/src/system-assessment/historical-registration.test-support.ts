@@ -54,6 +54,8 @@ export const historicalRegistrationFixture = (registeredAt?: string) => {
           }
         case JevResearchPolicy.Deployed:
           return policy
+        case JevResearchPolicy.Incumbent:
+          throw new Error('Historical registration cannot include a serving incumbent')
       }
     }),
   })

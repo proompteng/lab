@@ -4,6 +4,8 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
+import { marketCalendarSchemaVersion, marketCalendarSource } from '../broker/alpaca/model'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
 import { decideExecutionControllerDeactivation, type ExecutionControllerState } from '../execution/controller'
 import { projectExecutionControllerState } from '../composition/native-execution-runtime'
@@ -18,6 +20,7 @@ import { makeCycleStore } from '../cycle/store/postgres'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -151,6 +154,106 @@ describePostgres('PostgreSQL execution controller diagnostics', () => {
     expect(result.altered).toMatchObject({ failure: 'conflict' })
     expect(result.stale).toEqual({ _tag: 'Stale', status: completion })
     expect(result.stored).toEqual(completion)
+  })
+
+  test('retains the broker opening across failed passes and replaces it only with new calendar evidence', async () => {
+    const policy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(defaultJevProtocolDocument.executionModel))
+    const evaluatedAt = '2026-11-27T14:20:00.000Z'
+    const date = '2026-11-27'
+    const openAt = '2026-11-27T14:30:00.000Z'
+    const closeAt = '2026-11-27T18:00:00.000Z'
+    const calendar = {
+      schemaVersion: marketCalendarSchemaVersion,
+      source: marketCalendarSource,
+      requestedRange: { start: date, end: date },
+      timeZone: 'UTC' as const,
+      sessions: [{ date, openAt, closeAt }],
+      providerSessions: [
+        { date, regularOpenAt: openAt, regularCloseAt: closeAt, sessionOpenAt: openAt, sessionCloseAt: closeAt },
+      ],
+      normalizedResponseHash: 'a'.repeat(64),
+    } as const
+    const proof = {
+      schemaVersion: 'bayn.closed-entry-window.v1' as const,
+      accountId: 'paper-account',
+      authorityGenerationHash: 'b'.repeat(64),
+      strategyProtocolHash: 'c'.repeat(64),
+      evaluatedAt,
+      decidedAt: evaluatedAt,
+      executionPolicy: policy,
+      calendar,
+      calendarRead: { requestId: 'calendar', status: 200, contentHash: 'a'.repeat(64), observedAt: evaluatedAt },
+    }
+    const completion = {
+      schemaVersion: 1 as const,
+      controllerKey: 'primary',
+      planHash: 'f'.repeat(64),
+      active: true,
+      epoch: 1,
+      nextSequence: 2,
+      lastSequence: 1,
+      lastOutcome: ExecutionControllerOutcome.Waiting,
+      lastReceiptHash: 'd'.repeat(64),
+      completedAt: evaluatedAt,
+      lastPass: {
+        result: 'SUCCESS' as const,
+        outcome: 'WINDOW_CLOSED' as const,
+        observedAt: evaluatedAt,
+        closedEntryWindow: proof,
+      },
+    }
+    const expectedSession = {
+      date,
+      submissionOpenAt: '2026-11-27T14:30:00.000Z',
+      firstObservationAt: '2026-11-27T14:31:02.000Z',
+      submissionCutoffAt: '2026-11-27T17:55:00.000Z',
+    } as const
+    const failure = {
+      ...completion,
+      nextSequence: 3,
+      lastSequence: 2,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: 'e'.repeat(64),
+      completedAt: '2026-11-27T14:32:00.000Z',
+      lastPass: {
+        result: 'FAILURE' as const,
+        operation: 'acquire-cycle' as const,
+        failure: 'database' as const,
+        observedAt: '2026-11-27T14:32:00.000Z',
+        message: 'failed to create the first cycle',
+      },
+    }
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ExecutionControllerStatusStore
+        yield* store.project(completion)
+        yield* store.project(failure)
+        expect(yield* store.read('primary')).toEqual({ ...failure, expectedSession })
+        expect(yield* store.project(completion)).toMatchObject({ _tag: 'Stale', status: { expectedSession } })
+
+        yield* store.project({
+          ...completion,
+          nextSequence: 4,
+          lastSequence: 3,
+          lastPass: {
+            ...completion.lastPass,
+            closedEntryWindow: { ...proof, calendar: { ...calendar, sessions: [], providerSessions: [] } },
+          },
+        })
+        expect(yield* store.read('primary')).not.toHaveProperty('expectedSession')
+
+        yield* store.project({ ...completion, nextSequence: 5, lastSequence: 4 })
+        yield* store.project({
+          schemaVersion: 1,
+          controllerKey: completion.controllerKey,
+          active: true,
+          epoch: 2,
+          planHash: '1'.repeat(64),
+          nextSequence: 5,
+        })
+        expect(yield* store.read('primary')).not.toHaveProperty('expectedSession')
+      }),
+    )
   })
 
   test.each([false, true])(

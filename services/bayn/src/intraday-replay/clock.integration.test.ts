@@ -34,7 +34,7 @@ const fixture = Effect.gen(function* () {
     )
   const stopped = sql`SELECT measured_at, measured_observed_at, source_read_started_at
     FROM simulated_execution_clocks WHERE account_id = ${clock.accountId}`
-  return { clock, sql, commitNow, stopped }
+  return { clock, sql, commitNow, stopped, runId, providerClock }
 })
 
 const run = <A, E>(operation: Effect.Effect<A, E, Effect.Services<typeof fixture> | WriterFence>) => {
@@ -60,6 +60,49 @@ const run = <A, E>(operation: Effect.Effect<A, E, Effect.Services<typeof fixture
     ),
   )
 }
+
+postgresTest('keeps a replay clock bound to its account and source without affecting paper time', async () => {
+  await run(
+    Effect.gen(function* () {
+      const { clock, sql, commitNow, runId, providerClock } = yield* fixture
+      const wrongAccount = yield* Effect.flip(
+        sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+          VALUES ('paper-account-1', ${clock.sourceManifestHash}, clock_timestamp())`,
+      )
+      expect(wrongAccount).toMatchObject({
+        reason: { cause: { code: '23514', constraint: 'simulated_execution_clocks_account_id_check' } },
+      })
+      const missingClock = yield* Effect.flip(sql`SELECT execution_account_now(${`replay-${'0'.repeat(64)}`})`)
+      expect(missingClock).toMatchObject({
+        reason: { cause: { code: '23514', message: 'simulation account has no execution clock' } },
+      })
+      const rewind = yield* Effect.flip(clock.advanceTo(utcInstantFromEpochMillis(initialAt - 1)))
+      expect(rewind).toMatchObject({
+        reason: {
+          cause: { code: '23514', message: 'simulation clock identity is immutable and time cannot move backwards' },
+        },
+      })
+      const wrongSource = yield* Effect.flip(makeSimulatedExecutionClock(runId, 'f'.repeat(64), providerClock))
+      expect(Schema.isSchemaError(wrongSource)).toBe(true)
+      for (const erase of [
+        sql`DELETE FROM simulated_execution_clocks WHERE account_id = ${clock.accountId}`,
+        // Include the referencing table so PostgreSQL reaches the clock's append-only trigger.
+        sql`TRUNCATE simulated_execution_clocks, simulated_broker_checkpoints`,
+      ]) {
+        expect(yield* Effect.flip(erase)).toMatchObject({
+          reason: { cause: { code: '55000', message: 'simulated_execution_clocks is append-only' } },
+        })
+      }
+      expect(yield* commitNow).toBe(initialAt)
+      expect(
+        yield* sql`SELECT source_manifest_hash FROM simulated_execution_clocks WHERE account_id = ${clock.accountId}`,
+      ).toEqual([{ source_manifest_hash: clock.sourceManifestHash }])
+      expect(
+        yield* sql`SELECT abs(extract(epoch FROM (execution_account_now('paper-account-1') - clock_timestamp()))) < 1 AS current`,
+      ).toEqual([{ current: true }])
+    }),
+  )
+})
 
 postgresTest.each(['failure', 'defect', 'interruption'] as const)(
   'recovery fixture preserves native containment and both clocks after %s',

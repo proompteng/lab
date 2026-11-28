@@ -1,12 +1,17 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Schema } from 'effect'
+import { DateTime, Effect, Schema } from 'effect'
 
 import { executionControllerPlanHash } from '../execution/controller-plan'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { evaluateSystemAssessment } from './assessment'
 import { SystemAssessmentError } from './economics'
-import { validateSystemRegistration, verifyStoredSystemRegistration, type ScheduledEvaluation } from './policy'
+import {
+  validateProspectiveSystemRegistration,
+  verifyStoredSystemRegistration,
+  isNativeSystemRegistration,
+  type ScheduledEvaluation,
+} from './policy'
 import {
   OperationalRegistrationSchema,
   validateOperationalRegistration,
@@ -19,7 +24,8 @@ import {
   verifyStoredOperationalAssessment,
 } from './operational-assessment'
 import { readRegisteredFinancialIdentity } from './capital-identity'
-import { readSystemSourceCut } from './source-cut'
+import { PairedIncumbentWitnessSchema, readPairedWitness, requirePairedIncumbentWitness } from './paired-witness'
+import { readSystemSourceCut, type SystemSourceCut } from './source-cut'
 import { readOperationalAssessmentSourceCut } from './operational-source-cut'
 import { bindSystemSourceCut } from './bind-source'
 import { SystemAssessmentInputSchema } from './assessment'
@@ -30,6 +36,14 @@ import { bindLatencyStressSources } from './latency-report'
 import { JevResearchPolicy } from '../jev/acceptance'
 import type { VerifiedReplayImage } from './replay-image'
 import { readReplayExecutionReceipt, type ReplayExecutionReceiptSchema } from './replay-execution'
+import { registeredNativeCashAccounts } from './equity-fee-cash'
+import { ledgerReceiptQuery, ledgerTransactionQuery } from '../forward-performance/postgres/queries'
+import { decodeReceipts, decodeTransactions } from '../forward-performance/postgres/model'
+import { accountingReceiptFromRow, accountingTransactionFromRow } from '../db/accounting-rows'
+import { decodeAccountingReceipt } from '../execution/contracts'
+import { verifyRetainedAccountLedgerPrefix } from './accounting-source'
+import { StoredCashSettlementSchema } from '../accounting/cash-settlement'
+import { forwardPerformanceSnapshot } from '../forward-performance/postgres/snapshot'
 
 export const ProgramHistorySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.system-qualification-history.v1'),
@@ -49,6 +63,108 @@ export const ProgramHistorySchema = Schema.Struct({
 const boundaryError = (message: string) => (cause: unknown) => new SystemAssessmentError({ message, cause })
 const HashRow = Schema.Array(Schema.Struct({ registration_hash: Sha256Schema }))
 const RegistrationRows = Schema.Array(Schema.Struct({ payload: Schema.Unknown }))
+
+export const verifyNativeCashLedgerSources = (
+  registration: (typeof SystemAssessmentInputSchema.Type)['registration'],
+  cut: SystemSourceCut,
+  peer?: PgClient.PgClient,
+) =>
+  Effect.gen(function* () {
+    if (!isNativeSystemRegistration(registration)) return
+    const candidate = yield* PgClient.PgClient
+    if (peer !== undefined) {
+      const incumbent = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Incumbent)
+      if (incumbent === undefined)
+        return yield* new SystemAssessmentError({ message: 'Paired registration has no incumbent' })
+      const current = yield* requirePairedIncumbentWitness(
+        candidate,
+        peer,
+        cut.registrationHash,
+        incumbent.authorityGenerationHash,
+      )
+      const { incumbentWitness } = yield* Schema.decodeUnknownEffect(
+        Schema.Struct({ incumbentWitness: PairedIncumbentWitnessSchema }),
+      )(cut.sourceMaterial)
+      if (
+        (yield* Effect.fromResult(canonicalHashV1Result(incumbentWitness))) !==
+        (yield* Effect.fromResult(canonicalHashV1Result(current)))
+      )
+        return yield* new SystemAssessmentError({
+          message: 'Captured incumbent witness differs from the paired admission',
+        })
+    } else if ((yield* readPairedWitness(candidate, cut.registrationHash, 'qualification_pair_seals')) !== undefined) {
+      return yield* new SystemAssessmentError({ message: 'Paired assessment requires the independent incumbent store' })
+    }
+    const retained = yield* Effect.fromResult(registeredNativeCashAccounts(registration, cut))
+    const accounts = [...retained.values()].flatMap((account) => {
+      const transactions = account.forward.accountTransactions
+      const reconciledAt = account.forward.accountPositionCounts?.reconciledAt
+      return transactions !== undefined &&
+        reconciledAt !== undefined &&
+        account.forward.ledgerExact &&
+        account.forward.accountingReceiptsExact
+        ? [{ account, reconciledAt, transactions }]
+        : []
+    })
+    if (
+      accounts.some(
+        ({ account, reconciledAt }) =>
+          DateTime.toEpochMillis(DateTime.makeUnsafe(reconciledAt)) >
+          DateTime.toEpochMillis(DateTime.makeUnsafe(account.capturedAt ?? cut.asOf)),
+      )
+    )
+      return yield* new SystemAssessmentError({
+        message: 'Native cash reconciliation occurs after its immutable source cut',
+      })
+    if (accounts.length === 0) return
+    const verifyAccounts = (sql: PgClient.PgClient, owned: typeof accounts) =>
+      forwardPerformanceSnapshot(sql).withTransaction(
+        Effect.gen(function* () {
+          for (const { account, reconciledAt, transactions } of owned) {
+            const cutoff = DateTime.toDateUtc(DateTime.makeUnsafe(reconciledAt))
+            const durableTransactions = (yield* ledgerTransactionQuery(sql, account.identity.accountId, cutoff).pipe(
+              Effect.flatMap(decodeTransactions),
+            )).map(accountingTransactionFromRow)
+            const receiptRows = yield* ledgerReceiptQuery(sql, account.identity.accountId, cutoff).pipe(
+              Effect.flatMap(decodeReceipts),
+            )
+            const durableReceipts = yield* Effect.forEach(receiptRows, (row) =>
+              decodeAccountingReceipt(accountingReceiptFromRow(row)),
+            )
+            const durableCashSettlements = yield* sql`
+        SELECT settlement_id,data,rounding_delta_micros::text AS rounding_delta_micros,
+          content_hash,ledger_plan_hash,tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+          tigerbeetle_ledger::integer AS tigerbeetle_ledger,
+          posted_at IS NOT NULL AND posted_at<=${cutoff}::timestamptz AS posted
+        FROM broker_cash_settlements
+        WHERE account_id=${account.identity.accountId}
+          AND (data->>'occurredAt')::timestamptz<=${cutoff}::timestamptz
+        ORDER BY transaction_id COLLATE "C"
+      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(StoredCashSettlementSchema), strictParseOptions)))
+            yield* Effect.fromResult(
+              verifyRetainedAccountLedgerPrefix({
+                accountId: account.identity.accountId,
+                asOf: account.capturedAt ?? cut.asOf,
+                retainedTransactions: transactions,
+                durableTransactions,
+                durableReceipts,
+                retainedCashSettlements: account.forward.accountCashSettlements ?? [],
+                durableCashSettlements,
+              }),
+            )
+          }
+        }),
+      )
+    if (peer === undefined) return yield* verifyAccounts(candidate, accounts)
+    yield* verifyAccounts(
+      candidate,
+      accounts.filter(({ account }) => account.policy !== JevResearchPolicy.Incumbent),
+    )
+    yield* verifyAccounts(
+      peer,
+      accounts.filter(({ account }) => account.policy === JevResearchPolicy.Incumbent),
+    )
+  })
 
 /** The reviewed history origin is write-once; source and candidate changes never create a fresh program. */
 export const initializeQualificationHistory = (input: unknown, verifiedSources: ReadonlySet<string>) =>
@@ -80,11 +196,12 @@ export const initializeQualificationHistory = (input: unknown, verifiedSources: 
 
 export const registerSystemQualification = (input: unknown, verifiedSources: ReadonlySet<string>) =>
   Effect.gen(function* () {
-    const { registration, registrationHash } = yield* Effect.fromResult(validateSystemRegistration(input))
-    if (
-      registration.schemaVersion === 'bayn.system-registration.v4' &&
-      registration.statisticalPlan.supports.some((support) => !verifiedSources.has(support.sourceHash))
-    )
+    const { registration, registrationHash } = yield* Effect.fromResult(validateProspectiveSystemRegistration(input))
+    if (!verifiedSources.has(registration.calendar.sourceHash))
+      return yield* new SystemAssessmentError({
+        message: 'Registration requires the verified native calendar artifact',
+      })
+    if (registration.statisticalPlan.supports.some((support) => !verifiedSources.has(support.sourceHash)))
       return yield* new SystemAssessmentError({
         message: 'Registration requires verified statistical support sources before the first open',
       })
@@ -244,10 +361,12 @@ export const assessAndPersistSystem = (
   verifiedSources: ReadonlySet<string>,
   artifacts: ReadonlyMap<string, Uint8Array> = new Map(),
   images: ReadonlyMap<string, VerifiedReplayImage> = new Map(),
+  peer?: PgClient.PgClient,
 ) =>
   Effect.gen(function* () {
     const decoded = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(input)
     const cut = yield* readSystemSourceCut(decoded.sourceCutHash)
+    yield* verifyNativeCashLedgerSources(decoded.registration, cut, peer)
     const candidate = decoded.registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
     if (candidate === undefined) return yield* new SystemAssessmentError({ message: 'Missing candidate registration' })
     const timings = yield* Effect.fromResult(

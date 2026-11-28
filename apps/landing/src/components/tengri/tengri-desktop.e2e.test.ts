@@ -2802,7 +2802,7 @@ test('keeps the application menu and status controls separate on narrow viewport
   expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(statusBounds!.x)
 })
 
-test('shows a submitted message before the server accepts it and restores rejected drafts', async ({ page }) => {
+test('shows the submitted message and Thinking immediately, then restores a rejected draft', async ({ page }) => {
   await mockTengri(page)
   let releaseSend = () => {}
   const heldSend = new Promise<void>((resolve) => {
@@ -2825,13 +2825,14 @@ test('shows a submitted message before the server accepts it and restores reject
     })
     await expect(composer).toHaveValue('')
     await expect(tengri.getByLabel('Agent status', { exact: true })).toHaveText('Sending')
-    await expect(tengri.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
+    await expect(tengri.getByRole('status', { name: 'Agent activity' })).toHaveText('Thinking', { timeout: 1_000 })
   } finally {
     releaseSend()
   }
   await expect(tengri.getByText('Send was rejected', { exact: true })).toBeVisible()
   await expect(composer).toHaveValue('Show this immediately.')
   await expect(tengri.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+  await expect(tengri.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
 })
 
 for (const outcome of ['accepted', 'rejected'] as const) {
@@ -4431,6 +4432,30 @@ for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
     await expect(status).toHaveText('Ready')
   })
 }
+
+test('reopens the composer after an interrupted run without replaying the accepted message', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '88888888-8888-4888-8888-888888888888',
+    agentId: 'microvm-ada',
+    threadId: 'thread-fenced',
+    state: { phase: 'needs_reconciliation', turnId: null, reason: 'The last action could not be confirmed' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Response unconfirmed')
+
+  run.state = {
+    phase: 'unconfirmed',
+    turnId: null,
+    reason: 'The workspace restarted. Earlier actions may have taken effect.',
+  }
+  await expect(chat.getByRole('log').getByText('Response interrupted.', { exact: true })).toBeVisible()
+  await expect(chat.getByRole('button', { name: 'Stop response' })).toHaveCount(0)
+  await chat.getByRole('textbox', { name: 'Message your agent' }).fill('Show the current workspace state')
+  await expect(chat.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  expect(mock.actions.filter((action) => action.action === 'send-turn')).toHaveLength(0)
+})
 
 test('shows a text highlight while thinking and keeps reduced-motion status readable', async ({ page }, testInfo) => {
   await mockTengri(page)
@@ -7396,11 +7421,12 @@ test('stops idle chat polling while retaining minute-level connection checks', a
   await page.getByRole('textbox', { name: 'Message your agent' }).fill('An unsent draft')
   // Wait for the initial chat recovery before advancing its timers.
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
-  await page.clock.runFor(59_000)
+  expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
+  await page.clock.runFor(30_000)
   expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
   // ReadyDesktop independently checks all conversations once per minute before
   // renewing platform connections, including when chat windows are closed.
-  await page.clock.runFor(1_100)
+  await page.clock.runFor(31_000)
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(2)
   await page.clock.runFor(60_000)
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(3)
@@ -10612,13 +10638,14 @@ test('shows concise response activity and keeps detailed waiting reasons collaps
   const mock = await mockTengri(page, { durableRun: run })
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
-  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Thinking')
   await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Sending')
   await expect(chat.getByText('Ask Codex to explore, change, or run something in this workspace.')).toHaveCount(0)
   await chat.screenshot({ path: test.info().outputPath('accepted-response.png') })
   await expect(chat.getByText('Run accepted. Waiting for the agent.', { exact: true })).toHaveCount(0)
   run.state = { phase: 'waiting_for_guest', reason: 'waiting to protect the active run from automatic sleep' }
   await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Connecting')
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
   await expect(chat.getByText(run.state.reason, { exact: true })).not.toBeVisible()
   run.state = { phase: 'recovering', turnId: 'turn-current', reason: 'waiting for the authorized guest' }
   await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Reconnecting')

@@ -17,6 +17,7 @@ type Probe =
   | 'unauthorized'
   | 'failed'
   | 'waiting'
+  | 'stalled-once'
   | 'recovering'
   | 'starting'
   | 'defect'
@@ -83,7 +84,7 @@ const harness = (probe: Probe) =>
         observations.probes += 1
         yield* Deferred.succeed(probed, undefined)
         if (probe === 'defect') return yield* Effect.die(defect)
-        if (probe === 'waiting')
+        if (probe === 'waiting' || (probe === 'stalled-once' && observations.probes === 1))
           return yield* Effect.never.pipe(
             Effect.onInterrupt(() =>
               Effect.sync(() => {
@@ -223,7 +224,8 @@ test('the original 25-second readiness bound cancels the request and releases it
       const exit = yield* Fiber.await(fiber)
       expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : '').toContain('TimeoutError')
       expect(fixture.observations.stoppedAt).toBe(25_000)
-      expect(fixture.observations.cancelled).toBe(1)
+      expect(fixture.observations.probes).toBeGreaterThan(1)
+      expect(fixture.observations.cancelled).toBe(fixture.observations.probes)
       expect(fixture.observations.released).toBe(1)
       expect(yield* Deferred.isDone(fixture.serving)).toBe(false)
       expect(fixture.observations.providerCalls).toBe(0)
@@ -251,6 +253,25 @@ test.each(['recovering', 'starting'] as const)(
   },
 )
 
+test('an unanswered startup probe is cancelled before another probe proves the same child identity', async () => {
+  await run(
+    Effect.gen(function* () {
+      const fixture = yield* harness('stalled-once')
+      const fiber = yield* fixture.server.pipe(Effect.forkScoped)
+      yield* Deferred.await(fixture.probed)
+      yield* TestClock.adjust('1200 millis')
+      expect(fixture.observations.probes).toBe(2)
+      yield* Deferred.await(fixture.serving).pipe(Effect.raceFirst(Fiber.join(fiber)))
+      expect(fixture.observations.cancelled).toBe(1)
+      expect(fixture.observations.authenticated).toBe(1)
+      expect(fixture.commands.length).toBe(1)
+      expect(fixture.observations.providerCalls).toBe(0)
+      yield* Fiber.interrupt(fiber)
+      expect(fixture.observations.released).toBe(1)
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  )
+})
+
 test('a probe defect remains a defect and releases the native child', async () => {
   await run(
     Effect.gen(function* () {
@@ -265,3 +286,93 @@ test('a probe defect remains a defect and releases the native child', async () =
     }).pipe(Effect.scoped),
   )
 })
+
+test('scope shutdown escalates for an owned native child that ignores SIGTERM', async () => {
+  let child: ChildProcessSpawner.ChildProcessHandle | undefined
+  let watchdog: ReturnType<typeof setTimeout> | undefined
+  let watchdogFired = false
+  const forceStop = async () => {
+    if (child === undefined) return
+    await Effect.runPromise(
+      child.isRunning.pipe(
+        Effect.flatMap((running) =>
+          running && child !== undefined
+            ? child.kill({ killSignal: 'SIGKILL', forceKillAfter: '1 second' })
+            : Effect.void,
+        ),
+        Effect.ignore,
+      ),
+    )
+  }
+  try {
+    await run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-opencode-shutdown-' })
+        const binary = `${directory}/native`
+        const ready = `${directory}/child-ready`
+        yield* fs.writeFileString(
+          binary,
+          `#!${process.execPath}\nimport { writeFileSync } from 'node:fs'\nprocess.on('SIGTERM', () => {})\nwriteFileSync(${JSON.stringify(ready)}, 'ready')\nsetInterval(() => {}, 1000)\n`,
+          { mode: 0o700 },
+        )
+        const originalSpawner = yield* ChildProcessSpawner.ChildProcessSpawner
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (command._tag !== 'StandardCommand') throw new Error('Native shutdown requires one standard command')
+          expect(command.options.forceKillAfter).toBe('25 seconds')
+          // Check the production drain budget above, then exercise real signal escalation on a shorter budget.
+          const testCommand = ChildProcess.make(command.command, command.args, {
+            ...command.options,
+            forceKillAfter: '100 millis',
+          })
+          return originalSpawner.spawn(testCommand).pipe(
+            Effect.tap((handle) =>
+              Effect.sync(() => {
+                child = handle
+                // A failing regression must still reap its real child without relying on Bun's test timeout.
+                watchdog = setTimeout(() => {
+                  watchdogFired = true
+                  void forceStop()
+                }, 30_000)
+              }),
+            ),
+          )
+        })
+        const probed = yield* Deferred.make<void>()
+        const native = HttpClient.make(() =>
+          Effect.gen(function* () {
+            while (!(yield* fs.exists(ready).pipe(Effect.orDie))) yield* Effect.sleep('10 millis')
+            yield* Deferred.succeed(probed, undefined)
+            return yield* Effect.never
+          }),
+        )
+        const server = serveOpenCode({ sourceRevision: 'a'.repeat(40), proxy: 'http://127.0.0.1:9', binary }, native, {
+          directory,
+          nativePort: 0,
+          relayPort: 0,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HttpClient.HttpClient, native),
+          Effect.provideService(
+            HttpServer.HttpServer,
+            HttpServer.make({
+              address: NetAddress.inetAddressFromIpStringUnsafe('127.0.0.1', 0),
+              serve: () => Effect.void,
+            }),
+          ),
+        )
+        const fiber = yield* server.pipe(Effect.forkScoped)
+        yield* Deferred.await(probed).pipe(Effect.raceFirst(Fiber.join(fiber)))
+        const ownedChild = child
+        if (ownedChild === undefined) return yield* Effect.fail(new Error('Native child was not acquired'))
+        expect(yield* ownedChild.isRunning).toBe(true)
+        yield* Fiber.interrupt(fiber)
+        expect(watchdogFired).toBe(false)
+        expect(yield* ownedChild.isRunning).toBe(false)
+      }).pipe(Effect.scoped),
+    )
+  } finally {
+    clearTimeout(watchdog)
+    await forceStop()
+  }
+}, 35_000)

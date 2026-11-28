@@ -70,6 +70,15 @@ describe('native Restate execution activation', () => {
     expect(released).toBe(true)
   })
 
+  test('prefixes only the activation path, leaving the payload and idempotency bytes unchanged', () => {
+    const original = restateExecutionActivationRequest(config, token)
+    expect(restateExecutionActivationRequest({ ...config, servicePrefix: '' }, token)).toEqual(original)
+    expect(restateExecutionActivationRequest({ ...config, servicePrefix: 'sleeve-4' }, token)).toEqual({
+      ...original,
+      path: `/restate/send/sleeve-4-BaynExecutionController/${config.controllerKey}/activateDeployment`,
+    })
+  })
+
   test('binds one activation Job to its exact deployment generation and controller', () => {
     const idempotencyKey = restateExecutionActivationIdempotencyKey(config)
     expect(idempotencyKey).toMatch(/^bayn-execution-[0-9a-f]{64}$/)

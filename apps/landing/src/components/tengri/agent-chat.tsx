@@ -156,6 +156,7 @@ function codexRunStatus(phase: TengriCodexRun['state']['phase']): string | null 
     case 'waiting_for_approval':
     case 'succeeded':
     case 'failed':
+    case 'unconfirmed':
     case 'cancelled':
     case 'rejected':
       return null
@@ -495,7 +496,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         : current,
     )
     setCurrentActiveTurnId('')
-    const reason = 'reason' in run.state ? run.state.reason : undefined
+    const reason = 'reason' in run.state && run.state.phase !== 'unconfirmed' ? run.state.reason : undefined
     setError((current) => reason ?? (current === recoveredFailure ? '' : current))
   }, [run, runMatchesThread, setCurrentActiveTurnId])
 
@@ -2088,7 +2089,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     group.items[0].card
                   ),
                 )}
-                {agentStatus === 'Working' ? (
+                {runMatchesThread && run?.state.phase === 'unconfirmed' ? (
+                  <p className="text-copy-14 text-zinc-400" role="status">
+                    <span className="font-medium text-zinc-300">Response interrupted.</span> {run.state.reason}
+                  </p>
+                ) : null}
+                {agentStatus === 'Sending' || agentStatus === 'Working' ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>

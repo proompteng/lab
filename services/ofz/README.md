@@ -34,7 +34,8 @@ bash test-control.sh
 ```
 
 The policy and platform fixtures start disposable, loopback-only SpiceDB and PostgreSQL processes using the production
-versions packaged in `nix build .#ofz-fixture-tools`. Add the resulting `bin` directory to `PATH`, or use the
+versions packaged in `nix build .#ofz-fixture-tools`. PostgreSQL comes from a signed Nixpkgs cache at a pinned revision,
+with its version checked against the AgentRun package. Add the resulting `bin` directory to `PATH`, or use the
 [AgentRun environment](../../docs/agents/runner-environment.md). These callers require no Docker daemon.
 It never reads or modifies production relationships. It checks the complete human role matrix, platform membership
 revocation, workspace isolation, and native grant expiration. API, crash, broker and product acceptance are

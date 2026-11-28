@@ -26,9 +26,9 @@ pub struct Principal {
     pub action: Action,
     #[serde(skip)]
     verified_rpc_admission: bool,
-    // The signed RPC classifies reads; stored workflow authority cannot inherit that classification.
+    // Audit reuse is attached by the executing caller, never inherited from a workflow journal.
     #[serde(skip)]
-    pub(crate) observation: bool,
+    pub(crate) audit_scope: ofz::AuditScope,
 }
 
 impl Principal {
@@ -55,7 +55,7 @@ impl Principal {
             recovery_generation: 1,
             action,
             verified_rpc_admission: false,
-            observation: false,
+            audit_scope: ofz::AuditScope::Submission,
             context: RequestContext {
                 actor: Some(ofz::proto::Actor {
                     identity: Some(Identity::HumanId(owner_hash.into())),
@@ -308,10 +308,14 @@ impl Authenticator {
             recovery_generation,
             action,
             verified_rpc_admission: true,
-            observation: matches!(
+            audit_scope: if matches!(
                 method,
                 "GetActiveCodexRuns" | "GetCodexRun" | "ResumeCodexThread"
-            ),
+            ) {
+                ofz::AuditScope::Observation
+            } else {
+                ofz::AuditScope::Submission
+            },
         })
     }
 }
@@ -391,11 +395,15 @@ mod tests {
             );
             let admitted = auth.authorize(&request, &path).await.unwrap();
             assert_eq!(admitted.action, Action::CodexControl);
-            assert_eq!(admitted.observation, observation, "{method}");
+            assert_eq!(
+                admitted.audit_scope == ofz::AuditScope::Observation,
+                observation,
+                "{method}"
+            );
             let restored: Principal =
                 serde_json::from_value(serde_json::to_value(admitted).unwrap()).unwrap();
             assert!(
-                !restored.observation,
+                restored.audit_scope == ofz::AuditScope::Submission,
                 "stored capabilities cannot inherit RPC classification"
             );
         }

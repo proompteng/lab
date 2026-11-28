@@ -1,5 +1,8 @@
 name: dernier-ci
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
@@ -7,14 +10,16 @@ on:
       - 'argocd/applications/dernier/**'
       - 'docs/dernier.md'
       - 'skaffold.yaml'
+      - '.github/workflows/dernier-ci.yml'
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: dernier-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:15

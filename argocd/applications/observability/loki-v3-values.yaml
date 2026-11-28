@@ -3,6 +3,8 @@
 fullnameOverride: observability-loki-v3
 nameOverride: observability-loki-v3
 deploymentMode: Distributed
+test:
+  enabled: false
 
 defaults:
   extraArgs:
@@ -30,6 +32,10 @@ loki:
   commonConfig:
     path_prefix: /var/loki
     replication_factor: 1
+  distributor:
+    # Bound push decoding before the tenant's ingestion limits can reject the request.
+    max_recv_msg_size: 8388608
+    max_decompressed_size: 16777216
   ingester:
     chunk_encoding: snappy
     chunk_idle_period: 30m
@@ -70,9 +76,10 @@ loki:
   # after all writers and readers are explicitly verified.
   limits_config:
     allow_structured_metadata: false
-    # Preserve Loki 2 admission limits and labels during the version migration.
+    # Keep existing stream labels and allow intact 1 MiB AgentRun terminal events.
     max_label_names_per_series: 30
-    max_line_size: 0
+    max_line_size: 2097152
+    max_line_size_truncate: false
     discover_service_name: []
     reject_old_samples: true
     reject_old_samples_max_age: 168h
@@ -135,6 +142,8 @@ ingester:
 distributor:
   enabled: true
   replicas: 2
+  podDisruptionBudget:
+    maxUnavailable: 1
   resources:
     requests:
       cpu: 100m
@@ -146,6 +155,8 @@ distributor:
 querier:
   enabled: true
   replicas: 2
+  podDisruptionBudget:
+    maxUnavailable: 1
   resources:
     requests:
       cpu: 100m
@@ -157,6 +168,8 @@ querier:
 queryFrontend:
   enabled: true
   replicas: 2
+  podDisruptionBudget:
+    maxUnavailable: 1
   resources:
     requests:
       cpu: 100m
@@ -313,9 +326,6 @@ lokiCanary:
     limits:
       cpu: 50m
       memory: 64Mi
-
-minio:
-  enabled: false
 
 memcachedExporter:
   resources:

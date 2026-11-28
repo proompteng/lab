@@ -22,7 +22,12 @@ const RETURN_SCALE = 10n ** BigInt(RETURN_DECIMAL_PLACES)
 
 export interface ForwardPerformanceDomainFailure {
   readonly _tag: 'ForwardPerformanceDomainFailure'
-  readonly operation: 'hash-execution-evidence' | 'hash-position-episodes' | 'hash-receipt' | 'hash-report'
+  readonly operation:
+    | 'hash-execution-evidence'
+    | 'hash-position-episodes'
+    | 'hash-native-alpha-attribution'
+    | 'hash-receipt'
+    | 'hash-report'
   readonly cause: unknown
 }
 

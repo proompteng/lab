@@ -1,6 +1,7 @@
 name: symphony
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'patches/effect@4.1.4.patch'
@@ -17,13 +18,16 @@ on:
       - 'argocd/applicationsets/product.yaml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: symphony-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   pr-checks:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/common-monorepo.yml
     with:
       bun-version: 1.4.2
@@ -33,4 +37,3 @@ jobs:
       oxlint-command: bun run --cwd services/symphony lint:oxlint
       oxlint-type-command: bun run --cwd services/symphony lint:oxlint:type && bun run --cwd packages/scripts lint:oxlint:type
       test-command: bun run --cwd services/symphony tsc && bun run --cwd services/symphony test && bun test packages/scripts/src/symphony/release-contract.test.ts packages/scripts/src/symphony/deploy-service.test.ts packages/scripts/src/symphony/verify-deployment.test.ts
-    secrets: inherit
