@@ -451,7 +451,7 @@ describe('scheduled AgentRun templates', () => {
       'argocd/applications/agents/agents-primitives-agentprovider.yaml',
       'argocd/applications/agents/codex-agentprovider.yaml',
       'argocd/applications/agents/codex-smoke-agentprovider.yaml',
-      'argocd/applications/agents/graf-codex-agentprovider.yaml',
+      'argocd/applications/agents/anypi-agentprovider.yaml',
       'charts/agents/examples/agentprovider-native-workflow.yaml',
       'charts/agents/examples/agentprovider-sample.yaml',
       'charts/agents/examples/agentprovider-smoke.yaml',
@@ -479,40 +479,54 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'bucketName')).toBe('agents-artifacts')
     expect(objectAt(objectAt(bucketClaim, 'spec'), 'storageClassName')).toBe('rook-ceph-bucket')
 
-    const provider = readYamlObjects('argocd/applications/agents/graf-codex-agentprovider.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
-    )
-    const providerSpec = objectAt(provider, 'spec')
-    const adapter = objectAt(providerSpec, 'adapter')
-    const codex = objectAt(adapter, 'codex')
-    const secretEnv = objectAt(codex, 'secretEnv') as Record<string, unknown>[] | undefined
+    const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
+    const env = objectAt(objectAt(provider, 'spec'), 'envTemplate')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_BUCKET')).toBe('agents-artifacts')
+    expect(objectAt(env, 'AGENTS_ARTIFACTS_ENDPOINT')).toBe('http://rook-ceph-rgw-objectstore.rook-ceph.svc:80')
+  })
 
-    expect(secretEnv).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_ACCESS_KEY_ID',
-          secretName: 'agents-artifacts',
-          key: 'AWS_ACCESS_KEY_ID',
-        }),
-        expect.objectContaining({
-          name: 'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
-          secretName: 'agents-artifacts',
-          key: 'AWS_SECRET_ACCESS_KEY',
-        }),
-      ]),
-    )
-    expect(objectAt(objectAt(providerSpec, 'envTemplate'), 'AGENTS_ARTIFACTS_ENDPOINT')).toBe(
-      'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
-    )
+  it('gives the headless Codex provider a 60-second bootstrap budget and only the Auto Ontology MCP bridge', () => {
+    const provider = readYamlObjects('argocd/applications/agents/codex-agentprovider.yaml')[0]
+    const spec = objectAt(provider, 'spec')
+    const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
+    const inputFiles = objectAt(spec, 'inputFiles') as unknown[]
+    const input = inputFiles.find((file) => objectAt(file, 'path') === '/root/.codex/config.toml')
+    const config = Bun.TOML.parse(String(objectAt(input, 'content')))
 
-    const agent = readYamlObjects('argocd/applications/agents/graf-codex-agent.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'Agent',
-    )
-    const allowedSecrets = objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets') as
-      | string[]
-      | undefined
-    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'agents-artifacts']))
-    expect(allowedSecrets).not.toContain('observability-minio-creds')
+    expect(objectAt(codex, 'bootstrapTimeoutMs')).toBe(60_000)
+    expect(objectAt(objectAt(spec, 'workload'), 'serviceAccountName')).toBe('codex-auto-ontology-runner')
+    expect(objectAt(objectAt(codex, 'threadConfig'), 'mcp_servers')).toEqual({
+      auto_ontology: {
+        command: '/usr/local/bin/auto-ontology-mcp-bridge',
+        required: false,
+        startup_timeout_sec: 15,
+        tool_timeout_sec: 100,
+        env_vars: ['AGENTS_MCP_IDENTITY_TOKEN_PATH'],
+        env: {
+          AUTO_ONTOLOGY_MCP_GATEWAY_URL: 'http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp',
+        },
+      },
+    })
+    expect(objectAt(config, 'mcp_servers')).toEqual({})
+    expect(objectAt(objectAt(config, 'features'), 'multi_agent')).toBeUndefined()
+
+    const orchestrations = readYamlObjects('argocd/applications/agents/codex-orchestrations.yaml')
+    for (const orchestration of orchestrations) {
+      const steps = objectAt(orchestration, 'spec').steps as unknown[]
+      const runtime = JSON.parse(String(objectAt(objectAt(steps[0], 'with'), 'runtime')))
+      expect(runtime.config.serviceAccountName).toBe('codex-auto-ontology-runner')
+    }
+  })
+
+  it('ends the default Codex worker task at a locally validated, ready-to-review PR', () => {
+    const configMap = readYamlObjects('argocd/applications/agents/codex-agent-system-prompt-configmap.yaml')[0]
+    const prompt = objectAt(objectAt(configMap, 'data'), 'system-prompt.md')
+
+    expect(prompt).toContain('Validate locally')
+    expect(prompt).toContain('open a ready-to-review PR')
+    expect(prompt).toMatch(/Once the PR is open, .*exit\./)
+    expect(prompt).toMatch(/Do not wait for CI or review[\s\S]+or merge unless the task prompt explicitly asks/)
+    expect(prompt).not.toContain('ready-to-merge PR')
   })
 
   it('keeps the chart workflow smoke provider on the fake app-server', () => {
@@ -645,7 +659,7 @@ describe('scheduled AgentRun templates', () => {
     expect(JSON.stringify(provider)).not.toContain('gpt-5.6-sol')
   })
 
-  it('configures default runner resource requests for swarm jobs', () => {
+  it('sizes default AgentRun jobs and spreads them away from the Ryzen node', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controller = objectAt(values, 'controller')
     const defaultWorkload = objectAt(controller, 'defaultWorkload')
@@ -653,11 +667,34 @@ describe('scheduled AgentRun templates', () => {
     const requests = objectAt(resources, 'requests')
     const limits = objectAt(resources, 'limits')
 
-    expect(objectAt(requests, 'cpu')).toBe('1')
+    expect(objectAt(requests, 'cpu')).toBe('500m')
     expect(objectAt(requests, 'memory')).toBe('4Gi')
     expect(objectAt(requests, 'ephemeral-storage')).toBe('8Gi')
-    expect(objectAt(limits, 'memory')).toBe('16Gi')
+    expect(objectAt(limits, 'memory')).toBe('32Gi')
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
+    expect(objectAt(defaultWorkload, 'affinity')).toEqual({
+      nodeAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: {
+          nodeSelectorTerms: [
+            {
+              matchExpressions: [{ key: 'kubernetes.io/hostname', operator: 'NotIn', values: ['talos-192-168-1-194'] }],
+            },
+          ],
+        },
+      },
+    })
+    expect(objectAt(defaultWorkload, 'topologySpreadConstraints')).toEqual([
+      {
+        maxSkew: 16,
+        topologyKey: 'kubernetes.io/hostname',
+        whenUnsatisfiable: 'ScheduleAnyway',
+        labelSelector: { matchExpressions: [{ key: 'agents.proompteng.ai/agent-run', operator: 'Exists' }] },
+      },
+    ])
+    const concurrency = objectAt(controller, 'concurrency')
+    expect(objectAt(concurrency, 'perAgent')).toBe(96)
+    expect(objectAt(concurrency, 'perNamespace')).toBe(112)
+    expect(objectAt(concurrency, 'cluster')).toBe(160)
   })
 
   it('enables Swarm primitive RBAC for the live controllers while keeping domain admission env out of Agents', () => {
@@ -712,12 +749,12 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(spec, 'argsTemplate')).toEqual([])
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'model')).toBe('gpt-6.2-sol')
-    expect(objectAt(codex, 'effort')).toBe('xhigh')
+    expect(objectAt(codex, 'effort')).toBe('max')
     expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
     expect(objectAt(codex, 'approval')).toBe('never')
     expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
     expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-6.2-sol"')
-    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "xhigh"')
+    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "max"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "high"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.6-sol"')
     expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(

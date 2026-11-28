@@ -47,9 +47,9 @@ def validate_plan(plan):
     old = ipaddress.ip_network(plan["oldCIDR"])
     require(
         old.version == 4
-        and old.prefixlen in (23, 24)
+        and old.prefixlen in (22, 23, 24)
         and old.subnet_of(ipaddress.ip_network("10.244.0.0/16")),
-        "expected a /24 or /23 within 10.244.0.0/16",
+        "expected an IPv4 /22, /23, or /24 within 10.244.0.0/16",
     )
     require(str(uuid.UUID(plan["bootID"])) == plan["bootID"], "invalid boot ID")
     uids = plan["daemonPodUIDs"]

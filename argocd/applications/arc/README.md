@@ -63,22 +63,24 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 
 Set `runs-on` to one of these labels to run on memory-backed scratch.
 
-| AMD64 on Turin | ARM64 on Altra | Scratch capacity | Runner memory limit |
+| AMD64 on Turin | ARM64 on Altra | Scratch capacity | Runner memory request / limit |
 | --- | --- | ---: | ---: |
-| `arc-amd64-tmpfs` | `arc-arm64-tmpfs` | 16 GiB | 18 GiB |
-| `arc-amd64-tmpfs-large` | `arc-arm64-tmpfs-large` | 24 GiB | 28 GiB |
+| `arc-amd64-tmpfs` | `arc-arm64-tmpfs` | 16 GiB | 16 / 24 GiB |
+| `arc-amd64-tmpfs-large` | `arc-arm64-tmpfs-large` | 24 GiB | 24 / 32 GiB |
 
-The standard labels scale from zero to three workers per architecture. The large labels scale from zero to two.
-Each worker requests 8 GiB of memory. Scratch and job processes share the memory limit. Bootstrap allows up to
-4 GiB for the seed and verifies the copy and remaining capacity. Jobs with larger scratch requirements, such as
-the Restate Cargo cache export, use the default 64 GiB Ceph labels.
+The standard labels scale from zero to ten workers on AMD64 and eight on ARM64. The large labels scale from zero to six.
+Scratch and job processes share the memory limit. The request accounts for scratch capacity, and the limit leaves
+8 GiB for job processes at full scratch. The separate node-local ephemeral-storage request and limit are 10 GiB
+and 20 GiB. Bootstrap allows up to 4 GiB for the seed and verifies the copy and remaining capacity. Jobs with
+larger scratch requirements, such as the Restate Cargo cache export, use the default 64 GiB Ceph labels.
 
 OpenCode release images, the main Bayn image and the Bayn broker-feed image use the standard tmpfs labels through
 `nix-oci-build-common.yml`. These families accounted for 812 of 2,030 ARC build jobs in the 14 days ending
 2026-11-27 UTC. Their observed concurrency at job start was three at p95 on each architecture.
 
 After promotion, dispatch `ARC tmpfs acceptance` to verify both limits, placement, scratch mounts, Nix and BuildKit on
-all four labels.
+all four labels. See the [cluster performance runbook](../../../docs/runbooks/cluster-performance-audit-2026-11-27.md#arc)
+for mixed ARC and AgentRun capacity and rollback checks.
 
 ## Runner capacity and delivery
 

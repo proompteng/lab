@@ -75,8 +75,8 @@ normal restriction, settlement and recovery behavior. These settings are not an 
 Native workers create snapshots every 30 minutes and retain two. The PostSync restore proof and daily drill use the
 promoted runtime's same-version `restate-doctor` to open all 24 latest snapshots in an isolated read-only store and query
 invocations. They have no object-store write command. An unsuccessful doctor command cannot supply a success marker.
-The proof must succeed before the release completes. A failure requires inspecting its Job/logs and fixing the cause;
-keep the protected bucket and production data intact.
+The proof must succeed before the release completes. Capture failure logs within one hour, before Kubernetes can remove
+the Job. Fix the cause while keeping the protected bucket and production data intact.
 
 All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, partition progress, snapshots and
 restore-drill freshness. Investigate alerts from time-aligned native logs, metrics and database state. Measure storage

@@ -18,6 +18,23 @@ report command rejects them. Both artifacts publish as one commit- and run-bound
 workload credentials and network policies remain separate. Operator qualification commands need their existing
 explicit target configuration; the research service's scoped database identity is not a financial-report credential.
 
+## Daily shadow sleeves and scorecard
+
+`bayn-macro-daily-sleeves` runs weekdays at 20:20 New York time, after the SIP embargo. Its two containers each
+verify the account ID from their own paper Secret and run only in shadow, capped at $10,000 per sleeve. F4 keeps its
+full allocation because it does not share the intraday account. Only the plan hash, mode and hypothetical order count
+are logged. The private receipts volume retains the latest complete JSON per sleeve; each writer publishes its file
+atomically.
+
+`bayn-daily-scorecard` is scheduled for 20:35 New York time. It reads the current PAPER intraday audit from the
+TLS-verified PostgreSQL standby and the latest same-day shadow receipts from a read-only mount. Delayed or missing
+sleeve runs are reported as missing evidence, not filled in with stale receipts. This scorecard cannot qualify the
+shared-account strategy or submit orders. The CronJob is suspended until the approved SELECT-only audit identity is
+bound to `bayn-scorecard-db-ro` (keys `username`, `password`, and the verified intraday `account-id`); do not substitute the
+execution database credentials or broker Secret. Both jobs use the research image digest selected by the Bayn Kargo Stage.
+On promotion, Argo reconciles the receipts claim and network policies before the jobs. To stop either schedule,
+suspend that CronJob through GitOps; leave the claim in place so recovery does not discard the last receipts.
+
 ## Streaming broker delivery
 
 `bayn-broker-feed` runs Dorvud's `BrokerFeedMain` for the existing Bayn PAPER account. It verifies `/v2/account`
@@ -282,7 +299,9 @@ evidence pages. During an observed inference-request insert on October 29, 2026,
 memory-limit hits and reclaimed about 120 MiB of file cache. Separate samples showed receipt and resolution inserts
 waiting on physical reads, and a batch completion took 17.4 seconds against its original ten-second inference window.
 This allocation addresses the observed cache pressure; verify its effect on native batch and dispatch latency after
-rollout. PostgreSQL parameters, synchronous replication, storage, backups and trading limits retain their contracts.
+rollout. The [cluster performance runbook](../../../docs/runbooks/cluster-performance-audit-2026-11-27.md#bayn-postgresql)
+records the planner and vacuum settings for this memory budget. Synchronous replication, storage, backups and
+trading limits retain their contracts.
 
 CNPG applies the resource update through its existing unsupervised switchover policy. Allow for a brief connection
 interruption; verify both pods' resource limits, current primary, synchronous standby, exact financial reconciliation,

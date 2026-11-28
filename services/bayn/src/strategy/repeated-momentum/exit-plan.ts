@@ -58,8 +58,6 @@ export const MomentumFundedExitPlanSchema = Schema.Struct({
       : [{ path: [], issue: 'momentum funding must retain a possible loss and meet the frozen fee-inclusive target' }],
   ),
 )
-export type MomentumFundedExitPlan = typeof MomentumFundedExitPlanSchema.Type
-
 /** A funded bracket is an admissible contingent order, not evidence of positive expected profit. */
 export const makeMomentumFundedExitPlan = (
   policy: MomentumPolicyMaterial,

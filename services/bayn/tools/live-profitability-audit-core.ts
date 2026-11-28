@@ -223,7 +223,7 @@ const delta = (fill: Fill) => sign(fill.side) * BigInt(fill.quantityAtoms)
 const working = (order: Order) =>
   [OrderStatus.New, OrderStatus.Pending, OrderStatus.PartiallyFilled].includes(order.status)
 
-const summarizeBps = (values: readonly number[]) => {
+export const summarizeBps = (values: readonly number[]) => {
   const sorted = values.toSorted((a, b) => a - b)
   const lower = sorted[Math.floor((sorted.length - 1) / 2)]
   const upper = sorted[Math.floor(sorted.length / 2)]
@@ -679,6 +679,8 @@ const auditSession = (session: Session) => {
     cohort: 'B0 (QQQ+SMH 1.4x)',
     unmatchedFilledEntries: unmatchedB0Entries,
     ...presentBps(stats),
+    // Daily summaries cannot recover a pooled median or preserve the unrounded gate boundary.
+    roundTripBps: roundTrips,
     unmeasuredRoundTrips: b0.length - stats.samples,
     promotionBps,
     promotion: compareBudget(promotionBps),

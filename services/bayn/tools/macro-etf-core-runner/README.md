@@ -61,7 +61,10 @@ splits effective after the sizing close, and price moves can change realized exp
 
 ## Coexistence and recovery
 
-QQQ and SMH are always protected for Bayn v3's 30-minute, 1.4× Noise Area sleeve. `--exclude-symbols` adds protection
+QQQ and SMH are protected by default and always protected in paper-submit for Bayn v3's 30-minute, 1.4× Noise Area sleeve.
+On the dedicated paper account only, `--mode shadow --exclude-symbols ""` permits the full F4 allocation after Alpaca
+matches `BAYN_MACRO_CORE_ALPACA_ACCOUNT_ID`; this path uses only the matching scoped key and secret.
+Otherwise `--exclude-symbols` adds protection
 for other shared symbols; it cannot remove those two. Excluded symbols have zero target and are never bought, sold, or
 modified. Their offense weight goes to eligible peers within the same group, proportional to their existing targets (or
 equally if those targets are all zero). Non-offense exclusions and allocations with no eligible peers go to SHY, or to

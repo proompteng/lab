@@ -1,0 +1,69 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 30s
+tests:
+  - name: the 408th running sandbox warns after five minutes and clears on recovery
+    interval: 30s
+    input_series:
+      - series: kubelet_running_pods{job="kubelet",node="turin",instance="turin"}
+        values: 407 407 408+0x10 300+0x10
+      - series: kubelet_running_pods{job="kubelet",node="turin",instance="duplicate"}
+        values: 407 407 408+0x10 300+0x10
+      - series: kubelet_running_pods{job="kubelet",node="talos-192-168-1-85"}
+        values: 407+0x30
+      - series: kubelet_running_pods{job="kubelet",node="talos-192-168-1-194"}
+        values: 509+0x30
+    alert_rule_test:
+      - alertname: FlannelCbr0IPAMCapacityHigh
+        eval_time: 5m30s
+        exp_alerts: []
+      - alertname: FlannelCbr0IPAMCapacityHigh
+        eval_time: 6m
+        exp_alerts:
+          - exp_labels:
+              node: turin
+              severity: warning
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            exp_annotations:
+              summary: Flannel cbr0 address pressure on turin
+              description: Running pod sandboxes are at least 80% of usable PodCIDR capacity. Check actual cbr0 leases for IPAM pressure.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
+      - alertname: FlannelCbr0IPAMCapacityHigh
+        eval_time: 6m30s
+        exp_alerts: []
+  - name: sandbox creation failures page at low pod count without paging for four errors or a counter reset
+    interval: 30s
+    input_series:
+      - series: kubelet_running_pods{job="kubelet",node="talos-192-168-1-85"}
+        values: 100+0x25
+      - series: kubelet_started_pods_errors_total{job="kubelet",node="talos-192-168-1-85"}
+        values: 0+0x5 2 4 5+0x17
+      - series: kubelet_started_pods_errors_total{job="kubelet",node="turin"}
+        values: 100+0x5 102 104+0x3 0+0x15
+      - series: kubelet_started_pods_errors_total{job="kubelet",node="talos-192-168-1-194"}
+        values: 0+0x5 10+0x20
+    alert_rule_test:
+      - alertname: FlannelCbr0SandboxFailures
+        eval_time: 3m30s
+        exp_alerts: []
+      - alertname: FlannelCbr0SandboxFailures
+        eval_time: 4m
+        exp_alerts:
+          - exp_labels:
+              node: talos-192-168-1-85
+              severity: critical
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            exp_annotations:
+              summary: Pod sandbox creation failures on talos-192-168-1-85
+              description: At least five sandbox creation failures are estimated in five minutes. Confirm IPAM exhaustion in FailedCreatePodSandBox events before touching leases.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
+      - alertname: FlannelCbr0SandboxFailures
+        eval_time: 9m
+        exp_alerts: []
+      - alertname: FlannelCbr0IPAMCapacityHigh
+        eval_time: 6m
+        exp_alerts: []

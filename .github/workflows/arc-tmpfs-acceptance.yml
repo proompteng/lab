@@ -15,10 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: arc-amd64-tmpfs, node: turin, arch: x86_64, scratch: 16, memory: 18 }
-          - { label: arc-arm64-tmpfs, node: talos-192-168-1-85, arch: aarch64, scratch: 16, memory: 18 }
-          - { label: arc-amd64-tmpfs-large, node: turin, arch: x86_64, scratch: 24, memory: 28 }
-          - { label: arc-arm64-tmpfs-large, node: talos-192-168-1-85, arch: aarch64, scratch: 24, memory: 28 }
+          - { label: arc-amd64-tmpfs, node: turin, arch: x86_64, scratch: 16, memory: 24 }
+          - { label: arc-arm64-tmpfs, node: talos-192-168-1-85, arch: aarch64, scratch: 16, memory: 24 }
+          - { label: arc-amd64-tmpfs-large, node: turin, arch: x86_64, scratch: 24, memory: 32 }
+          - { label: arc-arm64-tmpfs-large, node: talos-192-168-1-85, arch: aarch64, scratch: 24, memory: 32 }
     env:
       EXPECTED_NODE: ${{ matrix.node }}
       EXPECTED_ARCH: ${{ matrix.arch }}

@@ -1,3 +1,4 @@
+import { executionServiceName } from './execution-service-names'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result, Schema } from 'effect'
 
@@ -86,6 +87,7 @@ export interface BrokerObservationRuntime {
   }>
 }
 export interface BrokerObservationOwnerConfig {
+  readonly servicePrefix?: string
   readonly controllerKey: string
   readonly sourceRevision: string
   readonly maxAgeMs: number
@@ -121,7 +123,7 @@ export const makeBaynBrokerObservations = (
   // SDK 1.16.5 encodes delay as invoke_time; core 7.0.2 excludes it from send replay equality.
   const schedule = (ctx: restate.ObjectContext, method: 'capture' | 'freshness', state: State, dueAt: number) =>
     ctx.genericSend({
-      service: 'BaynBrokerObservations',
+      service: executionServiceName('observations', config.servicePrefix),
       method,
       key: ctx.key,
       parameter: { sourceRevision: state.sourceRevision, epoch: state.epoch, sequence: state.sequence },
@@ -158,7 +160,7 @@ export const makeBaynBrokerObservations = (
     ctx.set(key, state)
     if (poll._tag === 'Published') {
       ctx.genericSend({
-        service: 'BaynExecutionController',
+        service: executionServiceName('controller', config.servicePrefix),
         method: 'wake',
         key: ctx.key,
         parameter: {
@@ -187,7 +189,7 @@ export const makeBaynBrokerObservations = (
     return state
   }
   return restate.object({
-    name: 'BaynBrokerObservations',
+    name: executionServiceName('observations', config.servicePrefix),
     metadata: {
       'bayn.source-revision': config.sourceRevision,
       'bayn.broker-identity-hash': config.controllerKey,
@@ -215,7 +217,7 @@ export const makeBaynBrokerObservations = (
             persistenceRunOptions,
           )
           ctx.genericSend({
-            service: 'BaynBrokerSourceProjector',
+            service: executionServiceName('projector', config.servicePrefix),
             method: 'project',
             key: ctx.key,
             parameter: { eventId: notification.eventId },
@@ -307,7 +309,7 @@ export const makeBaynBrokerObservations = (
             }
             if (proof !== null)
               ctx.genericSend({
-                service: 'BaynExecutionController',
+                service: executionServiceName('controller', config.servicePrefix),
                 method: 'wake',
                 key: ctx.key,
                 parameter: {
@@ -412,7 +414,7 @@ export const makeBaynBrokerSourceProjector = (
     if (ctx.key !== config.controllerKey) throw new restate.TerminalError('broker projector account binding mismatch')
   }
   return restate.object({
-    name: 'BaynBrokerSourceProjector',
+    name: executionServiceName('projector', config.servicePrefix),
     metadata: {
       'bayn.source-revision': config.sourceRevision,
       'bayn.broker-identity-hash': config.controllerKey,
@@ -434,7 +436,7 @@ export const makeBaynBrokerSourceProjector = (
             // Only the ordered projector waits. The financial writer transaction has returned, and the independent
             // canonical owner can establish the parent/child binding or cover this early nonfinancial event.
             ctx.genericSend({
-              service: 'BaynBrokerObservations',
+              service: executionServiceName('observations', config.servicePrefix),
               method: 'reconcile',
               key: ctx.key,
               parameter: { eventId: receipt.eventId },
@@ -464,7 +466,7 @@ export const makeBaynBrokerSourceProjector = (
           )
           if (projection._tag === 'Projected')
             ctx.genericSend({
-              service: 'BaynExecutionController',
+              service: executionServiceName('controller', config.servicePrefix),
               method: 'wake',
               key: ctx.key,
               parameter: {
@@ -479,7 +481,7 @@ export const makeBaynBrokerSourceProjector = (
             })
           if (!covered)
             ctx.genericSend({
-              service: 'BaynBrokerObservations',
+              service: executionServiceName('observations', config.servicePrefix),
               method: 'reconcile',
               key: ctx.key,
               parameter: { eventId: projection.eventId },

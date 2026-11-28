@@ -1,7 +1,10 @@
+import { X509Certificate } from 'node:crypto'
+
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Config, Console, Data, Effect, FileSystem, Redacted, Result, Schema } from 'effect'
+import { Config, ConfigProvider, Console, Data, Effect, FileSystem, Option, Redacted, Result, Schema } from 'effect'
 
+import { BrokerEnvironment } from '../src/broker/identity'
 import { IsoDateSchema, StrictNonEmptyStringSchema, strictParseOptions } from '../src/schemas'
 import {
   analyzeProfitability,
@@ -10,7 +13,7 @@ import {
   renderAuditJson,
   renderAuditMarkdown,
 } from './live-profitability-audit-core'
-import { readLiveProfitability } from './live-profitability-audit-postgres'
+import { readProfitability } from './live-profitability-audit-postgres'
 
 const usage =
   'Usage: bun services/bayn/tools/audit-bayn-live-profitability.ts (--session YYYY-MM-DD | --from YYYY-MM-DD --to YYYY-MM-DD) [--format markdown|json] [--fixture path] [--market-evidence path]'
@@ -71,30 +74,59 @@ export const parseAuditArguments = (args: readonly string[]): Result.Result<Audi
   } as const)
 }
 
+const invalidPostgresTls = (cause: unknown) =>
+  new AuditDatabaseError({
+    cause: Redacted.make(cause),
+    message:
+      'Invalid PostgreSQL TLS configuration. Check BAYN_POSTGRES_TLS, the readable PEM CA file at BAYN_POSTGRES_CA_PATH, and BAYN_POSTGRES_TLS_SERVERNAME.',
+  })
+
+export const loadAuditPostgresTls = Effect.gen(function* () {
+  const tls = yield* Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true))
+  if (!tls) return false as const
+  const caPath = yield* Config.schema(StrictNonEmptyStringSchema, 'BAYN_POSTGRES_CA_PATH').pipe(
+    Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
+  )
+  const servername = yield* Config.option(Config.schema(StrictNonEmptyStringSchema, 'BAYN_POSTGRES_TLS_SERVERNAME'))
+  const fs = yield* FileSystem.FileSystem
+  const ca = yield* fs.readFileString(caPath)
+  // Node's TLS context can accept an empty or malformed trust store without a configuration error.
+  yield* Effect.try({ try: () => new X509Certificate(ca), catch: invalidPostgresTls })
+  return { ca, rejectUnauthorized: true, ...(Option.isSome(servername) ? { servername: servername.value } : {}) }
+}).pipe(Effect.mapError((cause) => (cause._tag === 'AuditDatabaseError' ? cause : invalidPostgresTls(cause))))
+
+const auditPostgres = PgClient.layerFrom(
+  Effect.gen(function* () {
+    const ssl = yield* loadAuditPostgresTls
+    const url = yield* Config.Redacted('BAYN_POSTGRES_URL')
+    return yield* PgClient.make({
+      url,
+      ssl,
+      maxConnections: 1,
+      applicationName: 'bayn-live-profitability-audit',
+      connectTimeout: '5 seconds',
+    })
+  }),
+)
+
 const loadDatabase = (dates: readonly string[]) =>
   Effect.gen(function* () {
     const account = yield* Config.schema(StrictNonEmptyStringSchema, 'BAYN_AUDIT_ACCOUNT_ID')
     const sql = yield* PgClient.PgClient
-    return yield* readLiveProfitability(sql, account, dates)
+    return yield* readProfitability(sql, account, dates, BrokerEnvironment.Live)
   }).pipe(
     // @effect-diagnostics-next-line strictEffectProvide:off -- the CLI owns the short-lived read-only pool
-    Effect.provide(
-      PgClient.layerConfig({
-        url: Config.Redacted('BAYN_POSTGRES_URL'),
-        maxConnections: Config.succeed(1),
-        applicationName: Config.succeed('bayn-live-profitability-audit'),
-        connectTimeout: Config.succeed('5 seconds'),
-      }),
-    ),
-    Effect.mapError(
-      (cause) =>
-        new AuditDatabaseError({
-          cause: Redacted.make(cause),
-          message:
-            cause._tag === 'AuditScopeError'
-              ? cause.message
-              : `Read-only Postgres audit failed (${cause._tag}). Check BAYN_POSTGRES_URL, BAYN_AUDIT_ACCOUNT_ID, read grants, and migration revision; database details are redacted.`,
-        }),
+    Effect.provide(auditPostgres),
+    Effect.mapError((cause) =>
+      cause._tag === 'AuditDatabaseError'
+        ? cause
+        : new AuditDatabaseError({
+            cause: Redacted.make(cause),
+            message:
+              cause._tag === 'AuditScopeError'
+                ? cause.message
+                : `Read-only Postgres audit failed (${cause._tag}). Check BAYN_POSTGRES_URL, BAYN_AUDIT_ACCOUNT_ID, read grants, and migration revision; database details are redacted.`,
+          }),
     ),
   )
 
@@ -140,6 +172,8 @@ export const runAudit = (args: readonly string[]) =>
 if (import.meta.main) {
   NodeRuntime.runMain(
     runAudit(process.argv.slice(2)).pipe(
+      // A blank TLS setting is invalid, not an omitted setting.
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
       // @effect-diagnostics-next-line strictEffectProvide:off -- CLI composition
       Effect.provide(NodeServices.layer),
     ),

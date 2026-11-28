@@ -68,6 +68,15 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     'ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453',
   )
   expect(cluster.spec.postgresql.parameters).toMatchObject({
+    shared_buffers: '512MB',
+    effective_cache_size: '4GB',
+    work_mem: '8MB',
+    random_page_cost: '1.5',
+    max_wal_size: '4GB',
+    checkpoint_timeout: '15min',
+    checkpoint_completion_target: '0.9',
+    autovacuum_vacuum_scale_factor: '0.1',
+    autovacuum_analyze_scale_factor: '0.05',
     log_lock_waits: 'on',
     deadlock_timeout: '1s',
     log_min_duration_statement: '1000ms',
@@ -349,7 +358,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   })
   expect(databasePolicy.spec.podSelector.matchLabels).toEqual({ 'cnpg.io/cluster': 'bayn-db' })
   expect(databasePolicy.spec.policyTypes).toEqual(['Ingress'])
-  expect(databasePolicy.spec.ingress).toHaveLength(5)
+  expect(databasePolicy.spec.ingress).toHaveLength(6)
   expect(databasePolicy.spec.ingress).toEqual(
     expect.arrayContaining([
       {
@@ -357,6 +366,10 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
           { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
           { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
         ],
+        ports: [{ port: 5432, protocol: 'TCP' }],
+      },
+      {
+        from: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-daily-scorecard' } } }],
         ports: [{ port: 5432, protocol: 'TCP' }],
       },
       {
@@ -401,6 +414,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-research' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-broker-feed' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-macro-daily-sleeves' } } },
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })

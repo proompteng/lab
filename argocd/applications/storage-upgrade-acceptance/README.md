@@ -7,8 +7,7 @@ for backup preservation and cleanup. Re-enabling them requires a new reviewed ro
 
 This manual Argo Application proves RBD and CephFS writes survive a remount and
 RGW supports conditional PUT and readback. It reuses two retained 1 GiB claims in
-the existing `rook-ceph` namespace. Successful hook Jobs are removed; failed Jobs
-remain for inspection.
+the existing `rook-ceph` namespace.
 
 Before syncing a reviewed revision, use context `galactic-lan` to verify all Ceph
 daemons use the intended version, all six OSDs are up/in, PGs are active and clean,
@@ -27,8 +26,8 @@ its permissions.
 
 The application contains seven PostSync Jobs: the original RBD writer/readback,
 CephFS writer/readback, and RGW checks plus the two Turin readbacks. Successful
-hooks are removed; failed hooks remain for inspection and block the sync until
-they are reviewed.
+hook Jobs are removed by Argo CD. Failed hooks still fail the sync; capture their
+logs before the Jobs become eligible for cleanup one hour after failure.
 
 This Application reports functional storage results independently from Ceph's
 security health. The strict `scripts/cluster-upgrades/storage-csi-acceptance.sh`
