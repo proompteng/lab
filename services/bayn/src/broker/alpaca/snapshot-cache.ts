@@ -22,7 +22,6 @@ import {
   maximumBrokerObservationAgeMs,
   observationTimes,
   observationUnavailable,
-  requireSettledCashFees,
   type ObservedBrokerSnapshot,
   type BrokerObservationTicket,
 } from './observed-snapshot'
@@ -261,7 +260,7 @@ export const makeProjectedBrokerRead = (
     return {
       ...fresh,
       projection: {
-        healthSnapshot: cached.pipe(Effect.tap(requireSettledCashFees)),
+        healthSnapshot: cached,
         fresh,
         invalidate,
         reconciliationSnapshot: observations.readForReconciliation.pipe(

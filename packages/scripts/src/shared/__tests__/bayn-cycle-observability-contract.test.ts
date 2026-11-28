@@ -149,7 +149,7 @@ describe('Bayn cycle operations alert contract', () => {
     expect(expressions.BaynRuntimeDegraded).toMatch(/bayn_cycle_observation_available\{[^}]+\} == 1/s)
     expect(expressions.BaynRuntimeDegraded).toMatch(/condition="stalled"\s*\} == 0/)
     expect(expressions.BaynRuntimeDegraded).toMatch(/condition="failed"\s*\} == 0/)
-    expect(expressions.BaynRuntimeDegraded.match(/and on\(job, namespace, service, instance\)/g)).toHaveLength(3)
+    expect(expressions.BaynRuntimeDegraded.match(/and on\(job, namespace, service, instance\)/g)).toHaveLength(4)
     expect(expressions.BaynCycleStalled).toContain('condition="stalled"')
     expect(expressions.BaynCycleFailed).toContain('condition="failed"')
     expect(

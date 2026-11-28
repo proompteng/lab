@@ -57,6 +57,7 @@ const account = Schema.Struct({
   buyingPowerMicros: micros,
   accountBlocked: Schema.Boolean,
   tradingBlocked: Schema.Boolean,
+  transfersBlocked: Schema.optionalKey(Schema.Boolean),
   tradeSuspendedByUser: Schema.Boolean,
   shortingEnabled: Schema.optionalKey(Schema.Boolean),
   observedAt: UtcInstantSchema,
@@ -197,7 +198,9 @@ export const observedBrokerState = (value: ObservedBrokerSnapshot): ObservedBrok
 
 export const decodeObservedBrokerSnapshot = Schema.decodeUnknownResult(ObservedBrokerSnapshotSchema, strictParseOptions)
 
-export const requireSettledCashFees = ({ pendingCashFeeCount }: Pick<ObservedBrokerState, 'pendingCashFeeCount'>) =>
+export const requireSettledCashFees = ({
+  pendingCashFeeCount,
+}: Pick<ObservedBrokerState, 'pendingCashFeeCount'>): Effect.Effect<void, BrokerReadError> =>
   pendingCashFeeCount === 0
     ? Effect.void
     : Effect.fail(
