@@ -708,6 +708,65 @@ data:
               summary: Agents reconcile latency is elevated
               description: The 10-minute p95 for AgentRun reconciliation in {{ $labels.namespace }} has exceeded five seconds for five minutes.
               runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+      - name: agents-auto-ontology.rules
+        rules:
+          - alert: AgentsAutoOntologyMcpGatewayUnavailable
+            expr: |
+              max by (namespace, deployment) (
+                kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="agents",deployment="agents-auto-ontology-mcp-gateway"}
+              ) == 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+            annotations:
+              summary: Agents Auto Ontology MCP gateway has no available replicas
+              description: The gateway has had zero available replicas for five minutes. Inspect the Deployment, pod events and gateway logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
+          - alert: AgentsAutoOntologySyncFailed
+            expr: |
+              max by (namespace) (
+                kube_job_created{job="kube-state-metrics",namespace="agents"}
+                and on (namespace, job_name)
+                (kube_job_failed{job="kube-state-metrics",namespace="agents",condition="true"} == 1)
+                and on (namespace, job_name)
+                kube_job_owner{job="kube-state-metrics",namespace="agents",owner_kind="CronJob",owner_name="auto-ontology-sync",owner_is_controller="true"}
+              ) > scalar(
+                max(kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"})
+                or vector(0)
+              )
+            labels:
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+              cronjob: auto-ontology-sync
+            annotations:
+              summary: Agents Auto Ontology catalog sync failed
+              description: An owned Job reached terminal failure and has not been followed by a successful sync. Inspect the Job condition and pod logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
+          - alert: AgentsAutoOntologySyncStale
+            expr: |
+              time() - (
+                max by (namespace, cronjob) (
+                  kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"} > 0
+                )
+                or on (namespace, cronjob)
+                max by (namespace, cronjob) (
+                  kube_cronjob_created{job="kube-state-metrics",namespace="agents",cronjob="auto-ontology-sync"}
+                )
+              ) >= 129600
+            labels:
+              severity: warning
+              team: platform
+              service: agents
+              notify: email
+            annotations:
+              summary: Agents Auto Ontology catalog sync is stale
+              description: No successful sync has been observed for 36 hours since the last success or CronJob creation. Inspect the schedule, Jobs and pod logs.
+              runbook_url: docs/agents/ontology/README.md#nightly-sync-and-alerts
       - name: mimir-ingestion.rules
         rules:
           - alert: MimirSeriesCapacityHigh
