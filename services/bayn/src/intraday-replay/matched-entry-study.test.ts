@@ -194,6 +194,25 @@ test('three-arm economics separate selection from delay on one complete populati
   expect(report.recommendation).toBe(MatchedRecommendation.Stop)
 })
 
+test('a profitable overall process can still lose to momentum at the same decision time', () => {
+  const report = summarizeMatchedPairs(
+    registration,
+    pairs({
+      momentumSymbol: 'NVDA',
+      jev: outcome('30000000'),
+      delayedMomentum: outcome('40000000'),
+      immediateMomentum: outcome('10000000'),
+    }),
+    [],
+  )
+  expect(report.paired[0]?.selectionMicros).toBe('-10100000')
+  expect(report.paired[0]?.delayMicros).toBe('30000000')
+  expect(report.paired[0]?.totalMicros).toBe('19900000')
+  expect(report.means.stressedSelectionBudgetReturnBps).toBeLessThan(0)
+  expect(report.means.stressedTotalBudgetReturnBps).toBeGreaterThan(0)
+  expect(report.recommendation).toBe(MatchedRecommendation.TestPortfolio)
+})
+
 test('stress failure stops, prospective positive only earns portfolio test, historical remains development', () => {
   const failed = summarizeMatchedPairs(registration, pairs({ jev: outcome('10000000') }), [])
   expect(failed.means.selectionBudgetReturnBps).toBeGreaterThan(0)

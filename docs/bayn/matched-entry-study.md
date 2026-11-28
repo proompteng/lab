@@ -100,6 +100,15 @@ Shared infrastructure, data and subscription allocations need explicit witnessed
 These are witnessed allocation scenarios, not invoice reconciliation. Hashes establish identity; review the
 allocation's source joins and accounting scope independently.
 
+For every non-null cost, retain a `bayn.matched-entry-cost-witness.v1` JSON receipt with
+`schemaVersion`, `batchId`, `kind` (`INFERENCE` or `SHARED_OPERATING`), `costMicros`,
+`unresolvedCount`, and `sourceEvidenceHash`. Pin the receipt as the inline claim's `evidenceHash`
+and list both byte hashes and paths in `witnesses`. The source may be shared across batches, but each batch
+and category needs a matching receipt. A receipt does not establish provenance, tariff accuracy, or complete
+invoice coverage. An unknown expense remains null. An evidenced zero requires the same receipt as a positive cost.
+The report retains accepted receipts and their source hashes, including partial coverage, without exposing source
+paths or private invoice details.
+
 Every referenced witness is read and hashed as raw bytes, including latency, capacity, zero-batch inventories and
 both cost allocations. Missing, unreadable or changed files fail the command before evaluation. Timing and native
 decision decoders consume those same verified bytes without rereading a mutable path.
@@ -118,11 +127,12 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v9` and `bayn.matched-entry-study.v9`. Input is v2;
+Definition and report are `bayn.matched-entry-definition.v10` and `bayn.matched-entry-study.v10`. Input is v2;
 registration is v2 with the new definition hash, native millisecond timing contract and frozen profit-target lifecycle. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
-Version 9 corrects the native cycle identity comparison; it does not change entry selection, execution, costs or
-acceptance thresholds. Freeze the new definition hash and reviewed source revision before a new evaluation.
+Version 10 binds cost claims to their allocation receipt and source bytes. It changes no selection, fills,
+arithmetic or acceptance thresholds. Reproduce version 9 at its original registered revision. Freeze the new
+definition hash and reviewed source revision before a new evaluation.
 
 The in-process recorder and its interval replay API have been removed. Producing new timing witnesses through that
 path is unavailable. The [market-data archive boundary](market-data-archive.md) keeps its replacement outside trading;
@@ -240,6 +250,9 @@ remain missing. Jev pays inference even when it abstains; all arms pay the same 
 Returns use the fixed budget. Each arm owns its lifecycle even when symbols match, because entry fills, stops and hold deadlines can differ.
 Selection is `Jev - delayed momentum`; delay is `delayed momentum - immediate momentum`; total is
 `Jev - immediate momentum`. The three net micro-USD differences satisfy selection plus delay equals total.
+Positive total return can come from waiting even when Jev selection loses to momentum at the same decision time.
+Use the net selection and stressed selection columns to answer whether Jev adds value; a portfolio-test recommendation
+on its own is evidence about the combined policy, not the ranker.
 All three resolved arms are required for the common headline population.
 
 Missing any session inventory, source coverage/availability, calibration, selected outcome or cost blocks all headline
