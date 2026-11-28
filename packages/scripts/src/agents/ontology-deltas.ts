@@ -1,16 +1,7 @@
 import { z } from 'zod'
 
-const credentialPatterns = [
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/i,
-  /\b(?:sk-(?:proj-|ant-|svcacct-)?[\w-]{12,}|gh[pousr]_[\w]{12,}|github_pat_[\w]{12,}|xox[baprs]-[\w-]{12,}|AIza[\w-]{35}|(?:AKIA|ASIA)[A-Z0-9]{16}|nvapi-[\w-]{12,})\b/,
-  /\beyJ[\w-]+\.eyJ[\w-]+\.[\w-]+\b/,
-  /\bbearer\s+[\w.~+/=-]{8,}/i,
-  /\bauthorization["']?\s*[:=]\s*["']?(?:basic|bearer)\s+\S+/i,
-  /\b(?:api[-_ ]?key|access[-_ ]?token|client[-_ ]?secret|password|passwd|secret[-_ ]?access[-_ ]?key)["']?\s*[:=]\s*["']?[^\s"',;]+/i,
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i,
-]
-
-export const containsCredentials = (text: string): boolean => credentialPatterns.some((pattern) => pattern.test(text))
+import { containsCredentials, findOntologyDisclosure } from './ontology-disclosure'
+import { compare, serializeSortedJson } from './ontology-json'
 
 const safeText = (max: number) =>
   z
@@ -56,6 +47,8 @@ export type KnowledgeDelta = z.infer<typeof knowledgeDeltaSchema>
 export type KnowledgeBundle = z.infer<typeof bundleSchema>
 
 const validate = <T>(schema: z.ZodType<T>, value: unknown, label: string): T => {
+  const disclosure = findOntologyDisclosure(value)
+  if (disclosure) throw new Error(label + ': ' + disclosure)
   const result = schema.safeParse(value)
   if (result.success) return result.data
 
@@ -67,17 +60,10 @@ const validate = <T>(schema: z.ZodType<T>, value: unknown, label: string): T => 
   throw new Error(`${label}: ${details.join('; ')}`)
 }
 
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+export const validateKnowledgeDelta = (value: unknown, label = 'Knowledge delta'): KnowledgeDelta =>
+  validate(knowledgeDeltaSchema, value, label)
 
-export const serializeBundle = (bundle: KnowledgeBundle): string =>
-  `${JSON.stringify(
-    bundle,
-    (_key, value: unknown) =>
-      value && typeof value === 'object' && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => compare(a, b)))
-        : value,
-    2,
-  )}\n`
+export const serializeBundle = (bundle: KnowledgeBundle): string => serializeSortedJson(bundle)
 
 type NamedEntry = z.infer<typeof entry> & { provenance?: z.infer<typeof provenance>; sql?: string }
 
@@ -107,7 +93,7 @@ export const mergeKnowledgeDeltas = (
   const bundle = validate(bundleSchema, target, 'Knowledge bundle')
   // Keep reviewed provenance on replay and choose stable evidence for identical new entries.
   const deltas = inputs
-    .map(({ label, value }) => validate(knowledgeDeltaSchema, value, label))
+    .map(({ label, value }) => validateKnowledgeDelta(value, label))
     .sort((a, b) => compare(a.sourceCommit, b.sourceCommit) || compare(a.verificationNote, b.verificationNote))
 
   const entries = <T extends NamedEntry>(pick: (delta: KnowledgeDelta) => T[] | undefined) =>
