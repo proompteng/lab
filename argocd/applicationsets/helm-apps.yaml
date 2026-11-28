@@ -33,6 +33,13 @@ spec:
                     api:
                       enabled: true
                       host: kargo.ide-newton.ts.net
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          cpu: "1"
+                          memory: 512Mi
                       secretManagementEnabled: false
                       adminAccount:
                         enabled: false
@@ -93,6 +100,22 @@ spec:
                         watchArgocdNamespaceOnly: true
                       rollouts:
                         integrationEnabled: true
+                    managementController:
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          cpu: "1"
+                          memory: 512Mi
+                    webhooksServer:
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          cpu: "1"
+                          memory: 512Mi
                     extraObjects:
                       - apiVersion: networking.k8s.io/v1
                         kind: Ingress
