@@ -333,8 +333,7 @@ test('rejects a policy metrics probe that can fail from SIGPIPE under pipefail',
 for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
   test(`rejects ${namespace} source drift without a new reviewed contract`, async () => {
     const files = copy(await loadProductionFiles())
-    files[sources[0]] =
-      (files[sources[0]] ?? '') +
+    files[sources[0]] +=
       `\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: unreviewed\nspec:\n  podSelector: {}\n  policyTypes: [Ingress]\n  ingress: []\n`
     expect(validateProductionContent(files)).toContainEqual(
       expect.stringContaining(`${namespace}) expected_reviewed_policy_hash=`),
