@@ -143,9 +143,9 @@ Keep both controllers alive through their final receipts and store workstation
 evidence on persistent storage. This change does not modify serving workloads,
 source snapshots, source credentials, network policy or retained claims.
 
-The completed/failed Keeper v1 Job remains explicitly declared with Prune=false
-and Delete=false while v2 runs. Its original Pod identity, statuses and logs
-remain available until a separately recorded retirement.
+The failed Keeper v1 Job was retained with `Prune=false` and `Delete=false`
+while v2 ran. Its controller was excluded from the render at closeout; the
+original Pod identity, statuses and logs are part of the retirement evidence.
 
 Replica 0 generation v3 stopped before structure recovery because the private
 Keeper had not yet accepted sessions. Replica 1 completed the native restores and
@@ -178,11 +178,12 @@ verifier; no health or data comparison is relaxed.
 The verifier reads the completed v4 25.3/25.8 proof through links, records the
 original Job UID and SHA256 of every retained proof file, then compares the new
 26.3 proof with both retained phases. It never modifies the retained phase files
-or the failed v4 26.3 data. The v5 fixture and proof use separate directories on
-the existing dedicated rehearsal claims. Keep the runtime isolation controller
-active using `clickhouse-replica0-retry-profile.json`; all five live production
-endpoints must have current positive controls and fail the isolated native
-connection probes before the restore starts.
+or the failed v4 26.3 data. The v5 fixture and proof used separate directories on
+the dedicated rehearsal claims. The controller used the
+[historical v5 isolation profile](https://github.com/proompteng/lab/blob/aa0a2d91f1f20dca27e59634655311676f26d102/argocd/applications/clickhouse-upgrade-acceptance/clickhouse-replica0-retry-profile.json)
+to require current positive controls and failed isolated connection probes for
+all five production endpoints before restoring. Use the v6 rehearsal below for
+a new reviewed rollout, not the superseded v5 Job.
 
 ## Bound concurrent restores to the private Keeper
 
