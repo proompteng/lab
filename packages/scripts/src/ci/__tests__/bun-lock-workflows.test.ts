@@ -10,20 +10,28 @@ type PlannerInputs = {
   'dependency-aware-push'?: string
 }
 
-const readWorkflow = (filename: string) =>
-  Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8')) as {
-    on: { push?: { paths: string[] } }
-    concurrency?: { group: string }
-    jobs: Record<
-      string,
-      {
-        if?: string
-        needs?: string | string[]
-        outputs?: Record<string, string>
-        steps?: { id?: string; uses?: string; with?: PlannerInputs }[]
-      }
-    >
-  }
+type Workflow = {
+  on: { push?: { paths: string[] } }
+  concurrency?: { group: string }
+  jobs: Record<
+    string,
+    {
+      if?: string
+      needs?: string | string[]
+      outputs?: Record<string, string>
+      steps?: { id?: string; uses?: string; with?: PlannerInputs }[]
+    }
+  >
+}
+
+const workflows = new Map<string, Workflow>()
+const readWorkflow = (filename: string) => {
+  const cached = workflows.get(filename)
+  if (cached) return cached
+  const workflow = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8')) as Workflow
+  workflows.set(filename, workflow)
+  return workflow
+}
 
 const pushWorkflows = readdirSync('.github/workflows').filter(
   (filename) =>
@@ -42,6 +50,15 @@ const planner = ({ jobs }: ReturnType<typeof readWorkflow>) => {
 
 const configuredTargets = (inputs: PlannerInputs, event: string) =>
   parseTargets(inputs.workspaces, inputs.filters ?? '', inputs.workflow ?? '', event)
+
+const pushTargets = new Map(
+  pushWorkflows.map((filename) => [filename, configuredTargets(planner(readWorkflow(filename)).inputs, 'push')]),
+)
+const targetsForPush = (filename: string) => {
+  const targets = pushTargets.get(filename)
+  if (!targets) throw new Error(`Missing push targets for ${filename}`)
+  return targets
+}
 
 const lock = Bun.JSONC.parse(readFileSync('bun.lock', 'utf8')) as {
   workspaces: Record<string, { devDependencies?: Record<string, string> }>
@@ -65,7 +82,7 @@ test.each(pushWorkflows)('%s skips main work for a packages/scripts-only lockfil
   const workflow = readWorkflow(filename)
   const { id, stepId, inputs } = planner(workflow)
   expect(inputs['dependency-aware-push']).toBe('true')
-  const targets = configuredTargets(inputs, 'push')
+  const targets = targetsForPush(filename)
   const affected = selectAffectedInputs(['bun.lock'], targets, lock, scriptsLockChange)
   expect(Object.values(affected)).not.toContain(true)
 
@@ -142,10 +159,9 @@ const torghutCohort = Object.fromEntries(
 )
 
 test.each([desktopCohort, torghutCohort])('co-built images use identical push input boundaries', (cohort) => {
-  const selected = Object.entries(cohort).map(
-    ([filename, target]) => configuredTargets(planner(readWorkflow(filename)).inputs, 'push')[target],
-  )
-  for (const config of selected) expect(config).toEqual(selected[0])
+  const selected = Object.entries(cohort).map(([filename, target]) => targetsForPush(filename)[target])
+  expect(selected[0]).toBeDefined()
+  for (const config of selected.slice(1)) expect(config).toEqual(selected[0])
 })
 
 test.each([
@@ -156,7 +172,7 @@ test.each([
   (source, cohort) => {
     for (const [filename, target] of Object.entries(cohort)) {
       const workflow = readWorkflow(filename)
-      const targets = configuredTargets(planner(workflow).inputs, 'push')
+      const targets = targetsForPush(filename)
       expect(matchesPaths(source, workflow.on.push?.paths ?? []), filename).toBe(true)
       expect(selectAffectedInputs(['bun.lock', source], targets, lock, scriptsLockChange)[target], filename).toBe(true)
     }
@@ -182,14 +198,22 @@ test.each([
   ['services/signal-publisher', Object.fromEntries(Object.keys(torghutCohort).map((file) => [file, ['service']]))],
 ] as [string, Record<string, string[]>][])('main selects the consumers of %s', (path, expected) => {
   const changed = withWorkspaceDependency(path)
+  const lockfileSelections = new Map<string, string[]>()
   for (const filename of pushWorkflows) {
     const workflow = readWorkflow(filename)
-    const targets = configuredTargets(planner(workflow).inputs, 'push')
+    const targets = targetsForPush(filename)
     const selected = (files: string[], head: unknown) =>
       Object.entries(selectAffectedInputs(files, targets, lock, head))
         .filter(([, affected]) => affected)
         .map(([name]) => name)
-    expect(selected(['bun.lock'], changed), filename).toEqual(expected[filename] ?? [])
+    // Co-built workflows with identical parsed inputs need only one dependency-graph comparison.
+    const inputKey = JSON.stringify(targets)
+    let lockfileSelection = lockfileSelections.get(inputKey)
+    if (!lockfileSelection) {
+      lockfileSelection = selected(['bun.lock'], changed)
+      lockfileSelections.set(inputKey, lockfileSelection)
+    }
+    expect(lockfileSelection, filename).toEqual(expected[filename] ?? [])
     const manifest = `${path}/package.json`
     if (expected[filename]) {
       expect(matchesPaths(manifest, workflow.on.push?.paths ?? []), filename).toBe(true)
