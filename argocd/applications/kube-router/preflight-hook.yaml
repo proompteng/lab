@@ -55,6 +55,16 @@ spec:
                       jq -e '.items | length > 0' >/dev/null; then
                     printf '%s\n' relay
                   fi
+                  if kubectl -n kube-system get namespace glitchtip >/dev/null 2>&1 &&
+                    kubectl -n glitchtip get networkpolicies.networking.k8s.io -o json |
+                      jq -e '.items | length > 0' >/dev/null; then
+                    printf '%s\n' glitchtip
+                  fi
+                  if kubectl -n kube-system get namespace jangar >/dev/null 2>&1 &&
+                    kubectl -n jangar get networkpolicies.networking.k8s.io -o json |
+                      jq -e '.items | length > 0' >/dev/null; then
+                    printf '%s\n' jangar
+                  fi
                 } | sort -u
               )
               actual_namespaces=$(
@@ -120,11 +130,13 @@ spec:
                     exit 1
                   fi
                   ;;
-                buzz|codex-devbox|froussard|keycloak|observability|ofz|opencode|paperless|pelican|proompteng|restate|rook-ceph|stash|temporal)
+                buzz|codex-devbox|froussard|glitchtip|jangar|keycloak|observability|ofz|opencode|paperless|pelican|proompteng|restate|rook-ceph|stash|temporal)
                   case "$namespace" in
                   buzz) expected_reviewed_policy_hash=da668d68ed6a1b164bd46d6e0a6851fe9fe18d4f729dfd644b16d71f4810e11a ;;
                   codex-devbox) expected_reviewed_policy_hash=cbed530fd151e4753b5d2f72a7aa29b167d2c61f40c605f9a8b8623995d842ef ;;
                   froussard) expected_reviewed_policy_hash=5033e69d6c8b8a2585d44eec1df70c4f6a90917761ccd078234beb628e95c1d0 ;;
+                  glitchtip) expected_reviewed_policy_hash=77e61e67d4b3e97e61e77467501d2bf46c9e0c516f9be0dfea583d1ea4196dac ;;
+                  jangar) expected_reviewed_policy_hash=f7839ddf4cef724fcc86d69e55e2b7229ff89d8182823cd7216cab243d7bf69b ;;
                   keycloak) expected_reviewed_policy_hash=f684292a357941c6a41c29f41a8d8af5471dd7f47b08f729193c28a1d66a71d5 ;;
                   observability) expected_reviewed_policy_hash=bc98480fcfafda9fc71b8707689995fabf8aeecd02621d53cd4cb33c3dd4d38d ;;
                   ofz) expected_reviewed_policy_hash=4b4dd587be50f798059261d810285d0ab21701daf41d5fa611d9e688c7496fad ;;
