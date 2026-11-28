@@ -11,9 +11,12 @@ be picked based on the observed returns.
   daily (`adjustment=all`) and 5-minute (`adjustment=split`) archives and their official session calendars. The
   5-minute data supply observed regular-session pricing, not intraday signals or orders. Use the open of the
   bar starting exactly at the regular open and the last observed close in the final two 5-minute bars of each
-  regular session, including early closes. Report the dates that use the penultimate bar. Exclude any candidate
-  missing a required price on any date; never fill from another symbol, a later opening slot, or a prior day.
-  Missing SPY or incomplete control evidence invalidates the run. Require all eight candidates to advance.
+  regular session, including early closes. The coverage-only audit found a partial archive outage at the end of
+  2019-08-12, after all eight opening bars. On that date alone accept a valuation mark from the latest observed
+  bar in the final 35 minutes. This exception is neither a fill nor a signal input; record every nonfinal mark.
+  Exclude any candidate missing a required price on any date; never fill from another symbol, a later opening
+  slot, or a prior day. Missing SPY or incomplete control evidence invalidates the run. Require all eight
+  candidates to advance.
 - On completed session `t`, use the adjusted daily close. A flat name qualifies when its close is strictly above
   its 200-session SMA and Wilder RSI(2) is strictly below the trial threshold (seed with the mean gains and
   losses of the first two close changes; flat RSI is 50). All indicators include `t`, never `t+1`.
