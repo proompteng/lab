@@ -93,7 +93,6 @@ targets:
       - argocd/applications/proompteng/admin-network-policy.yaml
       - argocd/applications/relay/network-policy.yaml
       - argocd/applications/restate/networkpolicy.yaml
-      - argocd/applications/restate-example/networkpolicy.yaml
       - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
       - argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml
       - argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml
