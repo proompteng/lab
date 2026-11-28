@@ -1,4 +1,6 @@
-import { Effect, Result } from 'effect'
+import { join } from 'node:path'
+
+import { Effect, Redacted, Result } from 'effect'
 
 import { canonicalHashV1Result } from '../../src/hash'
 import { type Etf, universe } from '../../src/strategy/macro-etf-core/policy'
@@ -6,7 +8,14 @@ import { closeSnapshotSchema } from '../../src/strategy/macro-etf-core/signals'
 import { receipts, tapeReceipt } from '../pure-etf-dual-horizon-data'
 import { noiseRosters } from '../pure-etf-dual-horizon-noise'
 import { normalizeResearchCalendar, requireCalendarCoverage } from '../research-lib/calendar'
-import { type ArchiveReader, countArchiveLines, withS3Archive } from '../research-lib/s3-archive'
+import {
+  type ArchiveReader,
+  countArchiveLines,
+  decodeArchiveJson,
+  readGzipLines,
+  S3ArchiveError,
+  withS3Archive,
+} from '../research-lib/s3-archive'
 
 const { datasets, calendars } = receipts
 type Dataset = (typeof datasets)[keyof typeof datasets]
@@ -205,3 +214,18 @@ export const loadFrozenDailyFrames = withS3Archive(loadDaily).pipe(
   Effect.map(({ daily }) => daily),
   Effect.timeout('1 minute'),
 )
+
+/** Accept a local mirror of exactly the same six content-addressed daily objects. */
+export const loadFrozenDailyFramesFromDirectory = (directory: string) =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const { daily } = await loadDaily({
+        readJson: async (key, digest) => decodeArchiveJson(await Bun.file(join(directory, key)).bytes(), key, digest),
+        readGzip: (receipt, consume) =>
+          readGzipLines(Bun.file(join(directory, receipt.key)).stream(), receipt, signal, consume),
+      })
+      return daily
+    },
+    catch: (cause) =>
+      new S3ArchiveError({ message: 'Unable to load the frozen daily mirror', cause: Redacted.make(cause) }),
+  }).pipe(Effect.timeout('1 minute'))

@@ -2,7 +2,9 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { matchesGlob } from './impact-router'
 
-export type InputTarget = { paths: string[]; workspaces: string[] }
+export type InputTarget = { paths: string[]; workspaces: string[]; watchPlannerAction?: boolean }
+
+const plannerAction = '.github/actions/affected-inputs/**'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -140,8 +142,9 @@ export const selectAffectedInputs = (
         ...after.workspaceClosure(target.workspaces),
       ])
       const changed = files.some((file) => {
-        // Planner implementation and tests are validated by scripts CI, not by rebuilding every consumer.
-        if (matchesPaths(file, ['packages/scripts/src/ci/**', '.github/actions/affected-inputs/**'])) return false
+        // Scripts CI owns the planner. Consumers can explicitly validate changes to the action they call.
+        if (matchesGlob(file, 'packages/scripts/src/ci/**')) return false
+        if (matchesGlob(file, plannerAction) && !target.watchPlannerAction) return false
         if (file === 'bun.lock') return !equalDependencies(before, after, target.workspaces)
         if (file === 'package.json') return true
         if (file.endsWith('/package.json')) {
@@ -174,11 +177,13 @@ export const parseTargets = (
     Object.entries(workspaces).map(([name, paths]) => {
       const selected = strings(paths)
       if (selected.length === 0) throw new Error(`CI input target ${name} requires installed workspaces`)
+      const explicitPaths = filters[name] == null ? undefined : strings(filters[name])
       return [
         name,
         {
           workspaces: selected,
-          paths: strings(filters[name] ?? (workflow ? record(record(workflow.on)[event]).paths : undefined)),
+          paths: explicitPaths ?? strings(workflow ? record(record(workflow.on)[event]).paths : undefined),
+          watchPlannerAction: explicitPaths?.includes(plannerAction) ?? false,
         },
       ]
     }),
@@ -203,7 +208,7 @@ export const selectAffectedRange = (
 ) => {
   const range = changedRange(event, base, head)
   const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
-  // Most main publishers use path selection to co-build a Kargo image set at one revision.
+  // Publishers without Bun inputs can use path selection without reading the lockfile.
   if (event === 'push' && !dependencyAwarePush) {
     return {
       files,

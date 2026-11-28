@@ -45,6 +45,7 @@ import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 import { NativeReplayPolicySchema, nativeReplayPolicyIdentity, nativeReplayStrategyIdentity } from './native-policy'
 import {
+  isAlphaBinding,
   ResearchStrategyBindingSchema,
   ResearchStrategyEngine,
   researchStrategyInferenceModels,
@@ -348,7 +349,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         : yield* nativeReplayStrategyIdentity(
             JevResearchPolicy.Candidate,
             yield* makeResearchStrategyBinding({
-              engine: ResearchStrategyEngine.IntradayAlpha,
+              engine: ResearchStrategyEngine.PureEtf,
               parameters: activePolicy,
             }),
             baselineProtocol,
@@ -532,14 +533,13 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         strategyParameterHash: parameterHash,
         verification: embeddedBuildMetadata === undefined ? ('development-configured' as const) : ('embedded' as const),
       },
-      strategy:
-        strategyBinding?.engine === ResearchStrategyEngine.IntradayAlpha
-          ? makeIntradayAlphaRuntime(strategyBinding.parameters, provenance)
-          : decoded.policy === JevResearchPolicy.Ablation
-            ? makeEntryAblationRuntime(makeEntryAblationPolicy(protocol), provenance)
-            : decoded.policy === JevResearchPolicy.Momentum
-              ? makeRepeatedMomentumRuntime(makeRepeatedMomentumPolicy(protocol), provenance)
-              : makeJevStrategyRuntime(protocol, provenance),
+      strategy: isAlphaBinding(strategyBinding)
+        ? makeIntradayAlphaRuntime(strategyBinding.parameters, provenance)
+        : decoded.policy === JevResearchPolicy.Ablation
+          ? makeEntryAblationRuntime(makeEntryAblationPolicy(protocol), provenance)
+          : decoded.policy === JevResearchPolicy.Momentum
+            ? makeRepeatedMomentumRuntime(makeRepeatedMomentumPolicy(protocol), provenance)
+            : makeJevStrategyRuntime(protocol, provenance),
     }
   })
 export type PreparedBacktest = Result.Result.Success<ReturnType<typeof prepareBacktest>>
@@ -1074,28 +1074,27 @@ export const runBacktest = (
                 return { contentHash: row.content_hash, payload: row.payload }
               }),
             )
-      const alphaObservations =
-        prepared.strategyBinding?.engine !== ResearchStrategyEngine.IntradayAlpha
-          ? []
-          : yield* Effect.forEach(observationRows, (row) =>
-              Effect.gen(function* () {
-                const payload = yield* Schema.decodeUnknownEffect(IntradayAlphaObservationSchema)(
-                  row.payload,
-                  strictParseOptions,
-                )
-                const reproduced = yield* Effect.fromResult(reproduceIntradayAlphaObservation(payload))
-                if (reproduced.contentHash !== row.content_hash)
-                  return yield* new ReplayBrokerFailure({
-                    message: 'Persisted alpha observation hash does not reproduce',
-                  })
-                const baselineUse = baselineUses.get(row.content_hash)
-                if (baselineUse === undefined)
-                  return yield* new ReplayBrokerFailure({
-                    message: 'Persisted alpha observation has no original baseline-use receipt',
-                  })
-                return { contentHash: row.content_hash, payload, baselineUse }
-              }),
-            )
+      const alphaObservations = !isAlphaBinding(prepared.strategyBinding)
+        ? []
+        : yield* Effect.forEach(observationRows, (row) =>
+            Effect.gen(function* () {
+              const payload = yield* Schema.decodeUnknownEffect(IntradayAlphaObservationSchema)(
+                row.payload,
+                strictParseOptions,
+              )
+              const reproduced = yield* Effect.fromResult(reproduceIntradayAlphaObservation(payload))
+              if (reproduced.contentHash !== row.content_hash)
+                return yield* new ReplayBrokerFailure({
+                  message: 'Persisted alpha observation hash does not reproduce',
+                })
+              const baselineUse = baselineUses.get(row.content_hash)
+              if (baselineUse === undefined)
+                return yield* new ReplayBrokerFailure({
+                  message: 'Persisted alpha observation has no original baseline-use receipt',
+                })
+              return { contentHash: row.content_hash, payload, baselineUse }
+            }),
+          )
       if (baselineUses.size !== alphaObservations.length)
         return yield* new ReplayBrokerFailure({ message: 'Alpha baseline-use receipt has no retained observation' })
       if (prepared.strategyBinding !== null) {

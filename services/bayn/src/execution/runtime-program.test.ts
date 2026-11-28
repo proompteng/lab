@@ -1,3 +1,4 @@
+import { intentStoreFixture, mutationStoreFixture } from '../testing/execution-stores.test-support'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
@@ -210,75 +211,100 @@ const stableBrokerRead = (positions: readonly Position[] = [], account: Account 
   })
 }
 
-const finalLiveFixture = () => {
-  const liveIdentity = identity(BrokerEnvironment.Live)
-  const grant = Result.getOrThrow(
+const liveGrantFixture = (
+  brokerIdentity: ReturnType<typeof identity>,
+  limits: Partial<Parameters<typeof makeCapitalGrantRecord>[0]['limits']> = {},
+) =>
+  Result.getOrThrow(
     makeCapitalGrantRecord({
       schemaVersion: 'bayn.capital-grant.v2',
-      brokerIdentity: liveIdentity,
+      brokerIdentity,
       authorityGenerationHash,
       strategy,
+      validFrom: '2026-07-28T07:00:00.000Z',
+      validUntil: '2026-07-28T09:00:00.000Z',
+      issuedAt: '2026-07-28T06:00:00.000Z',
+      issuedBy: 'operator:test',
       limits: {
         maxGrossNotionalMicros: '100000000000',
         maxOrderNotionalMicros: '10000000000',
         maxPositionNotionalMicros: '25000000000',
         maxDailyLossMicros: '1000000000',
         maxOpenOrders: 5,
+        ...limits,
       },
-      validFrom: '2026-07-28T07:00:00.000Z',
-      validUntil: '2026-07-28T09:00:00.000Z',
-      issuedAt: '2026-07-28T06:00:00.000Z',
-      issuedBy: 'operator:test',
     }),
   )
+
+const mutationAuthorityFixture = (
+  brokerIdentity: ReturnType<typeof identity>,
+  capitalAuthority: Parameters<typeof makeExecutionAuthority>[0]['capitalAuthority'],
+) => {
   const authority = Result.getOrThrow(
     makeExecutionAuthority({
-      brokerIdentity: liveIdentity,
+      brokerIdentity,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: grantedCapitalAuthority(grant),
+      capitalAuthority,
       strategy,
       observedAt,
     }),
   )
   if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+  return authority
+}
+
+const approvedIntentFixture = (
+  binding: Pick<Intent, 'intentId' | 'riskDecisionId' | 'cycleId' | 'decisionHash' | 'clientOrderId'>,
+): Intent => ({
+  schemaVersion: 'bayn.execution-intent.v5',
+  authorityGenerationHash,
+  strategyName: strategy.name,
+  policyHash: riskPolicyHash,
+  accountId,
+  symbol: 'AMD',
+  side: OrderSide.Buy,
+  orderType: OrderType.Limit,
+  timeInForce: TimeInForce.Day,
+  quantityAtoms: '1000000000',
+  notionalLimitMicros: '100000000',
+  limitPriceMicros: '100000000',
+  state: IntentState.IoStarted,
+  createdAt: '2026-07-28T07:59:00.000Z',
+  ...binding,
+})
+
+const approvalFixture = (
+  intent: Intent,
+  overrides: Pick<RiskDecision, 'decisionId' | 'inputHash'> & Partial<Pick<RiskDecision, 'expiresAt'>>,
+): RiskDecision => ({
+  schemaVersion: 'bayn.paper-risk-decision.v1',
+  intentId: intent.intentId,
+  policyHash: intent.policyHash,
+  outcome: RiskOutcome.Approved,
+  reasonCodes: [],
+  decidedAt: '2026-07-28T07:59:00.001Z',
+  expiresAt: '2026-07-28T08:30:00.000Z',
+  ...overrides,
+})
+
+const finalLiveFixture = () => {
+  const liveIdentity = identity(BrokerEnvironment.Live)
+  const grant = liveGrantFixture(liveIdentity)
+  const authority = mutationAuthorityFixture(liveIdentity, grantedCapitalAuthority(grant))
   const riskDecisionId = '6'.repeat(64)
-  const intent: Intent = {
-    schemaVersion: 'bayn.execution-intent.v5',
+  const intent: Intent = approvedIntentFixture({
     intentId: '5'.repeat(64),
-    authorityGenerationHash,
     riskDecisionId,
-    strategyName: strategy.name,
     cycleId: '7'.repeat(64),
     decisionHash: '8'.repeat(64),
-    policyHash: riskPolicyHash,
-    accountId,
     clientOrderId: `b1_${'C'.repeat(43)}`,
-    symbol: 'AMD',
-    side: OrderSide.Buy,
-    orderType: OrderType.Limit,
-    timeInForce: TimeInForce.Day,
-    quantityAtoms: '1000000000',
-    notionalLimitMicros: '100000000',
-    limitPriceMicros: '100000000',
-    state: IntentState.IoStarted,
-    createdAt: '2026-07-28T07:59:00.000Z',
-  }
-  const stored: StoredIntent = {
+  })
+  const stored = {
     intent,
-    decision: {
-      schemaVersion: 'bayn.paper-risk-decision.v1',
-      decisionId: riskDecisionId,
-      inputHash: 'a'.repeat(64),
-      intentId: intent.intentId,
-      policyHash: intent.policyHash,
-      outcome: RiskOutcome.Approved,
-      reasonCodes: [],
-      decidedAt: '2026-07-28T07:59:00.001Z',
-      expiresAt: '2026-07-28T08:30:00.000Z',
-    },
+    decision: approvalFixture(intent, { decisionId: riskDecisionId, inputHash: 'a'.repeat(64) }),
     stateVersion: 4,
     updatedAt: '2026-07-28T07:59:00.002Z',
-  }
+  } satisfies StoredIntent
   return { authority, grant, intent, stored }
 }
 
@@ -295,43 +321,9 @@ describe('same-code execution program composition', () => {
   test('uses one program factory for sandbox and live with only injected authority and adapters changed', () => {
     const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
     const liveIdentity = identity(BrokerEnvironment.Live)
-    const sandboxAuthority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: sandboxIdentity,
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
-        strategy,
-        observedAt,
-      }),
-    )
-    const grant = Result.getOrThrow(
-      makeCapitalGrantRecord({
-        schemaVersion: 'bayn.capital-grant.v2',
-        brokerIdentity: liveIdentity,
-        authorityGenerationHash,
-        strategy,
-        limits: {
-          maxGrossNotionalMicros: '100000000000',
-          maxOrderNotionalMicros: '10000000000',
-          maxPositionNotionalMicros: '25000000000',
-          maxDailyLossMicros: '1000000000',
-          maxOpenOrders: 5,
-        },
-        validFrom: '2026-07-28T07:00:00.000Z',
-        validUntil: '2026-07-28T09:00:00.000Z',
-        issuedAt: '2026-07-28T06:00:00.000Z',
-        issuedBy: 'operator:test',
-      }),
-    )
-    const liveAuthority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: liveIdentity,
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(grant),
-        strategy,
-        observedAt,
-      }),
-    )
+    const sandboxAuthority = mutationAuthorityFixture(sandboxIdentity, grantedCapitalAuthority(authorityGenerationHash))
+    const grant = liveGrantFixture(liveIdentity)
+    const liveAuthority = mutationAuthorityFixture(liveIdentity, grantedCapitalAuthority(grant))
 
     const sandboxProgram = Result.getOrThrow(makeExecutionProgram(sandboxAuthority, dependencies('sandbox')))
     const liveProgram = Result.getOrThrow(makeExecutionProgram(liveAuthority, dependencies('live')))
@@ -474,18 +466,10 @@ describe('same-code execution program composition', () => {
 
   test('produces the same final core safeguard decision for equal sandbox and live broker facts', async () => {
     const live = finalLiveFixture()
-    const sandboxAuthority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: identity(BrokerEnvironment.Sandbox),
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
-        strategy,
-        observedAt,
-      }),
+    const sandboxAuthority = mutationAuthorityFixture(
+      identity(BrokerEnvironment.Sandbox),
+      grantedCapitalAuthority(authorityGenerationHash),
     )
-    if (sandboxAuthority.brokerAccess !== BrokerAccess.Mutation) {
-      throw new Error('fixture requires sandbox mutation authority')
-    }
 
     const decisions: string[] = []
     for (const authority of [sandboxAuthority, live.authority]) {
@@ -537,159 +521,73 @@ describe('same-code execution program composition', () => {
     expect(decisions).toEqual(['BrokerAccountUnavailable', 'BrokerAccountUnavailable'])
   })
 
-  test('carries the source-controlled net-exposure policy into final broker authorization', async () => {
-    const fixture = finalLiveFixture()
-    const boundedPolicy: Policy = { ...riskPolicy, maxNetExposureMicros: '199999999' }
-    const policyHash = Result.getOrThrow(canonicalHashV1Result(boundedPolicy))
-    const intent: Intent = { ...fixture.intent, policyHash }
-    if (fixture.stored.decision === undefined) throw new Error('fixture requires an approved risk decision')
-    const stored: StoredIntent = {
-      ...fixture.stored,
-      intent,
-      decision: { ...fixture.stored.decision, policyHash },
-    }
-    let posts = 0
-    const testDependencies: ExecutionProgramDependencies = {
-      ...dependencies('final-net-exposure'),
-      riskPolicy: boundedPolicy,
-      brokerRead: stableBrokerRead([brokerPosition()]),
-      intentStore: {
-        read: () => Effect.succeed(Option.some(stored)),
-      } as unknown as ExecutionProgramDependencies['intentStore'],
-      mutationStore: {
-        authorizeSubmit: () => Effect.void,
-      } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
-      persistedCapitalGrants: {
-        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
-        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
-      },
-    }
-
-    const exit = await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* authorizeFinalBrokerSubmit(
-          fixture.authority,
-          intent,
-          Effect.sync(() => {
-            posts += 1
-          }),
-          testDependencies,
-        ).pipe(Effect.exit)
-      }).pipe(Effect.provide(TestClock.layer())),
-    )
-
-    expect(finalAuthorizationFailureTag(exit)).toBe('NetExposureLimitExceeded')
-    expect(posts).toBe(0)
-  })
-
-  test('revalidates durable daily traded notional at the final writer fence', async () => {
-    const fixture = finalLiveFixture()
-    const boundedPolicy: Policy = { ...riskPolicy, maxDailyTradedNotionalMicros: '249999999' }
-    const policyHash = Result.getOrThrow(canonicalHashV1Result(boundedPolicy))
-    const intent: Intent = { ...fixture.intent, policyHash }
-    if (fixture.stored.decision === undefined) throw new Error('fixture requires an approved risk decision')
-    const stored: StoredIntent = {
-      ...fixture.stored,
-      intent,
-      decision: { ...fixture.stored.decision, policyHash },
-    }
-    let posts = 0
-    let turnoverReads = 0
-    const testDependencies: ExecutionProgramDependencies = {
-      ...dependencies('final-daily-turnover'),
-      riskPolicy: boundedPolicy,
-      readFinalExecutionRiskContext: () =>
-        Effect.sync(() => {
-          turnoverReads += 1
-          return { dailyTradedNotionalMicros: '150000000', peakEquityMicros: '1000000000' }
-        }),
-      intentStore: {
-        read: () => Effect.succeed(Option.some(stored)),
-      } as unknown as ExecutionProgramDependencies['intentStore'],
-      mutationStore: {
-        authorizeSubmit: () => Effect.void,
-      } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
-      persistedCapitalGrants: {
-        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
-        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
-      },
-    }
-
-    const exit = await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* authorizeFinalBrokerSubmit(
-          fixture.authority,
-          intent,
-          Effect.sync(() => {
-            posts += 1
-          }),
-          testDependencies,
-        ).pipe(Effect.exit)
-      }).pipe(Effect.provide(TestClock.layer())),
-    )
-
-    expect(finalAuthorizationFailureTag(exit)).toBe('DailyTradedNotionalLimitExceeded')
-    expect(turnoverReads).toBe(1)
-    expect(posts).toBe(0)
-  })
-
-  test('revalidates durable peak equity against the final broker account at the writer fence', async () => {
-    const fixture = finalLiveFixture()
-    const boundedPolicy: Policy = { ...riskPolicy, maxDrawdownMicros: '100000000' }
-    const policyHash = Result.getOrThrow(canonicalHashV1Result(boundedPolicy))
-    const intent: Intent = { ...fixture.intent, policyHash }
-    if (fixture.stored.decision === undefined) throw new Error('fixture requires an approved risk decision')
-    const stored: StoredIntent = {
-      ...fixture.stored,
-      intent,
-      decision: { ...fixture.stored.decision, policyHash },
-    }
-    let posts = 0
-    let riskContextReads = 0
-    const testDependencies: ExecutionProgramDependencies = {
-      ...dependencies('final-drawdown'),
-      riskPolicy: boundedPolicy,
-      brokerRead: stableBrokerRead([], brokerAccount({ equityMicros: '899999999', lastEquityMicros: '899999999' })),
-      readFinalExecutionRiskContext: () =>
-        Effect.sync(() => {
-          riskContextReads += 1
-          return { dailyTradedNotionalMicros: '0', peakEquityMicros: '1000000000' }
-        }),
-      intentStore: {
-        read: () => Effect.succeed(Option.some(stored)),
-      } as unknown as ExecutionProgramDependencies['intentStore'],
-      mutationStore: {
-        authorizeSubmit: () => Effect.void,
-      } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
-      persistedCapitalGrants: {
-        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
-        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
-      },
-    }
-
-    const exit = await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* authorizeFinalBrokerSubmit(
-          fixture.authority,
-          intent,
-          Effect.sync(() => {
-            posts += 1
-          }),
-          testDependencies,
-        ).pipe(Effect.exit)
-      }).pipe(Effect.provide(TestClock.layer())),
-    )
-
-    expect(finalAuthorizationFailureTag(exit)).toBe('DrawdownLimitExceeded')
-    expect(riskContextReads).toBe(1)
-    expect(posts).toBe(0)
-  })
+  test.each([
+    {
+      reason: 'NetExposureLimitExceeded',
+      limits: { maxNetExposureMicros: '199999999' },
+      broker: () => stableBrokerRead([brokerPosition()]),
+    },
+    {
+      reason: 'DailyTradedNotionalLimitExceeded',
+      limits: { maxDailyTradedNotionalMicros: '249999999' },
+      broker: () => stableBrokerRead(),
+      risk: { dailyTradedNotionalMicros: '150000000', peakEquityMicros: '1000000000' },
+    },
+    {
+      reason: 'DrawdownLimitExceeded',
+      limits: { maxDrawdownMicros: '100000000' },
+      broker: () => stableBrokerRead([], brokerAccount({ equityMicros: '899999999', lastEquityMicros: '899999999' })),
+      risk: { dailyTradedNotionalMicros: '0', peakEquityMicros: '1000000000' },
+    },
+  ] as const)(
+    'rechecks $reason at the final writer fence before any broker post',
+    async ({ reason, limits, broker, ...scenario }) => {
+      const fixture = finalLiveFixture()
+      const boundedPolicy: Policy = { ...riskPolicy, ...limits }
+      const policyHash = Result.getOrThrow(canonicalHashV1Result(boundedPolicy))
+      const intent: Intent = { ...fixture.intent, policyHash }
+      const stored: StoredIntent = { ...fixture.stored, intent, decision: { ...fixture.stored.decision, policyHash } }
+      let posts = 0
+      let riskContextReads = 0
+      const testDependencies: ExecutionProgramDependencies = {
+        ...dependencies(reason),
+        riskPolicy: boundedPolicy,
+        brokerRead: broker(),
+        ...('risk' in scenario && scenario.risk !== undefined
+          ? {
+              readFinalExecutionRiskContext: () =>
+                Effect.sync(() => {
+                  riskContextReads++
+                  return scenario.risk
+                }),
+            }
+          : {}),
+        intentStore: intentStoreFixture({ read: () => Effect.succeed(Option.some(stored)) }),
+        mutationStore: mutationStoreFixture({ authorizeSubmit: () => Effect.void }),
+        writerFence: { check: Effect.void, transaction: (effect) => effect },
+        persistedCapitalGrants: {
+          read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+          lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+        },
+      }
+      const exit = await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(observedAt))
+          return yield* authorizeFinalBrokerSubmit(
+            fixture.authority,
+            intent,
+            Effect.sync(() => {
+              posts += 1
+            }),
+            testDependencies,
+          ).pipe(Effect.exit)
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+      expect(finalAuthorizationFailureTag(exit)).toBe(reason)
+      if ('risk' in scenario) expect(riskContextReads).toBe(1)
+      expect(posts).toBe(0)
+    },
+  )
 
   test('revalidates a persisted capital grant after broker refresh and before transmission', async () => {
     const fixture = finalLiveFixture()
@@ -767,18 +665,10 @@ describe('same-code execution program composition', () => {
 
   test('revalidates the execution window after broker refresh and before transmission', async () => {
     const fixture = finalLiveFixture()
-    const sandboxAuthority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: identity(BrokerEnvironment.Sandbox),
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
-        strategy,
-        observedAt,
-      }),
+    const sandboxAuthority = mutationAuthorityFixture(
+      identity(BrokerEnvironment.Sandbox),
+      grantedCapitalAuthority(authorityGenerationHash),
     )
-    if (sandboxAuthority.brokerAccess !== BrokerAccess.Mutation) {
-      throw new Error('fixture requires sandbox mutation authority')
-    }
     const expiresAt = '2026-07-28T08:00:00.020Z'
     let measuredNow = observedAt
     let brokerReads = 0
@@ -890,16 +780,10 @@ describe('same-code execution program composition', () => {
 
   test('rejects a risk-policy binding mismatch before broker or grant I/O', async () => {
     const fixture = finalLiveFixture()
-    const authority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: identity(BrokerEnvironment.Sandbox),
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
-        strategy,
-        observedAt,
-      }),
+    const authority = mutationAuthorityFixture(
+      identity(BrokerEnvironment.Sandbox),
+      grantedCapitalAuthority(authorityGenerationHash),
     )
-    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
     const intent = { ...fixture.intent, policyHash: '0'.repeat(64) }
     const stored = {
       ...fixture.stored,
@@ -936,16 +820,7 @@ describe('same-code execution program composition', () => {
 
   test('expires PAPER submission authority at runtime while allowing only a precommitted close intent', async () => {
     const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
-    const authority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: sandboxIdentity,
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
-        strategy,
-        observedAt,
-      }),
-    )
-    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const authority = mutationAuthorityFixture(sandboxIdentity, grantedCapitalAuthority(authorityGenerationHash))
 
     const { intent: sourceIntent, stored: sourceStored } = finalLiveFixture()
     const intent: Intent = { ...sourceIntent, side: OrderSide.Sell }
@@ -1027,16 +902,10 @@ describe('same-code execution program composition', () => {
   })
 
   test('preserves policy limit exemptions for a verified close in a mixed-sign account', async () => {
-    const authority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: identity(BrokerEnvironment.Sandbox),
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
-        strategy,
-        observedAt,
-      }),
+    const authority = mutationAuthorityFixture(
+      identity(BrokerEnvironment.Sandbox),
+      grantedCapitalAuthority(authorityGenerationHash),
     )
-    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
     const source = finalLiveFixture()
     const closePolicy: Policy = {
       ...riskPolicy,
@@ -1045,7 +914,6 @@ describe('same-code execution program composition', () => {
     }
     const policyHash = Result.getOrThrow(canonicalHashV1Result(closePolicy))
     const intent: Intent = { ...source.intent, side: OrderSide.Sell, policyHash }
-    if (source.stored.decision === undefined) throw new Error('fixture requires an approved risk decision')
     const stored: StoredIntent = {
       ...source.stored,
       intent,
@@ -1112,35 +980,8 @@ describe('same-code execution program composition', () => {
 
   test('keeps a distinct live-grant order cap on an exposure-reducing close', async () => {
     const liveIdentity = identity(BrokerEnvironment.Live)
-    const grant = Result.getOrThrow(
-      makeCapitalGrantRecord({
-        schemaVersion: 'bayn.capital-grant.v2',
-        brokerIdentity: liveIdentity,
-        authorityGenerationHash,
-        strategy,
-        limits: {
-          maxGrossNotionalMicros: '100000000000',
-          maxOrderNotionalMicros: '99999999',
-          maxPositionNotionalMicros: '25000000000',
-          maxDailyLossMicros: '1000000000',
-          maxOpenOrders: 5,
-        },
-        validFrom: '2026-07-28T07:00:00.000Z',
-        validUntil: '2026-07-28T09:00:00.000Z',
-        issuedAt: '2026-07-28T06:00:00.000Z',
-        issuedBy: 'operator:test',
-      }),
-    )
-    const authority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: liveIdentity,
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(grant),
-        strategy,
-        observedAt,
-      }),
-    )
-    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const grant = liveGrantFixture(liveIdentity, { maxOrderNotionalMicros: '99999999' })
+    const authority = mutationAuthorityFixture(liveIdentity, grantedCapitalAuthority(grant))
     const source = finalLiveFixture()
     const intent: Intent = { ...source.intent, side: OrderSide.Sell }
     const stored: StoredIntent = { ...source.stored, intent }
@@ -1180,69 +1021,18 @@ describe('same-code execution program composition', () => {
   test('rechecks risk expiry after a blocking live-grant lock and performs zero broker posts', async () => {
     const liveIdentity = identity(BrokerEnvironment.Live)
     const expiresAt = '2026-07-28T08:00:00.010Z'
-    const grant = Result.getOrThrow(
-      makeCapitalGrantRecord({
-        schemaVersion: 'bayn.capital-grant.v2',
-        brokerIdentity: liveIdentity,
-        authorityGenerationHash,
-        strategy,
-        limits: {
-          maxGrossNotionalMicros: '100000000000',
-          maxOrderNotionalMicros: '10000000000',
-          maxPositionNotionalMicros: '25000000000',
-          maxDailyLossMicros: '1000000000',
-          maxOpenOrders: 5,
-        },
-        validFrom: '2026-07-28T07:00:00.000Z',
-        validUntil: '2026-07-28T09:00:00.000Z',
-        issuedAt: '2026-07-28T06:00:00.000Z',
-        issuedBy: 'operator:test',
-      }),
-    )
-    const authority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: liveIdentity,
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(grant),
-        strategy,
-        observedAt,
-      }),
-    )
-    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const grant = liveGrantFixture(liveIdentity)
+    const authority = mutationAuthorityFixture(liveIdentity, grantedCapitalAuthority(grant))
     const intentId = 'a'.repeat(64)
     const decisionId = 'b'.repeat(64)
-    const intent: Intent = {
-      schemaVersion: 'bayn.execution-intent.v5',
+    const intent: Intent = approvedIntentFixture({
       intentId,
-      authorityGenerationHash,
       riskDecisionId: decisionId,
-      strategyName: strategy.name,
       cycleId: 'c'.repeat(64),
       decisionHash: 'd'.repeat(64),
-      policyHash: riskPolicyHash,
-      accountId,
       clientOrderId: `b1_${'A'.repeat(43)}`,
-      symbol: 'AMD',
-      side: OrderSide.Buy,
-      orderType: OrderType.Limit,
-      timeInForce: TimeInForce.Day,
-      quantityAtoms: '1000000000',
-      notionalLimitMicros: '100000000',
-      limitPriceMicros: '100000000',
-      state: IntentState.IoStarted,
-      createdAt: '2026-07-28T07:59:00.000Z',
-    }
-    const decision: RiskDecision = {
-      schemaVersion: 'bayn.paper-risk-decision.v1',
-      decisionId,
-      inputHash: 'f'.repeat(64),
-      intentId,
-      policyHash: intent.policyHash,
-      outcome: RiskOutcome.Approved,
-      reasonCodes: [],
-      decidedAt: '2026-07-28T07:59:00.001Z',
-      expiresAt,
-    }
+    })
+    const decision: RiskDecision = approvalFixture(intent, { decisionId, inputHash: 'f'.repeat(64), expiresAt })
     const stored: StoredIntent = {
       intent,
       decision,
@@ -1440,50 +1230,21 @@ describe('same-code execution program composition', () => {
 
   test('keeps a post-transmit transaction failure unknown for broker recovery', async () => {
     const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
-    const authority = Result.getOrThrow(
-      makeExecutionAuthority({
-        brokerIdentity: sandboxIdentity,
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
-        strategy,
-        observedAt,
-      }),
-    )
-    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const authority = mutationAuthorityFixture(sandboxIdentity, grantedCapitalAuthority(authorityGenerationHash))
     const intentId = '7'.repeat(64)
     const decisionId = '8'.repeat(64)
-    const intent: Intent = {
-      schemaVersion: 'bayn.execution-intent.v5',
+    const intent: Intent = approvedIntentFixture({
       intentId,
-      authorityGenerationHash,
       riskDecisionId: decisionId,
-      strategyName: strategy.name,
       cycleId: '9'.repeat(64),
       decisionHash: 'a'.repeat(64),
-      policyHash: riskPolicyHash,
-      accountId,
       clientOrderId: `b1_${'B'.repeat(43)}`,
-      symbol: 'AMD',
-      side: OrderSide.Buy,
-      orderType: OrderType.Limit,
-      timeInForce: TimeInForce.Day,
-      quantityAtoms: '1000000000',
-      notionalLimitMicros: '100000000',
-      limitPriceMicros: '100000000',
-      state: IntentState.IoStarted,
-      createdAt: '2026-07-28T07:59:00.000Z',
-    }
-    const decision: RiskDecision = {
-      schemaVersion: 'bayn.paper-risk-decision.v1',
+    })
+    const decision: RiskDecision = approvalFixture(intent, {
       decisionId,
       inputHash: 'c'.repeat(64),
-      intentId,
-      policyHash: intent.policyHash,
-      outcome: RiskOutcome.Approved,
-      reasonCodes: [],
-      decidedAt: '2026-07-28T07:59:00.001Z',
       expiresAt: '2026-07-28T08:01:00.000Z',
-    }
+    })
     const stored: StoredIntent = {
       intent,
       decision,
@@ -1543,7 +1304,6 @@ describe('same-code execution program composition', () => {
 for (const delay of ['writer fence', 'broker read', 'restart'] as const) {
   test(`honors a persisted ten-second entry deadline after ${delay} with zero broker posts`, async () => {
     const fixture = finalLiveFixture()
-    if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
     const expiresAt = '2026-07-28T08:00:10.000Z'
     const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
     const broker = stableBrokerRead()
@@ -1598,7 +1358,6 @@ for (const delay of ['writer fence', 'broker read', 'restart'] as const) {
 
 test('final risk authorization uses the measured execution time after inference processing', async () => {
   const fixture = finalLiveFixture()
-  if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
   const expiresAt = '2026-07-28T08:00:10.000Z'
   const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
   let posts = 0
@@ -1650,7 +1409,6 @@ for (const phase of [
 ] as const) {
   test(`measured replay time governs final submission after ${phase}`, async () => {
     const fixture = finalLiveFixture()
-    if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
     const expiresAt = phase === 'clock synchronization' ? '2026-07-28T08:00:11.000Z' : '2026-07-28T08:00:10.000Z'
     const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
     const base = dependencies('measured-replay-final-authorization')
@@ -1906,7 +1664,6 @@ describe('execution with the native reconciliation cache', () => {
       // The stale bound is part of the intent's verified policy, so bind the updated policy hash too.
       const policyHash = Result.getOrThrow(canonicalHashV1Result(changed.riskPolicy))
       const intent = { ...fixture.intent, policyHash }
-      if (fixture.stored.decision === undefined) throw new Error('missing risk approval')
       const stored = { ...fixture.stored, intent, decision: { ...fixture.stored.decision, policyHash } }
       const exit = await Effect.runPromiseExit(
         authorizeCachedFinalBrokerSubmit(

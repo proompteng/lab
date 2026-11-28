@@ -5,6 +5,8 @@ import { Result, Schema } from 'effect'
 
 import { canonicalJsonEqualV1 } from '../hash'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
+import { resolveAlphaRegularSession, noiseAreaBands } from '../strategy/intraday-alpha/signals'
+import { pureEtfCheckpointMinutes } from '../market-data/intraday/trailing-baseline'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { intradayAgeNanos, millisecondsAsNanos } from '../market-data/intraday/time'
@@ -26,12 +28,13 @@ export enum JevExitReason {
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
   ProtectionReleased = 'PROTECTION_RELEASED',
+  OppositeBandExit = 'OPPOSITE_BAND_EXIT',
 }
 
 const TriggerSchema = Schema.Union([
   Schema.Struct({ reason: Schema.Literals([JevExitReason.MaximumHold, JevExitReason.ProtectionReleased]) }),
   Schema.Struct({
-    reason: Schema.Literals([JevExitReason.ProtectiveStop, JevExitReason.ProfitTarget]),
+    reason: Schema.Literals([JevExitReason.ProtectiveStop, JevExitReason.ProfitTarget, JevExitReason.OppositeBandExit]),
     manifest: JevObservationSchema.fields.manifest,
     rows: JevObservationSchema.fields.rows,
   }),
@@ -101,6 +104,7 @@ export const reproducePositionQuote = (
   input: Pick<JevExitEvidenceMaterial, 'protocol' | 'sessionDate' | 'observedAt'> & {
     readonly symbol: string
     readonly positionSide?: 'SHORT'
+    readonly checkpoint?: true
   },
   source: PriceExitSource,
 ) =>
@@ -117,7 +121,10 @@ export const reproducePositionQuote = (
       ? undefined
       : exchangeSessions(m.calendar).find(({ date }) => date === sessionDate)
     if (
-      m.purpose !== IntradaySnapshotPurpose.Liquidation ||
+      m.purpose !==
+        (input.checkpoint === true
+          ? IntradaySnapshotPurpose.PositionCheckpoint
+          : IntradaySnapshotPurpose.Liquidation) ||
       m.observedAt !== observedAt ||
       m.sessionDate !== sessionDate ||
       m.symbols.length !== 1 ||
@@ -139,7 +146,7 @@ export const reproducePositionQuote = (
     if (quote === undefined) return yield* invalid('Price exit has no fresh executable bid')
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-    return { bid, ask, quote }
+    return { bid, ask, quote, snapshot }
   })
 
 export const verifiedPositionQuote = (input: Parameters<typeof reproducePositionQuote>[0], source: PriceExitSource) =>
@@ -158,6 +165,8 @@ export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMateri
   Result.gen(function* () {
     const { portfolio, protocol } = evidence
     if (portfolio.purpose !== JevPurpose.Manage) return yield* invalid('Exit requires an accounted held position')
+    if (portfolio.managedSymbol !== undefined && portfolio.managedSymbol !== evidence.symbol)
+      return yield* invalid('Position evidence must manage the exact bound ETF leg')
     const state = portfolio.brokerState
     const position =
       evidence.symbol === undefined
@@ -196,6 +205,38 @@ export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMateri
     return { portfolio, position, firstFill, entryPlan, now }
   })
 
+/** A zero width is a real observation: the gap-aware open and prior close remain the bands. */
+export const oppositeAlphaBandCrossed = (
+  snapshot: import('../market-data/streaming/snapshot').StrategyMarketSnapshot,
+  plan: import('../strategy/intraday-alpha/exit-plan').IntradayAlphaFundedExitPlan,
+) =>
+  Result.gen(function* () {
+    const { fillAnchored, symbol } = plan.levels
+    if (fillAnchored === undefined) return false
+    const { calendar, sessionDate, rangeEndAt } = snapshot.manifest
+    const regular = yield* resolveAlphaRegularSession(calendar, sessionDate)
+    const end = Date.parse(rangeEndAt)
+    const minute = (end - regular.openMs) / 60_000
+    if (
+      !pureEtfCheckpointMinutes.some((cp) => cp === minute) ||
+      end > regular.closeMs - 30 * 60_000 ||
+      rangeEndAt <= plan.levels.sourceEndAt
+    )
+      return false
+    const width = fillAnchored.checkpointSwings[String(minute)]
+    if (width === undefined) return false
+    const bar = snapshot.bars.find((record) => record.symbol === symbol && Date.parse(record.eventAt) === end - 60_000)
+    if (bar === undefined || intradayAgeNanos(bar.ingestedAt, bar.eventAt) < millisecondsAsNanos(60_000))
+      return yield* invalid('Opposite-band exit requires the completed checkpoint bar')
+    const { upperBand, lowerBand } = noiseAreaBands(
+      fillAnchored.sessionOpen,
+      fillAnchored.previousClose,
+      width,
+      fillAnchored.bandMultiplier,
+    )
+    return isShortExitPlan(plan) ? bar.close > upperBand : bar.close < lowerBand
+  })
+
 export const deriveJevExitTargetMaterial = <Evidence extends JevExitEvidenceMaterial>(evidence: Evidence) =>
   Result.gen(function* () {
     const { protocol, trigger } = evidence
@@ -211,17 +252,27 @@ export const deriveJevExitTargetMaterial = <Evidence extends JevExitEvidenceMate
           return yield* invalid('Maximum holding time has not elapsed since the actual first fill')
         break
       case JevExitReason.ProtectiveStop:
-      case JevExitReason.ProfitTarget: {
+      case JevExitReason.ProfitTarget:
+      case JevExitReason.OppositeBandExit: {
         const short = isShortExitPlan(entryPlan)
-        const { bid, ask, quote } = yield* verifiedPositionQuote(
-          { ...evidence, symbol: position.symbol, ...(short ? { positionSide: 'SHORT' as const } : {}) },
+        const { bid, ask, quote, snapshot } = yield* verifiedPositionQuote(
+          {
+            ...evidence,
+            symbol: position.symbol,
+            ...(short ? { positionSide: 'SHORT' as const } : {}),
+            ...(trigger.reason === JevExitReason.OppositeBandExit ? { checkpoint: true as const } : {}),
+          },
           trigger,
         )
         const exitPrice = short ? ask : bid
         const crossed =
           trigger.reason === JevExitReason.ProtectiveStop
             ? jevProtectiveStopCrossed(exitPrice, entryPlan.levels)
-            : yield* jevProfitTargetCrossed(portfolio, exitPrice, position.symbol)
+            : trigger.reason === JevExitReason.OppositeBandExit
+              ? portfolio.managedSymbol === position.symbol &&
+                isIntradayAlphaExitPlan(entryPlan) &&
+                (yield* oppositeAlphaBandCrossed(snapshot, entryPlan))
+              : yield* jevProfitTargetCrossed(portfolio, exitPrice, position.symbol)
         if (!crossed) return yield* invalid('The verified bid has not crossed its entry-bound exit threshold')
         commitDeadlineAt = new Date(Date.parse(quote.eventAt) + protocol.maximumQuoteAgeMs).toISOString()
         break

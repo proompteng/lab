@@ -26,6 +26,8 @@ import {
 import { IntradayAlphaObservationSchema, reproduceIntradayAlphaObservation } from './observation'
 import {
   IntradayAlphaPhase,
+  alphaObservationVersion,
+  isPureEtfPolicy,
   IntradayAlphaPolicySchema,
   IntradayAlphaSetup,
   type IntradayAlphaPolicy,
@@ -139,6 +141,8 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
     const hours = observation.snapshot.manifest.calendar
     const regularSession = resolveAlphaRegularSession(hours, observation.snapshot.manifest.sessionDate)
     if (
+      observation.schemaVersion !== alphaObservationVersion(policy) ||
+      (isPureEtfPolicy(policy) && evidence.catalystVetos.length > 0) ||
       observation.portfolio.purpose !== JevPurpose.Entry ||
       (yield* canonicalHashV1Result(protocol)) !== (yield* canonicalHashV1Result(observation.protocol)) ||
       decided < Date.parse(observation.observedAt) ||
@@ -240,8 +244,7 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
       }))
       .toSorted((a, b) => a.symbol.localeCompare(b.symbol) || a.direction.localeCompare(b.direction))
 
-    return {
-      schemaVersion: 'bayn.intraday-alpha-target.v2' as const,
+    const material = {
       strategy: 'jev' as const,
       policy,
       evidence,
@@ -262,6 +265,9 @@ export const deriveIntradayAlphaTargetMaterial = <Policy extends IntradayAlphaPo
         plans,
       },
     }
+    return isPureEtfPolicy(policy)
+      ? { ...material, schemaVersion: 'bayn.intraday-alpha-target.v3' as const }
+      : { ...material, schemaVersion: 'bayn.intraday-alpha-target.v2' as const }
   })
 
 const deriveIntradayAlphaTarget = (policy: IntradayAlphaPolicy, evidence: IntradayAlphaDecisionEvidence) =>
@@ -278,8 +284,7 @@ export const decideIntradayAlphaEntry = (input: unknown, policy: IntradayAlphaPo
     Result.mapError((cause) => new JevContractError({ message: 'Intraday alpha target could not be derived', cause })),
   )
 
-export const IntradayAlphaTargetSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v2'),
+const alphaTargetFields = {
   strategy: Schema.Literal('jev'),
   policy: IntradayAlphaPolicySchema,
   evidence: IntradayAlphaDecisionEvidenceSchema,
@@ -294,7 +299,16 @@ export const IntradayAlphaTargetSchema = Schema.Struct({
   selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isMaxLength(4), Schema.isUnique()),
   targetWeights: Schema.Record(SymbolSchema, Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
   exitPolicy: AlphaExitPolicySchema,
-}).check(
+}
+const AlphaV2TargetSchema = Schema.Struct({
+  ...alphaTargetFields,
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v2'),
+})
+const PureEtfTargetSchema = Schema.Struct({
+  ...alphaTargetFields,
+  schemaVersion: Schema.Literal('bayn.intraday-alpha-target.v3'),
+})
+export const IntradayAlphaTargetSchema = Schema.Union([AlphaV2TargetSchema, PureEtfTargetSchema]).check(
   Schema.makeFilter((target) => {
     const reproduced = deriveIntradayAlphaTarget(target.policy, target.evidence).pipe(
       Result.flatMap(canonicalHashV1Result),

@@ -196,10 +196,21 @@ kubectl -n agents wait --for=condition=complete job \
   -l agents.proompteng.ai/agent-run=codex-run-sample --timeout=5m
 ```
 
-## Smoke test (kind/minikube; local only)
+## Smoke test (Kind; local only)
+
+Build and load the slim lifecycle runner into the local Kind cluster before running the smoke script. Pass
+`--name <cluster>` to `kind load` if the cluster uses a custom name.
 
 ```bash
-bun run packages/scripts/src/agents/smoke-agents.ts
+(
+  set -e
+  nix build --no-link .#agents-smoke-runner-image
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+  gzip -dc "$(nix path-info .#agents-smoke-runner-image)" > "$archive"
+  kind load image-archive "$archive"
+  bun run packages/scripts/src/agents/smoke-agents.ts
+)
 ```
 
 This installs the chart, applies deterministic smoke CRs, submits a multi-step workflow runtime
@@ -213,8 +224,8 @@ Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, `AGENT
 `AGENTS_RUN_NAME`, `AGENTS_CREATE_NAMESPACE`, or `AGENTCTL_BIN` if needed.
 If you do not have an external database handy, set `AGENTS_DB_BOOTSTRAP=true` to spin up a local
 Postgres in-cluster and wire `database.url` automatically (or provide `AGENTS_DB_URL` yourself).
-Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner` or set
-`env.vars.AGENTS_AGENT_RUNNER_IMAGE` in your values.
+For a published slim runner, set `AGENTS_SMOKE_RUNNER_IMAGE` to its `sha-<commit>@sha256:<digest>` image
+reference instead of loading the local archive.
 
 ## Workflow runtime validation (native)
 

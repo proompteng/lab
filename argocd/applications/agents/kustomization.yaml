@@ -8,6 +8,7 @@ resources:
   - codex-auth-master-externalsecret.yaml
   - codex-auth-externalsecret.yaml
   - codex-auth-refresher.yaml
+  - google-adc-externalsecret.yaml
   - workspace-cache-daemonset.yaml
   - hf-router-token-sealedsecret.yaml
   - agents-shell-tunnel-runtime-sealedsecret.yaml
@@ -24,6 +25,9 @@ resources:
   - codex-smoke-implspec.yaml
   - anypi-agentprovider.yaml
   - anypi-agent.yaml
+  - google-secretbinding.yaml
+  - google-agentprovider.yaml
+  - google-agent.yaml
   - codex-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
@@ -51,8 +55,10 @@ resources:
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
   - auto-ontology-mcp-token-sealedsecret.yaml
+  - ../../../docs/agents/ontology
   - auto-ontology-networkpolicy.yaml
   - auto-ontology-db-networkpolicy.yaml
+  - auto-ontology-sync-cronjob.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
@@ -67,6 +73,16 @@ replacements:
           name: agents-workspace-cache
         fieldPaths:
           - spec.template.spec.containers.[name=refresh].image
+  - source:
+      kind: Deployment
+      name: agents-controllers
+      fieldPath: spec.template.spec.containers.[name=agents-controllers].image
+    targets:
+      - select:
+          kind: CronJob
+          name: auto-ontology-sync
+        fieldPaths:
+          - spec.jobTemplate.spec.template.spec.containers.[name=sync].image
   - source:
       kind: SealedSecret
       name: agents-shell-tunnel-runtime

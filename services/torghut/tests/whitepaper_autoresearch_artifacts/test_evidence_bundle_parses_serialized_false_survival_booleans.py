@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.whitepaper_autoresearch_artifacts.support import (
     Any,
     Decimal,
@@ -15,6 +17,8 @@ from tests.whitepaper_autoresearch_artifacts.support import (
     patch,
     train_mlx_ranker,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestEvidenceBundleParsesSerializedFalseSurvivalBooleans(

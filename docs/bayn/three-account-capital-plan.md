@@ -56,6 +56,9 @@ positive delta can occur when rounding changes exposures, turnover, or the deadb
 At 5 bp with B0, the daily sleeves contribute most of the tracking error. They also have high positive
 correlation; separate ledgers protect ownership, not diversification.
 
+The [coordinated F4/O1 v2 proposal](macro-portfolio-v2.md) targets those two daily books, with a separate
+walk-forward comparison. It does not change this plan, the three-account results, or the Paper decision.
+
 | Total | Tracking error #1 / #2 / #3 (bp/yr) | Corr. #1–#2 | Corr. #1–#3 | Corr. #2–#3 | Phase 2 combined CAGR, 2 / 5 / 10 bp |
 | ----: | ----------------------------------: | ----------: | ----------: | ----------: | -----------------------------------: |
 |  $30k |             18.16 / 145.68 / 131.78 |       0.201 |       0.257 |       0.737 |                5.60% / 4.84% / 3.78% |

@@ -5,7 +5,7 @@ import { type AgentRun, agentRun, type Job, type Pod, rawList } from './resource
 
 export const RUN_LABEL = 'agents.proompteng.ai/agent-run'
 const RUN_UID = 'agents.proompteng.ai/run-uid'
-const STEP_INDEX = 'agents.proompteng.ai/step-index'
+export const STEP_INDEX = 'agents.proompteng.ai/step-index'
 
 export const timestamp = (value?: string | null) => (value ? Date.parse(value) || 0 : 0)
 const newest = (a: Job | Pod, b: Job | Pod) =>

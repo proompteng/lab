@@ -266,6 +266,7 @@ export interface Account {
   readonly buyingPowerMicros: string
   readonly accountBlocked: boolean
   readonly tradingBlocked: boolean
+  readonly transfersBlocked?: boolean
   readonly tradeSuspendedByUser: boolean
   readonly shortingEnabled?: boolean
   readonly observedAt: string
@@ -555,6 +556,7 @@ export const AccountResponseSchema = Schema.Struct({
   crypto_tier: Schema.optionalKey(Schema.NullOr(CryptoFeeTierSchema)),
   account_blocked: Schema.Boolean,
   trading_blocked: Schema.Boolean,
+  transfers_blocked: Schema.optionalKey(Schema.Boolean),
   trade_suspended_by_user: Schema.Boolean,
   shorting_enabled: Schema.optionalKey(Schema.Boolean),
 })
