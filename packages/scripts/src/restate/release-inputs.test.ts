@@ -86,6 +86,22 @@ test('new build parameters require a build', () => {
   expect(releasePlan(f.cwd).reuse).toBe(false)
 })
 
+test('an existing qualified runtime remains eligible when its unchanged build becomes reusable', () => {
+  const f = fixture()
+  f.write(
+    '.github/workflows/restate-images.yml',
+    YAML.stringify({ jobs: { validate: { uses: './.github/workflows/restate-validation.yml' } } }),
+  )
+  f.write('.github/workflows/restate-validation.yml', YAML.stringify(f.workflow))
+  f.commit()
+  expect(releasePlan(f.cwd).reuse).toBe(true)
+
+  Object.assign(f.workflow.jobs.build.steps[1]?.with ?? {}, { 'build-args': 'FEATURE=new' })
+  f.write('.github/workflows/restate-validation.yml', YAML.stringify(f.workflow))
+  f.commit()
+  expect(releasePlan(f.cwd).reuse).toBe(false)
+})
+
 test('release labels and cache policy do not change runtime inputs', () => {
   const f = fixture()
   Object.assign(f.workflow.jobs.build.steps[1]?.with ?? {}, {

@@ -445,6 +445,108 @@
       "pattern": "^ci-pr(?: \\(.*\\))?$"
     }
   ],
+  "queue-service-validation.yml": [
+    {
+      "id": "agentctl",
+      "pattern": "^agentctl(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "codex",
+      "pattern": "^codex(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "dernier",
+      "pattern": "^dernier(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "dorvud",
+      "pattern": "^dorvud(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "facteur",
+      "pattern": "^facteur(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "feature-flags",
+      "pattern": "^feature-flags(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "flamingo",
+      "pattern": "^flamingo(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "galette",
+      "pattern": "^galette(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "golink",
+      "pattern": "^golink(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "graf-service",
+      "pattern": "^graf-service(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "jangar-guardrails",
+      "pattern": "^jangar-guardrails(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "khoshut",
+      "pattern": "^khoshut(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "miel",
+      "pattern": "^miel(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "nuc-omni-serve",
+      "pattern": "^nuc-omni-serve(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "orbit-salvage",
+      "pattern": "^orbit-salvage(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "otel",
+      "pattern": "^otel(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "reestr",
+      "pattern": "^reestr(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "registry-cleanup",
+      "pattern": "^registry-cleanup(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "restate",
+      "pattern": "^restate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ricochet-rush",
+      "pattern": "^ricochet-rush(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "schematic",
+      "pattern": "^schematic(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "signal-publisher",
+      "pattern": "^signal-publisher(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "spire-migration",
+      "pattern": "^spire-migration(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "symphony",
+      "pattern": "^symphony(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "synthesis",
+      "pattern": "^synthesis(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
   "relay.yml": [
     {
       "id": "validate",
@@ -457,6 +559,16 @@
   ],
   "restate-images.yml": [
     {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "restate-validation.yml": [
+    {
       "id": "changes",
       "pattern": "^changes(?: \\(.*\\))?$"
     },
@@ -465,12 +577,16 @@
       "pattern": "^Restate build and fault tests \\(.*\\)(?: \\(.*\\))?$"
     },
     {
+      "id": "queue-build",
+      "pattern": "^Restate native queue validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
       "id": "cache-proof",
       "pattern": "^cache-proof(?: \\(.*\\))?$"
     },
     {
-      "id": "publish",
-      "pattern": "^publish(?: \\(.*\\))?$"
+      "id": "queue-cache-proof",
+      "pattern": "^queue-cache-proof(?: \\(.*\\))?$"
     }
   ],
   "sag-build-push.yaml": [

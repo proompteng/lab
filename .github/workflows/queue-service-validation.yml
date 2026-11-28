@@ -61,6 +61,9 @@ jobs:
   registry-cleanup:
     uses: ./.github/workflows/registry-cleanup-ci.yml
 
+  restate:
+    uses: ./.github/workflows/restate-validation.yml
+
   ricochet-rush:
     uses: ./.github/workflows/ricochet-rush-ci.yml
 
