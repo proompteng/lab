@@ -1,13 +1,8 @@
-import {
-  bootstrapPValue,
-  dailySharpe,
-  deflatedSharpe,
-  expectedMaximumSharpe,
-  quantile,
-  sum,
-} from './midday-research-statistics'
 import { sleeves } from './portfolio-research-data'
 import { type PortfolioDay, startingEquity } from './portfolio-research-replay'
+import { requireAlignedSessions, sliceFold } from './research-lib/calendar'
+import { dailySharpe, deflatedSharpe, expectedMaximumSharpe, sum } from './research-lib/statistics'
+import { bootstrapPValue, quantile } from './midday-research-statistics'
 
 const tradingDays = 252
 
@@ -72,12 +67,11 @@ export const bootstrapPortfolio = (daily: readonly number[]) => {
   }
 }
 
-export const commonSessions = (series: readonly (readonly PortfolioDay[])[]): ReadonlySet<string> =>
-  new Set(
-    (series[0] ?? []).flatMap(({ date }, i) =>
-      series.every((arm) => arm[i]?.date === date && arm[i]?.net != null) ? [date] : [],
-    ),
-  )
+export const commonSessions = (series: readonly (readonly PortfolioDay[])[]): ReadonlySet<string> => {
+  const [calendar = [], ...others] = series
+  requireAlignedSessions(calendar, ...others)
+  return new Set(calendar.flatMap(({ date }, i) => (series.every((arm) => arm[i].net !== null) ? [date] : [])))
+}
 
 export const dailyNet = (days: readonly PortfolioDay[], support: ReadonlySet<string>) =>
   days.flatMap(({ date, net }) => (support.has(date) && net !== null ? [net] : []))
@@ -99,7 +93,7 @@ export const score = (
   })
   const partitioned = folds.map((fold) => ({
     ...fold,
-    days: days.filter(({ date }) => date >= fold.start && date <= fold.end),
+    days: sliceFold(days, fold),
   }))
   const regimes = {
     spyUp: days.filter(({ spyReturn }) => spyReturn !== null && spyReturn > 0),

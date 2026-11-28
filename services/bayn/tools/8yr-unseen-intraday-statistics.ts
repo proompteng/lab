@@ -10,55 +10,18 @@ import {
 } from './8yr-unseen-intraday-protocol'
 import { createPreparation, ids, netAt, replayDay, type Id, type Ledger, type Pnl } from './8yr-unseen-intraday-replay'
 import type { Day } from './8yr-unseen-intraday-tape'
-import { dailySharpe, mean, sum } from './midday-research-statistics'
+import {
+  dailySharpe,
+  mean,
+  stationaryBootstrap,
+  StationaryCentering,
+  stationaryMeanP,
+  type StationaryPlan,
+  sum,
+} from './research-lib/statistics'
 
-export const stationaryPlan = (sessions: number, draws: number = p.bootstrap.draws) => {
-  // Pack a circular start and geometric block length into one word. Reuse the
-  // same deterministic resample plan for every candidate/cost in a window.
-  if (sessions <= 0 || sessions >= 65_536) throw new Error('Stationary resample requires 1–65,535 sessions')
-  const blocks = new Uint32Array(sessions * draws)
-  const offsets = new Uint32Array(draws + 1)
-  let seed: number = p.bootstrap.seed
-  const random = () => {
-    seed ^= seed << 13
-    seed ^= seed >>> 17
-    seed ^= seed << 5
-    return (seed >>> 0) / 0x1_0000_0000
-  }
-  const logContinue = Math.log1p(-1 / p.bootstrap.meanBlockSessions)
-  let cursor = 0
-  for (let draw = 0; draw < draws; draw++) {
-    let left = sessions
-    while (left > 0) {
-      const start = Math.floor(random() * sessions)
-      const length = Math.min(left, Math.floor(Math.log1p(-random()) / logContinue) + 1)
-      blocks[cursor++] = (start << 16) | length
-      left -= length
-    }
-    offsets[draw + 1] = cursor
-  }
-  return { sessions, draws, blocks: blocks.subarray(0, cursor), offsets }
-}
-
-export const stationaryP = (daily: readonly number[], plan: ReturnType<typeof stationaryPlan>) => {
-  if (daily.length !== plan.sessions) throw new Error('Stationary bootstrap length mismatch')
-  if (daily.length < 2 || daily.every((value) => value === daily[0])) return null
-  const observed = sum(daily)
-  const center = observed / daily.length
-  const prefix = new Float64Array(daily.length * 2 + 1)
-  for (let i = 0; i < daily.length * 2; i++) prefix[i + 1] = prefix[i] + daily[i % daily.length] - center
-  let tail = 0
-  for (let i = 0; i < plan.draws; i++) {
-    let resampled = 0
-    for (let j = plan.offsets[i]; j < plan.offsets[i + 1]; j++) {
-      const block = plan.blocks[j]
-      const start = block >>> 16
-      resampled += prefix[start + (block & 0xffff)] - prefix[start]
-    }
-    if (resampled >= observed) tail++
-  }
-  return (tail + 1) / (plan.draws + 1)
-}
+export const stationaryPlan = (sessions: number, draws: number = p.bootstrap.draws) =>
+  stationaryBootstrap(sessions, { draws, meanBlock: p.bootstrap.meanBlockSessions, seed: p.bootstrap.seed })
 
 const add = (target: Pnl, source: Pnl) => {
   target.base += source.base
@@ -73,7 +36,7 @@ const trimTop = (daily: readonly number[], k: number, net: number) =>
       .sort((a, b) => b - a)
       .slice(0, k),
   )
-export const summarize = (ledgers: readonly Ledger[], cost: number, plan: ReturnType<typeof stationaryPlan>) => {
+export const summarize = (ledgers: readonly Ledger[], cost: number, plan: StationaryPlan) => {
   const daily = ledgers.map((row) => netAt(row, cost))
   const closed = sum(daily)
   const unresolvedDays = ledgers.filter(({ unresolved }) => unresolved > 0).length
@@ -122,7 +85,7 @@ export const summarize = (ledgers: readonly Ledger[], cost: number, plan: Return
     breakevenRtBps: slope > 0 ? sum(ledgers.map((row) => row.base)) / slope : null,
     winRate: coverage.activeDays > 0 ? winners.length / coverage.activeDays : null,
     profitFactor: loss > 0 ? sum(winners) / loss : null,
-    stationaryBootstrapP: stationaryP(daily, plan),
+    stationaryBootstrapP: stationaryMeanP(daily, plan, StationaryCentering.AfterSum),
   }
 }
 

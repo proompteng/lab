@@ -382,6 +382,26 @@
       },
       "additionalProperties": false
     },
+    "autoOntologyMcpGateway": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "apiTokenSecretName": { "type": "string", "minLength": 1 },
+        "apiUrl": { "type": "string", "minLength": 1 },
+        "runnerServiceAccountName": { "type": "string", "minLength": 1 },
+        "tokenAudience": { "type": "string", "minLength": 1 },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "agentsShell": {
       "type": "object",
       "properties": {
