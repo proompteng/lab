@@ -77,7 +77,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          # PRs get the changed files from the central router; only a push diffs local history.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -300,18 +301,9 @@ jobs:
 
   integration:
     name: Agents Kind smoke (${{ needs.plan.outputs.tier }})
-    needs:
-      - plan
-      - unit
-      - static
-    if: >-
-      ${{
-        always() &&
-        needs.plan.result == 'success' &&
-        needs.plan.outputs.run_integration == 'true' &&
-        (needs.unit.result == 'success' || needs.unit.result == 'skipped') &&
-        (needs.static.result == 'success' || needs.static.result == 'skipped')
-      }}
+    # The smoke job owns its fixtures. ci-pr still requires the entire called workflow to pass.
+    needs: plan
+    if: ${{ needs.plan.outputs.run_integration == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
