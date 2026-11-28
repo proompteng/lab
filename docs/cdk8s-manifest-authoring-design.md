@@ -69,7 +69,7 @@ Before adoption, the repository contained two cdk8s experiments, but neither was
 
 - `services/bonjour/infra/**` synthesizes a Deployment, Service, and HPA. Bonjour is disabled and is useful only as a
   compiler canary.
-- `packages/cloutt/**` is an older cdk8s-plus experiment whose output is not current GitOps authority.
+- The earlier cdk8s-plus experiment was not a GitOps source; Reviseur's manifests were already checked in separately.
 - `argocd/applicationsets/cdk8s.yaml` had no enabled consumer.
 - the Argo repo-server cdk8s plugin installed dependencies and executed synthesis during reconciliation. That added package
   registry and JavaScript runtime availability to Argo's critical path.
