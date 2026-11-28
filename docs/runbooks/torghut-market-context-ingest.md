@@ -137,18 +137,7 @@ Use this sequence when dispatch is active but snapshots do not persist:
   `kubectl logs -n jangar deploy/jangar -c app --since=30m | rg "market_context_ingest_auth|unable to verify"`
 - Fix landed: fallback TokenReview via direct in-cluster HTTPS (`/apis/authentication.k8s.io/v1/tokenreviews`) using mounted SA token + CA.
 
-3. `codex-spark` provider incompatibility:
-
-- Symptom in agent job logs:
-  - `Unsupported parameter: 'reasoning.summary'`
-  - `refresh_token_reused`
-- Check:
-  `kubectl logs -n agents job/<market-context-job> --tail=200`
-- Fix landed:
-  - `model_reasoning_summary = "none"` for `gpt-5.6-sol`.
-  - Provider bootstrap rewrites mounted auth to API-key mode before `codex exec`.
-
-4. Fundamentals/news callback payload malformed:
+3. Fundamentals/news callback payload malformed:
 
 - Symptom: callback `POST /api/torghut/market-context/ingest` returns `400` from job script.
 - Fix landed: implementation prompts now require Python JSON serialization + `json.tool` and `jq` validation before callback, plus explicit HTTP status/body checks.
