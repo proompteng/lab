@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auto-ontology
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: copy-sql-runtime
+          # Kustomize copies the exact rendered backend image here.
+          image: nvcr.io/nvidia/auto-ontology
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              mkdir -p /work/original
+              cp -R /app/auto_ontology/retrieval/text_to_sql/. /work/original/
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - name: sql-runtime
+              mountPath: /work
+        - name: apply-sql-routing
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              mkdir -p /work/patched
+              cp -R /work/original/. /work/patched/
+              cd /work/patched
+              find . -name '*.pyc' -delete
+              patch -p1 -i /config/sql-routing.patch
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - name: sql-runtime
+              mountPath: /work
+            - name: sql-routing
+              mountPath: /config
+              readOnly: true
+      containers:
+        - name: backend
+          volumeMounts:
+            - name: sql-runtime
+              mountPath: /app/auto_ontology/retrieval/text_to_sql
+              subPath: patched
+              readOnly: true
+      volumes:
+        - name: sql-runtime
+          emptyDir: {sizeLimit: 8Mi}
+        - name: sql-routing
+          configMap:
+            name: auto-ontology-sql-routing

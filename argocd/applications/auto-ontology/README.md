@@ -6,6 +6,23 @@ Sync the reviewed revision of Saigak first. Verify the Radeon serves the embeddi
 
 The model settings in the SealedSecret template point to Flamingo, Saigak, and Nemotron Rerank. `DEFAULT_MODELS_API_KEY` supplies the nonempty string the client library requires for these unauthenticated cluster services.
 
+## Verify questions across the Agents and Bayn databases
+
+The UI and MCP send questions without a database selector. Version 1.3.0 can retrieve candidate tables from both databases and then fail to execute SQL that reads from just one. The backend applies the PostgreSQL routing changes from [NVIDIA's upstream fix](https://github.com/NVIDIA/auto-ontology/commit/a12fec75226a54ffc91752cca9538f1f01f760eb) to its pinned image at startup. The tables referenced by the SQL must resolve to one connector. Remove the patch and its init containers when upgrading to a release containing the fix.
+
+From each approved read-only source, obtain the reference count for the same closed period:
+
+```sql
+-- Agents
+SELECT count(*) FROM agents_audit.agent_runs WHERE created_at < TIMESTAMPTZ '2026-11-26 00:00:00+00';
+-- Bayn standby
+SELECT count(*) FROM public.broker_events WHERE occurred_at < TIMESTAMPTZ '2026-11-26 00:00:00+00';
+```
+
+From the tailnet, supply a read/chat token in `AUTO_ONTOLOGY_API_TOKEN` and run
+`bun argocd/applications/auto-ontology/verify-queries.ts <agents-count> <bayn-count>`.
+It submits both questions to the private frontend without a source hint and checks the returned SQL relation and count. At release, repeat the two questions in the signed-in UI and with the public MCP server's authenticated `ask_question` tool. Both must agree with the reference counts.
+
 ## PostgreSQL commit durability
 
 The single-instance catalog database uses [`synchronous_commit=off`](https://www.postgresql.org/docs/19/wal-async-commit.html)
