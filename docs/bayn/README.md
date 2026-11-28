@@ -7,6 +7,7 @@ account, and reconciliation state before operating. Runbooks and research eviden
 ## Active Production Runbooks
 
 - [Profitability master playbook](profitability-master-playbook.md) — PAPER qualification, comparisons, and stops.
+- [November 30 cutover dossier](monday-2026-11-30-cutover-playbook.md) — read-only opening settlement and F4/O1 shadow evidence.
 - [Live profitability audit](live-profitability-audit-runbook.md) — read-only execution and cost checks.
 - [Cycle operations](../runbooks/bayn-cycle-operations.md) — diagnose execution and recovery.
 - [Consolidated SIP shadow rollout](consolidated-sip-shadow-rollout.md) — parked capture, parity, and rollback; IEX stays primary.

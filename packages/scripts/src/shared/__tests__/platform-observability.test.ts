@@ -59,6 +59,7 @@ test.each([
 test.each([
   ['agents-fleet-alerts.yaml', ['agents-fleet.rules']],
   ['bayn-backup-alerts.yaml', ['bayn-database-backup.rules']],
+  ['flannel-cbr0-ipam-alerts.yaml', ['flannel-cbr0-ipam.rules']],
   ['platform-alerts.yaml', ['ofz-relay-platform.rules', 'tengri-production.rules']],
   ['restate-alerts.yaml', ['restate-control-plane.rules']],
   ['torghut-registry-alerts.yaml', ['torghut-ws.rules', 'registry.rules']],

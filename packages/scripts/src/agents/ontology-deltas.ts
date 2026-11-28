@@ -36,6 +36,7 @@ const bundleSchema = z.strictObject({
   customAnalyses: z.array(analysis.extend({ provenance })),
   dataSource: z.literal('agents-db-next'),
   database: safeText(120).optional(),
+  ruleTag: safeText(25).optional(),
   rules: z.array(entry.extend({ provenance })),
   version: z.literal(1),
 })
