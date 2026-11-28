@@ -42,6 +42,7 @@ resources:
   - daily-jobs-networkpolicy.yaml
   - opencode-retained-state.yaml
   - research-networkpolicy.yaml
+  - auto-ontology-networkpolicy.yaml
 configMapGenerator:
   - name: bayn-telemetry
     files:
