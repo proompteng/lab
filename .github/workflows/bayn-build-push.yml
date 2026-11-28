@@ -131,6 +131,7 @@ jobs:
     with:
       image_name: bayn-research
       package_attr: bayn-research-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_index: false
       publish_kargo_tag: false

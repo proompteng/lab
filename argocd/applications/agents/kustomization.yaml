@@ -16,19 +16,13 @@ resources:
   - agents-shell-paperless-secret.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
-  - graf-codex-agentprovider.yaml
-  - graf-codex-agent.yaml
-  - codex-spark-agent.yaml
-  - codex-spark-smoke-agentprovider.yaml
-  - codex-spark-smoke-agent.yaml
-  - codex-spark-smoke-agent-system-prompt-configmap.yaml
-  - codex-spark-smoke-implspec.yaml
+  - codex-smoke-agentprovider.yaml
+  - codex-smoke-agent.yaml
+  - codex-smoke-agent-system-prompt-configmap.yaml
+  - codex-smoke-implspec.yaml
   - anypi-agentprovider.yaml
-  - anypi-eval-agentprovider.yaml
   - anypi-agent.yaml
-  - anypi-eval-agent.yaml
   - codex-agentprovider.yaml
-  - codex-spark-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
   - codex-orchestrations.yaml

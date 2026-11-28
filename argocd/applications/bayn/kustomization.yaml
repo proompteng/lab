@@ -7,6 +7,8 @@ resources:
 - serviceaccount.yaml
 - clickhouse-secret.yaml
 - alpaca-sealedsecret.yaml
+- alpaca-macro-core-sealedsecret.yaml
+- alpaca-macro-canary-sealedsecret.yaml
 - objectbucketclaim.yaml
 - research-storage.yaml
 - research-objectbucket.yaml
@@ -48,10 +50,10 @@ configMapGenerator:
 images:
 - name: bayn-broker-feed
   newName: registry.ide-newton.ts.net/lab/bayn-broker-feed
-  digest: sha256:0b87e157f7383fac3db9e523306faaf86c3fc6aec605297d16082c25d65b210e
+  digest: sha256:d3fae28244ab247518621ab4416c21063fbbd66df9a16673447be74a140e5d76
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:33d6a801e6d765d2c380cd5429879bc62c937a4c5167be3ca9260e94a34a84c4
+  digest: sha256:cefeb13f8a5df15a913cdbbfe81ce9c2566bd1014a3430687a7fc3d5c4ad013e
 - name: bayn-research
   newName: registry.ide-newton.ts.net/lab/bayn-research
-  digest: sha256:14c695bba7774fc7f746aee901f9be5442c392770dee5dc74c873ba641d66fc5
+  digest: sha256:a443bb8c955cdaf111f2dc28cab19f43915154c1254b70d6fff3bda3dddd89c8
