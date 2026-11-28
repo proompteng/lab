@@ -1,15 +1,13 @@
-import { spawn } from 'node:child_process'
+import childProcess from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { CodexRunner } from './runner'
 
-vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
-
-const spawnMock = vi.mocked(spawn)
+let spawnMock: MockInstance<typeof childProcess.spawn>
 
 type MockProcess = EventEmitter & {
   stdin: Writable
@@ -43,7 +41,11 @@ const createMockProcess = (lines: string[], exitCode = 0) => {
 
 describe('CodexRunner', () => {
   beforeEach(() => {
-    spawnMock.mockReset()
+    spawnMock = vi.spyOn(childProcess, 'spawn')
+  })
+
+  afterEach(() => {
+    spawnMock.mockRestore()
   })
 
   it('streams agent messages and captures session id', async () => {

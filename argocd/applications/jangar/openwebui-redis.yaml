@@ -21,7 +21,7 @@ spec:
     fsGroup: 1000
   redisExporter:
     enabled: true
-    image: oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836
+    image: oliver006/redis_exporter:v1.99.0-alpine@sha256:7c3fbd30b73ffa151654f092713ff7b39a98dcbf35266439c4e8f08ad93b005e
   storage:
     volumeClaimTemplate:
       spec:

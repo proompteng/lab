@@ -273,6 +273,33 @@ describe('ExecutionStore decisions', () => {
         ),
       ),
     ).toMatchObject({ _tag: 'SupersedeOrderVersion' })
+
+    const zeroTailTimestamp = '2026-07-22T15:30:00.500900000Z'
+    const zeroTailEvent = orderEvent(zeroTailTimestamp)
+    const zeroTailRetained = {
+      ...current,
+      content_hash: Result.getOrThrow(orderSourceContentHashResult(zeroTailEvent.order, zeroTailTimestamp)),
+      source_event_id: zeroTailEvent.sourceEventId,
+      broker_updated_at: zeroTailTimestamp,
+    }
+    const zeroTailTruncated = orderEvent(zeroTailTimestamp, 'order:broker-order-1:2026-07-22T15:30:00.500900Z')
+    expect(value(decideOrderVersion(zeroTailTruncated, zeroTailRetained))).toEqual({
+      _tag: 'RetainEquivalentOrderVersion',
+      receipt: {
+        eventId: zeroTailRetained.event_id,
+        sourceSequence: zeroTailRetained.source_sequence,
+        deduplicated: true,
+        superseded: true,
+      },
+    })
+    expect(
+      failure(
+        decideOrderVersion(
+          { ...zeroTailTruncated, order: { ...zeroTailTruncated.order, status: OrderStatus.Canceled } },
+          zeroTailRetained,
+        ),
+      ),
+    ).toMatchObject({ failure: 'conflict' })
   })
 
   test('derives source sequences without a hidden partial bigint conversion', () => {

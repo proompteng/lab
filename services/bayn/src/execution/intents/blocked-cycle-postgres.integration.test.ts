@@ -17,7 +17,7 @@ import shadowDecisionGenerationIndex from '../../../migrations/0104_shadow_decis
 import { canRearmUnusedCycle } from '../../cycle/runner/calendar-decisions'
 import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
-import { CycleState, CycleTerminalReason } from '../../cycle/model'
+import { CycleState, CycleTerminalReason, type ExecutionCalendarObservation } from '../../cycle/model'
 import {
   makeCycleDraft,
   makeCycleExecutionPolicy,
@@ -85,19 +85,21 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 
 const instant = (epochMillis: number): string => new Date(epochMillis).toISOString()
 
-const makeFixture = (openSession = false) => {
+const makeFixture = (openSession = false, calendarOverride?: ExecutionCalendarObservation) => {
   const now = Date.now()
   const session = new Date(now + (openSession ? 0 : 24 * 60 * 60_000))
   const executionSessionDate = session.toISOString().slice(0, 10)
-  const calendar = value(
-    makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
-      source: 'alpaca-v2-calendar',
-      date: executionSessionDate,
-      openAt: `${executionSessionDate}T${openSession ? '00:00:00.000' : '13:30:00.000'}Z`,
-      closeAt: `${executionSessionDate}T${openSession ? '23:59:59.999' : '20:00:00.000'}Z`,
-    }),
-  )
+  const calendar =
+    calendarOverride ??
+    value(
+      makeExecutionCalendarObservation({
+        schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
+        source: 'alpaca-v2-calendar',
+        date: executionSessionDate,
+        openAt: `${executionSessionDate}T${openSession ? '00:00:00.000' : '13:30:00.000'}Z`,
+        closeAt: `${executionSessionDate}T${openSession ? '23:59:59.999' : '20:00:00.000'}Z`,
+      }),
+    )
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
   const sessionPolicy = openSession
     ? value(
@@ -117,7 +119,7 @@ const makeFixture = (openSession = false) => {
       qualificationRunId: planHash,
       strategyProtocolHash: Result.getOrThrow(canonicalHashV1Result({ strategy: 'jev', version: 2 })),
       accountId,
-      executionSessionDate,
+      executionSessionDate: calendar.executionSessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
       executionCalendarSource: calendar.executionCalendarSource,
       executionCalendarHash: calendar.executionCalendarHash,
@@ -184,7 +186,10 @@ const seedExecutionAuthority = (
     | 'bayn.jev.protocol.v38'
     | 'bayn.jev.protocol.v39'
     | 'bayn.jev.protocol.v40'
-    | 'bayn.jev.protocol.v41' = defaultJevProtocolDocument.schemaVersion,
+    | 'bayn.jev.protocol.v41'
+    | 'bayn.jev.protocol.v42'
+    | 'bayn.jev.protocol.v43'
+    | 'bayn.jev.protocol.v44' = defaultJevProtocolDocument.schemaVersion,
 ) => {
   const observeGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' }))
   const executionGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
@@ -785,8 +790,23 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     'settles only zero-target NO_TRADE generations: decisionEvidence=$decisionEvidence terminalAfterRestriction=$terminalAfterRestriction',
     async ({ decisionEvidence, terminalAfterRestriction }) => {
       const now = Date.now()
+      // Anchor the test session to the scenario so the live database lease also works across UTC midnight.
+      const openAt = instant(now - (decisionEvidence === 'created-before-open' ? 13_000 : 20_000))
+      const session = value(
+        tradingWindow(continuousMarketHours, openAt, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
+      )
+      if (session === null) throw new Error('Expected continuous test session')
+      const calendar = value(
+        makeExecutionCalendarObservation({
+          schemaVersion: continuousMarketHours.schemaVersion,
+          source: continuousMarketHours.source,
+          date: session.date,
+          openAt: session.openAt,
+          closeAt: session.closeAt,
+        }),
+      )
       const fixture = {
-        ...makeFixture(decisionEvidence !== 'created-before-open'),
+        ...makeFixture(decisionEvidence !== 'created-before-open', calendar),
         acquiredAt: instant(now - 20_000),
         cycleActivatedAt: instant(now - 19_000),
         restrictedAt: instant(now - 16_000),

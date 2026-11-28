@@ -122,6 +122,7 @@ RUN apt-get update -o Acquire::Retries=3 && \
 
 COPY --from=build /out-tengri /usr/local/bin/tengri
 COPY --from=nanoagent /out/nanoagent /usr/share/tengri/nanoagent
+COPY --from=nanoagent-src /bootstrap-codex.sh /usr/share/tengri/bootstrap-codex
 COPY --from=firecracker-build /out-firecracker /usr/local/bin/firecracker
 COPY --from=firecracker-build /firecracker/LICENSE /firecracker/NOTICE /usr/share/doc/tengri/firecracker/
 COPY --from=firecracker-build /libseccomp/LICENSE /usr/share/doc/tengri/firecracker/libseccomp-LICENSE

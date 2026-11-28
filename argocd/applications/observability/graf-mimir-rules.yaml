@@ -646,6 +646,68 @@ data:
                 AgentRun step pods are active while agents-alloy has no available replicas.
                 Logs can be lost once Job pods terminate.
               runbook_url: docs/runbooks/agents-log-observability.md
+      - name: agents-fleet.rules
+        rules:
+          - alert: AgentsUntouchedBacklogHigh
+            expr: max by (namespace) (agents_agentrun_untouched_backlog{job="agents",service="agents-controllers"}) > 10
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents controller has a sustained untouched backlog
+              description: More than ten AgentRuns in {{ $labels.namespace }} have not been observed by the controller for five minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+          - alert: AgentsRunFailureRateHigh
+            expr: |
+              (
+                sum(increase(agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome="Failed"}[30m]))
+                / sum(increase(agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome=~"Succeeded|Failed"}[30m]))
+                > 0.20
+              )
+              and
+              (sum(increase(agents_agent_run_outcomes_total{job="agents",service="agents-controllers",outcome=~"Succeeded|Failed"}[30m])) >= 5)
+            for: 5m
+            labels:
+              severity: warning
+              namespace: agents
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents run failure rate is elevated
+              description: More than 20% of non-cancelled runs are failing, with at least five completions in the last 30 minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+          - alert: AgentsQuotaNearLimit
+            expr: max by (limit_id) (agents_runner_quota_used_percent{job="agents",service="agents-controllers"}) > 85
+            for: 5m
+            labels:
+              severity: warning
+              namespace: agents
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents runner weekly quota is near its limit
+              description: The observed weekly quota for {{ $labels.limit_id }} has exceeded 85% for five minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
+          - alert: AgentsControllerReconcileSlow
+            expr: |
+              histogram_quantile(0.95,
+                sum by (namespace, le) (rate(agents_reconcile_duration_ms_bucket{job="agents",service="agents-controllers",kind="agentrun"}[10m]))
+              ) > 5000
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: agents-controllers
+              notify: email
+            annotations:
+              summary: Agents reconcile latency is elevated
+              description: The 10-minute p95 for AgentRun reconciliation in {{ $labels.namespace }} has exceeded five seconds for five minutes.
+              runbook_url: docs/runbooks/agents-log-observability.md#fleet-triage
       - name: mimir-ingestion.rules
         rules:
           - alert: MimirSeriesCapacityHigh
@@ -922,6 +984,38 @@ data:
               description: |
                 Requested CPU on the arm64 runner node is above 90% of allocatable CPU for 15 minutes.
                 ARC arm64 runner scale-out may be blocked even if live CPU usage is low.
+      - name: flannel-cbr0-ipam.rules
+        interval: 30s
+        rules:
+          - alert: FlannelCbr0IPAMCapacityHigh
+            # Both target nodes have /23s: 512 addresses minus network, gateway and broadcast.
+            expr: |
+              max by (node) (kubelet_running_pods{job="kubelet",node=~"turin|talos-192-168-1-85"}) / 509 >= 0.8
+            for: 5m
+            labels:
+              severity: warning
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            annotations:
+              summary: Flannel cbr0 address pressure on {{ $labels.node }}
+              description: Running pod sandboxes are at least 80% of usable PodCIDR capacity. Check actual cbr0 leases for IPAM pressure.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
+          - alert: FlannelCbr0SandboxFailures
+            # Kubelet increments this counter in the FailedCreatePodSandBox event path.
+            expr: |
+              max by (node) (
+                increase(kubelet_started_pods_errors_total{job="kubelet",node=~"turin|talos-192-168-1-85"}[5m])
+              ) >= 5
+            labels:
+              severity: critical
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            annotations:
+              summary: Pod sandbox creation failures on {{ $labels.node }}
+              description: At least five sandbox creation failures are estimated in five minutes. Confirm IPAM exhaustion in FailedCreatePodSandBox events before touching leases.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
       - name: torghut-storage-baseline.rules
         interval: 30s
         rules:
@@ -3334,6 +3428,80 @@ data:
               summary: Bayn has no recent completed database backup
               description: No completed bayn-db backup observation is newer than thirty-six hours, or completion telemetry is missing. Check the daily ScheduledBackup, Barman plugin, object store, WAL archive and metric collection. A running or failed backup does not establish completion; a completed backup still requires an independent restore proof.
               runbook_url: docs/bayn/cnpg-backup-restore.md
+      - name: bayn-broker-feed.rules
+        interval: 15s
+        rules:
+          - alert: BaynBrokerFeedUnavailable
+            expr: |
+              max(dorvud_broker_feed_ready{job="bayn-broker-stream",namespace="bayn",service="bayn-broker-feed"}) < 1
+              or absent(dorvud_broker_feed_ready{job="bayn-broker-stream",namespace="bayn",service="bayn-broker-feed"})
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-broker-feed
+              notify: email
+            annotations:
+              summary: Bayn has no verified broker event connection
+              description: The single PAPER broker connection owner has been unready or missing for one minute. Order and fill lifecycle events are no longer reaching the durable source ledger; canonical snapshot recovery remains the safety path.
+              runbook_url: argocd/applications/bayn/README.md
+          - alert: BaynBrokerSourceProjectionFallbackHigh
+            expr: |
+              sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller",outcome="reconcile_required"}[15m])) >= 5
+              and
+              (
+                sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller",outcome="reconcile_required"}[15m]))
+                /
+                sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller"}[15m]))
+              ) > 0.25
+            for: 5m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn broker events are falling back to snapshot reconciliation
+              description: At least five source events and more than 25 percent of projected broker events required canonical reconciliation in fifteen minutes. Group bayn_broker_source_projection_total by reason before changing the fail-closed gate.
+              runbook_url: docs/bayn/durable-broker-event-architecture.md
+          - alert: BaynBrokerSourceProjectionLatencyHigh
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (
+                  rate(bayn_broker_source_projection_lag_seconds_bucket{namespace="bayn",service="bayn-execution-controller"}[10m])
+                )
+              ) > 1
+              and on()
+              sum(increase(bayn_broker_source_projection_lag_seconds_count{namespace="bayn",service="bayn-execution-controller"}[10m])) >= 10
+            for: 5m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn durable broker projection is slower than one second
+              description: Source-to-projection p95 exceeded one second with at least ten completed source events. Inspect the Restate projector queue and PostgreSQL writer fence; financial posting remains on canonical reconciliation.
+              runbook_url: docs/bayn/durable-broker-event-architecture.md
+          - alert: BaynBrokerSourceProjectionStalled
+            expr: |
+              (
+                max(bayn_broker_source_projection_pending{namespace="bayn",service="bayn-execution-controller"}) > 0
+                and
+                max(bayn_broker_source_projection_oldest_pending_seconds{namespace="bayn",service="bayn-execution-controller"}) > 5
+              )
+              or max(bayn_broker_source_projection_observation_success{namespace="bayn",service="bayn-execution-controller"}) < 1
+              or absent(bayn_broker_source_projection_observation_success{namespace="bayn",service="bayn-execution-controller"})
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn broker source projection is stalled
+              description: At least one durable broker source event from any retained revision has lacked a terminal projection receipt for more than five seconds, or PostgreSQL backlog observation itself is failing or absent. This covers a stalled first event and a retired-revision backlog, which current-revision completion histograms cannot observe.
+              runbook_url: docs/bayn/durable-broker-event-architecture.md
       - name: bayn-cycle-operations.rules
         interval: 15s
         rules:
@@ -3424,77 +3592,6 @@ data:
               summary: Bayn broker egress proxy is below its replica target
               description: Bayn has lost broker-proxy redundancy for two minutes while the Deployment still expects multiple replicas.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
-          - alert: BaynBrokerFeedUnavailable
-            expr: |
-              max(dorvud_broker_feed_ready{job="bayn-broker-stream",namespace="bayn",service="bayn-broker-feed"}) < 1
-              or absent(dorvud_broker_feed_ready{job="bayn-broker-stream",namespace="bayn",service="bayn-broker-feed"})
-            for: 1m
-            labels:
-              severity: critical
-              team: trading
-              service: bayn-broker-feed
-              notify: email
-            annotations:
-              summary: Bayn has no verified broker event connection
-              description: The single PAPER broker connection owner has been unready or missing for one minute. Order and fill lifecycle events are no longer reaching the durable source ledger; canonical snapshot recovery remains the safety path.
-              runbook_url: argocd/applications/bayn/README.md
-          - alert: BaynBrokerSourceProjectionFallbackHigh
-            expr: |
-              sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller",outcome="reconcile_required"}[15m])) >= 5
-              and
-              (
-                sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller",outcome="reconcile_required"}[15m]))
-                /
-                sum(increase(bayn_broker_source_projection_total{namespace="bayn",service="bayn-execution-controller"}[15m]))
-              ) > 0.25
-            for: 5m
-            labels:
-              severity: warning
-              team: trading
-              service: bayn-execution-controller
-              notify: email
-            annotations:
-              summary: Bayn broker events are falling back to snapshot reconciliation
-              description: At least five source events and more than 25 percent of projected broker events required canonical reconciliation in fifteen minutes. Group bayn_broker_source_projection_total by reason before changing the fail-closed gate.
-              runbook_url: docs/bayn/durable-broker-event-architecture.md
-          - alert: BaynBrokerSourceProjectionLatencyHigh
-            expr: |
-              histogram_quantile(0.95,
-                sum by (le) (
-                  rate(bayn_broker_source_projection_lag_seconds_bucket{namespace="bayn",service="bayn-execution-controller"}[10m])
-                )
-              ) > 1
-              and on()
-              sum(increase(bayn_broker_source_projection_lag_seconds_count{namespace="bayn",service="bayn-execution-controller"}[10m])) >= 10
-            for: 5m
-            labels:
-              severity: warning
-              team: trading
-              service: bayn-execution-controller
-              notify: email
-            annotations:
-              summary: Bayn durable broker projection is slower than one second
-              description: Source-to-projection p95 exceeded one second with at least ten completed source events. Inspect the Restate projector queue and PostgreSQL writer fence; financial posting remains on canonical reconciliation.
-              runbook_url: docs/bayn/durable-broker-event-architecture.md
-          - alert: BaynBrokerSourceProjectionStalled
-            expr: |
-              (
-                max(bayn_broker_source_projection_pending{namespace="bayn",service="bayn-execution-controller"}) > 0
-                and
-                max(bayn_broker_source_projection_oldest_pending_seconds{namespace="bayn",service="bayn-execution-controller"}) > 5
-              )
-              or max(bayn_broker_source_projection_observation_success{namespace="bayn",service="bayn-execution-controller"}) < 1
-              or absent(bayn_broker_source_projection_observation_success{namespace="bayn",service="bayn-execution-controller"})
-            for: 1m
-            labels:
-              severity: critical
-              team: trading
-              service: bayn-execution-controller
-              notify: email
-            annotations:
-              summary: Bayn broker source projection is stalled
-              description: At least one durable broker source event from any retained revision has lacked a terminal projection receipt for more than five seconds, or PostgreSQL backlog observation itself is failing or absent. This covers a stalled first event and a retired-revision backlog, which current-revision completion histograms cannot observe.
-              runbook_url: docs/bayn/durable-broker-event-architecture.md
           # Count updated workers only, never the retained ReplicaSet pool.
           # Missing/stale or inconsistent generations are UNKNOWN, not zero.
           - record: bayn:execution_worker_observed_ready_replicas
@@ -3695,6 +3792,14 @@ data:
                   )
                 ) == 0
               )
+              or on(job, namespace, service)
+              max by (job, namespace, service) (
+                (bayn_capital_activation_state{job="bayn",namespace="bayn",service="bayn",state="realized"} == 1)
+                and on(job, namespace, service, instance)
+                (time() >= bayn_execution_missing_cycle_alert_start_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+                and on(job, namespace, service, instance)
+                (time() < bayn_execution_missing_cycle_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+              )
             for: 1m
             keep_firing_for: 5m
             labels:
@@ -3704,7 +3809,7 @@ data:
               notify: email
             annotations:
               summary: Bayn execution session is not ready in its submission window
-              description: A realized unbound execution session is within ten minutes of submission open or inside its submission window, but its durable prerequisites or evaluation path are unavailable. Input-window failures and decision lag use their dedicated alerts.
+              description: A realized execution session has unavailable prerequisites, missed its first cycle, or cannot evaluate its active cycle. Input-window failures and decision lag use their dedicated alerts.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynInputWindowUnavailable
             expr: |
@@ -3948,6 +4053,120 @@ data:
                 Firing is retained for 5 minutes after the condition clears; notification
                 time is not incident onset or duration. Follow the runbook to verify recovery.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
+      - name: bayn-multi-sleeve.rules
+        interval: 30s
+        rules:
+          # The outer cycle pass can succeed after recording a failed preflight or a close wait.
+          # Inspect the inner stages too, but don't add nested failures together in the alert.
+          - record: bayn:execution_controller_stage_errors:increase3m
+            expr: |
+              sum by (namespace, service, stage) (
+                increase(bayn_operation_duration_seconds_count{
+                  namespace="bayn",service="bayn-execution-controller",outcome=~"failed|interrupted",
+                  stage=~"bayn[.]execution[.]cycle-pass|bayn[.]reconciliation[.](broker-snapshot|persist)"
+                }[3m])
+                or
+                increase(bayn_operation_duration_seconds_count{
+                  namespace="bayn",service="bayn-execution-controller",outcome=~"failed|interrupted",
+                  stage="bayn.market-data.snapshot",operation="LIQUIDATION"
+                }[3m])
+              )
+          - alert: BaynExecutionControllerErrorBurst
+            expr: max by (namespace, service) (bayn:execution_controller_stage_errors:increase3m) >= 4
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              notify: email
+            annotations:
+              summary: Bayn execution controller is repeatedly failing a stage
+              description: A cycle pass, broker reconciliation stage, or liquidation snapshot read recorded an estimated four or more failures or interruptions per three minutes for one minute. Compare the stage rates, controller observations and corresponding worker logs before intervening.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+          - record: bayn:daily_cronjob_last_success_timestamp_seconds
+            expr: |
+              max by (namespace, cronjob) (
+                kube_cronjob_status_last_successful_time{job="kube-state-metrics",namespace="bayn",cronjob=~"bayn-macro-daily-sleeves|bayn-daily-scorecard"}
+              )
+              or on (namespace, cronjob)
+              0 * max by (namespace, cronjob) (
+                kube_cronjob_created{job="kube-state-metrics",namespace="bayn",cronjob=~"bayn-macro-daily-sleeves|bayn-daily-scorecard"}
+              )
+          - record: bayn:daily_cronjob_unrecovered_failure_timestamp_seconds
+            expr: |
+              max by (namespace, cronjob) (
+                (
+                  max by (namespace, job_name) (kube_job_created{job="kube-state-metrics",namespace="bayn"})
+                  and on (namespace, job_name) (kube_job_status_failed{job="kube-state-metrics",namespace="bayn"} > 0)
+                  and on (namespace, job_name) (kube_job_failed{job="kube-state-metrics",namespace="bayn",condition="true"} == 1)
+                )
+                * on (namespace, job_name) group_left (cronjob)
+                max by (namespace, job_name, cronjob) (
+                  label_replace(
+                    kube_job_owner{job="kube-state-metrics",namespace="bayn",owner_kind="CronJob",owner_is_controller="true",owner_name=~"bayn-macro-daily-sleeves|bayn-daily-scorecard"},
+                    "cronjob", "$1", "owner_name", "(.+)"
+                  )
+                )
+              )
+              > on (namespace, cronjob) bayn:daily_cronjob_last_success_timestamp_seconds
+          - alert: BaynDailyCronJobFailed
+            expr: bayn:daily_cronjob_unrecovered_failure_timestamp_seconds
+            for: 1m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn CronJob {{ $labels.cronjob }} has an unrecovered failed Job
+              description: An owned Job reached terminal failure and the CronJob has no successful completion at or after that Job was created. Inspect the Job condition and pod logs. Failed pods in an active retry do not count.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+          - alert: BaynDailyCronJobStale
+            expr: |
+              (
+                (
+                  max by (namespace, cronjob) (
+                    kube_cronjob_status_last_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob=~"bayn-macro-daily-sleeves|bayn-daily-scorecard"}
+                  ) > on (namespace, cronjob) bayn:daily_cronjob_last_success_timestamp_seconds
+                ) < time() - 7200
+                or
+                max by (namespace, cronjob) (
+                  kube_cronjob_next_schedule_time{job="kube-state-metrics",namespace="bayn",cronjob=~"bayn-macro-daily-sleeves|bayn-daily-scorecard"}
+                ) < time() - 7200
+              )
+              unless on (namespace, cronjob)
+              (
+                (kube_cronjob_spec_suspend{job="kube-state-metrics",namespace="bayn"} == 1)
+                or bayn:daily_cronjob_unrecovered_failure_timestamp_seconds
+              )
+            for: 5m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn CronJob {{ $labels.cronjob }} missed its completion budget
+              description: An enabled CronJob is more than two hours past an expected start without being scheduled, or more than two hours past its last scheduled start without a successful completion. Inspect the CronJob schedule, events and Jobs. A separate alert covers observed terminal Job failures.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
+          - alert: AutoOntologyDeploymentUnavailable
+            expr: |
+              max by (namespace, deployment) (
+                kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="auto-ontology"}
+              ) < on (namespace, deployment)
+              max by (namespace, deployment) (
+                kube_deployment_spec_replicas{job="kube-state-metrics",namespace="auto-ontology"} > 0
+              )
+            for: 5m
+            labels:
+              severity: warning
+              advisory: "true"
+              team: platform
+              service: auto-ontology
+            annotations:
+              summary: Auto Ontology deployment {{ $labels.deployment }} is below its replica target
+              description: Available replicas have remained below the desired count for five minutes. This advisory signals degraded collective knowledge availability, not a trading-critical outage or execution gate.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-multi-sleeve-operations
       - name: kafka-critical-service.rules
         rules:
           - alert: KafkaBrokerUnavailable

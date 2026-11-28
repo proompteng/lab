@@ -3,14 +3,15 @@ kind: Deployment
 metadata:
   name: bayn-broker-feed
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    # Activity ingestion requires the owner established by the activation hook in wave 0.
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app.kubernetes.io/name: bayn-broker-feed
     app.kubernetes.io/part-of: bayn
 spec:
   replicas: 1
   revisionHistoryLimit: 2
-  # One verified account socket; reconnect emits a session boundary for gap repair.
+  # One verified process owns trade_updates plus finite-prefix and long-lived Activity SSE connections.
   strategy:
     type: Recreate
   selector:

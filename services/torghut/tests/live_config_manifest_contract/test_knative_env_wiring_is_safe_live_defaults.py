@@ -367,16 +367,21 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         config = _load_yaml_mapping("argocd/applications/torghut/ws/configmap.yaml")
         data = cast(Mapping[str, object], config["data"])
         invalid_configs = (
-            ({"ALPACA_MARKET_DATA_BARS_SYMBOLS": data["SYMBOLS"]}, "sixteen-symbol"),
             (
                 {
-                    "ALPACA_MARKET_DATA_QUOTES_SYMBOLS": "AAPL,AMZN,GOOGL,IWM,NVDA,QQQ,SMH,SPY"
+                    "ALPACA_MARKET_DATA_BARS_SYMBOLS": str(data["SYMBOLS"]).replace(
+                        "TSLA,", ""
+                    )
                 },
+                "twenty-two-symbol",
+            ),
+            (
+                {"ALPACA_MARKET_DATA_QUOTES_SYMBOLS": "AAPL,AMZN,IWM,NVDA,SPY"},
                 "WebSocket quotes",
             ),
             (
-                {"ALPACA_LATEST_BAR_SYMBOLS": "GOOGL,INTC,META,MSFT,NFLX"},
-                "six-symbol source extension",
+                {"ALPACA_LATEST_BAR_SYMBOLS": "GOOGL"},
+                "completed REST bars must not overlap",
             ),
             (
                 {
@@ -387,16 +392,15 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                 "remaining quotes symbols",
             ),
             (
-                {"SYMBOLS": data["ALPACA_MARKET_DATA_BARS_SYMBOLS"]},
-                "sorted WS and completed REST bar union",
+                {"ALPACA_MARKET_DATA_TRADES_SYMBOLS": "AAPL,AMZN,SPY"},
+                "WebSocket trades",
             ),
             (
                 {
                     "SYMBOLS": f"{data['SYMBOLS']},UNREQUESTED",
                     "SYMBOLS_ALLOWLIST": f"{data['SYMBOLS_ALLOWLIST']},UNREQUESTED",
-                    "ALPACA_LATEST_BAR_SYMBOLS": f"{data['ALPACA_LATEST_BAR_SYMBOLS']},UNREQUESTED",
                 },
-                "six-symbol source extension",
+                "shared source symbols must exactly match",
             ),
             (
                 {"ALPACA_MARKET_DATA_CHANNELS": "trades,quotes,bars,updatedBars"},

@@ -1,3 +1,23 @@
+import auditReaderGrants from '../../migrations/0226_audit_reader_grants'
+import alphaBaselinePreparation from '../../migrations/0225_alpha_baseline_preparation'
+import strategyBoundQualification from '../../migrations/0224_strategy_bound_qualification'
+import intradayAlphaV1PaperSettlement from '../../migrations/0223_intraday_alpha_v1_paper_settlement'
+import intradayAlphaV2Admission from '../../migrations/0222_intraday_alpha_v2_admission'
+import v44PaperSettlement from '../../migrations/0221_v44_paper_settlement'
+import intradayAlphaAdmission from '../../migrations/0220_intraday_alpha_admission'
+import positiveNetTargetAdmission from '../../migrations/0219_positive_net_target_admission'
+import v43PaperSettlement from '../../migrations/0218_v43_paper_settlement'
+import stopFloorRewardRiskAdmission from '../../migrations/0217_stop_floor_reward_risk_admission'
+import stopFloorRewardRiskObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
+import executionExpectedSession from '../../migrations/0215_execution_expected_session'
+import singleControllerObservation from '../../migrations/0214_single_controller_observation'
+import riskSymmetryAdmission from '../../migrations/0213_risk_symmetry_admission'
+import riskSymmetryObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutover'
+import durableBrokerActivities from '../../migrations/0211_durable_broker_activities'
+import pairedQualificationAdmission from '../../migrations/0210_paired_qualification_admission'
+import qualificationAuthorityWitness from '../../migrations/0209_qualification_authority_witness'
+import reconciliationSourceSnapshots from '../../migrations/0208_reconciliation_source_snapshots'
+import nativeQualificationCalendar from '../../migrations/0207_native_qualification_calendar'
 import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
 import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
 import protectionClosePlans from '../../migrations/0204_protection_close_plans'
@@ -207,6 +227,26 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '224_strategy_bound_qualification': strategyBoundQualification,
+  '226_audit_reader_grants': auditReaderGrants,
+  '225_alpha_baseline_preparation': alphaBaselinePreparation,
+  '223_intraday_alpha_v1_paper_settlement': intradayAlphaV1PaperSettlement,
+  '222_intraday_alpha_v2_admission': intradayAlphaV2Admission,
+  '221_v44_paper_settlement': v44PaperSettlement,
+  '220_intraday_alpha_admission': intradayAlphaAdmission,
+  '219_positive_net_target_admission': positiveNetTargetAdmission,
+  '218_v43_paper_settlement': v43PaperSettlement,
+  '217_stop_floor_reward_risk_admission': stopFloorRewardRiskAdmission,
+  '216_stop_floor_reward_risk_observe_cutover': stopFloorRewardRiskObserveCutover,
+  '215_execution_expected_session': executionExpectedSession,
+  '214_single_controller_observation': singleControllerObservation,
+  '213_risk_symmetry_admission': riskSymmetryAdmission,
+  '212_risk_symmetry_observe_cutover': riskSymmetryObserveCutover,
+  '211_durable_broker_activities': durableBrokerActivities,
+  '210_paired_qualification_admission': pairedQualificationAdmission,
+  '209_qualification_authority_witness': qualificationAuthorityWitness,
+  '208_reconciliation_source_snapshots': reconciliationSourceSnapshots,
+  '207_native_qualification_calendar': nativeQualificationCalendar,
   '206_durable_broker_source_events': durableBrokerSourceEvents,
   '205_inference_source_seals': inferenceSourceSeals,
   '204_protection_close_plans': protectionClosePlans,

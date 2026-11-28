@@ -1,8 +1,9 @@
+import { AuthenticationV1Api, type KubeConfig } from '@kubernetes/client-node'
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESOURCE_MAP, type KubernetesClient } from '../server/kube-types'
 
-import { createLinearMcpIdentityVerifier, type TokenReviewIdentity } from './identity'
+import { createKubernetesTokenReviewer, createLinearMcpIdentityVerifier, type TokenReviewIdentity } from './identity'
 
 const ISSUE_UUID = '2174add1-f7c8-44e3-bbf3-2d60b5ea8bc9'
 
@@ -182,6 +183,78 @@ describe('Linear MCP workload identity', () => {
     await expect(verifier.verify('bound-token')).rejects.toMatchObject({
       message: 'AgentRun Linear source identity is incomplete',
     })
+  })
+})
+
+describe('createKubernetesTokenReviewer', () => {
+  it('uses the Bun Kubernetes transport when Bun transport is enabled', async () => {
+    const createTokenReview = vi.fn(async () => ({
+      status: {
+        authenticated: true,
+        audiences: ['agents.proompteng.ai/auto-ontology-mcp'],
+        user: {
+          username: 'system:serviceaccount:agents:codex-auto-ontology-runner',
+          groups: ['system:serviceaccounts:agents'],
+          extra: { 'authentication.kubernetes.io/pod-name': ['run-pod'] },
+        },
+      },
+    }))
+    const makeApiClient = vi.fn()
+    const makeBunClient = vi.fn(() => ({ createTokenReview }) as unknown as AuthenticationV1Api)
+    const kubeConfig = { makeApiClient } as unknown as KubeConfig
+
+    const reviewer = createKubernetesTokenReviewer({
+      kubeConfig,
+      useBunTransport: true,
+      makeBunClient,
+    })
+
+    await expect(reviewer('projected-token', 'agents.proompteng.ai/auto-ontology-mcp')).resolves.toEqual({
+      authenticated: true,
+      audiences: ['agents.proompteng.ai/auto-ontology-mcp'],
+      username: 'system:serviceaccount:agents:codex-auto-ontology-runner',
+      groups: ['system:serviceaccounts:agents'],
+      extra: { 'authentication.kubernetes.io/pod-name': ['run-pod'] },
+      error: null,
+    })
+    expect(makeBunClient).toHaveBeenCalledWith(kubeConfig, AuthenticationV1Api)
+    expect(makeApiClient).not.toHaveBeenCalled()
+    expect(createTokenReview).toHaveBeenCalledWith({
+      body: {
+        apiVersion: 'authentication.k8s.io/v1',
+        kind: 'TokenReview',
+        spec: {
+          token: 'projected-token',
+          audiences: ['agents.proompteng.ai/auto-ontology-mcp'],
+        },
+      },
+    })
+  })
+
+  it('uses KubeConfig.makeApiClient when Bun transport is disabled', async () => {
+    const createTokenReview = vi.fn(async () => ({
+      status: { authenticated: false, error: 'invalid bearer token' },
+    }))
+    const makeApiClient = vi.fn(() => ({ createTokenReview }))
+    const makeBunClient = vi.fn()
+    const kubeConfig = { makeApiClient } as unknown as KubeConfig
+
+    const reviewer = createKubernetesTokenReviewer({
+      kubeConfig,
+      useBunTransport: false,
+      makeBunClient,
+    })
+
+    await expect(reviewer('bad-token', 'agents.proompteng.ai/auto-ontology-mcp')).resolves.toEqual({
+      authenticated: false,
+      audiences: [],
+      username: null,
+      groups: [],
+      extra: {},
+      error: 'invalid bearer token',
+    })
+    expect(makeApiClient).toHaveBeenCalledWith(AuthenticationV1Api)
+    expect(makeBunClient).not.toHaveBeenCalled()
   })
 })
 

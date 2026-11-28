@@ -16,7 +16,7 @@ const yaml = (filename: string) =>
         uses?: string
         needs?: string[]
         secrets?: string
-        steps?: { run?: string; env?: Record<string, string> }[]
+        steps?: { if?: string; run?: string; env?: Record<string, string> }[]
       }
     >
   }
@@ -127,6 +127,48 @@ test('queued service validation joins the required gate without duplicate or mut
   }
 })
 
+test('the PR gate requires all Jangar jobs when the runtime inputs are affected', () => {
+  const router = yaml('pull-request.yml')
+  expect(router.jobs.jangar).toMatchObject({
+    needs: 'plan',
+    if: "github.event_name == 'pull_request' && needs.plan.result == 'success' && needs.plan.outputs.jangar_affected == 'true'",
+    uses: './.github/workflows/jangar-ci.yml',
+  })
+  const jangar = yaml('jangar-ci.yml')
+  expect(Object.keys(jangar.on)).toEqual(['workflow_call'])
+  expect(Object.keys(jangar.jobs).sort()).toEqual([
+    'atlas-search-integration',
+    'dependency-closure',
+    'lint-and-typecheck',
+  ])
+  const gate = router.jobs['ci-pr']
+  expect(gate.needs).toContain('jangar')
+  const step = gate.steps?.find(({ env }) => env?.JANGAR_RESULT !== undefined)
+  if (!step?.run) throw new Error('Jangar result enforcement is missing')
+  expect(step.if).toBe("github.event_name == 'pull_request'")
+  expect(step.env?.JANGAR_AFFECTED).toBe('${{ needs.plan.outputs.jangar_affected }}')
+  expect(step.env?.JANGAR_RESULT).toBe('${{ needs.jangar.result }}')
+  const command = step.run
+  const run = (affected: string, result: string) =>
+    Bun.spawnSync(['bash', '-c', command], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        JANGAR_AFFECTED: affected,
+        JANGAR_RESULT: result,
+      },
+    })
+  expect(run('true', 'success').exitCode).toBe(0)
+  expect(run('false', 'skipped').exitCode).toBe(0)
+  const missingDecision = run('', 'skipped')
+  expect(missingDecision.exitCode).toBe(1)
+  expect(missingDecision.stderr.toString()).toContain('Missing Jangar impact decision')
+  for (const result of ['failure', 'cancelled', 'skipped']) {
+    const rejected = run('true', result)
+    expect(rejected.exitCode).toBe(1)
+    expect(rejected.stderr.toString()).toContain('Jangar validation failed:')
+  }
+})
+
 describe('root script ownership', () => {
   test.each([
     ['argocd/applications/tengri/network-policies.yaml', ['kube-router']],
@@ -202,10 +244,10 @@ describe('impact router', () => {
     ).toThrow('Full CI plan has no validation targets')
   })
 
-  test('routes a service change to its owner without image validation', () => {
+  test('Jangar source still validates the architecture inventory', () => {
     const plan = selectImpactPlan(['services/jangar/src/server.ts'], map)
-    expect(plan.validationTargets).toEqual(['planner'])
-    expect(plan.delegatedWorkflows).toEqual(['jangar-ci'])
+    expect(plan.validationTargets).toEqual(['jangar-inventory'])
+    expect(plan.delegatedWorkflows).toEqual([])
   })
 
   test('routes Olden changes to app validation', () => {
@@ -246,16 +288,20 @@ describe('impact router', () => {
 
   test('routes only inventory-owning Agents sources through Jangar inventory validation', () => {
     const sourcePlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.ts'], map)
-    expect(sourcePlan.validationTargets).toEqual(['planner'])
-    expect(sourcePlan.delegatedWorkflows).toEqual(['agents-ci', 'jangar-ci'])
+    expect(sourcePlan.validationTargets).toEqual(['jangar-inventory'])
+    expect(sourcePlan.delegatedWorkflows).toEqual(['agents-ci'])
 
     const uiPlan = selectImpactPlan(['services/agents/src/app-routes/primitives.tsx'], map)
-    expect(uiPlan.validationTargets).toEqual(['planner'])
-    expect(uiPlan.delegatedWorkflows).toEqual(['agents-ci', 'jangar-ci'])
+    expect(uiPlan.validationTargets).toEqual(['jangar-inventory'])
+    expect(uiPlan.delegatedWorkflows).toEqual(['agents-ci'])
 
     const testPlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.test.ts'], map)
     expect(testPlan.validationTargets).toEqual(['planner'])
     expect(testPlan.delegatedWorkflows).toEqual(['agents-ci'])
+
+    expect(selectImpactPlan(['docs/jangar/architecture-inventory.md'], map).validationTargets).toEqual([
+      'jangar-inventory',
+    ])
   })
 
   test('routes Agents chart changes to published-image smoke', () => {
@@ -276,16 +322,12 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes runtime package dependencies through their package and service consumers', () => {
+  test('routes runtime package dependencies through their owning delegated workflows', () => {
     expect(selectImpactPlan(['packages/otel/src/api.ts'], map).delegatedWorkflows).toEqual(['agents-ci', 'otel'])
     expect(selectImpactPlan(['packages/temporal-bun-sdk/src/index.ts'], map).delegatedWorkflows).toEqual([
       'agents-ci',
-      'jangar-ci',
       'temporal-bun-sdk',
     ])
-    for (const path of ['packages/temporal-bun-sdk/tests/client.test.ts', 'packages/temporal-bun-sdk/README.md']) {
-      expect(selectImpactPlan([path], map).delegatedWorkflows).not.toContain('jangar-ci')
-    }
   })
 
   test('does not fan agentctl changes into the broader agents workflow', () => {
@@ -300,15 +342,15 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
-  test('routes Nix lock changes through compatibility and Agents image validation', () => {
+  test('routes Nix lock changes through compatibility, manifest, and Agents image validation', () => {
     const plan = selectImpactPlan(['flake.lock'], map)
-    expect(plan.validationTargets).toEqual(['shared-compat'])
+    expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes per-service Nix image changes to compatibility validation', () => {
+  test('routes per-service Nix image changes to compatibility and manifest validation', () => {
     const plan = selectImpactPlan(['nix/images/jangar.nix'], map)
-    expect(plan.validationTargets).toEqual(['shared-compat'])
+    expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
@@ -321,7 +363,7 @@ describe('impact router', () => {
       'nix/packages.nix',
     ]) {
       const plan = selectImpactPlan([path], map)
-      expect(plan.validationTargets).toEqual(['shared-compat'])
+      expect(plan.validationTargets).toEqual(['kubeconform', 'shared-compat'])
       expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
     }
   })
@@ -340,6 +382,12 @@ describe('impact router', () => {
   test('routes Kubernetes YAML to schema validation', () => {
     const plan = selectImpactPlan(['kubernetes/base/deployment.yaml'], map)
     expect(plan.validationTargets).toEqual(['kubeconform'])
+  })
+
+  test('validates standalone kubeconform workflow changes through the PR router', () => {
+    expect(Object.keys(yaml('kubeconform.yml').on)).toEqual(['push'])
+    const plan = selectImpactPlan(['.github/workflows/kubeconform.yml'], map)
+    expect(plan.validationTargets).toContain('kubeconform')
   })
 
   test('routes the Bayn rendered secret-mode regression through schema validation', () => {
@@ -371,8 +419,8 @@ describe('impact router', () => {
 
   test('keeps mixed service changes deterministic', () => {
     const plan = selectImpactPlan(['services/jangar/src/server.ts', 'services/torghut/src/main.py'], map)
-    expect(plan.validationTargets).toEqual(['planner'])
-    expect(plan.delegatedWorkflows).toEqual(['jangar-ci', 'torghut-ci'])
+    expect(plan.validationTargets).toEqual(['jangar-inventory'])
+    expect(plan.delegatedWorkflows).toEqual(['torghut-ci'])
   })
 
   test('routes workflow-only changes to actionlint', () => {

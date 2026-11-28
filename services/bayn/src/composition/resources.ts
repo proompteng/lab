@@ -6,6 +6,7 @@ import { ValkeyCacheLive } from '../valkey-cache'
 import { BrokerObservationsLive } from '../db/broker-observations'
 import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
+import { NativeAlphaBaselinePreparationLive } from '../db/alpha-baseline-preparation-postgres'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevInferenceWorkStoreLive } from '../db/jev-inference-work-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
@@ -16,8 +17,10 @@ import { JevFailure } from '../jev/contract'
 import { JevHttpClientLive } from '../jev/http'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 
+import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
-import { Effect, Layer, type Context } from 'effect'
+import { Effect, Layer, Redacted, type Context } from 'effect'
+import { ClickhouseTrailingBaselineLive } from '../market-data/intraday/trailing-baseline'
 
 import type { ApplicationIdentity, ApplicationPlan } from '../app'
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
@@ -37,7 +40,6 @@ import { JournalLive } from '../ledger'
 import { IntradayMarketData } from '../market-data/intraday/model'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { makeThreadedKafkaProjection, projectionWorkerOptions } from '../market-data/streaming/worker'
-import type { DatabaseError } from '../db/database-error'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { operationalError, type OperationalError } from '../errors'
 
@@ -86,7 +88,7 @@ const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
 
 export const WorkerMarketProjectionLive = (
   plan: ApplicationIdentity,
-): Layer.Layer<KafkaMarketProjection, DatabaseError | OperationalError> => {
+): Layer.Layer<KafkaMarketProjection, OperationalError> => {
   const kafka = plan.config.kafka
   return kafka === undefined
     ? Layer.effect(
@@ -102,13 +104,7 @@ export const WorkerMarketProjectionLive = (
     : Layer.effect(
         KafkaMarketProjection,
         makeThreadedKafkaProjection(
-          projectionWorkerOptions(
-            kafka,
-            plan.config,
-            workerStreamingUniverse(plan),
-            plan.config.build,
-            plan.config.alpaca.identity.identityHash,
-          ),
+          projectionWorkerOptions(kafka, workerStreamingUniverse(plan), plan.config.build.sourceRevision),
         ).pipe(
           Effect.mapError((cause) =>
             operationalError({
@@ -119,7 +115,7 @@ export const WorkerMarketProjectionLive = (
             }),
           ),
         ),
-      ).pipe(Layer.provide(PostgresMigrationsLive(plan.config).pipe(Layer.provide(ApplicationPlatformLive))))
+      )
 }
 
 const WorkerMarketDataLive = (
@@ -206,10 +202,28 @@ export const AutonomousRuntimeResourcesLive = (
     ExecutionCycleClosureStorePostgresLive,
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(WriterFenceLive), Layer.provideMerge(JournalLive(plan.config)))
+  const trailingBaseline = ClickhouseTrailingBaselineLive.pipe(
+    Layer.provide(
+      ClickhouseClient.layer({
+        url: plan.config.clickhouse.url,
+        username: plan.config.clickhouse.username,
+        password: Redacted.value(plan.config.clickhouse.password),
+        database: 'signal',
+        application: 'bayn-trailing-baseline',
+        request_timeout: 15_000,
+      }),
+    ),
+  )
   return Layer.mergeAll(
     DecisionConstructionLive,
     BrokerSessionResourceLive(plan.config),
     executionPersistence,
+    trailingBaseline,
+    NativeAlphaBaselinePreparationLive({
+      sourceRevision: plan.config.build.sourceRevision,
+      imageRepository: plan.config.build.imageRepository,
+      imageDigest: plan.config.build.imageDigest,
+    }).pipe(Layer.provide(trailingBaseline)),
     WriterFencedCycleStoreLive.pipe(Layer.provide(executionPersistence)),
   ).pipe(
     Layer.provideMerge(ValkeyCacheLive),

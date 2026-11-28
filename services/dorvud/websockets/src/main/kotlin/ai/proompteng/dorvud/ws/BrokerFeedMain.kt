@@ -16,10 +16,12 @@ import io.ktor.server.routing.routing
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mu.KotlinLogging
 import java.util.concurrent.atomic.AtomicInteger
@@ -46,9 +48,16 @@ object BrokerFeedMain {
 }
 
 internal suspend fun runVerifiedBrokerFeed(settings: BrokerFeedSettings) {
-  val ready = AtomicInteger()
-  Metrics.registry.gauge("dorvud_broker_feed_ready", ready) { it.get().toDouble() }
+  val tradeReady = AtomicInteger()
+  val activityReady = AtomicInteger()
+  val readiness = listOf(tradeReady, activityReady)
+  Metrics.registry.gauge("dorvud_broker_feed_ready", readiness) {
+    if (it.all { state -> state.get() == 1 }) 1.0 else 0.0
+  }
+  Metrics.registry.gauge("dorvud_broker_trade_updates_ready", tradeReady) { it.get().toDouble() }
+  Metrics.registry.gauge("dorvud_broker_activities_ready", activityReady) { it.get().toDouble() }
   val publications = Metrics.registry.counter("dorvud_broker_feed_publications")
+  val activityHeartbeats = Metrics.registry.counter("dorvud_broker_activity_heartbeats")
   val failures = Metrics.registry.counter("dorvud_broker_feed_session_failures")
   val brokerClient =
     HttpClient(ClientCIO) {
@@ -76,7 +85,7 @@ internal suspend fun runVerifiedBrokerFeed(settings: BrokerFeedSettings) {
         routing {
           get("/healthz") { call.respondText("ok") }
           get("/readyz") {
-            val current = ready.get() == 1
+            val current = readiness.all { it.get() == 1 }
             call.respondText(
               if (current) "ready" else "not_ready",
               status = if (current) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
@@ -87,32 +96,65 @@ internal suspend fun runVerifiedBrokerFeed(settings: BrokerFeedSettings) {
           }
         }
       }
-    var attempt = 0
     val backoff = ReconnectBackoff(1000, 30_000)
-    val feed =
-      VerifiedBrokerFeed(settings.connection, brokerClient, publish = { key, eventId, notification ->
-        publisher.publish(key, eventId, notification)
+    val tradeFeed =
+      VerifiedBrokerFeed(settings.connection, brokerClient, publish = { key, delivery, notification ->
+        publisher.publish(key, delivery, notification)
         publications.increment()
-        ready.set(1)
-        attempt = 0
-      })
-    try {
-      health.start(wait = false)
+      }, onReady = { tradeReady.set(1) })
+    val activityFeed =
+      VerifiedBrokerActivityFeed(
+        settings.connection,
+        brokerClient,
+        cursor = publisher::activityCursor,
+        publish = { key, delivery, activity ->
+          val receipt = publisher.publishActivity(key, delivery, activity)
+          publications.increment()
+          receipt
+        },
+        completeCatchup = { key, delivery, activity ->
+          val receipt = publisher.completeActivityCatchup(key, delivery, activity)
+          activityHeartbeats.increment()
+          receipt
+        },
+        heartbeat = { key, delivery, activity ->
+          val receipt = publisher.publishActivityHeartbeat(key, delivery, activity)
+          activityHeartbeats.increment()
+          receipt
+        },
+        onReady = { activityReady.set(1) },
+      )
+
+    suspend fun reconnect(
+      stream: String,
+      streamReady: AtomicInteger,
+      collect: suspend () -> Unit,
+    ) {
+      var attempt = 0
       while (currentCoroutineContext().isActive) {
         try {
-          feed.collect()
+          collect()
         } catch (failure: Exception) {
           if (failure is CancellationException) throw failure
           failures.increment()
-          brokerFeedLogger.warn { "Verified broker feed session ended failure_class=${failure.javaClass.simpleName}" }
-        } finally {
-          ready.set(0)
+          brokerFeedLogger.warn {
+            "Verified broker feed session ended stream=$stream failure_class=${failure.javaClass.simpleName}"
+          }
         }
-        attempt = (attempt + 1).coerceAtMost(16)
+        val reachedReady = streamReady.getAndSet(0) == 1
+        attempt = if (reachedReady) 1 else (attempt + 1).coerceAtMost(16)
         delay(backoff.nextDelay(attempt))
       }
+    }
+    try {
+      health.start(wait = false)
+      coroutineScope {
+        launch { reconnect("trade_updates", tradeReady, tradeFeed::collect) }
+        launch { reconnect("activities", activityReady, activityFeed::collect) }
+      }
     } finally {
-      ready.set(0)
+      tradeReady.set(0)
+      activityReady.set(0)
       health.stop(0, 1000)
     }
   } finally {

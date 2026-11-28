@@ -253,7 +253,17 @@ export const UncappedTurnoverRiskPolicySchema = Schema.Struct({
   maxDailyTradedNotionalMicros: Schema.Null,
 })
 
-export const PolicySchema = Schema.Union([ExecutionRiskPolicySchema, UncappedTurnoverRiskPolicySchema])
+export const MultiSleevePaperRiskPolicySchema = Schema.Struct({
+  ...ExecutionRiskPolicySchema.fields,
+  schemaVersion: Schema.Literal('bayn.execution-risk-policy.v6'),
+  maxDailyTradedNotionalMicros: Schema.Null,
+})
+
+export const PolicySchema = Schema.Union([
+  ExecutionRiskPolicySchema,
+  UncappedTurnoverRiskPolicySchema,
+  MultiSleevePaperRiskPolicySchema,
+])
 export type Policy = typeof PolicySchema.Type
 
 export const EntryQuoteFreshnessSchema = Schema.Struct({

@@ -26,7 +26,9 @@ use super::{Claim, FIRECRACKER_VERSION, Slot, SlotConfig, SlotIdentity, SlotStat
 pub(super) const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 pub(super) const FENCING_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const PACKAGED_GUEST_AGENT: &str = "/usr/share/tengri/nanoagent";
+pub(super) const PACKAGED_CODEX_BOOTSTRAP: &str = "/usr/share/tengri/bootstrap-codex";
 const GUEST_AGENT: &str = "/usr/local/bin/nanoagent";
+const GUEST_CODEX_BOOTSTRAP: &str = "/usr/local/bin/bootstrap-codex";
 const GUEST_COLD_REFRESH: &str = "/etc/tengri-agent-replaced";
 
 #[derive(Debug, thiserror::Error)]
@@ -385,11 +387,35 @@ pub(super) async fn stage_root_disk(
     Ok(())
 }
 
-#[tracing::instrument(name = "guest.update_agent", skip_all)]
-pub(super) async fn update_guest_agent(root: &Path, agent: &Path) -> anyhow::Result<()> {
-    let expected = fs::read(agent).await.context("read packaged Nanoagent")?;
-    ensure!(!expected.is_empty(), "packaged Nanoagent is empty");
-    if read_guest_agent(root).await? == expected {
+#[tracing::instrument(name = "guest.update_runtime", skip_all)]
+pub(super) async fn update_guest_runtime(
+    root: &Path,
+    agent: &Path,
+    codex_bootstrap: &Path,
+) -> anyhow::Result<()> {
+    let files = [
+        (
+            GUEST_AGENT,
+            agent,
+            fs::read(agent).await.context("read packaged Nanoagent")?,
+        ),
+        (
+            GUEST_CODEX_BOOTSTRAP,
+            codex_bootstrap,
+            fs::read(codex_bootstrap)
+                .await
+                .context("read packaged Codex bootstrap")?,
+        ),
+    ];
+    let mut current = true;
+    for (target, _, expected) in &files {
+        ensure!(
+            !expected.is_empty(),
+            "packaged guest file is empty: {target}"
+        );
+        current &= read_guest_file(root, target).await? == *expected;
+    }
+    if current {
         return Ok(());
     }
 
@@ -419,20 +445,25 @@ pub(super) async fn update_guest_agent(root: &Path, agent: &Path) -> anyhow::Res
             matches!(checked.status.code(), Some(0 | 1)),
             "retained guest root needs filesystem repair"
         );
-        for request in [
-            format!("rm {GUEST_AGENT}"),
-            format!("write {} {GUEST_AGENT}", agent.display()),
-            format!("set_inode_field {GUEST_AGENT} mode 0100755"),
+        let updates = files.iter().flat_map(|(target, source, _)| {
+            [
+                format!("rm {target}"),
+                format!("write {} {target}", source.display()),
+                format!("set_inode_field {target} mode 0100755"),
+            ]
+        });
+        for request in updates.chain([
+            format!("rm {GUEST_COLD_REFRESH}"),
             format!("write /dev/null {GUEST_COLD_REFRESH}"),
             format!("set_inode_field {GUEST_COLD_REFRESH} mode 0100444"),
-        ] {
+        ]) {
             let written = Command::new("debugfs")
                 .kill_on_drop(true)
                 .args(["-w", "-R", &request])
                 .arg(&staged)
                 .output()
                 .await?;
-            ensure!(written.status.success(), "update guest Nanoagent");
+            ensure!(written.status.success(), "update retained guest runtime");
         }
         let checked = Command::new("e2fsck")
             .kill_on_drop(true)
@@ -444,11 +475,13 @@ pub(super) async fn update_guest_agent(root: &Path, agent: &Path) -> anyhow::Res
             checked.status.success(),
             "updated guest root failed filesystem validation"
         );
-        ensure!(
-            read_guest_agent(&staged).await? == expected,
-            "updated guest Nanoagent failed readback"
-        );
-        verify_guest_file_mode(&staged, GUEST_AGENT, "0755").await?;
+        for (target, _, expected) in &files {
+            ensure!(
+                read_guest_file(&staged, target).await? == *expected,
+                "updated guest file failed readback: {target}"
+            );
+            verify_guest_file_mode(&staged, target, "0755").await?;
+        }
         verify_guest_file_mode(&staged, GUEST_COLD_REFRESH, "0444").await?;
         fs::File::open(&staged).await?.sync_all().await?;
         fs::rename(&staged, root).await?;
@@ -465,14 +498,14 @@ pub(super) async fn update_guest_agent(root: &Path, agent: &Path) -> anyhow::Res
     result
 }
 
-async fn read_guest_agent(root: &Path) -> anyhow::Result<Vec<u8>> {
+async fn read_guest_file(root: &Path, path: &str) -> anyhow::Result<Vec<u8>> {
     let output = Command::new("debugfs")
         .kill_on_drop(true)
-        .args(["-R", &format!("cat {GUEST_AGENT}")])
+        .args(["-R", &format!("cat {path}")])
         .arg(root)
         .output()
         .await?;
-    ensure!(output.status.success(), "read guest Nanoagent");
+    ensure!(output.status.success(), "read retained guest file: {path}");
     Ok(output.stdout)
 }
 
@@ -508,12 +541,18 @@ async fn retained_root_update_preserves_files_and_never_commits_an_incomplete_co
     let template = directory.join("template");
     let root = directory.join("root.ext4");
     let packaged = directory.join("nanoagent");
+    let bootstrap = directory.join("bootstrap-codex");
     fs::create_dir_all(template.join("usr/local/bin"))
         .await
         .unwrap();
     let result: anyhow::Result<()> = async {
         fs::create_dir_all(template.join("etc")).await?;
         fs::write(template.join("usr/local/bin/nanoagent"), b"old agent").await?;
+        fs::write(
+            template.join("usr/local/bin/bootstrap-codex"),
+            b"old bootstrap",
+        )
+        .await?;
         fs::write(template.join("retained"), b"keep this file").await?;
         fs::File::create(&root).await?.set_len(8 << 20).await?;
         let created = Command::new("mkfs.ext4")
@@ -524,22 +563,29 @@ async fn retained_root_update_preserves_files_and_never_commits_an_incomplete_co
             .await?;
         ensure!(created.success(), "create fixture root");
         let before = fs::read(&root).await?;
-        fs::write(&packaged, vec![7; 10 << 20]).await?;
+        fs::write(&packaged, b"updated agent").await?;
+        fs::write(&bootstrap, vec![7; 10 << 20]).await?;
         ensure!(
-            update_guest_agent(&root, &packaged).await.is_err(),
-            "oversized update committed"
+            update_guest_runtime(&root, &packaged, &bootstrap)
+                .await
+                .is_err(),
+            "an incomplete runtime pair committed"
         );
         ensure!(
             fs::read(&root).await? == before,
             "failed update modified the retained root"
         );
 
-        fs::write(&packaged, b"updated agent").await?;
-        update_guest_agent(&root, &packaged).await?;
+        fs::write(&bootstrap, b"updated bootstrap").await?;
+        update_guest_runtime(&root, &packaged, &bootstrap).await?;
         verify_guest_file_mode(&root, GUEST_COLD_REFRESH, "0444").await?;
         ensure!(
-            read_guest_agent(&root).await? == b"updated agent",
+            read_guest_file(&root, GUEST_AGENT).await? == b"updated agent",
             "agent update missing"
+        );
+        ensure!(
+            read_guest_file(&root, GUEST_CODEX_BOOTSTRAP).await? == b"updated bootstrap",
+            "Codex bootstrap update missing"
         );
         let retained = Command::new("debugfs")
             .args(["-R", "cat /retained"])
@@ -551,7 +597,7 @@ async fn retained_root_update_preserves_files_and_never_commits_an_incomplete_co
             "unrelated root file changed"
         );
         let after = fs::read(&root).await?;
-        update_guest_agent(&root, &packaged).await?;
+        update_guest_runtime(&root, &packaged, &bootstrap).await?;
         ensure!(
             fs::read(&root).await? == after,
             "retry rewrote a committed root"

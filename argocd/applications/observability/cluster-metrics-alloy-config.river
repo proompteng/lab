@@ -65,6 +65,65 @@ prometheus.scrape "mimir_ingesters" {
 	forward_to      = [prometheus.relabel.mimir_ingester_metrics.receiver]
 }
 
+discovery.kubernetes "agents" {
+	role = "pod"
+
+	namespaces {
+		names = ["agents"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name in (agents,agents-controllers,agents-alloy)"
+	}
+}
+
+discovery.relabel "agents_metrics" {
+	targets = discovery.kubernetes.agents.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "(agents|agents-controllers);http|alloy;http-metrics"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+}
+
+prometheus.relabel "agents_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|agents_.*"
+	}
+}
+
+prometheus.scrape "agents" {
+	job_name        = "agents"
+	targets         = discovery.relabel.agents_metrics.output
+	metrics_path    = "/metrics"
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	// Controller gauges describe the watched namespace, not necessarily the target namespace.
+	honor_labels = true
+	forward_to   = [prometheus.relabel.agents_metrics.receiver]
+}
+
 prometheus.scrape "ci_observability" {
 	job_name = "ci-observability"
 	targets  = [{
@@ -1010,11 +1069,24 @@ prometheus.scrape "kubelet" {
 	scrape_interval   = "30s"
 	scrape_timeout    = "10s"
 	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-	forward_to        = [prometheus.relabel.arc_resource_metrics.receiver]
+	forward_to        = [
+		prometheus.relabel.arc_resource_metrics.receiver,
+		prometheus.relabel.flannel_cbr0_ipam.receiver,
+	]
 
 	tls_config {
 		ca_file     = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 		server_name = "kubernetes.default.svc"
+	}
+}
+
+prometheus.relabel "flannel_cbr0_ipam" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__", "node"]
+		regex         = "(kubelet_running_pods|kubelet_started_pods_errors_total);(turin|talos-192-168-1-85)"
 	}
 }
 
@@ -1027,7 +1099,18 @@ prometheus.scrape "kube_state_metrics" {
 	]
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
-	forward_to      = [prometheus.relabel.arc_resource_metrics.receiver]
+	forward_to      = [prometheus.relabel.arc_resource_metrics.receiver, prometheus.relabel.bayn_daily_job_metrics.receiver]
+}
+
+prometheus.relabel "bayn_daily_job_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	// Bound Job history to these CronJob name prefixes. The rules verify controller ownership.
+	rule {
+		action        = "keep"
+		source_labels = ["__name__", "namespace", "cronjob", "job_name"]
+		regex         = "kube_job_(created|failed|owner|status_failed);bayn;;bayn-(macro-daily-sleeves|daily-scorecard)-.+|kube_cronjob_(next_schedule_time|spec_suspend);bayn;bayn-(macro-daily-sleeves|daily-scorecard);"
+	}
 }
 
 prometheus.scrape "flink" {

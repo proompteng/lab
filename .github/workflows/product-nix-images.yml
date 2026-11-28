@@ -365,6 +365,7 @@ jobs:
     with:
       image_name: synthesis
       package_attr: synthesis-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: true
@@ -377,6 +378,7 @@ jobs:
     with:
       image_name: docs
       package_attr: docs-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: true

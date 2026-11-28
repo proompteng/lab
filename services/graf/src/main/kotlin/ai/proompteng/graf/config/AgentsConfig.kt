@@ -3,7 +3,7 @@ package ai.proompteng.graf.config
 data class AgentsConfig(
   val baseUrl: String,
   val namespace: String,
-  val agentName: String,
+  val agentName: String?,
   val serviceAccountName: String,
   val tokenPath: String?,
   val bearerToken: String?,
@@ -22,7 +22,7 @@ data class AgentsConfig(
         env["AGENTS_BASE_URL"]?.takeIf { it.isNotBlank() }
           ?: "http://agents.agents.svc.cluster.local"
       val namespace = env["AGENTS_NAMESPACE"]?.takeIf { it.isNotBlank() } ?: "agents"
-      val agentName = env["AGENTS_GRAF_AGENT_NAME"]?.takeIf { it.isNotBlank() } ?: "graf-codex-agent"
+      val agentName = env["AGENTS_GRAF_AGENT_NAME"]?.takeIf { it.isNotBlank() }
       val serviceAccount =
         env["AGENTS_SERVICE_ACCOUNT_NAME"]?.takeIf { it.isNotBlank() }
           ?: "agents-sa"

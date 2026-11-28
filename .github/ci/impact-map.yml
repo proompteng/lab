@@ -174,9 +174,15 @@ targets:
     kind: validation
     paths:
       - .github/workflows/pull-request.yml
+      - .github/workflows/kubeconform.yml
+      - flake.nix
+      - flake.lock
+      - nix/**
       - services/ofz/test-ha-manifests.sh
       - services/ofz/tests/ha_manifests.py
       - scripts/cluster-upgrades/temporal_*.py
+      - argocd/applications/auto-ontology/*.cfg
+      - argocd/applications/auto-ontology/*.test.ts
       - argocd/**/*.yaml
       - argocd/**/*.yml
       - argocd/**/*.river
@@ -279,9 +285,8 @@ targets:
     paths:
       - services/bumba/**
 
-  jangar:
-    kind: delegated
-    workflow: jangar-ci
+  jangar-inventory:
+    kind: validation
     exclude:
       - services/agents/src/**/*.test.ts
       - services/agents/src/**/*.test.tsx
@@ -292,10 +297,6 @@ targets:
       - services/agents/src/**/*.generated.ts
       - services/agents/src/**/*.generated.tsx
     paths:
-      - packages/temporal-bun-sdk/src/**
-      - packages/temporal-bun-sdk/package.json
-      - packages/temporal-bun-sdk/tsconfig.json
-      - patches/effect@4.1.4.patch
       - services/jangar/**
       - services/agents/src/app-routes/**
       - services/agents/src/components/control-plane/**
@@ -312,8 +313,6 @@ targets:
       - services/agents/src/server/start-runtime.ts
       - services/agents/src/server/orchestration-controller.ts
       - services/agents/src/server/supporting-primitives-controller.ts
-      - packages/scripts/src/jangar/**
-      - argocd/applications/jangar/**
       - docs/jangar/architecture-inventory.md
 
   froussard:

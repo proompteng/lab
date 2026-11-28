@@ -22,6 +22,7 @@ jobs:
       delegated: ${{ steps.impact.outputs.delegated }}
       changed_files: ${{ steps.impact.outputs.changed_files }}
       changed_manifests: ${{ steps.active_files.outputs.changed_manifests || '[]' }}
+      jangar_affected: ${{ fromJSON(steps.jangar.outputs.affected || '{}').jangar }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -64,6 +65,46 @@ jobs:
           bun run packages/scripts/src/ci/impact-router.ts "${input[@]}" \
             --map .github/ci/impact-map.yml --github-output "${GITHUB_OUTPUT}"
 
+      - name: Resolve Jangar runtime inputs
+        id: jangar
+        if: github.event_name == 'pull_request'
+        uses: ./.github/actions/affected-inputs
+        with:
+          workspaces: |
+            jangar: ['services/jangar', 'packages/cx-tools']
+          filters: |
+            jangar:
+              - 'services/jangar/**'
+              - 'services/bumba/src/**'
+              - 'services/bumba/tsconfig.json'
+              - 'packages/agent-contracts/**'
+              - 'packages/codex/src/**'
+              - 'packages/codex/scripts/**'
+              - 'packages/codex/tsconfig.json'
+              - 'packages/cx-tools/src/**'
+              - 'packages/cx-tools/tsconfig.json'
+              - 'packages/design/**'
+              - 'packages/discord/**'
+              - 'packages/otel/src/**'
+              - 'packages/otel/tsconfig.json'
+              - 'packages/temporal-bun-sdk/src/**'
+              - 'packages/temporal-bun-sdk/tsconfig.json'
+              - '!packages/**/*.test.*'
+              - '!packages/**/*.spec.*'
+              - '!packages/**/__tests__/**'
+              - '!packages/**/__snapshots__/**'
+              - 'packages/scripts/src/jangar/**'
+              - 'argocd/applications/jangar/**'
+              - 'argocd/bootstrap/jangar/**'
+              - 'nix/images/jangar.nix'
+              - 'patches/effect@4.1.4.patch'
+              - 'tsconfig.base.json'
+              - 'bunfig.toml'
+              - '.npmrc'
+              - '.github/workflows/jangar-ci.yml'
+              - '.github/workflows/common-monorepo.yml'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+
       - name: Serialize active changed files
         id: active_files
         if: github.event_name == 'pull_request'
@@ -77,12 +118,14 @@ jobs:
         env:
           TARGETS: ${{ steps.impact.outputs.targets }}
           DELEGATED: ${{ steps.impact.outputs.delegated }}
+          JANGAR: ${{ fromJSON(steps.jangar.outputs.affected || '{}').jangar }}
         run: |
           {
             echo '### CI validation plan'
             echo
             echo "- Router validations: \`${TARGETS}\`"
             echo "- Delegated service workflows: \`${DELEGATED}\`"
+            echo "- Jangar runtime checks: \`${JANGAR:-not evaluated}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   landing:
@@ -348,6 +391,9 @@ jobs:
                 nix flake check --no-build
               fi
               ;;
+            jangar-inventory)
+              bun run --cwd services/jangar docs:inventory:check
+              ;;
             argo-lint)
               nix run .#lint-argo-workflows
               ;;
@@ -369,6 +415,9 @@ jobs:
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${changed_manifests[@]}"
               else
                 nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
+              fi
+              if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/auto-ontology/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bun test argocd/applications/auto-ontology/oauth-discovery.test.ts
               fi
               if [[ "${FULL_VALIDATION}" == true ]] || jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
@@ -426,8 +475,14 @@ jobs:
               if [ "${#shell_scripts[@]}" -gt 0 ]; then shellcheck "${shell_scripts[@]}"; fi
               ;;
             workflow-lint)
-              go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-              "$(go env GOPATH)/bin/actionlint" -shellcheck '' -pyflakes ''
+              actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"
+              curl --fail --silent --show-error --location \
+                https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+                --output "${actionlint_archive}"
+              printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "${actionlint_archive}" \
+                | sha256sum -c -
+              tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint
+              "${RUNNER_TEMP}/actionlint" -shellcheck '' -pyflakes ''
               ;;
             *)
               echo "Unknown impact target: ${target}" >&2
@@ -453,6 +508,12 @@ jobs:
     uses: ./.github/workflows/agents-ci.yml
     with:
       changed_files_json: ${{ needs.plan.outputs.changed_files }}
+
+  jangar:
+    name: Jangar CI
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && needs.plan.outputs.jangar_affected == 'true'
+    uses: ./.github/workflows/jangar-ci.yml
 
   bayn:
     name: Bayn CI
@@ -517,6 +578,7 @@ jobs:
       - landing
       - agents
       - agents-full
+      - jangar
       - bayn
       - ofz
       - relay
@@ -584,3 +646,23 @@ jobs:
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
+
+      - name: Enforce Jangar validation result
+        if: github.event_name == 'pull_request'
+        env:
+          JANGAR_RESULT: ${{ needs.jangar.result }}
+          JANGAR_AFFECTED: ${{ needs.plan.outputs.jangar_affected }}
+        run: |
+          set -euo pipefail
+          case "${JANGAR_AFFECTED}" in
+            true) expected=success ;;
+            false) expected=skipped ;;
+            *)
+              echo 'Missing Jangar impact decision' >&2
+              exit 1
+              ;;
+          esac
+          if [[ "${JANGAR_RESULT}" != "${expected}" ]]; then
+            echo "Jangar validation failed: jangar=${JANGAR_RESULT}, expected=${expected}" >&2
+            exit 1
+          fi

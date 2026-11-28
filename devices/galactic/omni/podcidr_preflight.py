@@ -6,10 +6,14 @@ import ipaddress
 import json
 import subprocess
 from datetime import datetime, timezone
+from itertools import combinations
 
 
 CLUSTER_CIDR = ipaddress.ip_network("10.244.0.0/16")
 NODES = {"turin", "talos-192-168-1-85", "talos-192-168-1-194"}
+MIGRATED_LIMITS = {22: 1000, 23: 500}
+SUPPORTED_PREFIXES = {*MIGRATED_LIMITS, 24}
+DEFAULT_ALLOCATOR_PREFIX = 23
 
 
 def ready(obj):
@@ -19,7 +23,15 @@ def ready(obj):
     )
 
 
-def evaluate(nodes, pods, ceph, target, migrated=False):
+def evaluate(
+    nodes,
+    pods,
+    ceph,
+    target,
+    migrated=False,
+    *,
+    allocator_prefix=DEFAULT_ALLOCATOR_PREFIX,
+):
     failures = []
     warnings = []
     networks = {}
@@ -51,7 +63,7 @@ def evaluate(nodes, pods, ceph, target, migrated=False):
         if network.version != 4 or not network.subnet_of(CLUSTER_CIDR):
             failures.append(f"{name}: PodCIDR is outside {CLUSTER_CIDR}")
             continue
-        if network.prefixlen not in (23, 24):
+        if network.prefixlen not in SUPPORTED_PREFIXES:
             failures.append(f"{name}: unexpected prefix /{network.prefixlen}")
             continue
         networks[name] = network
@@ -60,31 +72,31 @@ def evaluate(nodes, pods, ceph, target, migrated=False):
         if limit > network.num_addresses - 3:
             warnings.append(f"{name}: maxPods {limit} exceeds CNI address capacity")
         if name == target:
-            expected_limit = 500 if migrated else 250
+            expected_limit = MIGRATED_LIMITS[allocator_prefix] if migrated else 250
             if limit != expected_limit:
                 failures.append(
                     f"{name}: expected maxPods {expected_limit}, found {limit}"
                 )
-            if migrated and network.prefixlen != 23:
-                failures.append(f"{name}: migrated node must have a /23 PodCIDR")
+            if migrated and network.prefixlen != allocator_prefix:
+                failures.append(
+                    f"{name}: migrated node must have a /{allocator_prefix} PodCIDR"
+                )
     if target not in networks:
         failures.append(f"{target}: target has no verified PodCIDR")
-    for name, network in networks.items():
-        for other, other_network in networks.items():
-            if name >= other:
-                continue
-            parent = (
-                network.supernet(new_prefix=23) if network.prefixlen == 24 else network
+    # RangeAllocator tracks blocks at the configured mask, not per Node.
+    reservations = {
+        name: network.supernet(new_prefix=allocator_prefix)
+        if network.prefixlen > allocator_prefix
+        else network
+        for name, network in networks.items()
+    }
+    for (name, block), (other, other_block) in combinations(
+        sorted(reservations.items()), 2
+    ):
+        if block.overlaps(other_block):
+            failures.append(
+                f"{name}, {other}: overlap within an allocator /{allocator_prefix} block"
             )
-            other_parent = (
-                other_network.supernet(new_prefix=23)
-                if other_network.prefixlen == 24
-                else other_network
-            )
-            if network.overlaps(other_network) or parent.overlaps(other_parent):
-                failures.append(
-                    f"{name}, {other}: overlap within one allocator /23 block"
-                )
 
     seen = {}
     mds_hosts = {}
@@ -183,7 +195,16 @@ def main():
         "--node", required=True, choices=["turin", "talos-192-168-1-85"]
     )
     parser.add_argument(
-        "--migrated", action="store_true", help="require /23 and maxPods 500"
+        "--migrated",
+        action="store_true",
+        help="require the target to match the allocator prefix and its final pod cap",
+    )
+    parser.add_argument(
+        "--allocator-prefix",
+        type=int,
+        choices=sorted(MIGRATED_LIMITS),
+        default=DEFAULT_ALLOCATOR_PREFIX,
+        help="live controller-manager IPv4 allocation mask (default: %(default)s)",
     )
     args = parser.parse_args()
     try:
@@ -199,7 +220,14 @@ def main():
             "--format",
             "json",
         )
-        report = evaluate(nodes, pods, ceph, args.node, args.migrated)
+        report = evaluate(
+            nodes,
+            pods,
+            ceph,
+            args.node,
+            args.migrated,
+            allocator_prefix=args.allocator_prefix,
+        )
     except (
         OSError,
         subprocess.SubprocessError,

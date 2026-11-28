@@ -1,0 +1,62 @@
+name: ARC tmpfs acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify ${{ matrix.label }}
+    runs-on: ${{ matrix.label }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: arc-amd64-tmpfs, node: turin, arch: x86_64, scratch: 16, memory: 24 }
+          - { label: arc-arm64-tmpfs, node: talos-192-168-1-85, arch: aarch64, scratch: 16, memory: 24 }
+          - { label: arc-amd64-tmpfs-large, node: turin, arch: x86_64, scratch: 24, memory: 32 }
+          - { label: arc-arm64-tmpfs-large, node: talos-192-168-1-85, arch: aarch64, scratch: 24, memory: 32 }
+    env:
+      EXPECTED_NODE: ${{ matrix.node }}
+      EXPECTED_ARCH: ${{ matrix.arch }}
+      SCRATCH_GIB: ${{ matrix.scratch }}
+      MEMORY_GIB: ${{ matrix.memory }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-buildkit
+      - name: Verify limits, scratch mounts, Nix and BuildKit output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$ARC_RUNNER_NODE_NAME" = "$EXPECTED_NODE"
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          [[ "$BUILDKIT_HOST" == "unix://$RUNNER_TEMP"/buildkit.*/buildkitd.sock ]]
+          buildkit_root="${BUILDKIT_HOST#unix://}"
+          buildkit_root="${buildkit_root%/buildkitd.sock}/cache"
+          device="$(stat -c %d /nix)"
+          test "$(stat -c %d /)" != "$device"
+          for path in /nix /tmp /var/tmp "$HOME/.cache" "$CARGO_HOME" "$RUSTUP_HOME" "$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$buildkit_root"; do
+            test "$(stat -f -c %T "$path")" = tmpfs
+            test "$(stat -c %d "$path")" = "$device"
+          done
+          gib=$((1024 ** 3))
+          capacity="$(df -P -B1 /nix | awk 'NR == 2 {print $2}')"
+          cgroup="/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
+          memory_limit="$(cat "$cgroup/memory.max")"
+          test "$capacity" = "$((SCRATCH_GIB * gib))"
+          test "$memory_limit" = "$((MEMORY_GIB * gib))"
+          test "$(nix eval --offline --expr '40 + 2')" = 42
+          proof="$(mktemp -d "$RUNNER_TEMP/arc-tmpfs-proof.XXXXXX")"
+          trap 'rm -rf "$proof"' EXIT
+          printf 'ARC tmpfs acceptance\n' > "$proof/payload"
+          printf 'FROM scratch\nCOPY payload /payload\n' > "$proof/Dockerfile"
+          buildctl build --frontend dockerfile.v0 --local "context=$proof" --local "dockerfile=$proof" \
+            --output "type=local,dest=$proof/output"
+          cmp "$proof/payload" "$proof/output/payload"
+          printf 'Pod %s on %s verified %s bytes of tmpfs and a %s-byte memory limit\n' \
+            "$ACTIONS_RUNNER_POD_NAME" "$ARC_RUNNER_NODE_NAME" "$capacity" "$memory_limit"

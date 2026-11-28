@@ -16,16 +16,22 @@ import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
 import { entryJudgmentThresholds } from './judgment-policy'
 import { WebullEntryContextSchema, webullEntryContextPolicy } from './webull-entry-context'
-import { isShortEntryProposal, nativeModeledLossMicros, type NativeEntryProposal } from './native-entry-proposal'
+import {
+  isShortEntryProposal,
+  nativeModeledGainMicros,
+  nativeModeledLossMicros,
+  type NativeEntryProposal,
+} from './native-entry-proposal'
+import type { JevProtocolMaterial } from './protocol'
 import { shortQuestionNames } from './short-entry-questions'
 
-const questionNames = (setup: EntrySetup, market: MarketKind) => {
+const questionNames = (setup: EntrySetup, market: MarketKind, includeEquityObstruction = false) => {
   const setupName = setup === EntrySetup.SupportRecovery ? 'support_recovery' : 'base_breakout'
   const prefix = `${market === MarketKind.Equity ? 'equity' : 'crypto'}_${setupName}`
   const common = { setup: `${prefix}_confirmed`, stop: `${prefix}_stop_invalidates` }
-  return market === MarketKind.Equity
+  return market === MarketKind.Equity && !includeEquityObstruction
     ? ({ market: MarketKind.Equity, ...common } as const)
-    : ({ market: MarketKind.Crypto, ...common, obstruction: `${prefix}_target_obstructed` } as const)
+    : ({ market, ...common, obstruction: `${prefix}_target_obstructed` } as const)
 }
 
 export const entryJudgmentDefinitions = (setup: EntrySetup) => ({
@@ -109,8 +115,30 @@ export const entryJudgmentPolicy = {
   supplementalMarketData: webullEntryContextPolicy,
 }
 
+const symmetricMarketJudgmentPolicy = (market: MarketKind) => ({
+  costBasis: market === MarketKind.Equity ? 'equity-cash-fees' : 'crypto-received-asset-and-sell-fees',
+  setups: Object.fromEntries(
+    Object.values(EntrySetup).map((setup) => [
+      setup,
+      {
+        names: questionNames(setup, market, true),
+        judgments: { ...entryJudgmentDefinitions(setup), obstruction: cryptoTargetObstruction },
+      },
+    ]),
+  ),
+})
+
+export const symmetricEntryJudgmentPolicy = {
+  ...entryJudgmentPolicy,
+  markets: {
+    [MarketKind.Equity]: symmetricMarketJudgmentPolicy(MarketKind.Equity),
+    [MarketKind.Crypto]: symmetricMarketJudgmentPolicy(MarketKind.Crypto),
+  },
+}
+
 export const makeEntryJudgmentRequest = (input: {
   readonly model?: JevRequest['model']
+  readonly includeEquityObstruction?: boolean
   readonly numericalState: Readonly<Record<string, Schema.Json>>
   readonly chart: NativeChartEvidence
   readonly assessments: ChartAssessmentsMaterial
@@ -145,8 +173,9 @@ export const makeEntryJudgmentRequest = (input: {
     const proposalEvidence: Record<string, Schema.Json> = {}
     const questions: Record<string, JevRequest['questions'][string]> = {}
     const market = instrumentMarket(candidate.symbol)
+    const includeEquityObstruction = input.includeEquityObstruction === true
     for (const proposal of input.proposals) {
-      const names = questionNames(proposal.source.setup, market)
+      const names = questionNames(proposal.source.setup, market, includeEquityObstruction)
       const source = proposal.source
       const selectedIds =
         source.setup === EntrySetup.SupportRecovery
@@ -235,7 +264,7 @@ export const makeEntryJudgmentRequest = (input: {
           criteria: definition.criteria,
         }
       }
-      if (names.market === MarketKind.Crypto)
+      if ('obstruction' in names)
         questions[names.obstruction] = {
           type: 'noul',
           instructions: { question: cryptoTargetObstruction.question, ...context },
@@ -272,14 +301,20 @@ export const makeEntryJudgmentRequest = (input: {
     ),
   )
 
-export const selectSupportedEntryProposal = (input: {
+export const evaluateSupportedEntryProposals = (input: {
   readonly proposals: readonly NativeEntryProposal[]
   readonly response: JevResponse
+  readonly protocol?: Pick<JevProtocolMaterial, 'schemaVersion'>
 }) =>
   Result.gen(function* () {
-    const eligible: {
+    const includeEquityObstruction =
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v42' ||
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v43' ||
+      input.protocol?.schemaVersion === 'bayn.jev.protocol.v44'
+    const supported: {
       readonly proposal: NativeEntryProposal
-      readonly judgmentSupport: number
+      readonly structuralSupport: number
+      readonly modeledGainMicros: bigint
       readonly modeledLossMicros: bigint
     }[] = []
     const rejections: {
@@ -287,9 +322,10 @@ export const selectSupportedEntryProposal = (input: {
       readonly reason: 'SETUP_UNSUPPORTED' | 'INVALIDATION_UNSUPPORTED' | 'OBJECTIVE_OBSTRUCTED' | 'JUDGMENT_UNCERTAIN'
     }[] = []
     for (const proposal of input.proposals) {
-      const names = isShortEntryProposal(proposal)
+      const isShort = isShortEntryProposal(proposal)
+      const names = isShort
         ? { ...shortQuestionNames(proposal.source.setup), market: MarketKind.Equity as const }
-        : questionNames(proposal.source.setup, instrumentMarket(proposal.symbol))
+        : questionNames(proposal.source.setup, instrumentMarket(proposal.symbol), includeEquityObstruction)
       const setup = input.response.answers[names.setup]
       const stop = input.response.answers[names.stop]
       if (setup?.type !== 'noul' || stop?.type !== 'noul')
@@ -309,27 +345,16 @@ export const selectSupportedEntryProposal = (input: {
         })
         continue
       }
-      let judgmentSupport = Math.min(setup.noul, stop.noul)
-      if (isShortEntryProposal(proposal)) {
-        const obstruction = input.response.answers[shortQuestionNames(proposal.source.setup).obstruction]
-        if (obstruction?.type !== 'noul')
-          return yield* Result.fail(
-            new JevContractError({ message: 'Short entry proposal is missing its downside-support judgment' }),
-          )
-        if (obstruction.noul > negativeAtMost) {
-          rejections.push({
-            proposalId: proposal.proposalId,
-            reason: obstruction.noul >= affirmativeAtLeast ? 'OBJECTIVE_OBSTRUCTED' : 'JUDGMENT_UNCERTAIN',
-          })
-          continue
-        }
-        judgmentSupport = Math.min(judgmentSupport, 1 - obstruction.noul)
-      }
-      if (names.market === MarketKind.Crypto) {
+      let structuralSupport = Math.min(setup.noul, stop.noul)
+      if ('obstruction' in names) {
         const obstruction = input.response.answers[names.obstruction]
         if (obstruction?.type !== 'noul')
           return yield* Result.fail(
-            new JevContractError({ message: 'Crypto entry proposal is missing its target-obstruction judgment' }),
+            new JevContractError({
+              message: isShort
+                ? 'Short entry proposal is missing its downside-support judgment'
+                : 'Entry proposal is missing its target-obstruction judgment',
+            }),
           )
         if (obstruction.noul > negativeAtMost) {
           rejections.push({
@@ -338,22 +363,14 @@ export const selectSupportedEntryProposal = (input: {
           })
           continue
         }
-        judgmentSupport = Math.min(judgmentSupport, 1 - obstruction.noul)
+        structuralSupport = Math.min(structuralSupport, 1 - obstruction.noul)
       }
-      eligible.push({
+      supported.push({
         proposal,
-        judgmentSupport,
+        structuralSupport,
+        modeledGainMicros: nativeModeledGainMicros(proposal),
         modeledLossMicros: nativeModeledLossMicros(proposal),
       })
     }
-    eligible.sort(
-      (left, right) =>
-        right.judgmentSupport - left.judgmentSupport ||
-        (left.modeledLossMicros < right.modeledLossMicros
-          ? -1
-          : left.modeledLossMicros > right.modeledLossMicros
-            ? 1
-            : left.proposal.proposalId.localeCompare(right.proposal.proposalId)),
-    )
-    return { selected: eligible[0] ?? null, rejections }
+    return { supported, rejections }
   })

@@ -151,7 +151,7 @@ export const buildNixRolloutReport = (input: {
   const nixImages = inventory.entries.filter((entry) => entry.class === 'nix-image')
   const workflowImages = inventory.entries.filter((entry) => entry.class === 'workflow-image')
   const manifestOnlyImageApps = inventory.entries.filter(
-    (entry) => entry.class === 'vendor-manifest' && entry.repoImages.length > 0,
+    (entry) => entry.class === 'vendor-manifest' && (entry.repoImages.length > 0 || entry.deferredReason !== undefined),
   )
   const deferredApps = inventory.entries.filter((entry) => entry.class === 'deferred')
   const missingBuildContracts = nixImages.flatMap((entry) => {
@@ -245,7 +245,7 @@ export const formatNixRolloutReportMarkdown = (report: NixRolloutReport): string
         `| ${entry.name} | ${entry.repoImages.join('<br>')} | ${entry.workflowPaths.join('<br>')} | ${entry.deferredReason ?? ''} |`,
     ),
     '',
-    '## Manifest-Only Repo Image References',
+    '## Manifest-Only Image Apps',
     '',
     '| App | Images | Reason |',
     '| --- | --- | --- |',

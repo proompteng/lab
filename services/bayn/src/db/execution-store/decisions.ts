@@ -231,9 +231,18 @@ export const decideOrderVersion = (
         superseded: true,
       },
     })
-  return current.source_event_id === input.sourceEventId
-    ? Result.succeed({ _tag: 'AcceptOrderVersion' })
-    : fail('conflict', 'broker order provider version was reused with a different source identity')
+  if (current.source_event_id === input.sourceEventId) return Result.succeed({ _tag: 'AcceptOrderVersion' })
+  if (isPrecisionEquivalentOrderVersion(input, current))
+    return Result.succeed({
+      _tag: 'RetainEquivalentOrderVersion',
+      receipt: {
+        eventId: current.event_id,
+        sourceSequence: current.source_sequence,
+        deduplicated: true,
+        superseded: true,
+      },
+    })
+  return fail('conflict', 'broker order provider version was reused with a different source identity')
 }
 
 export const selectLatestOrderVersions = (

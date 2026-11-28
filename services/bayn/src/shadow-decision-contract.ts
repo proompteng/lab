@@ -13,8 +13,8 @@ import {
   type RecordedRuntimeStrategyDecision,
 } from './strategy/runtime-decision'
 import { MarketKind, instrumentMarket } from './instruments'
-import { compareRecords, normalizeQuote } from './market-data/intraday/verification'
-import { decodeIntradayQuoteRows } from './market-data/intraday/rows'
+import { compareRecords, normalizeBar, normalizeQuote } from './market-data/intraday/verification'
+import { decodeIntradayBarRows, decodeIntradayQuoteRows } from './market-data/intraday/rows'
 import { RetainedJevEntryTargetSchema, RetainedJevExitTargetSchema } from './jev/retained-jev-targets'
 import { RetainedJevAblationTargetSchema, RetainedJevMomentumTargetSchema } from './jev/retained-jev-control-targets'
 import { JevContractError } from './jev/contract'
@@ -23,6 +23,11 @@ import {
   repeatedMomentumStrategyIdentity,
   type RepeatedMomentumPolicy,
 } from './strategy/repeated-momentum/policy'
+import {
+  intradayAlphaStrategyIdentity,
+  makeIntradayAlphaPolicy,
+  type IntradayAlphaPolicy,
+} from './strategy/intraday-alpha/policy'
 import { entryBracketProtection } from './execution/position-protection'
 import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings } from './jev/exit'
 import { isShortExitPlan } from './strategy/funded-exit-plan'
@@ -47,6 +52,9 @@ import {
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
   retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
   jevBehaviorHash,
   type JevProtocol,
   type RetainedVisualJevProtocolSchema,
@@ -79,7 +87,7 @@ import {
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, canonicalJsonEqualV1, canonicalJsonV1Result, sha256 } from './hash'
 import { intradayAgeNanos, millisecondsAsNanos } from './market-data/intraday/time'
-import { IntradaySnapshotPurpose } from './market-data/intraday/model'
+import { IntradaySnapshotPurpose, sameIntradaySource } from './market-data/intraday/model'
 import {
   AuthorityStateSchema,
   OrderSide,
@@ -368,14 +376,6 @@ export const isSnapshotExecutionMarketDataBinding = (
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
-
-const sameSourceUniverse = (
-  left: SnapshotExecutionMarketDataBinding,
-  right: SnapshotExecutionMarketDataBinding,
-): boolean =>
-  left.universeId === right.universeId &&
-  left.universeSymbolHash === right.universeSymbolHash &&
-  sameStrings(left.universe, right.universe)
 
 const ShadowDecisionBindingsSchema = Schema.Struct({
   strategyName: StrictNonEmptyStringSchema,
@@ -1034,6 +1034,39 @@ const streamingPricingEvidenceIssues = (
     terms === undefined
   )
     return [{ path: ['plannerInput'], issue: 'streaming execution requires quote-bound planner inputs' }]
+  const target = document.strategyDecision
+  const isIntradayAlpha = target?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+  const alphaBarCloses = isIntradayAlpha
+    ? Result.gen(function* () {
+        const rangeEndAt = target.evidence.observation.manifest['rangeEndAt']
+        if (typeof rangeEndAt !== 'string')
+          return yield* Result.fail(
+            new JevContractError({ message: 'Intraday alpha observation manifest lacks rangeEndAt' }),
+          )
+        const expectedBarMs = Date.parse(rangeEndAt) - 60_000
+        const decodedBars = yield* decodeIntradayBarRows(target.evidence.observation.rows.bars)
+        const bars = yield* Result.all(decodedBars.map(normalizeBar))
+        const closes = new Map<string, { readonly bid: bigint; readonly ask: bigint }>()
+        for (const bar of bars) {
+          if (Date.parse(bar.eventAt) !== expectedBarMs) continue
+          if (!Number.isFinite(bar.close) || bar.close <= 0) continue
+          const bid = quantizeInstrumentPriceMicros(
+            bar.symbol,
+            yield* priceNumberToMicros(bar.close, `bar close for ${bar.symbol}`, 'DOWN'),
+            'DOWN',
+          )
+          const ask = quantizeInstrumentPriceMicros(
+            bar.symbol,
+            yield* priceNumberToMicros(bar.close, `bar close for ${bar.symbol}`, 'UP'),
+            'UP',
+          )
+          if (bid > 0n && ask > 0n) closes.set(bar.symbol, { bid, ask })
+        }
+        return closes
+      })
+    : undefined
+  if (alphaBarCloses !== undefined && Result.isFailure(alphaBarCloses))
+    return [{ path: ['strategyDecision', 'evidence'], issue: 'intraday alpha bar evidence is invalid' }]
   for (const symbol of binding.symbols) {
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined)
@@ -1047,25 +1080,61 @@ const streamingPricingEvidenceIssues = (
     if (Result.isFailure(values))
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
-    const target = document.strategyDecision
     if (isProtectedEntryTarget(target) && target.selectedSymbols.includes(symbol)) {
       const plan = target.exitPolicy.plans[symbol]
       const short = plan !== undefined && isShortExitPlan(plan)
-      // Match compileJevEntry at the exact executable closing side before price quantization.
+      if (isIntradayAlpha) {
+        const twoSided = bid > 0n && ask > 0n
+        if (
+          plan === undefined ||
+          (twoSided &&
+            (short
+              ? bid >= BigInt(plan.levels.stopPriceMicros) && ask >= BigInt(plan.levels.stopPriceMicros)
+              : bid <= BigInt(plan.levels.stopPriceMicros) && ask <= BigInt(plan.levels.stopPriceMicros))) ||
+          (twoSided &&
+            (short
+              ? bid <= BigInt(plan.levels.profitLimitPriceMicros) && ask <= BigInt(plan.levels.profitLimitPriceMicros)
+              : bid >= BigInt(plan.levels.profitLimitPriceMicros) && ask >= BigInt(plan.levels.profitLimitPriceMicros)))
+        )
+          return [
+            {
+              path: ['executionMarketDataRows'],
+              issue: 'entry pricing must remain strictly between the selected stop and profit target',
+            },
+          ]
+      } else {
+        // Match compileJevEntry at the exact executable closing side before price quantization.
+        if (
+          plan === undefined ||
+          (short ? ask >= BigInt(plan.levels.stopPriceMicros) : bid <= BigInt(plan.levels.stopPriceMicros)) ||
+          (short
+            ? ask <= BigInt(plan.levels.profitLimitPriceMicros)
+            : bid >= BigInt(plan.levels.profitLimitPriceMicros))
+        )
+          return [
+            {
+              path: ['executionMarketDataRows'],
+              issue: 'entry pricing must remain strictly between the selected stop and profit target',
+            },
+          ]
+      }
+    }
+    const increment = BigInt(plannerInput.precision.quantityIncrementAtoms)
+    if (isIntradayAlpha) {
+      const barClose = alphaBarCloses?.success.get(symbol)
       if (
-        plan === undefined ||
-        (short ? ask >= BigInt(plan.levels.stopPriceMicros) : bid <= BigInt(plan.levels.stopPriceMicros)) ||
-        (short ? ask <= BigInt(plan.levels.profitLimitPriceMicros) : bid >= BigInt(plan.levels.profitLimitPriceMicros))
+        barClose === undefined ||
+        prices.bidPriceMicros[symbol] !== barClose.bid.toString() ||
+        prices.askPriceMicros[symbol] !== barClose.ask.toString() ||
+        prices.priceMicros[symbol] !== prices.askPriceMicros[symbol]
       )
         return [
           {
-            path: ['executionMarketDataRows'],
-            issue: 'entry pricing must remain strictly between the selected stop and profit target',
+            path: ['plannerInput'],
+            issue: `intraday alpha entry price does not match the verified completed bar close for ${symbol}`,
           },
         ]
-    }
-    const increment = BigInt(plannerInput.precision.quantityIncrementAtoms)
-    if (
+    } else if (
       prices.bidPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, bid, 'DOWN').toString() ||
       prices.askPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, ask, 'UP').toString() ||
       prices.priceMicros[symbol] !== prices.askPriceMicros[symbol] ||
@@ -1270,21 +1339,13 @@ export const jevProtocolIdentityMatches = (protocol: JevProtocol, strategyProtoc
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
-// Only retained financial schemas supply v38/v39 here; current execution admission is strictly v40.
+// Recorded decisions reproduce the parameter document that governed their original admission.
 const recordedJevProtocolIdentityMatches = (
   protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type,
   strategyProtocolHash: string,
 ): boolean => {
-  if (protocol.schemaVersion === 'bayn.jev.protocol.v41')
-    return jevProtocolIdentityMatches(protocol, strategyProtocolHash)
   const parameters = canonicalHashV1Result(protocol)
-  const expected = canonicalHashV1Result(
-    protocol.schemaVersion === 'bayn.jev.protocol.v40'
-      ? retainedJevProtocolV40Document
-      : protocol.schemaVersion === 'bayn.jev.protocol.v39'
-        ? retainedJevProtocolV39Document
-        : retainedJevProtocolV38Document,
-  )
+  const expected = canonicalHashV1Result(retainedExpectedProtocolDocument(protocol))
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
   const identity = makeStrategyProtocolHashResult({
@@ -1296,6 +1357,21 @@ const recordedJevProtocolIdentityMatches = (
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
+const retainedExpectedProtocolDocument = (protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type) =>
+  protocol.schemaVersion === 'bayn.jev.protocol.v44'
+    ? defaultJevProtocolDocument
+    : protocol.schemaVersion === 'bayn.jev.protocol.v43'
+      ? retainedJevProtocolV43Document
+      : protocol.schemaVersion === 'bayn.jev.protocol.v42'
+        ? retainedJevProtocolV42Document
+        : protocol.schemaVersion === 'bayn.jev.protocol.v41'
+          ? retainedJevProtocolV41Document
+          : protocol.schemaVersion === 'bayn.jev.protocol.v40'
+            ? retainedJevProtocolV40Document
+            : protocol.schemaVersion === 'bayn.jev.protocol.v39'
+              ? retainedJevProtocolV39Document
+              : retainedJevProtocolV38Document
+
 const ablationProtocolIdentityMatches = (
   policy: Omit<EntryAblationPolicy, 'sharedProtocol' | 'questionPolicyHash'> & {
     readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
@@ -1304,15 +1380,7 @@ const ablationProtocolIdentityMatches = (
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result({
-    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
-      ? defaultJevProtocolDocument
-      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
-        ? retainedJevProtocolV40Document
-        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document),
-  })
+  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
   const identity = entryAblationStrategyIdentity(policy)
@@ -1326,16 +1394,26 @@ const momentumProtocolIdentityMatches = (
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result({
-    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v41'
-      ? defaultJevProtocolDocument
-      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
-        ? retainedJevProtocolV40Document
-        : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document),
-  })
+  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
   const identity = repeatedMomentumStrategyIdentity(policy)
+  return (
+    Result.isSuccess(parameters) &&
+    Result.isSuccess(expected) &&
+    parameters.success === expected.success &&
+    Result.isSuccess(identity) &&
+    identity.success.protocolHash === strategyProtocolHash
+  )
+}
+
+const intradayAlphaProtocolIdentityMatches = (
+  policy: Omit<IntradayAlphaPolicy, 'sharedProtocol'> & {
+    readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
+  },
+  strategyProtocolHash: string,
+): boolean => {
+  const parameters = canonicalHashV1Result(policy.sharedProtocol)
+  const expected = canonicalHashV1Result({ ...retainedExpectedProtocolDocument(policy.sharedProtocol) })
+  const identity = intradayAlphaStrategyIdentity(policy)
   return (
     Result.isSuccess(parameters) &&
     Result.isSuccess(expected) &&
@@ -1392,6 +1470,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
             targetWeights: jevPlanningTargetWeights(target),
             capitalMicros: observation.portfolio.brokerState.account.equityMicros,
             precision: observation.protocol.executionModel.precision,
+            ...(target.schemaVersion === 'bayn.intraday-alpha-target.v2' ? { ignoreDisplayedBidSize: true } : {}),
           }),
           equityShortEntries: protectedEntryShortEligibility(target),
         }
@@ -1441,7 +1520,10 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     target.selectedSymbols.some(
       (symbol) =>
-        (document.entryLimitSlippageBps ?? 0) > jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps,
+        (document.entryLimitSlippageBps ?? 0) >
+        (target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+          ? target.policy.entryLimitSlippageBps
+          : jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps),
     )
   )
     issues.push({
@@ -1462,9 +1544,11 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !(target.schemaVersion === 'bayn.repeated-momentum-target.v1'
       ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-      : target.schemaVersion === 'bayn.entry-ablation-target.v1'
-        ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-        : recordedJevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash)) ||
+      : target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+        ? intradayAlphaProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
+        : target.schemaVersion === 'bayn.entry-ablation-target.v1'
+          ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
+          : recordedJevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash)) ||
     observation.cycleId !== document.bindings.cycleId ||
     observation.authorityGenerationHash !== document.bindings.authorityGenerationHash ||
     observation.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
@@ -1497,9 +1581,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
     !equal(plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
     document.targetPlan.intentTargets.some((intent) => {
       const plan = target.exitPolicy.plans[intent.symbol]
-      return (
-        intent.side !== (plan?.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ? OrderSide.Sell : OrderSide.Buy)
-      )
+      return plan === undefined || intent.side !== (isShortExitPlan(plan) ? OrderSide.Sell : OrderSide.Buy)
     })
   )
     issues.push({
@@ -1509,7 +1591,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     !isSnapshotExecutionMarketDataBinding(source) ||
     !isSnapshotExecutionMarketDataBinding(pricing) ||
-    !sameSourceUniverse(source, pricing) ||
+    !sameIntradaySource(source, pricing) ||
     document.executionSession === undefined ||
     !sameMarketHours(source.calendar, document.executionSession.calendar) ||
     !sameMarketHours(pricing.calendar, source.calendar) ||
@@ -1523,7 +1605,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   )
     issues.push({
       path: ['bindings'],
-      issue: 'Jev execution requires fresh quote pricing from the same verified source universe and session',
+      issue: 'Jev execution requires fresh quote pricing from the same verified market source and session',
     })
   issues.push(...streamingPricingEvidenceIssues(document))
   return issues
@@ -1539,7 +1621,18 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
   if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') return []
   const evidence = target.evidence
   const input = executionDecisionPlannerInput(document)
-  const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+  const exitSymbol = target.symbols[0]
+  const position =
+    exitSymbol === undefined
+      ? undefined
+      : evidence.portfolio.brokerState.positions.find(
+          ({ symbol, quantityAtoms }) => symbol === exitSymbol && BigInt(quantityAtoms) !== 0n,
+        )
+  const priorPositionsBySymbol = new Map(
+    evidence.portfolio.brokerState.positions
+      .filter(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
+      .map((held) => [held.symbol, held] as const),
+  )
   if (
     input === undefined ||
     position === undefined ||
@@ -1553,6 +1646,10 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
       momentumProtocolIdentityMatches(
         makeRepeatedMomentumPolicy(evidence.protocol),
         document.bindings.strategyProtocolHash,
+      ) ||
+      intradayAlphaProtocolIdentityMatches(
+        makeIntradayAlphaPolicy(evidence.protocol),
+        document.bindings.strategyProtocolHash,
       )
     ) ||
     target.cycleId !== document.bindings.cycleId ||
@@ -1561,13 +1658,15 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
     document.createdAt < target.observedAt ||
     (document.replanGenerationHash === undefined && document.createdAt >= target.commitDeadlineAt) ||
     input.brokerState.reconciliation.reconciledAt < evidence.portfolio.brokerState.reconciliation.reconciledAt ||
-    input.brokerState.positions.some(
-      (held) =>
-        BigInt(held.quantityAtoms) !== 0n &&
-        (held.symbol !== position.symbol ||
-          BigInt(held.quantityAtoms) < 0n !== BigInt(position.quantityAtoms) < 0n ||
-          absoluteMicros(BigInt(held.quantityAtoms)) > absoluteMicros(BigInt(position.quantityAtoms))),
-    ) ||
+    input.brokerState.positions.some((held) => {
+      if (BigInt(held.quantityAtoms) === 0n) return false
+      const prior = priorPositionsBySymbol.get(held.symbol)
+      return (
+        prior === undefined ||
+        BigInt(held.quantityAtoms) < 0n !== BigInt(prior.quantityAtoms) < 0n ||
+        absoluteMicros(BigInt(held.quantityAtoms)) > absoluteMicros(BigInt(prior.quantityAtoms))
+      )
+    }) ||
     Object.values(input.targetWeights).some((weight) => weight !== 0) ||
     document.targetPlan.intentTargets.some(
       (intent) =>
@@ -1687,7 +1786,7 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
       issue: 'close limit allowance must bind a close-only limit plan within the intraday risk policy',
     })
   }
-  const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined
+  const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose === 'forced-close'
   const intentTargetSymbols = document.targetPlan.intentTargets.map(({ symbol }) => symbol).toSorted()
   const plannedTargetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol).toSorted()
   if (usesLiquidationMarketData !== requiresLiquidationMarketData) {
@@ -1875,7 +1974,7 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
             issue: 'dedicated intraday execution pricing must be explicitly quote-only',
           })
         }
-        if (!sameSourceUniverse(decisionMarketData, executionMarketData)) {
+        if (!sameIntradaySource(decisionMarketData, executionMarketData)) {
           issues.push({
             path: ['bindings', 'executionMarketData', 'universe'],
             issue: 'intraday decision and execution pricing evidence must share one immutable source universe',

@@ -222,14 +222,3 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
       }
   }
 }
-
-export const validateCycleLoopInterval = (pollIntervalMs: number): Result.Result<number, CycleRunnerError> =>
-  Number.isSafeInteger(pollIntervalMs) && pollIntervalMs > 0
-    ? Result.succeed(pollIntervalMs)
-    : Result.fail(
-        runnerError({
-          operation: 'configure',
-          failure: 'invalid-config',
-          message: 'cycle loop interval must be a positive safe integer',
-        }),
-      )

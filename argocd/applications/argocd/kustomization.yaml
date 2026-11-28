@@ -3,7 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: argocd
 resources:
-  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.2/manifests/ha/install.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.3/manifests/ha/install.yaml
   - base/ingressroute.yaml
   - base/ingressroute-private.yaml
   - base/kargo-dex-cors-middleware.yaml
@@ -14,8 +14,11 @@ resources:
   - alloy-deployment.yaml
 images:
   - name: public.ecr.aws/docker/library/redis
-    newTag: 8.10.1-alpine
-    digest: sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    newTag: 8.12.0-alpine
+    digest: sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483
+  - name: ghcr.io/dexidp/dex
+    newTag: v2.46.1
+    digest: sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
   - name: public.ecr.aws/docker/library/haproxy
     newTag: 3.4.4-alpine
     digest: sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564

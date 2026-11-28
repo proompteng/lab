@@ -1,3 +1,4 @@
+import { executionServiceName, restateServicePrefixConfig } from './execution-service-names'
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
 import { ValkeyCacheLive } from '../valkey-cache'
@@ -6,6 +7,7 @@ import {
   makeBaynBrokerSourceProjector,
   type BrokerObservationRuntime,
 } from './restate-broker-observations'
+import { makeBaynBrokerActivities, type BrokerActivityRuntime } from './restate-broker-activities'
 import { createServer, type Http2ServerRequest, type Http2ServerResponse } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
@@ -43,6 +45,7 @@ export const restateExecutionServerConfig = Config.all({
   activationToken: Config.Redacted('BAYN_EXECUTION_ACTIVATION_TOKEN'),
   port: Config.Port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
+  servicePrefix: restateServicePrefixConfig,
   ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
     Config.withDefault('http://restate.restate.svc.cluster.local:8080'),
   ),
@@ -50,7 +53,7 @@ export const restateExecutionServerConfig = Config.all({
 
 export const publishMarketChange = (
   ingressOrigin: string,
-  config: Pick<ExecutionControllerConfig, 'controllerKey' | 'operationTimeoutMs' | 'sourceRevision'>,
+  config: Pick<ExecutionControllerConfig, 'controllerKey' | 'operationTimeoutMs' | 'sourceRevision' | 'servicePrefix'>,
   event: MarketChangedWakeup,
   activationToken: Redacted.Redacted<string>,
 ): Effect.Effect<void, KafkaMarketFailure> => {
@@ -66,7 +69,7 @@ export const publishMarketChange = (
   return Effect.tryPromise({
     try: async (signal) => {
       const response = await fetch(
-        `${ingressOrigin}/BaynExecutionController/${encodeURIComponent(config.controllerKey)}/marketChanged`,
+        `${ingressOrigin}/${executionServiceName('controller', config.servicePrefix)}/${encodeURIComponent(config.controllerKey)}/marketChanged`,
         {
           method: 'POST',
           // Deduplicate live waiters. Public completions expire immediately so registration is checked again.
@@ -139,6 +142,7 @@ export const makeRestateExecutionEndpointHandler = (
   inferenceRuntime: EntryInferenceRuntime,
   brokerObservations: {
     readonly runtime: BrokerObservationRuntime
+    readonly activityRuntime: BrokerActivityRuntime
     readonly maxAgeMs: number
     readonly freshnessLeadMs: number
   },
@@ -154,16 +158,21 @@ export const makeRestateExecutionEndpointHandler = (
     brokerObservations.runtime,
     hooks,
   )
+  const activities = makeBaynBrokerActivities(
+    { ...config, maxAgeMs: brokerObservations.maxAgeMs, freshnessLeadMs: brokerObservations.freshnessLeadMs },
+    brokerObservations.activityRuntime,
+    hooks,
+  )
   const controller = makeBaynExecutionController({ ...config, activationAuthorizationHash }, runtime, hooks)
   const inference = makeBaynEntryInference(config, inferenceRuntime, hooks)
   return restate.createEndpointHandler({
-    services: [controller, observations, projector, inference],
+    services: [controller, observations, projector, activities, inference],
     identityKeys: [...identityKeys],
   })
 }
 
 export const restateExecutionServerProgram = Effect.gen(function* () {
-  const [{ activationToken, port, requestIdentityKeys, ingressOrigin }, plan] = yield* Effect.all([
+  const [{ activationToken, port, requestIdentityKeys, ingressOrigin, servicePrefix }, plan] = yield* Effect.all([
     restateExecutionServerConfig,
     loadApplicationPlan,
   ])
@@ -187,8 +196,14 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
         }),
     ),
   )
-  const { config, runtime, inferenceRuntime, readMarketReadiness, startMarketWakeups } =
-    yield* acquireNativeExecutionRuntime(plan)
+  const {
+    config: binding,
+    runtime,
+    inferenceRuntime,
+    readMarketReadiness,
+    startMarketWakeups,
+  } = yield* acquireNativeExecutionRuntime(plan, servicePrefix === '')
+  const config = { ...binding, servicePrefix }
   yield* startInferenceExpenseProjection(plan.config)
   const brokerObservations = yield* acquireBrokerObservationRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({

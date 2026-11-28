@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { NodeServices } from '@effect/platform-node'
 import { Deferred, Effect, Exit, Fiber, FileSystem, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
@@ -7,6 +7,11 @@ import { postgresMigrations } from '../db/postgres-migrations'
 import { marketCalendarQueryFromSession } from '../cycle/runner/calendar-decisions'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { ControllerPassEvidenceSchema } from './decision-work'
 import { testHash } from './fixtures.test-support'
 import { bindOperationalObligations, bindOperationalWork } from './operational-obligations'
@@ -138,28 +143,32 @@ const assessmentFixture = (
 }
 
 postgres('replayed operational source records', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const url = baynTestPostgresUrl ?? ''
-    const parsed = new URL(url)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw Error('Operational source tests require an isolated local _test database')
-    runtime = makeRuntime(url)
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(baynTestPostgresUrl ?? '', async (url) => {
+      const schema = makeRuntime(url)
+      try {
+        await schema.runPromise(postgresMigrations)
+      } finally {
+        await schema.dispose()
+      }
+    })
+  }, 30000)
+  beforeEach(async () => {
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
+  }, 30000)
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
-  beforeEach(
-    () =>
-      runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          yield* sql`DROP SCHEMA public CASCADE`
-          yield* sql`CREATE SCHEMA public`
-          yield* postgresMigrations
-        }),
-      ),
-    30000,
-  )
   afterAll(async () => {
-    if (runtime !== undefined) await runtime.dispose()
+    await template?.dispose()
   })
 
   test('retains the real pass across deactivation without hiding contradictory active evidence', async () => {

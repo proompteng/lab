@@ -31,6 +31,21 @@ data:
         regex         = "agents-alloy-.*"
         action        = "drop"
       }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_agents_proompteng_ai_agent_run"]
+        target_label  = "agent_run_k8s"
+      }
     }
 
     loki.source.kubernetes "agents_pod_logs" {
@@ -39,18 +54,84 @@ data:
     }
 
     loki.process "agents_pod_logs" {
-      stage.labels {
+      stage.static_labels {
         values = {
-          namespace = "{{ .Labels.namespace }}",
-          pod       = "{{ .Labels.pod }}",
-          container = "{{ .Labels.container }}",
+          job          = "agents",
+          namespace    = "agents",
+          metadata_on  = sys.env("AGENTS_LOKI_STRUCTURED_METADATA"),
         }
       }
 
-      stage.static_labels {
-        values = {
-          job       = "agents",
-          namespace = "agents",
+      stage.match {
+        selector = `{container=~"agents|agents-controllers|agent-runner"}`
+
+        stage.json {
+          expressions = {
+            level            = "level",
+            component        = "component",
+            event_type       = "event_type || event.type || event",
+            model            = "model || event.telemetry.model || event.status.model",
+            effort           = "effort || event.telemetry.effort || event.status.effort",
+            agent_run        = "agent_run || runName",
+            trace_id         = "trace_id",
+            tmpfs_used_bytes = "event.workspaceTmpfsUsedBytes",
+          }
+        }
+
+        stage.template {
+          source   = "agent_run"
+          template = `{{ or .agent_run .agent_run_k8s "" }}`
+        }
+
+        stage.template {
+          source   = "component"
+          template = `{{ or .component .container "" }}`
+        }
+
+        stage.template {
+          source   = "level"
+          template = `{{ if .level }}{{ .level }}{{ else if eq .event_type "error" }}error{{ else if eq .event_type "telemetry_error" }}warn{{ else if .event_type }}info{{ end }}`
+        }
+
+        // BoltDB Shipper rejects structured metadata. Enable only after Loki's active index is TSDB.
+        stage.match {
+          selector = `{metadata_on="true"}`
+
+          stage.structured_metadata {
+            values = {
+              level      = "",
+              component  = "",
+              event_type = "",
+              model      = "",
+              effort     = "",
+              agent_run  = "",
+              trace_id   = "",
+            }
+          }
+        }
+      }
+
+      stage.label_drop {
+        values = ["agent_run_k8s", "metadata_on"]
+      }
+
+      stage.match {
+        selector = `{container="agent-runner"}`
+
+        stage.metrics {
+          metric.gauge {
+            name              = "workspace_tmpfs_used_bytes"
+            description       = "Used bytes on the runner's /workspace tmpfs mount."
+            prefix            = "agents_runner_"
+            source            = "tmpfs_used_bytes"
+            action            = "set"
+            max_idle_duration = "2m"
+          }
+        }
+
+        // Pod identity is needed for the resource metric, but not as a Loki stream label.
+        stage.label_drop {
+          values = ["pod"]
         }
       }
 

@@ -29,7 +29,11 @@ export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: s
   protocol.schemaVersion === 'bayn.jev.protocol.v30' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v29' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v28' ||
-  (protocol.schemaVersion === 'bayn.jev.protocol.v27' && instrumentMarket(symbol) === MarketKind.Crypto)
+  ((protocol.schemaVersion === 'bayn.jev.protocol.v27' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
+    instrumentMarket(symbol) === MarketKind.Crypto)
     ? { quoteDriftBps: 0, limitSlippageBps: 0 }
     : {
         quoteDriftBps: protocol.maximumEntryQuoteDriftBps,
@@ -42,7 +46,10 @@ export const jevMaximumEntryAskMicros = (
   observedAsk: bigint,
 ): bigint => {
   const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
-  return protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+  return protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
@@ -140,12 +147,18 @@ export const jevEntryEconomics = (input: {
       // v38 and earlier retain their emitted bytes. v39 describes the effective entry cap;
       // shared protocol allowances still bind exit and proposal economics.
       maximumEntryQuoteDriftBps:
+        protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v39'
           ? entryAllowances.quoteDriftBps
           : protocol.maximumEntryQuoteDriftBps,
       maximumEntryLimitSlippageBps:
+        protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v39'
