@@ -7,6 +7,7 @@ import {
   makeConfigCommand,
   makeDiagnoseCommand,
   makeExamplesCommand,
+  makeFleetCommand,
   makeHelpCommand,
   makeQuickstartCommand,
   makeStatusCommand,
@@ -24,6 +25,7 @@ import {
   makeListCommand,
   makeWatchCommand,
 } from './commands/verbs'
+import { globalOptions } from './global-flags'
 import { renderShortHelp } from './help'
 
 export const makeApp = () => {
@@ -53,6 +55,8 @@ export const makeApp = () => {
       console.log(renderShortHelp(getVersion()))
     }),
   ).pipe(
+    Command.withGlobalFlags(globalOptions),
+    Command.withDescription('Operate Agents resources and AgentRuns from Kubernetes or gRPC.'),
     Command.withSubcommands([
       help,
       examples,
@@ -63,6 +67,7 @@ export const makeApp = () => {
       completion,
       status,
       diagnose,
+      makeFleetCommand(),
       get,
       describe,
       list,

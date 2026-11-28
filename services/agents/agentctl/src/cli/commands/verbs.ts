@@ -3,6 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import YAML from 'yaml'
 
+import { readRun, readRunObservation } from '../../kube/runs'
 import {
   AGENT_RUN_SPEC,
   applyManifest,
@@ -10,7 +11,6 @@ import {
   clearScreen,
   DEFAULT_WATCH_INTERVAL_MS,
   deleteCustomObject,
-  filterAgentRunsList,
   getCustomObjectOptional,
   listCustomObjects,
   outputList,
@@ -24,9 +24,11 @@ import {
 } from '../../runtime'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
-import { asAgentctlError } from '../errors'
+import { asAgentctlError, validationError } from '../errors'
 import { promptConfirm } from '../prompt'
 import { resolveResource } from '../resource-registry'
+import { hasRunFilters, listRuns, renderRunRows, runFilters, selectorOption } from '../run-list'
+import { describeRun, kubeCall } from '../run-observation'
 
 type RpcMapping = { list: string; get: string; apply: string; del: string; create?: string }
 
@@ -51,19 +53,28 @@ const parseIntervalMs = (value?: string) => {
   return Math.floor(parsed * 1000)
 }
 
-const resolveDescribeOutput = (output: string, outputFlag?: string) => (outputFlag ? output : 'yaml')
-
 const transportErrorTag = (error: unknown) => {
   if (error && typeof error === 'object' && 'code' in error) return 'GrpcError'
   return 'KubeError'
 }
 
-const selectorOption = Flag.optional(Flag.String('selector').pipe(Flag.withAlias('l')))
-const intervalOption = Flag.optional(Flag.String('interval'))
-const phaseOption = Flag.optional(Flag.String('phase'))
-const runtimeOption = Flag.optional(Flag.String('runtime'))
-const fileOption = Flag.String('file').pipe(Flag.withAlias('f'))
-const dryRunOption = Flag.Boolean('dry-run').pipe(Flag.withDefault(false))
+const intervalOption = Flag.optional(
+  Flag.String('interval').pipe(Flag.withDescription('Seconds between snapshots (default: 5).')),
+)
+const fileOption = Flag.String('file').pipe(
+  Flag.withAlias('f'),
+  Flag.withDescription('Read YAML manifests from this file or - for stdin.'),
+)
+const dryRunOption = Flag.Boolean('dry-run').pipe(
+  Flag.withDefault(false),
+  Flag.withDescription('Show what would change without writing to the backend.'),
+)
+const resourceArg = Argument.String('resource').pipe(
+  Argument.withDescription('Resource type, for example agent, impl, or run.'),
+)
+const nameArg = Argument.String('name').pipe(
+  Argument.withDescription('Name of the resource in the selected namespace.'),
+)
 
 const confirmOrThrow = (message: string, flags: { yes?: boolean; noInput?: boolean }) =>
   Effect.gen(function* () {
@@ -83,50 +94,31 @@ const resolveResourceOrThrow = (raw: string) => {
   return resource
 }
 
-const listRuns = (phase: string | undefined, runtime: string | undefined, selector: string | undefined) =>
+const getRun = (name: string, describe: boolean) =>
   Effect.gen(function* () {
-    const { resolved } = yield* AgentctlContext
+    const {
+      resolved: { namespace, output },
+      flags,
+    } = yield* AgentctlContext
     const transport = yield* TransportService
     if (transport.mode === 'kube') {
-      const resource = yield* Effect.promise(() =>
-        listCustomObjects(transport.backend, AGENT_RUN_SPEC, resolved.namespace, selector),
-      )
-      outputList(filterAgentRunsList(resource, phase, runtime), resolved.output)
+      const backend = transport.backend
+      if (output === 'table' || output === 'wide') {
+        const observation = yield* kubeCall((signal) => readRunObservation(backend, namespace, name, signal))
+        if (describe) yield* kubeCall(() => describeRun(backend, namespace, observation))
+        else renderRunRows([observation], output)
+      } else {
+        const resource = yield* kubeCall((signal) => readRun(backend, namespace, name, signal))
+        outputResource(resource, output)
+      }
       return
     }
-    const request: Record<string, string> = { namespace: resolved.namespace }
-    if (selector) request.label_selector = selector
-    if (phase) request.phase = phase
-    if (runtime) request.runtime = runtime
-    const response = yield* Effect.promise(() =>
-      callUnary<{ json: string }>(transport.client, 'ListAgentRuns', request, transport.metadata),
-    )
+    const response = yield* Effect.tryPromise({
+      try: () => callUnary<{ json: string }>(transport.client, 'GetAgentRun', { name, namespace }, transport.metadata),
+      catch: (error) => asAgentctlError(error, 'GrpcError'),
+    })
     const resource = parseJson(response.json)
-    if (resource) outputList(resource, resolved.output)
-  })
-
-const getRun = (name: string, describeOutput?: string) =>
-  Effect.gen(function* () {
-    const { resolved } = yield* AgentctlContext
-    const transport = yield* TransportService
-    if (transport.mode === 'kube') {
-      const resource = yield* Effect.promise(() =>
-        getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
-      )
-      if (!resource) throw new Error('AgentRun not found')
-      outputResource(resource, describeOutput ?? resolved.output)
-      return
-    }
-    const response = yield* Effect.promise(() =>
-      callUnary<{ json: string }>(
-        transport.client,
-        'GetAgentRun',
-        { name, namespace: resolved.namespace },
-        transport.metadata,
-      ),
-    )
-    const resource = parseJson(response.json)
-    if (resource) outputResource(resource, describeOutput ?? resolved.output)
+    if (resource) outputResource(resource, describe && !flags.output ? 'yaml' : output)
   })
 
 const listGenericResource = (resourceName: string, selector: string | undefined) =>
@@ -155,23 +147,24 @@ const listGenericResource = (resourceName: string, selector: string | undefined)
     if (body) outputList(body, resolved.output)
   })
 
-const getGenericResource = (resourceName: string, name: string, describeOutput?: string) =>
+const getGenericResource = (resourceName: string, name: string, describe = false) =>
   Effect.gen(function* () {
     const resource = resolveResourceOrThrow(resourceName)
     if (resource.isRun) {
-      yield* getRun(name, describeOutput)
+      yield* getRun(name, describe)
       return
     }
     const rpc = resource.rpc
     if (!rpc) throw new Error(`No RPC mapping for ${resource.name}`)
-    const { resolved } = yield* AgentctlContext
+    const { resolved, flags } = yield* AgentctlContext
+    const output = describe && !flags.output ? 'yaml' : resolved.output
     const transport = yield* TransportService
     if (transport.mode === 'kube') {
       const response = yield* Effect.promise(() =>
         getCustomObjectOptional(transport.backend, resource.spec, name, resolved.namespace),
       )
       if (!response) throw new Error(`${resource.name} ${name} not found`)
-      outputResource(response, describeOutput ?? resolved.output)
+      outputResource(response, output)
       return
     }
     const response = yield* Effect.promise(() =>
@@ -183,123 +176,78 @@ const getGenericResource = (resourceName: string, name: string, describeOutput?:
       ),
     )
     const body = parseJson(response.json)
-    if (body) outputResource(body, describeOutput ?? resolved.output)
+    if (body) outputResource(body, output)
   })
 
-export const makeGetCommand = () => {
-  const resourceArg = Argument.String('resource')
-  const nameArg = Argument.optional(Argument.String('name'))
-  return Command.make(
+export const makeGetCommand = () =>
+  Command.make(
     'get',
-    { resource: resourceArg, name: nameArg, selector: selectorOption, phase: phaseOption, runtime: runtimeOption },
-    ({ resource, name, selector, phase, runtime }) =>
+    { resource: resourceArg, name: Argument.optional(nameArg), selector: selectorOption, ...runFilters },
+    ({ resource, name, selector, ...filters }) =>
       Effect.gen(function* () {
-        const resolvedName = Option.getOrUndefined(name)
-        const resolvedSelector = Option.getOrUndefined(selector)
-        const resolvedPhase = Option.getOrUndefined(phase)
-        const resolvedRuntime = Option.getOrUndefined(runtime)
-
-        if (!resolvedName) {
-          const entry = resolveResourceOrThrow(resource)
-          if (entry.isRun) {
-            yield* listRuns(resolvedPhase, resolvedRuntime, resolvedSelector)
-            return
+        if (Option.isSome(name)) {
+          if (Option.isSome(selector) || hasRunFilters(filters)) {
+            return yield* Effect.fail(
+              validationError('Selectors and filters are only supported when listing resources.'),
+            )
           }
-          if (resolvedPhase || resolvedRuntime) {
-            throw new Error('Run filters are only supported for resource "run".')
-          }
-          yield* listGenericResource(resource, resolvedSelector)
-          return
+          yield* getGenericResource(resource, name.value)
+        } else {
+          yield* listResource(resource, Option.getOrUndefined(selector), filters)
         }
-
-        if (resolvedSelector || resolvedPhase || resolvedRuntime) {
-          throw new Error('Selectors and filters are only supported when listing resources.')
-        }
-        yield* getGenericResource(resource, resolvedName)
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-}
+  ).pipe(Command.withDescription('Get one resource or list resources of the requested type.'))
 
-export const makeDescribeCommand = () => {
-  const resourceArg = Argument.String('resource')
-  const nameArg = Argument.String('name')
-  return Command.make('describe', { resource: resourceArg, name: nameArg }, ({ resource, name }) =>
-    Effect.gen(function* () {
-      const { resolved, flags } = yield* AgentctlContext
-      const describeOutput = resolveDescribeOutput(resolved.output, flags.output)
-      yield* getGenericResource(resource, name, describeOutput)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-}
+export const makeDescribeCommand = () =>
+  Command.make('describe', { resource: resourceArg, name: nameArg }, ({ resource, name }) =>
+    getGenericResource(resource, name, true).pipe(
+      Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error))),
+    ),
+  ).pipe(Command.withDescription('Show resource details, including live workload and Events for an AgentRun.'))
 
-export const makeListCommand = () => {
-  const resourceArg = Argument.String('resource')
-  return Command.make(
+const listResource = (resource: string, selector: string | undefined, filters: Parameters<typeof listRuns>[0]) =>
+  Effect.gen(function* () {
+    if (resolveResourceOrThrow(resource).isRun) {
+      yield* listRuns(filters, selector)
+    } else {
+      if (hasRunFilters(filters)) {
+        return yield* Effect.fail(validationError('Run filters are only supported for resource "run".'))
+      }
+      yield* listGenericResource(resource, selector)
+    }
+  })
+
+export const makeListCommand = () =>
+  Command.make(
     'list',
-    { resource: resourceArg, selector: selectorOption, phase: phaseOption, runtime: runtimeOption },
-    ({ resource, selector, phase, runtime }) =>
-      Effect.gen(function* () {
-        const resolvedSelector = Option.getOrUndefined(selector)
-        const resolvedPhase = Option.getOrUndefined(phase)
-        const resolvedRuntime = Option.getOrUndefined(runtime)
-        const entry = resolveResourceOrThrow(resource)
-        if (entry.isRun) {
-          yield* listRuns(resolvedPhase, resolvedRuntime, resolvedSelector)
-          return
-        }
-        if (resolvedPhase || resolvedRuntime) {
-          throw new Error('Run filters are only supported for resource "run".')
-        }
-        yield* listGenericResource(resource, resolvedSelector)
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-}
+    { resource: resourceArg, selector: selectorOption, ...runFilters },
+    ({ resource, selector, ...filters }) =>
+      listResource(resource, Option.getOrUndefined(selector), filters).pipe(
+        Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error))),
+      ),
+  ).pipe(Command.withDescription('List resources, optionally filtering AgentRuns by phase or workload state.'))
 
-export const makeWatchCommand = () => {
-  const resourceArg = Argument.String('resource')
-  return Command.make(
+export const makeWatchCommand = () =>
+  Command.make(
     'watch',
-    {
-      resource: resourceArg,
-      selector: selectorOption,
-      phase: phaseOption,
-      runtime: runtimeOption,
-      interval: intervalOption,
-    },
-    ({ resource, selector, phase, runtime, interval }) =>
+    { resource: resourceArg, selector: selectorOption, interval: intervalOption, ...runFilters },
+    ({ resource, selector, interval, ...filters }) =>
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext
-        const resolvedSelector = Option.getOrUndefined(selector)
-        const resolvedPhase = Option.getOrUndefined(phase)
-        const resolvedRuntime = Option.getOrUndefined(runtime)
         const intervalMs = parseIntervalMs(Option.getOrUndefined(interval))
-        const entry = resolveResourceOrThrow(resource)
-
+        const structured = resolved.output !== 'table' && resolved.output !== 'wide'
         let iteration = 0
         while (true) {
-          if (resolved.output === 'table' || resolved.output === 'wide') {
-            clearScreen()
-          } else if (iteration > 0) {
-            console.log('')
-          }
-          if (entry.isRun) {
-            yield* listRuns(resolvedPhase, resolvedRuntime, resolvedSelector)
-          } else {
-            if (resolvedPhase || resolvedRuntime) {
-              throw new Error('Run filters are only supported for resource "run".')
-            }
-            yield* listGenericResource(resource, resolvedSelector)
-          }
+          if (!structured) clearScreen()
+          else if (iteration > 0) console.log('')
+          yield* listResource(resource, Option.getOrUndefined(selector), filters)
           iteration += 1
           yield* Effect.sleep(intervalMs)
         }
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-}
+  ).pipe(Command.withDescription('Refresh a resource list until interrupted.'))
 
 export const makeDeleteCommand = () => {
-  const resourceArg = Argument.String('resource')
-  const nameArg = Argument.String('name')
   return Command.make(
     'delete',
     { resource: resourceArg, name: nameArg, dryRun: dryRunOption },
@@ -361,7 +309,7 @@ export const makeDeleteCommand = () => {
         )
         console.log(response.message ?? 'deleted')
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
+  ).pipe(Command.withDescription('Delete a resource after confirming; use run cancel for AgentRuns.'))
 }
 
 export const makeApplyCommand = () => {
@@ -415,11 +363,10 @@ export const makeApplyCommand = () => {
       }
       outputResources(applied, resolved.output)
     }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
+  ).pipe(Command.withDescription('Apply one or more resource manifests.'))
 }
 
 export const makeExplainCommand = () => {
-  const resourceArg = Argument.String('resource')
   return Command.make('explain', { resource: resourceArg }, ({ resource }) =>
     Effect.sync(() => {
       const entry = resolveResourceOrThrow(resource)
@@ -437,5 +384,5 @@ export const makeExplainCommand = () => {
       console.log('Sample manifest:')
       console.log(YAML.stringify(sample))
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'ValidationError'))),
-  )
+  ).pipe(Command.withDescription('Show the Kubernetes identity and an example for a resource type.'))
 }

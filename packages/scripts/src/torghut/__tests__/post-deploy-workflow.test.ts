@@ -50,9 +50,11 @@ describe('torghut post-deploy verifier workflow', () => {
   })
 
   it('checks retained deployments and both Flink jobs without contacting retired APIs', () => {
-    expect(workflow).toContain(
-      'for deployment in \\\n            torghut-ta \\\n            market-data-archive \\\n            torghut-ws; do',
+    const commands = workflow.replaceAll('\\\n', ' ').replace(/\s+/g, ' ')
+    expect(commands).toContain(
+      'for deployment in torghut-ta market-data-archive; do kubectl rollout status "deployment/${deployment}" -n torghut',
     )
+    expect(commands).toContain('kubectl rollout status deployment/torghut-ws -n bayn --timeout=10m')
     expect(workflow).toContain('for pipeline in torghut-ta market-data-archive; do')
     expect(workflow).toContain('kubectl rollout status "deployment/${deployment}"')
     expect(workflow).not.toContain('wait_knative_service_ready')
