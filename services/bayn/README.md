@@ -16,6 +16,8 @@ define executable behavior.
 
 ## Start here
 
+See the [Bayn documentation index](../../docs/bayn/README.md) for production runbooks, architecture, and retained evidence.
+
 | Task                                          | Reference                                                                                                                                       |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Understand current entries, pricing and exits | [Active strategy](#active-strategy), [strategy protection](../../docs/bayn/strategy-protection.md)                                              |
@@ -25,6 +27,7 @@ define executable behavior.
 | Operate or release Bayn                       | [Operations](#operations), [delivery](#delivery), [cycle runbook](../../docs/runbooks/bayn-cycle-operations.md)                                 |
 | Read status or diagnose an outage             | [Endpoints](#endpoints), [cache runbook](../../docs/runbooks/bayn-cache-observability.md)                                                       |
 | Evaluate economics or a proposed strategy     | [Profitability goal](#profitability-goal), [replay and backtesting](#replay-and-backtesting), [research](#independent-jev-instruction-research) |
+| Configure independent Alpaca Paper sleeves    | [Multi-account sleeve runbook](../../docs/bayn/multi-account-sleeve-architecture.md)                                                            |
 | Qualify daily multi-horizon PAPER evidence    | [Profitability master playbook](../../docs/bayn/profitability-master-playbook.md)                                                               |
 | Build and validate a change                   | [Package scripts](package.json), [validation](#validation), [service guide](AGENTS.md)                                                          |
 
@@ -56,7 +59,7 @@ This guide describes current source behavior. Historical implementation notes re
 [pre-cleanup revision](https://github.com/proompteng/lab/blob/ce24661870dd490c1fac592227f77027f7c6ddab/services/bayn/README.md);
 earlier activation recipes remain in the
 [prior guide](https://github.com/proompteng/lab/blob/55f1aad1e416e03ba4c3a7b9ce14ab2a20b7c4fc/services/bayn/README.md).
-The [October 17 investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) retains its reproduction and cost
+The [October 17 investigation](../../docs/bayn/archive/crypto-entry-research-2026-10-17.md) retains its reproduction and cost
 evidence. Historical recipes and measurements do not establish current deployment, authority or profitable edge.
 
 ## Webull live ingestion
@@ -151,9 +154,9 @@ could have read historically and cannot serve as a qualified backtest or live de
 **Produce repeatable positive profit after all costs, within the registered risk limits, using the smallest
 understandable system that meets its original deadlines and reliability requirements.**
 
-The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
+The [October 6, 2026 research review](../../docs/bayn/archive/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
-The [November 7 paper-edge campaign](../../docs/bayn/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
+The [November 7 paper-edge campaign](../../docs/bayn/archive/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
 
 Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
 untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
@@ -1904,7 +1907,7 @@ after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start dela
 
 Run forward-performance reports outside execution-controller pods, in a separately budgeted reporting process. A November 13 diagnostic
 report exhausted a controller's 1 GiB memory limit and restarted it; the report subsequently completed in a 4 GiB
-API pod. That single success is not a memory bound. See the [investigation](../../docs/bayn/system-investigation-2026-11-13.md)
+API pod. That single success is not a memory bound. See the [investigation](../../docs/bayn/archive/system-investigation-2026-11-13.md)
 for the measured result and remaining evidence gaps.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
@@ -2106,7 +2109,7 @@ limit supports the pool without increasing the 250m CPU reservation. Reports rem
 Manifest authentication for archive grouping also uses the same pool, preserving request order and grouping keys.
 Completed-session intraday reads run at concurrency eight. Requests for an identical archive window reuse one
 verified bar summary within that read while retaining each decision's identity, scope and watermark lower bound.
-See the [report measurements](../../docs/bayn/report-performance-2026-11-13.md) for observed timings and limitations.
+See the [report measurements](../../docs/bayn/archive/report-performance-2026-11-13.md) for observed timings and limitations.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
@@ -2802,7 +2805,7 @@ predicate with the shared strict DAY/IOC proof, including the renamed partial-fi
 current economic-plan v18 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
 reconciliation before activating a new same-account v18 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
-See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
+See the [Alpaca hours investigation](../../docs/bayn/archive/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.
 
 Current equity fee modeling uses the registered effective-dated schedule and an explicit New York execution date.

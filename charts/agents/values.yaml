@@ -117,6 +117,22 @@ linearMcpGateway:
   networkPolicy:
     enabled: true
 
+# Enable only after the controller and runner images and API token Secret are available.
+autoOntologyMcpGateway:
+  enabled: false
+  replicaCount: 2
+  apiTokenSecretName: auto-ontology-mcp-token
+  apiUrl: http://frontend.auto-ontology.svc.cluster.local:3000
+  runnerServiceAccountName: codex-auto-ontology-runner
+  tokenAudience: agents.proompteng.ai/auto-ontology-mcp
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+
 agentsShell:
   enabled: false
   replicaCount: 1

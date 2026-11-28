@@ -12,7 +12,7 @@ The immediate work is a complete comparison on original retained inputs with ind
 
 The search log retains 63 targeted queries covering intraday trend and reversal, opening-range breakout, news and language models, daily statistical arbitrage, pairs trading, option premia, order flow, market making, cryptocurrency forecasting, execution costs, recent replications, lower-turnover portfolios, and public replication access. Sources include arXiv, SSRN, NBER, the New York Fed, the Chicago Fed, university repositories, publishers, authors' websites, and authors' public repositories. Search results from blogs and social media were navigation leads, not evidence for the conclusions.
 
-The [search log](recent-strategy-searches-2026-10-06.json) retains the queries. The catalog below screens 48 distinct papers or research notes, including 27 entries with selected primary methods and results inspected. `Methods` does not mean an independent replication was performed. `Abstract` and `Author summary` mean the underlying experiment remains unaudited here. Several SSRN and NBER full-text fetches failed. Those failures do not upgrade abstracts into verified methods. `Primary update` identifies an authors' recent empirical follow-up rather than a new full paper. This is a broad documented search, not complete coverage of every paper or private data source.
+The [search log](../recent-strategy-searches-2026-10-06.json) retains the queries. The catalog below screens 48 distinct papers or research notes, including 27 entries with selected primary methods and results inspected. `Methods` does not mean an independent replication was performed. `Abstract` and `Author summary` mean the underlying experiment remains unaudited here. Several SSRN and NBER full-text fetches failed. Those failures do not upgrade abstracts into verified methods. `Primary update` identifies an authors' recent empirical follow-up rather than a new full paper. This is a broad documented search, not complete coverage of every paper or private data source.
 
 Publication or revision date and the last tested observation are different fields. A 2026 revision with data ending in 2021 provides no direct evidence about performance in 2025 or 2026.
 
@@ -50,7 +50,7 @@ The newly calculated risk and cost diagnostics below weaken the headline return 
 
 ## Independently calculated diagnostics
 
-The [diagnostic receipt](recent-strategy-diagnostics-2026-10-06.json) retains the frozen protocol, exact input hashes and requests, declared methods, all 40 trend-case summaries and independent accounting checks. Full private working artifacts retain per-episode results and source responses. The receipt contains no credentials or broker account records.
+The [diagnostic receipt](../recent-strategy-diagnostics-2026-10-06.json) retains the frozen protocol, exact input hashes and requests, declared methods, all 40 trend-case summaries and independent accounting checks. Full private working artifacts retain per-episode results and source responses. The receipt contains no credentials or broker account records.
 
 ### Published news returns: risk, selection and costs
 
