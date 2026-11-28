@@ -12,10 +12,16 @@ import { McpRunIdentityError } from '../server/mcp-run-identity'
 import { connectColabBridge } from './bridge'
 import { resolveColabGatewayConfig } from './config'
 import { createColabTokenProvider } from './oauth'
+import { ownerPrefix } from './policy'
 import { createColabGatewayHandler } from './server'
 import { COLAB_TOOLS, createColabUpstream } from './upstream'
 
 const identity = { agentRun: 'example-run', namespace: 'agents', serviceAccount: 'google-triage-runner' }
+const runCaller = `${identity.namespace}/${identity.agentRun}`
+const runPrefix = ownerPrefix(runCaller)
+const otherRunCaller = `${identity.namespace}/other-run`
+const otherRunPrefix = ownerPrefix(otherRunCaller)
+const ownedRuntime = (suffix: string, prefix = runPrefix) => `runtimes/${prefix}${suffix}`
 const url = new URL('http://agents-colab-mcp-gateway.agents.svc.cluster.local:8080/mcp')
 const toolResult = (structuredContent: Record<string, unknown>): CallToolResult => ({ content: [], structuredContent })
 type GoogleRequest = {
@@ -129,13 +135,14 @@ it('proxies discovery and JSON/SSE tool results with only approved tools and red
   expect(tools.map((tool: { name: string }) => tool.name)).toEqual([...COLAB_TOOLS])
   expect(await call('get_subscription')).toMatchObject({ result: { structuredContent: { stdout: '42\n' } } })
   const code = 'print(6 * 7) # private notebook'
-  expect(await call('execute_code', { code, runtime: 'runtimes/cpu' })).toMatchObject({
+  const cpuRuntime = ownedRuntime('cpu')
+  expect(await call('execute_code', { code, runtime: cpuRuntime })).toMatchObject({
     id: 1,
     result: { structuredContent: { stdout: '42\n' } },
   })
   expect(JSON.parse(String(google.mock.lastCall?.[1]?.body)).params).toEqual({
     name: 'execute_code',
-    arguments: { code, runtime: 'runtimes/cpu' },
+    arguments: { code, runtime: cpuRuntime },
   })
   expect(exchange).toHaveBeenCalledTimes(1)
   expect(audit).toHaveBeenLastCalledWith({
@@ -171,9 +178,15 @@ it('stays reachable without ADC, and fails closed before any backend tool or OAu
   expect(google).toHaveBeenCalledTimes(1)
 })
 
-const fourRuntimes = () => ['one', 'two', 'three', 'four'].map((id) => ({ name: `runtimes/${id}` }))
+const fourRuntimes = () => [
+  { name: ownedRuntime('one') },
+  { name: ownedRuntime('two', otherRunPrefix) },
+  { name: 'runtimes/personal-three' },
+  { name: 'runtimes/personal-four' },
+]
 const runtimeLimit = { error: { data: { code: 'colab_runtime_limit_reached' } } }
 const runtimeAlreadyReserved = { error: { data: { code: 'colab_runtime_already_reserved' } } }
+const runtimeForbidden = { error: { data: { code: 'colab_runtime_forbidden' } } }
 const deadlineExceededResult: CallToolResult = {
   isError: true,
   content: [{ type: 'text', text: '{"error":{"status":"DEADLINE_EXCEEDED"}}' }],
@@ -188,7 +201,8 @@ it('counts simultaneous and not-yet-listed creates against the five-runtime cap'
     callTool: async ({ params }) => {
       if (params.name === 'list_runtimes') return toolResult({ runtimes })
       if (params.name === 'delete_runtime') {
-        runtimes.shift()
+        const index = runtimes.findIndex((runtime) => runtime.name === params.arguments?.name)
+        if (index >= 0) runtimes.splice(index, 1)
         return toolResult({})
       }
       expect(params.name).toBe('create_runtime')
@@ -196,7 +210,10 @@ it('counts simultaneous and not-yet-listed creates against the five-runtime cap'
         started.resolve()
         await finish.promise
       }
-      return toolResult({ name: `runtimes/${params.arguments?.runtimeId}` })
+      return toolResult({
+        name: `runtimes/${params.arguments?.runtimeId}`,
+        connectionInfo: { url: 'https://proxy.example', token: 'secret-proxy-token' },
+      })
     },
   })
   const create = (runtimeId: string) => call('create_runtime', { runtime: {}, runtimeId })
@@ -209,12 +226,15 @@ it('counts simultaneous and not-yet-listed creates against the five-runtime cap'
   } finally {
     finish.resolve()
   }
-  expect(await first).toMatchObject({ result: { structuredContent: { name: 'runtimes/fifth' } } })
+  const firstResult = await first
+  expect(firstResult).toMatchObject({ result: { structuredContent: { name: ownedRuntime('fifth') } } })
+  expect(firstResult.result.structuredContent).not.toHaveProperty('connectionInfo')
   expect(await create('sixth')).toMatchObject(runtimeLimit)
-  runtimes.push({ name: 'runtimes/fifth' })
+  runtimes.push({ name: ownedRuntime('fifth') })
   expect(await create('sixth')).toMatchObject(runtimeLimit)
-  await call('delete_runtime', { name: 'runtimes/one' })
-  expect(await create('sixth')).toMatchObject({ result: { structuredContent: { name: 'runtimes/sixth' } } })
+  expect(await call('delete_runtime', { name: 'runtimes/personal-three' })).toMatchObject(runtimeForbidden)
+  await call('delete_runtime', { name: ownedRuntime('one') })
+  expect(await create('sixth')).toMatchObject({ result: { structuredContent: { name: ownedRuntime('sixth') } } })
   expect(createCount).toBe(2)
 })
 
@@ -283,7 +303,7 @@ it('allows matching idempotent create_runtime retries after DEADLINE_EXCEEDED at
     runtimeLimit,
   )
 
-  // 3. Conflicting requestId, mutated runtime spec, or different AgentRun for the reserved runtimeId are rejected.
+  // 3. Conflicting requestId, mutated runtime spec, or different AgentRun cannot hijack the reserved slot.
   expect(
     await call('create_runtime', {
       runtime: { region: 'us-central1', machineType: 'n1-standard-4' },
@@ -298,6 +318,7 @@ it('allows matching idempotent create_runtime retries after DEADLINE_EXCEEDED at
       requestId,
     }),
   ).toMatchObject(runtimeAlreadyReserved)
+  // Another AgentRun using the same short runtimeId gets its own prefix and hits the global 5/5 limit.
   expect(
     await call(
       'create_runtime',
@@ -308,7 +329,19 @@ it('allows matching idempotent create_runtime retries after DEADLINE_EXCEEDED at
       },
       'other-run-token',
     ),
-  ).toMatchObject(runtimeAlreadyReserved)
+  ).toMatchObject(runtimeLimit)
+  // Another AgentRun attempting to spoof Run A's prefixed runtimeId is rejected as forbidden before upstream.
+  expect(
+    await call(
+      'create_runtime',
+      {
+        runtime: { region: 'us-central1', machineType: 'n1-standard-4' },
+        runtimeId: `${runPrefix}fifth`,
+        requestId,
+      },
+      'other-run-token',
+    ),
+  ).toMatchObject(runtimeForbidden)
 
   // 4. Matching idempotent retry (case-insensitive UUID, equivalent runtime key order) succeeds at 5/5 capacity.
   const retry = call('create_runtime', {
@@ -329,15 +362,15 @@ it('allows matching idempotent create_runtime retries after DEADLINE_EXCEEDED at
   } finally {
     finishRetry.resolve()
   }
-  expect(await retry).toMatchObject({ result: { structuredContent: { name: 'runtimes/fifth' } } })
+  expect(await retry).toMatchObject({ result: { structuredContent: { name: ownedRuntime('fifth') } } })
 
   // 5. Reservation settles cleanly without double-counting once observed by list_runtimes and freed on delete.
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
-  runtimes.push({ name: 'runtimes/fifth' })
+  runtimes.push({ name: ownedRuntime('fifth') })
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
-  await call('delete_runtime', { name: 'runtimes/one' })
+  await call('delete_runtime', { name: ownedRuntime('one') })
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject({
-    result: { structuredContent: { name: 'runtimes/sixth' } },
+    result: { structuredContent: { name: ownedRuntime('sixth') } },
   })
   expect(attempt).toBe(3)
 })
@@ -349,7 +382,7 @@ it('releases a reserved slot when a retried create_runtime permanently fails, an
     deadlineExceededResult,
     { isError: true, content: [{ type: 'text', text: '{"error":{"status":"ALREADY_EXISTS"}}' }] },
     { isError: true, content: [{ type: 'text', text: '{"error":{"status":"RESOURCE_EXHAUSTED"}}' }] },
-    toolResult({ name: 'runtimes/sixth' }),
+    toolResult({ name: ownedRuntime('sixth') }),
   ]
   const create = vi.fn(async () => responses.shift()!)
   const { call } = fixture({
@@ -370,7 +403,7 @@ it('releases a reserved slot when a retried create_runtime permanently fails, an
     result: { isError: true },
   })
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject({
-    result: { structuredContent: { name: 'runtimes/sixth' } },
+    result: { structuredContent: { name: ownedRuntime('sixth') } },
   })
   expect(create).toHaveBeenCalledTimes(4)
 })
@@ -384,7 +417,7 @@ it('allows a matching idempotent retry even if Google already listed the runtime
       if (params.name === 'list_runtimes') return toolResult({ runtimes })
       expect(params.name).toBe('create_runtime')
       if (++attempt === 1) return deadlineExceededResult
-      return toolResult({ name: 'runtimes/fifth' })
+      return toolResult({ name: ownedRuntime('fifth') })
     },
   })
 
@@ -392,12 +425,112 @@ it('allows a matching idempotent retry even if Google already listed the runtime
     result: { isError: true },
   })
   // Google finished creating the runtime before the client retried the identical request.
-  runtimes.push({ name: 'runtimes/fifth' })
+  runtimes.push({ name: ownedRuntime('fifth') })
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'fifth', requestId })).toMatchObject({
-    result: { structuredContent: { name: 'runtimes/fifth' } },
+    result: { structuredContent: { name: ownedRuntime('fifth') } },
   })
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
   expect(attempt).toBe(2)
+})
+
+it('isolates runtimes and sessions per verified AgentRun and strips proxy credentials across gateway calls', async () => {
+  const runARuntime = ownedRuntime('gpu-a')
+  const runBRuntime = ownedRuntime('gpu-b', otherRunPrefix)
+  const humanRuntime = 'runtimes/personal-human-gpu'
+  const runASession = `${runARuntime}/sessions/sess-a1`
+  const runBSession = `${runBRuntime}/sessions/sess-b1`
+  const upstreamRuntimes = [
+    {
+      name: runARuntime,
+      state: 'RUNNING',
+      connectionInfo: { url: 'https://proxy-a.example', token: 'token-a' },
+      proxy_token: 'proxy-secret-a',
+    },
+    {
+      name: runBRuntime,
+      state: 'RUNNING',
+      connection_info: { url: 'https://proxy-b.example', access_token: 'token-b' },
+      accessToken: 'access-secret-b',
+    },
+    {
+      name: humanRuntime,
+      state: 'RUNNING',
+      connectionInfo: { url: 'https://proxy-human.example', token: 'token-human' },
+    },
+  ]
+
+  const upstreamCall = vi.fn(async ({ params }: GoogleRequest): Promise<CallToolResult> => {
+    if (params.name === 'list_runtimes') {
+      return {
+        structuredContent: { runtimes: upstreamRuntimes },
+        content: [{ type: 'text', text: JSON.stringify({ runtimes: upstreamRuntimes }) }],
+      }
+    }
+    if (params.name === 'get_runtime') {
+      const match = upstreamRuntimes.find((r) => r.name === params.arguments?.name)
+      return {
+        structuredContent: match,
+        content: [{ type: 'text', text: JSON.stringify(match) }],
+      }
+    }
+    return toolResult({ ok: true })
+  })
+
+  const { call, google } = fixture({ callTool: upstreamCall })
+
+  // Run B sees only its own runtime in both structuredContent and content text, with credentials stripped.
+  const listB = await call('list_runtimes', {}, 'other-run-token')
+  expect(listB.result.structuredContent).toEqual({
+    runtimes: [{ name: runBRuntime, state: 'RUNNING' }],
+  })
+  expect(JSON.parse(listB.result.content[0].text)).toEqual({
+    runtimes: [{ name: runBRuntime, state: 'RUNNING' }],
+  })
+  expect(JSON.stringify(listB)).not.toMatch(
+    /gpu-a|personal-human|token-a|token-b|proxy-secret|access-secret|connectionInfo|connection_info/,
+  )
+
+  // Run B can inspect its own runtime without receiving connectionInfo or tokens.
+  const getB = await call('get_runtime', { name: runBRuntime }, 'other-run-token')
+  expect(getB.result.structuredContent).toEqual({ name: runBRuntime, state: 'RUNNING' })
+  expect(JSON.parse(getB.result.content[0].text)).toEqual({ name: runBRuntime, state: 'RUNNING' })
+
+  const callsBeforeForbidden = google.mock.calls.length
+
+  // Run B is rejected BEFORE upstream for every cross-run, human, and traversal target.
+  const forbiddenCalls: Array<[string, Record<string, unknown>]> = [
+    ['get_runtime', { name: runARuntime }],
+    ['get_runtime', { name: humanRuntime }],
+    ['get_runtime', { name: `${runBRuntime}/../${runPrefix}gpu-a` }],
+    ['delete_runtime', { name: runARuntime }],
+    ['delete_runtime', { runtime_name: runARuntime }],
+    ['list_sessions', { parent: runARuntime }],
+    ['create_session', { parent: runARuntime }],
+    ['delete_session', { name: runASession }],
+    ['delete_session', { session: `${runBRuntime}/sessions/../other` }],
+    ['execute_code', { code: 'print(1)', session: runASession }],
+    ['execute_code', { code: 'print(1)', runtime: runARuntime }],
+    ['execute_code', { code: 'print(1)', runtime: runBRuntime, session: runASession }],
+    ['execute_code', { code: 'print(1)', runtime: `${runBRuntime}/../${runPrefix}gpu-a` }],
+  ]
+  for (const [toolName, toolArgs] of forbiddenCalls) {
+    expect(await call(toolName, toolArgs, 'other-run-token')).toMatchObject(runtimeForbidden)
+  }
+  expect(google).toHaveBeenCalledTimes(callsBeforeForbidden)
+
+  // Run B succeeds on its own session/runtime tools.
+  expect(await call('list_sessions', { parent: runBRuntime }, 'other-run-token')).toMatchObject({
+    result: { structuredContent: { ok: true } },
+  })
+  expect(await call('create_session', { parent: runBRuntime }, 'other-run-token')).toMatchObject({
+    result: { structuredContent: { ok: true } },
+  })
+  expect(await call('execute_code', { code: 'print(1)', session: runBSession }, 'other-run-token')).toMatchObject({
+    result: { structuredContent: { ok: true } },
+  })
+  expect(await call('delete_session', { name: runBSession }, 'other-run-token')).toMatchObject({
+    result: { structuredContent: { ok: true } },
+  })
 })
 
 it('bridges MCP discovery and calls with the rotated projected token, without network I/O', async () => {
@@ -417,16 +550,22 @@ it('bridges MCP discovery and calls with the rotated projected token, without ne
     })
     await client.connect(clientTransport)
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...COLAB_TOOLS])
+    const cpuRuntime = ownedRuntime('cpu')
     await expect(
       client.callTool(
-        { name: 'execute_code', arguments: { code: 'print(42)', runtime: 'runtimes/cpu' } },
+        { name: 'execute_code', arguments: { code: 'print(42)', runtime: cpuRuntime } },
         CallToolResultSchema,
       ),
     ).resolves.toMatchObject({ structuredContent: { stdout: '42\n' } })
     rotateToken('rotated-token')
     await writeFile(tokenPath, 'rotated-token')
     options.credentials = false
-    await expect(client.callTool({ name: 'execute_code' }, CallToolResultSchema)).rejects.toMatchObject({
+    await expect(
+      client.callTool(
+        { name: 'execute_code', arguments: { code: 'print(42)', runtime: cpuRuntime } },
+        CallToolResultSchema,
+      ),
+    ).rejects.toMatchObject({
       data: { code: 'colab_credentials_unavailable' },
     })
     expect(verify).toHaveBeenLastCalledWith('rotated-token')

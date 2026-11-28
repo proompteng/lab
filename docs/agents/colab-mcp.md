@@ -22,13 +22,17 @@ ADC file; it does not exchange a token on each probe. The optional volume allows
 and rotation without a gateway restart. The audit record contains the verified run identity, tool,
 status, and duration, not requests, results, or credentials.
 
-## Runtime cap and network scope
+## Runtime cap, isolation, and network scope
 
 Use `list_runtimes` before creating a runtime. Use separate sessions for isolated kernels and clean up
-unused sessions and runtimes. The five-runtime limit applies to the shared Colab identity, not to each
-AgentRun. The gateway counts listed runtimes and creations not yet visible to Colab's list endpoint.
-If creation is unconfirmed, check `list_runtimes` before retrying. A reservation is released after the
-runtime is observed, a deletion is confirmed, or Google definitively rejects the create.
+unused sessions and runtimes. The gateway deterministically prefixes created `runtimeId` values with
+`run-<sha256(namespace/agentRun)[0:12]>-`, rejects runtime and session tool calls targeting resources
+outside the verified AgentRun's prefix, filters `list_runtimes` to the caller's own runtimes, and strips
+`connectionInfo` and proxy token fields from runtime responses. The five-runtime limit applies to the
+shared Colab identity across all callers, not to each AgentRun. The gateway counts listed runtimes and
+creations not yet visible to Colab's list endpoint. If creation is unconfirmed, check `list_runtimes`
+before retrying. A reservation is released after the runtime is observed, a deletion is confirmed, or
+Google definitively rejects the create.
 
 Run one replica with the `Recreate` strategy. Reservations are in memory; reconcile outstanding
 creations with Colab after an unclean restart. Do not share the gateway's Google identity with other

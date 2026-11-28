@@ -144,12 +144,10 @@ export const createColabGatewayHandler = (options: {
         return rpcError(id, ErrorCode.InvalidParams, 'Tool or parameters are not exposed by the Colab gateway')
       }
       tool = input.data.params.name
-      const result = await callTool(
-        tool,
-        input.data.params.arguments ?? {},
-        context,
-        `${identity.namespace}/${identity.agentRun}`,
-      )
+      const callerNamespace = identity.namespace.trim()
+      const callerRun = identity.agentRun.trim()
+      const caller = callerNamespace && callerRun ? `${callerNamespace}/${callerRun}` : ''
+      const result = await callTool(tool, input.data.params.arguments ?? {}, context, caller)
       if (result.isError) status = 'tool_error'
       return reply(result)
     } catch (error) {
