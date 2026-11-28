@@ -1069,11 +1069,24 @@ prometheus.scrape "kubelet" {
 	scrape_interval   = "30s"
 	scrape_timeout    = "10s"
 	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-	forward_to        = [prometheus.relabel.arc_resource_metrics.receiver]
+	forward_to        = [
+		prometheus.relabel.arc_resource_metrics.receiver,
+		prometheus.relabel.flannel_cbr0_ipam.receiver,
+	]
 
 	tls_config {
 		ca_file     = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 		server_name = "kubernetes.default.svc"
+	}
+}
+
+prometheus.relabel "flannel_cbr0_ipam" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__", "node"]
+		regex         = "(kubelet_running_pods|kubelet_started_pods_errors_total);(turin|talos-192-168-1-85)"
 	}
 }
 
