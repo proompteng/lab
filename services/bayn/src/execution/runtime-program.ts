@@ -382,7 +382,12 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
         submitProtectionClose(prepared, consistencyDelayMs),
         coordinatorDependencies(prepared.submitExpiresAt, prepared.proofId),
       ),
-    cancelProtectionOrder: (intentId: string, brokerOrderId: string, exitTarget: JevExitTarget | undefined) =>
+    cancelProtectionOrder: (
+      intentId: string,
+      brokerOrderId: string,
+      exitTarget: JevExitTarget | undefined,
+      reanchor?: boolean,
+    ) =>
       dependencies.brokerStateCache.invalidate.pipe(
         Effect.andThen(
           Effect.gen(function* () {
@@ -392,6 +397,7 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
               brokerOrderId,
               observedAt,
               exitTarget,
+              reanchor,
             )
             switch (admission._tag) {
               case 'NotEligible':

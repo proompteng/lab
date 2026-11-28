@@ -70,7 +70,7 @@ syncs that branch; no script, SHA bump, deployment PR, release branch, Image Upd
 of the normal path. See
 [`docs/release-automation.md`](../../docs/release-automation.md) for enrollment, evidence, and recovery.
 
-## PR input selection
+## CI input selection
 
 `src/ci/affected-inputs.ts` runs through `.github/actions/affected-inputs` before expensive Bun service and image jobs.
 Each target declares its installed workspaces and source paths. The planner compares PR merge-base and head lockfiles,
@@ -86,10 +86,12 @@ rejects missing decisions or unsuccessful selected checks. Merge groups still ru
 The separate product image workflow starts on PRs only for candidate App dependency-closure inputs; source-only
 changes stay with the owning application validators.
 
-Push events retain path-based selection because Kargo requires groups of published images at one source revision.
-Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
-and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
-use the root Bun lockfile.
+Main push workflows that watch the root lockfile use `dependency-aware-push` to compare the before and head revisions.
+GitHub's path filters still wake the planner for `bun.lock`, but unrelated changes do not schedule tests, native builds,
+or publishes. Co-built images use the same source paths and Bun workspace union even when only one member
+uses Bun: Landing drives the Ofz/Tengri/Nanoagent/Proompteng cohort, and Signal Publisher drives the Torghut cohort.
+Publication slots are shared only after selection so unrelated pushes cannot displace a pending publish.
+Bayn retains its comparison against the last verified cohort. Manual selection retains each workflow's existing controls.
 
 The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
 commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted
@@ -100,13 +102,16 @@ database, browser, and editor validation without rebuilding up to eight platform
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
 Bayn also publishes images only from `main`. PRs limited to offline Bayn tools or documentation use the fast tier:
 lint, type checks, and tools unit tests without disposable services. Full-tier inputs include Bayn source (including
-tests), migrations, Bayn GitOps, workflow definitions, and the integration drivers and runtime inputs stored under
-tools and docs. Mixed PRs are not eligible for the fast tier. Standalone contract, formal, and GEPA changes still
-select their owned checks when they don't touch full-tier inputs. The same `Bayn release gate` requires success for
-every selected job and a skip for every unselected job. Merge groups, dispatches, and release callers always run
-every suite. See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
+tests), migrations, Bayn workflows and their shared workflow/action, and the integration drivers and runtime inputs
+stored under tools and docs. Mixed PRs are not eligible for the fast tier. Bayn GitOps changes select PR contracts
+and keep root manifest validation; the PostgreSQL monitoring ConfigMap and shared ClickHouse archive DDL also select
+the integration suites that execute those inputs. Formal verification and GEPA are selected independently for their
+proof/conformance and strategy/prompt inputs. The same `Bayn release gate` requires success for every selected job
+and a skip for every unselected job. Merge groups, dispatches, and release callers always run every suite.
+See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
 Replay image and execution acceptance share one hosted job and Nix environment, including dependency boundaries.
-The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
+The inference ledger group owns the native equity-short regression with and without TigerBeetle, so the PostgreSQL
+matrix does not repeat the PostgreSQL-only case.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
 the controller. Runtime compiler tools retain main-branch publication.
 Ofz, Tengri, and Nanoagent source validation uses GitHub-hosted runners; native image and KVM jobs retain the cluster

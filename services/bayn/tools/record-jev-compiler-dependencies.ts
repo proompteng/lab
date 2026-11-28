@@ -67,7 +67,7 @@ await writeFile(
     compilerFiles: compilerDependencies.files(),
     applicationStrategyBinding: Result.getOrThrow(
       Result.flatMap(loadActiveStrategyProtocol(), (parameters) =>
-        makeResearchStrategyBinding({ engine: ResearchStrategyEngine.IntradayAlpha, parameters }),
+        makeResearchStrategyBinding({ engine: ResearchStrategyEngine.PureEtf, parameters }),
       ),
     ),
     compiledReplayStrategies: Result.getOrThrow(Result.flatMap(loadSharedJevProtocol(), nativeReplayStrategyManifest)),

@@ -10,7 +10,8 @@ Quickstart:
 
 Common tasks:
   agentctl run submit --agent <name> --impl <name> --runtime <type>
-  agentctl run logs <name> --follow
+  agentctl run summary <name>
+  agentctl run batch --spec runs.yaml --verify --concurrency 8
   agentctl run list --active -o wide
 
 Discover more:
@@ -27,7 +28,9 @@ export const renderTopicHelp = (topic: string) => {
   agentctl run submit --agent <name> --impl <name> --runtime <type>
   agentctl init run --apply --wait
   agentctl run codex --prompt-file task.md --repo <owner/repo> --base main --head <branch> --verify
+  agentctl run batch --spec runs.yaml [--verify] [--concurrency 8]
   agentctl run list --active -o wide
+  agentctl run summary <name> [--json]
   agentctl run logs <name> --follow
   agentctl run wait <name>
 `

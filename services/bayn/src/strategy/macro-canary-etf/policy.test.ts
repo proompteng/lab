@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
-import { loadActiveStrategyProtocol } from '../../strategy'
+import { loadSharedJevProtocol } from '../../strategy'
+import { makeIntradayAlphaPolicy } from '../intraday-alpha/policy'
 import { decodeMacroCanaryEtfPolicy, defaultMacroCanaryEtfPolicy } from './policy'
 
 const { policy, policyHash } = defaultMacroCanaryEtfPolicy
@@ -47,10 +48,10 @@ test('rejects unreviewed equations, symbols, roles, extraneous keys and inconsis
   expect(signed.policyHash).not.toEqual(policyHash)
 })
 
-test('leaves the active intraday v2 parameter hash at its origin/main value', () => {
-  const active = Result.getOrThrow(loadActiveStrategyProtocol())
-  expect(active.schemaVersion).toBe('bayn.intraday-alpha-policy.v2')
-  expect(Result.getOrThrow(canonicalHashV1Result(active))).toBe(
+test('retains the historical intraday v2 parameter hash independently of the active strategy', () => {
+  const retained = makeIntradayAlphaPolicy(Result.getOrThrow(loadSharedJevProtocol()))
+  expect(retained.schemaVersion).toBe('bayn.intraday-alpha-policy.v2')
+  expect(Result.getOrThrow(canonicalHashV1Result(retained))).toBe(
     'f632170473534577a59a98c800bca69917b710c3857a68d0c52ec776ebcdd509',
   )
 })

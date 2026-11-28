@@ -5,8 +5,16 @@ import { operationalError, retryableOperationalError, type OperationalError } fr
 import type { TrailingBaselineQuery } from '../market-data/intraday/trailing-baseline'
 import { strictParseOptions } from '../schemas'
 import { reproduceIntradayAlphaObservation } from '../strategy/intraday-alpha/observation'
-import { intradayAlphaEquityMarketProfile } from '../strategy/intraday-alpha/policy'
-import { ResearchStrategyEngine, type ResearchStrategyBinding } from '../system-assessment/strategy-binding'
+import {
+  alphaObservationVersion,
+  isPureEtfPolicy,
+  intradayAlphaEquityMarketProfile,
+} from '../strategy/intraday-alpha/policy'
+import {
+  isAlphaBinding,
+  ResearchStrategyEngine,
+  type ResearchStrategyBinding,
+} from '../system-assessment/strategy-binding'
 import { AlphaBaselineSourceSchema, type AlphaBaselineSource } from '../system-assessment/alpha-observation-witness'
 import { ReplayBrokerFailure } from './broker'
 
@@ -16,7 +24,7 @@ export const prepareReplayAlphaBaselineSources = (
 ) =>
   Result.gen(function* () {
     const sources = yield* Schema.decodeUnknownResult(Schema.Array(AlphaBaselineSourceSchema), strictParseOptions)(raw)
-    if (binding.engine !== ResearchStrategyEngine.IntradayAlpha) {
+    if (!isAlphaBinding(binding)) {
       if (sources.length !== 0)
         return yield* Result.fail(
           new ReplayBrokerFailure({ message: 'Only the bound alpha engine may use retained alpha baselines' }),
@@ -28,6 +36,7 @@ export const prepareReplayAlphaBaselineSources = (
     for (const source of sources) {
       const reproduced = yield* reproduceIntradayAlphaObservation(source.payload)
       if (
+        reproduced.schemaVersion !== alphaObservationVersion(binding.parameters) ||
         reproduced.contentHash !== source.observationHash ||
         seen.has(source.observationHash) ||
         Date.parse(source.availableAt) < Date.parse(reproduced.observedAt) ||
@@ -48,8 +57,15 @@ export const prepareReplayAlphaBaselineSources = (
 
 const queryMatches = (
   query: TrailingBaselineQuery,
-  binding: Extract<ResearchStrategyBinding, { engine: ResearchStrategyEngine.IntradayAlpha }>,
+  binding: Extract<
+    ResearchStrategyBinding,
+    { engine: ResearchStrategyEngine.IntradayAlpha | ResearchStrategyEngine.PureEtf }
+  >,
 ) =>
+  query.checkpointMinutesFromOpen?.join('|') ===
+    (isPureEtfPolicy(binding.parameters)
+      ? binding.parameters.noiseArea.checkpointMinutesFromOpen.join('|')
+      : undefined) &&
   query.lookbackSessions === binding.parameters.trailingBaseline.lookbackSessions &&
   query.minimumSessions === binding.parameters.trailingBaseline.minimumSessions &&
   [...query.symbols].sort().join('|') === [...binding.parameters.candidateSymbols].sort().join('|') &&
@@ -63,11 +79,12 @@ export const selectReplayAlphaBaselineSource = (
 ): Result.Result<AlphaBaselineSource, OperationalError> => {
   const fail = (message: string) =>
     Result.fail(operationalError({ component: 'market-data', operation: 'replay-alpha-baseline', message }))
-  if (binding.engine !== ResearchStrategyEngine.IntradayAlpha || !queryMatches(query, binding))
+  if (!isAlphaBinding(binding) || !queryMatches(query, binding))
     return fail('Replay baseline query differs from its explicitly bound alpha policy')
   const source = sources
     .filter(
       (source) =>
+        source.payload.schemaVersion === alphaObservationVersion(binding.parameters) &&
         Date.parse(source.availableAt) <= Date.parse(observedAt) &&
         source.payload.trailingBaseline.sessionDate === query.sessionDate &&
         source.payload.trailingBaseline.latestPriorSessionDate < query.sessionDate &&

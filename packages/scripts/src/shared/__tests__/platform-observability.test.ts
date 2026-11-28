@@ -57,6 +57,7 @@ test.each([
 )
 
 test.each([
+  ['agents-auto-ontology-alerts.yaml', ['agents-auto-ontology.rules']],
   ['agents-fleet-alerts.yaml', ['agents-fleet.rules']],
   ['bayn-backup-alerts.yaml', ['bayn-database-backup.rules']],
   ['flannel-cbr0-ipam-alerts.yaml', ['flannel-cbr0-ipam.rules']],

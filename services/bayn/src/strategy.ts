@@ -9,9 +9,9 @@ import { Result } from 'effect'
 import type { makeRepeatedMomentumDefinition } from './strategy/repeated-momentum/decision'
 import { makeIntradayAlphaDefinition } from './strategy/intraday-alpha/decision'
 import {
-  decodeIntradayAlphaPolicy,
+  decodePureEtfPolicy,
   intradayAlphaBehaviorHash,
-  makeIntradayAlphaPolicy,
+  makePureEtfPolicy,
   type IntradayAlphaPolicy,
 } from './strategy/intraday-alpha/policy'
 
@@ -28,7 +28,7 @@ export const makeJevStrategyRuntime = (protocol: JevProtocol, provenance: Runtim
 export const activeStrategyName = 'jev' as const
 export const activeStrategyBehaviorHash = intradayAlphaBehaviorHash
 export const loadActiveStrategyProtocol = () =>
-  loadSharedJevProtocol().pipe(Result.flatMap((shared) => decodeIntradayAlphaPolicy(makeIntradayAlphaPolicy(shared))))
+  loadSharedJevProtocol().pipe(Result.flatMap((shared) => decodePureEtfPolicy(makePureEtfPolicy(shared))))
 
 export const makeActiveStrategyRuntime = (policy: IntradayAlphaPolicy, provenance: RuntimeProvenance) =>
   ({
@@ -61,7 +61,8 @@ export const isRepeatedMomentumRuntime = (runtime: StrategyRuntime): runtime is 
   runtime.definition.parameters.schemaVersion === 'bayn.repeated-momentum-policy.v1'
 
 export const isIntradayAlphaRuntime = (runtime: StrategyRuntime): runtime is IntradayAlphaStrategyRuntime =>
-  runtime.definition.parameters.schemaVersion === 'bayn.intraday-alpha-policy.v2'
+  runtime.definition.parameters.schemaVersion === 'bayn.intraday-alpha-policy.v2' ||
+  runtime.definition.parameters.schemaVersion === 'bayn.intraday-alpha-policy.v3'
 
 export const strategyTradingProtocol = (runtime: StrategyRuntime): JevProtocol => {
   const parameters = runtime.definition.parameters

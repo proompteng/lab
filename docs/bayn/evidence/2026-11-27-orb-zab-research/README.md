@@ -86,6 +86,8 @@ portfolio is being proposed.
 
 ## Reproduce
 
+The commands below use the runner and results from the [archived checkout][study-revision].
+
 Download the manifest and its four requested frozen inputs from the `bayn-research-datasets/2026-11-27/`
 artifact prefix into one private directory, or pass `--s3` in an artifact-enabled runner. Both modes verify
 the pinned manifest and compressed/uncompressed SHA-256 and length before using the data. Do not commit the data.
@@ -158,7 +160,7 @@ verified market-regime explanation or a previously robust three-year edge.
 ### Pairwise sleeve correlation at 10 bp
 
 These are correlations of each isolated sleeve's daily net for dates complete in **all three** paths, not correlations
-of deployed strategy returns. See the [ledger](results.json) for the full matrices at each cost and in each split.
+of deployed strategy returns. See the [ledger][archived-results] for the full matrices at each cost and in each split.
 
 | Window             | Paired sessions | ORB–Noise | ORB–Midday | Noise–Midday |
 | ------------------ | --------------: | --------: | ---------: | -----------: |
@@ -175,7 +177,7 @@ assumptions and never read these quotes to trade.
 
 ### Full trial ledger
 
-[results.json](results.json) retains every variant, three primary costs, all six half-years, all live thirds,
+[results.json][archived-results] retains every variant, three primary costs, all six half-years, all live thirds,
 full and complete-case metrics, refit-free full LOSO reruns, coverage, matched cost attribution and correlations.
 Read a trial's `costs["10"].windows[i]` using the top-level `metricColumns` in order and the panel's `windows[i]`
 for its dates. LOSO uses the same window order and `losoColumns`; `null` means unavailable or undefined,
@@ -344,3 +346,6 @@ rather than total net.
 | `noise-only-SPY`                     |  -4,865\* |   -4,789\* |   -2,577 |     -157 |
 
 </details>
+
+[archived-results]: https://github.com/proompteng/lab/blob/4b25eaee338c3c4766360108733da2f266dff493/docs/bayn/evidence/2026-11-27-orb-zab-research/results.json
+[study-revision]: https://github.com/proompteng/lab/tree/4b25eaee338c3c4766360108733da2f266dff493

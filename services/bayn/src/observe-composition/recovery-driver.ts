@@ -1,3 +1,4 @@
+import { alphaObservationVersion } from '../strategy/intraday-alpha/policy'
 import { positionProtectionIntervalMs } from '../jev/exit-policy'
 import { ExecutionProtectionRelease } from '../execution/events'
 import { firstIntradayObservationAtMs, selectIntradayExecutionSession } from '../cycle/runner/calendar-decisions'
@@ -882,7 +883,9 @@ const makeRecoveryFirstCycleDriverEffect = (
             nextJevEntryWindowDueAt(
               cycleId,
               strategyTradingProtocol(input.strategy),
-              isIntradayAlphaRuntime(input.strategy) ? 'bayn.intraday-alpha-observation.v2' : undefined,
+              isIntradayAlphaRuntime(input.strategy)
+                ? alphaObservationVersion(input.strategy.definition.parameters)
+                : undefined,
             ).pipe(Effect.mapError(decisionBuildError)),
           buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance, readForPricing),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),

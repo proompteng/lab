@@ -1,11 +1,24 @@
 from __future__ import annotations
 
-from tests.historical_simulation.start_historical_simulation_base import (
-    ClickHouseRuntimeConfig,
-    Path,
+import json
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import (
+    historical_simulation_runtime_verification as runtime_verification,
+)
+from scripts import (
+    historical_simulation_startup,
+)
+from scripts.historical_simulation_runtime_verification import (
+    artifact_verification,
+    runtime_progress,
+)
+from scripts.historical_simulation_startup import (
     PostgresRuntimeConfig,
-    StartHistoricalSimulationTestCaseBase,
-    TemporaryDirectory,
     _build_fill_price_error_budget_payload,
     _build_resources,
     _build_simulation_completion_trace,
@@ -13,27 +26,29 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _monitor_run_completion,
     _validate_dump_coverage,
     _validate_window_policy,
-    runtime_verification,
-    json,
-    patch,
-    replace,
-    historical_simulation_startup,
+    replay_execution,
+    runtime_migrations,
+)
+from tests.historical_simulation.fixtures import (
+    make_clickhouse_config,
+    make_postgres_config,
+    simulation_resources,
 )
 
 
-class TestStartHistoricalSimulationCompletionPolicy(
-    StartHistoricalSimulationTestCaseBase
-):
+class TestStartHistoricalSimulationCompletionPolicy(TestCase):
     def test_teardown_requires_runtime_lock_ownership(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
+        self.enterContext(patch.object(replay_execution, "_ensure_supported_binary"))
+        resources = simulation_resources()
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
             state_path = resources.output_root / resources.run_token / "state.json"
             state_path.parent.mkdir(parents=True, exist_ok=True)
             state_path.write_text(json.dumps({"ta_job_state": "running"}))
 
-            with patch(
-                "scripts.historical_simulation_startup.replay_execution._read_simulation_runtime_lock",
+            with patch.object(
+                replay_execution,
+                "_read_simulation_runtime_lock",
                 return_value={"run_id": "sim-2"},
             ):
                 report = historical_simulation_startup._teardown(
@@ -47,11 +62,13 @@ class TestStartHistoricalSimulationCompletionPolicy(
         self.assertEqual(report["simulation_lock"]["status"], "not_owner")
 
     def test_teardown_releases_runtime_lock_when_state_missing_allowed(self) -> None:
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
+        self.enterContext(patch.object(replay_execution, "_ensure_supported_binary"))
+        resources = simulation_resources()
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
-            with patch(
-                "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock",
+            with patch.object(
+                replay_execution,
+                "_release_simulation_runtime_lock",
                 return_value={"status": "released", "run_id": resources.run_id},
             ) as release_lock:
                 report = historical_simulation_startup._teardown(
@@ -64,6 +81,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
         self.assertEqual(report["simulation_lock"]["status"], "released")
 
     def test_teardown_keeps_warm_lane_baseline(self) -> None:
+        self.enterContext(patch.object(replay_execution, "_ensure_supported_binary"))
         resources = _build_resources(
             "sim-1",
             {
@@ -78,28 +96,25 @@ class TestStartHistoricalSimulationCompletionPolicy(
             state_path.write_text(json.dumps({"ta_job_state": "running"}))
 
             with (
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._read_simulation_runtime_lock",
+                patch.object(
+                    replay_execution,
+                    "_read_simulation_runtime_lock",
                     return_value={"run_id": resources.run_id},
                 ),
-                patch(
-                    "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock",
+                patch.object(
+                    replay_execution,
+                    "_release_simulation_runtime_lock",
                     return_value={"status": "released", "run_id": resources.run_id},
                 ) as release_lock,
-                patch(
-                    "scripts.historical_simulation_startup.runtime_migrations._restore_ta_configuration"
+                patch.object(
+                    runtime_migrations, "_restore_ta_configuration"
                 ) as restore_ta,
-                patch(
-                    "scripts.historical_simulation_startup.runtime_migrations._restore_torghut_env"
-                ) as restore_env,
-                patch(
-                    "scripts.historical_simulation_startup.runtime_migrations._restart_ta_deployment",
+                patch.object(runtime_migrations, "_restore_torghut_env") as restore_env,
+                patch.object(
+                    runtime_migrations,
+                    "_restart_ta_deployment",
                     return_value=11,
                 ) as restart_ta,
-                patch(
-                    "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
-                    return_value=None,
-                ),
             ):
                 report = historical_simulation_startup._teardown(
                     resources=resources,
@@ -524,12 +539,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
     def test_monitor_run_completion_requires_order_events_when_executions_exist(
         self,
     ) -> None:
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "window": {
                 "start": "2026-02-27T14:30:00Z",
@@ -545,15 +555,14 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 "cursor_grace_seconds": 0,
             },
         }
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
+            patch.object(
+                runtime_progress,
+                "_monitor_snapshot",
                 return_value={
                     "trade_decisions": 10,
                     "executions": 5,
@@ -562,8 +571,9 @@ class TestStartHistoricalSimulationCompletionPolicy(
                     "cursor_at": "2026-02-27T21:00:01Z",
                 },
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
+            patch.object(
+                runtime_progress,
+                "_signal_snapshot",
                 return_value={"signal_rows": 10, "price_rows": 10},
             ),
             patch(
@@ -584,12 +594,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
     def test_monitor_run_completion_succeeds_when_terminal_signal_precedes_window_end(
         self,
     ) -> None:
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "window": {
                 "start": "2026-03-11T13:30:00Z",
@@ -601,15 +606,14 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 "cursor_grace_seconds": 5,
             },
         }
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
+            patch.object(
+                runtime_progress,
+                "_monitor_snapshot",
                 return_value={
                     "trade_decisions": 12,
                     "executions": 12,
@@ -619,8 +623,9 @@ class TestStartHistoricalSimulationCompletionPolicy(
                     "last_source_ts": "2026-03-11T13:34:58Z",
                 },
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
+            patch.object(
+                runtime_progress,
+                "_signal_snapshot",
                 return_value={
                     "signal_rows": 120,
                     "price_rows": 120,
@@ -687,12 +692,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
     def test_current_activity_report_prefers_terminal_success_over_runtime_flap(
         self,
     ) -> None:
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "window": {
                 "start": "2026-03-13T13:30:00Z",
@@ -721,13 +721,12 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 },
             },
         )
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
-        with patch(
-            "scripts.historical_simulation_runtime_verification.artifact_verification._simulation_progress_snapshot",
+        with patch.object(
+            artifact_verification,
+            "_simulation_progress_snapshot",
             return_value={
                 "components": {
                     "replay": {
@@ -776,12 +775,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
     def test_monitor_run_completion_uses_direct_counts_when_progress_rows_are_stale(
         self,
     ) -> None:
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "window": {
                 "start": "2026-03-13T13:30:00Z",
@@ -797,15 +791,14 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 "cursor_grace_seconds": 0,
             },
         }
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._progress_component_snapshot",
+            patch.object(
+                runtime_progress,
+                "_progress_component_snapshot",
                 return_value={
                     "torghut": {
                         "trade_decisions": 0,
@@ -821,8 +814,9 @@ class TestStartHistoricalSimulationCompletionPolicy(
                     },
                 },
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
+            patch.object(
+                runtime_progress,
+                "_monitor_snapshot",
                 return_value={
                     "trade_decisions": 213,
                     "executions": 60,
@@ -831,8 +825,9 @@ class TestStartHistoricalSimulationCompletionPolicy(
                     "cursor_at": "2026-03-13T20:00:00Z",
                 },
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
+            patch.object(
+                runtime_progress,
+                "_signal_snapshot",
                 return_value={
                     "signal_rows": 1,
                     "price_rows": 1,
@@ -867,12 +862,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
     def test_monitor_run_completion_waits_for_source_window_when_signal_generation_lags(
         self,
     ) -> None:
-        postgres_config = PostgresRuntimeConfig(
-            admin_dsn="postgresql://torghut:secret@localhost:5432/postgres",
-            simulation_dsn="postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1",
-            simulation_db="torghut_sim_sim_1",
-            migrations_command="true",
-        )
+        postgres_config = make_postgres_config()
         manifest = {
             "window": {
                 "start": "2026-03-13T13:30:00Z",
@@ -888,15 +878,14 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 "min_execution_order_events": 1,
             },
         }
-        resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
-        clickhouse_config = ClickHouseRuntimeConfig(
-            http_url="http://clickhouse:8123",
-            username="torghut",
+        resources = simulation_resources()
+        clickhouse_config = make_clickhouse_config(
             password=None,
         )
         with (
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
+            patch.object(
+                runtime_progress,
+                "_monitor_snapshot",
                 side_effect=[
                     {
                         "trade_decisions": 0,
@@ -916,8 +905,9 @@ class TestStartHistoricalSimulationCompletionPolicy(
                     },
                 ],
             ),
-            patch(
-                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
+            patch.object(
+                runtime_progress,
+                "_signal_snapshot",
                 side_effect=[
                     {
                         "signal_rows": 120,

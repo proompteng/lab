@@ -11,6 +11,7 @@ let
   kubectl = exact.kubectl or pkgs.kubectl;
   yq = exact.yq or pkgs.yq;
   pythonPackages = pkgs.python312Packages;
+  antigravityCli = import ./antigravity-cli.nix { inherit pkgs; };
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
   runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
   pstackVersion = "0.9.159";
@@ -292,12 +293,26 @@ let
     "@proompteng/temporal-bun-sdk"
   ];
 
+  # Package only the sync CLI's WASM parser and its dependency, not the scripts workspace.
+  # Keep the archive hashes aligned with bun.lock. Zod is already in the Agents runtime.
+  libpgQueryVersion = (lib.importJSON (repoRoot + "/packages/scripts/package.json")).dependencies.libpg-query;
+  libpgQueryArchive = pkgs.fetchurl {
+    url = "https://registry.npmjs.org/libpg-query/-/libpg-query-${libpgQueryVersion}.tgz";
+    hash = "sha512-JHoTTsuDC85VBQj74iUo61+k74dNU/ef/s3nTPnld7wX+jPUq8oNrAPi1g+CNtj0TK8YoRTQn9ROPGN4/RGVsQ==";
+  };
+  pgsqlTypesArchive = pkgs.fetchurl {
+    url = "https://registry.npmjs.org/@pgsql/types/-/types-18.0.0.tgz";
+    hash = "sha512-jtAY4JU7jdVYZ/Vv3zlZqVP+FRWZokyCLKPPCnAApiaJAElpyyiMC3HRiquBu29kSrVs+rkqZD50SUIb/zyEGw==";
+  };
+
   serviceSourcePaths = [
     "charts/agents/crds"
+    "docs/agents/ontology/agents-knowledge.json"
     "packages/agent-contracts"
     "packages/codex"
     "packages/cx-tools"
     "packages/otel"
+    "packages/scripts/src/agents"
     "packages/temporal-bun-sdk"
     "services/agents"
   ];
@@ -408,6 +423,15 @@ let
     cp -R "$TMPDIR/work/services/agents/.output" "$out/app/services/agents/.output"
     copyWorkspaceNodeModules "$TMPDIR/work/services/agents/node_modules" "$out/app/services/agents/node_modules"
 
+    syncDir="$out/app/services/agents/scripts/auto-ontology-sync"
+    mkdir -p "$syncDir/node_modules/libpg-query" "$syncDir/node_modules/@pgsql/types"
+    tar -xzf ${libpgQueryArchive} --strip-components=1 -C "$syncDir/node_modules/libpg-query"
+    tar -xzf ${pgsqlTypesArchive} --strip-components=1 -C "$syncDir/node_modules/@pgsql/types"
+    bun build "$TMPDIR/work/packages/scripts/src/agents/sync-auto-ontology-bundle.ts" --target bun \
+      --external libpg-query --external zod --outfile "$syncDir/sync-auto-ontology-bundle.js"
+    bun --no-install "$syncDir/sync-auto-ontology-bundle.js" \
+      --bundle "$TMPDIR/work/docs/agents/ontology/agents-knowledge.json" --mode dry-run
+
     chmod +x \
       "$out/app/services/agents/scripts/agents-shell-entrypoint.sh" \
       "$out/app/services/agents/scripts/install-agents-shell-pstack.sh"
@@ -500,7 +524,9 @@ let
     applyPatch
     bun
     nodejs
+    antigravityCli
     openaiCodexCli
+    pstackBundle
     pkgs.bash
     pkgs.cacert
     pkgs.coreutils
@@ -579,6 +605,7 @@ let
       "$out/app/services/agents/scripts/codex" \
       "$out/app/services/agents/scripts" \
       "$out/root/.codex" \
+      "$out/root/.gemini/antigravity-cli" \
       "$out/workspace" \
       "$out/usr/bin" \
       "$out/usr/local/bin"
@@ -610,6 +637,8 @@ let
     #!${pkgs.bash}/bin/bash
     exec ${bun}/bin/bun /app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js "$@"
     EOF
+    ln -s ${antigravityCli}/bin/agy "$out/usr/local/bin/agy"
+    ln -s ${antigravityCli}/bin/agy "$out/usr/bin/agy"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"
     ln -s ${runnerPython}/bin/alpaca-mcp-server "$out/usr/local/bin/alpaca-mcp-server"
@@ -667,6 +696,8 @@ let
         "WORKSPACE=/workspace"
         "WORKTREE=/workspace/lab"
         "GIT_TERMINAL_PROMPT=0"
+        "AGENTS_AGY_BINARY=/usr/local/bin/agy"
+        "AGY_CLI_DISABLE_AUTO_UPDATE=true"
         "AGENTS_CODEX_BINARY=/usr/local/bin/codex"
         "CODEX_BINARY=/usr/local/bin/codex"
         "BUN_INSTALL=/usr/local"

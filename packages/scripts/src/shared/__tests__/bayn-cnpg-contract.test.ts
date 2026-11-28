@@ -548,7 +548,11 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.get('BAYN_CODE_REVISION')?.value).toBe(sourceRevision)
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
   if (request === undefined) expect(encodedIdentity).toBeUndefined()
-  expect(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value).toBe('{}')
+  const mountedMandate = controllerEnvironment.has('BAYN_CAPITAL_ACTIVATION_REQUEST')
+  for (const env of [controllerEnvironment, deploymentEnvironment, activationEnvironment]) {
+    expect(env.has('BAYN_CAPITAL_ACTIVATION_REQUEST')).toBe(mountedMandate)
+    expect(env.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value).toBe(mountedMandate ? '{}' : undefined)
+  }
   expect(controllerEnvironment.get('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS')?.value).toBe('300000')
   expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
@@ -609,11 +613,9 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   ])
 
   for (const candidate of [controllerEnvironment, activationEnvironment, deploymentEnvironment]) {
-    expect(candidate.get('BAYN_CAPITAL_ACTIVATION_REQUEST')?.valueFrom?.secretKeyRef).toEqual({
-      name: 'bayn-alpaca-auth',
-      key: 'capital-activation-request',
-      optional: true,
-    })
+    expect(candidate.get('BAYN_CAPITAL_ACTIVATION_REQUEST')?.valueFrom?.secretKeyRef).toEqual(
+      mountedMandate ? { name: 'bayn-alpaca-auth', key: 'capital-activation-request', optional: true } : undefined,
+    )
     expect(candidate.has('BAYN_MAXIMUM_AUTHORITY')).toBe(false)
   }
   expect(kustomization.resources).toContain('execution-activation.yaml')

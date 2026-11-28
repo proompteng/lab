@@ -134,8 +134,9 @@ export const bindReplayImagePolicy = (
             : ResearchStrategyEngine.Jev)
       const selected = entries.find((entry) => entry.engine === engine)
       const compiledRoot = entries.find((entry) => entry.engine === root.engine)
+      const expectedEngineCount = entries.some((entry) => entry.engine === ResearchStrategyEngine.PureEtf) ? 5 : 4
       if (
-        entries.length !== 4 ||
+        entries.length !== expectedEngineCount ||
         new Set(entries.map((entry) => entry.engine)).size !== entries.length ||
         entries.some((entry) => entry.engine === ResearchStrategyEngine.FrozenDeployed) ||
         selected === undefined ||

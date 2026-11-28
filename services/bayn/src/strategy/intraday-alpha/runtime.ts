@@ -27,7 +27,8 @@ import { makeOwnedIntradayAlphaObservation } from './observation'
 import {
   IntradayAlphaPhase,
   intradayAlphaBenchmarkSymbol,
-  intradayAlphaCandidateSymbols,
+  alphaObservationVersion,
+  isPureEtfPolicy,
   intradayAlphaEquityMarketProfile,
   intradayAlphaStrategyIdentity,
   type IntradayAlphaPolicy,
@@ -62,8 +63,33 @@ export const makeIntradayAlphaEntryQuery = (input: {
       }),
     )
   }
+  if (isPureEtfPolicy(input.policy)) {
+    const elapsed = (rangeEndMs - regular.success.openMs) / 60_000
+    const noise = input.policy.noiseArea
+    const grid = noise.checkpointMinutesFromOpen.filter(
+      (minute) =>
+        regular.success.openMs + minute * 60_000 <=
+        regular.success.closeMs - noise.lastEntryMinutesBeforeClose * 60_000,
+    )
+    if (!grid.includes(elapsed)) {
+      const next = grid.find((minute) => minute > elapsed)
+      return Result.fail(
+        new JevAwaitingEvidence({
+          message: 'Pure ETF strategy awaits a completed 30-minute checkpoint',
+          readiness: DecisionReadinessReason.NoEligibleCandidate,
+          ...(next === undefined
+            ? {}
+            : {
+                availableAt: utcInstantFromEpochMillis(
+                  jevSignalDueAtMs(regular.success.openMs + next * 60_000, protocol),
+                ),
+              }),
+        }),
+      )
+    }
+  }
   const market = intradayAlphaEquityMarketProfile
-  const candidates = [...intradayAlphaCandidateSymbols]
+  const candidates = [...input.policy.candidateSymbols]
   return Result.succeed({
     sessionDate: input.sessionDate,
     calendar: input.calendar,
@@ -107,7 +133,7 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, 
     const latest = yield* store.latestJevWindowEnd({
       cycleId: input.observation.cycleId,
       purpose: input.observation.portfolio.purpose,
-      schemaVersion: 'bayn.intraday-alpha-observation.v2',
+      schemaVersion: alphaObservationVersion(input.policy),
     })
     if (Option.isSome(latest) && latest.value >= input.rangeEndAt)
       return yield* new JevAwaitingFreshWindow({
@@ -129,7 +155,7 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, 
       const baselineService = yield* Effect.serviceOption(IntradayTrailingBaseline)
       if (Option.isNone(baselineService)) {
         return yield* new JevContractError({
-          message: 'Intraday alpha v2 requires the causal trailing-baseline service',
+          message: 'Intraday alpha requires the causal trailing-baseline service',
         })
       }
       trailingBaseline = yield* baselineService.value.load({
@@ -138,6 +164,9 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, 
         noiseAreaSymbols: input.policy.noiseAreaSymbols,
         lookbackSessions: input.policy.trailingBaseline.lookbackSessions,
         minimumSessions: input.policy.trailingBaseline.minimumSessions,
+        ...(isPureEtfPolicy(input.policy)
+          ? { checkpointMinutesFromOpen: input.policy.noiseArea.checkpointMinutesFromOpen }
+          : {}),
         sourceContract: {
           provider: 'alpaca',
           feed: snapshot.manifest.feed,
@@ -150,6 +179,7 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, 
     const owned = yield* Effect.fromResult(
       makeOwnedIntradayAlphaObservation({
         ...input.observation,
+        schemaVersion: alphaObservationVersion(input.policy),
         trailingBaseline,
         ...(equityShortEligibility === undefined ? {} : { equityShortEligibility }),
         snapshot,
@@ -201,13 +231,14 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, 
       }),
     )
 
-    const maxPerSide = input.policy.catalystVeto.maxCandidatesPerSide
+    const veto = isPureEtfPolicy(input.policy) ? undefined : input.policy.catalystVeto
+    const maxPerSide = veto?.maxCandidatesPerSide ?? 0
     const vetoCandidates: CatalystVetoRequestInput[] =
-      !input.policy.catalystVeto.enabled || extracted.context.phase === IntradayAlphaPhase.OutsideWindow
+      veto === undefined || !veto.enabled || extracted.context.phase === IntradayAlphaPhase.OutsideWindow
         ? []
         : [...extracted.longPool.slice(0, maxPerSide), ...extracted.shortPool.slice(0, maxPerSide)].map(
             (candidate) => ({
-              model: input.policy.catalystVeto.model,
+              model: veto.model,
               symbol: candidate.symbol,
               phase: candidate.phase,
               direction: candidate.direction,
@@ -230,11 +261,11 @@ export const evaluateIntradayAlphaFromSnapshot = <E, R, EE = never, RE = never, 
     const vetoRecordedAt = yield* currentUtcInstant
     const remainingBudgetMs = Math.max(0, expiresAt - Date.parse(vetoRecordedAt) - 500)
     const catalystVetos =
-      vetoCandidates.length === 0
+      vetoCandidates.length === 0 || veto === undefined
         ? []
         : yield* evaluateCatalystVetos({
             candidates: vetoCandidates,
-            vetoThreshold: input.policy.catalystVeto.vetoThreshold,
+            vetoThreshold: veto.vetoThreshold,
             budgetMs: remainingBudgetMs,
             recordedAt: vetoRecordedAt,
           })

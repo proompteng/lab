@@ -1,5 +1,6 @@
 import { Effect } from 'effect'
 
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import type { BrokerReadShape } from '../broker/alpaca/model'
 import type { ReconciliationPersistence } from '../db/execution-store/contract'
 import type { WriterFenceService } from '../execution/writer-fence'
@@ -25,7 +26,11 @@ const run = (
   dependencies: ReconciliationDependencies,
 ): Effect.Effect<ReconciliationPassResult, ReconciliationPassError> =>
   readReconciliationSnapshot(dependencies.read, dependencies.now).pipe(
-    withObservedStage('bayn.reconciliation.broker-snapshot', { dependency: 'broker' }),
+    withObservedStage('bayn.reconciliation.broker-snapshot', {
+      dependency: 'broker',
+      isPendingError: (error) =>
+        error instanceof BrokerReadError && error.kind === BrokerReadErrorKind.ObservationPending,
+    }),
     Effect.flatMap(({ snapshot, complete }) =>
       persistStableSnapshot(dependencies.store, snapshot, dependencies.now).pipe(
         withObservedStage('bayn.reconciliation.persist'),

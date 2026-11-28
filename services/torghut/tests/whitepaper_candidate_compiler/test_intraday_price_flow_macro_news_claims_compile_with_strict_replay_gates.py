@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.whitepaper_candidate_compiler.support import (
     Decimal,
     Path,
     TemporaryDirectory,
-    _TestWhitepaperCandidateCompilerBase,
     _expected_portfolio_target_candidate_count,
+    _TestWhitepaperCandidateCompilerBase,
     build_hypothesis_cards,
     compile_claim_payloads_to_whitepaper_experiments,
     compile_whitepaper_candidate_specs,
     compiler_module,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestIntradayPriceFlowMacroNewsClaimsCompileWithStrictReplayGates(

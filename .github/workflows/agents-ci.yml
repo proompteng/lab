@@ -23,12 +23,14 @@ on:
       - 'argocd/applications/argo-workflows/**'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'
+      - 'docs/agents/ontology/**'
       - 'flake.lock'
       - 'flake.nix'
       - 'nix/images/agents.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/relativize-bun-cache.sh'
       - 'patches/effect@4.1.4.patch'
+      - 'nix/images/antigravity-cli.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'nix/images/agentrun-tools.nix'
       - 'nix/packages.nix'
@@ -222,6 +224,7 @@ jobs:
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
             packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
+            packages/scripts/src/agents/__tests__/sync-auto-ontology-bundle.test.ts \
             packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
             packages/scripts/src/agents/__tests__/curate-ontology-deltas.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \

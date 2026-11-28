@@ -16,7 +16,7 @@ import {
   repeatedMomentumStrategyIdentity,
 } from '../strategy/repeated-momentum/policy'
 import { Sha256Schema } from '../schemas'
-import { makeIntradayAlphaPolicy } from '../strategy/intraday-alpha/policy'
+import { makeIntradayAlphaPolicy, makePureEtfPolicy } from '../strategy/intraday-alpha/policy'
 import {
   makeResearchStrategyBinding,
   ResearchStrategyEngine,
@@ -95,6 +95,10 @@ export const nativeReplayStrategyManifest = (protocol: JevProtocol) =>
     makeResearchStrategyBinding({
       engine: ResearchStrategyEngine.IntradayAlpha,
       parameters: makeIntradayAlphaPolicy(protocol),
+    }),
+    makeResearchStrategyBinding({
+      engine: ResearchStrategyEngine.PureEtf,
+      parameters: makePureEtfPolicy(protocol),
     }),
     makeResearchStrategyBinding({
       engine: ResearchStrategyEngine.EntryAblation,
