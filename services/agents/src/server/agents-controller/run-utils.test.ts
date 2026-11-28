@@ -3,11 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   appendBranchSuffix,
   applyVcsMetadataToParameters,
-  hasBranchConflict,
   hasParameterValue,
   isActiveRun,
   isQueuedRun,
-  normalizeBranchName,
   normalizeRepository,
   resolveImplementation,
   resolveParam,
@@ -98,7 +96,6 @@ describe('agents controller run-utils module', () => {
 
   it('normalizes repo/branch, active phases, and queued phases', () => {
     expect(normalizeRepository(' Owner/Repo ')).toBe('owner/repo')
-    expect(normalizeBranchName(' feature/test ')).toBe('feature/test')
 
     expect(isActiveRun({ status: { phase: 'Running' } })).toBe(true)
     expect(isActiveRun({ status: { phase: 'Succeeded' } })).toBe(false)
@@ -128,31 +125,6 @@ describe('agents controller run-utils module', () => {
         spec: { parameters: { headRef: 'feature/param' } },
       }),
     ).toBe('feature/param')
-  })
-
-  it('detects branch conflicts only for active runs in same repo/branch', () => {
-    const runs = [
-      {
-        metadata: { name: 'run-a' },
-        status: { phase: 'Running', vcs: { headBranch: 'feature/a' } },
-        spec: { parameters: { repository: 'org/repo' } },
-      },
-      {
-        metadata: { name: 'run-b' },
-        status: { phase: 'Succeeded', vcs: { headBranch: 'feature/a' } },
-        spec: { parameters: { repository: 'org/repo' } },
-      },
-      {
-        metadata: { name: 'run-c' },
-        status: { phase: 'Running', vcs: { headBranch: 'feature/other' } },
-        spec: { parameters: { repository: 'org/repo' } },
-      },
-    ]
-
-    expect(hasBranchConflict(runs, 'run-current', 'org/repo', 'feature/a')).toBe(true)
-    expect(hasBranchConflict(runs, 'run-a', 'org/repo', 'feature/a')).toBe(false)
-    expect(hasBranchConflict(runs, 'run-current', 'org/repo', 'feature/z')).toBe(false)
-    expect(hasBranchConflict(runs, 'run-current', '', 'feature/a')).toBe(false)
   })
 
   it('applies branch suffixes and vcs metadata when missing', () => {
