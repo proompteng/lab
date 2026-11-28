@@ -12,6 +12,7 @@ spec:
       labels:
         app.kubernetes.io/name: auto-ontology-mcp
     spec:
+      enableServiceLinks: false
       containers:
         - name: mcp
           image: nvcr.io/nvidia/auto-ontology-mcp:1.3.0@sha256:c0b46acbf957d1210341a3984ca7941f5a7b292aee8fefd16c6305cc34f9fdf0
