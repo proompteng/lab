@@ -21,7 +21,8 @@ test('retains producer CFS diagnostics without expanding other resource metric f
     'container_cpu_cfs_throttled_periods_total',
     'container_cpu_cfs_throttled_seconds_total',
   ]) {
-    expect(retained.test(`${name};torghut;torghut-ws`)).toBe(true)
+    expect(retained.test(`${name};bayn;torghut-ws`)).toBe(true)
+    expect(retained.test(`${name};torghut;torghut-ws`)).toBe(false)
     expect(retained.test(`${name};bayn;execution-controller`)).toBe(true)
     expect(retained.test(`${name};bayn;postgres`)).toBe(true)
     expect(retained.test(`${name};torghut;torghut-ws-options`)).toBe(false)
@@ -36,6 +37,7 @@ test('retains producer CFS diagnostics without expanding other resource metric f
     'kube_pod_container_resource_limits',
     'kube_deployment_status_replicas_available',
   ]) {
+    expect(retained.test(`${name};bayn;torghut-ws`)).toBe(true)
     expect(retained.test(`${name};torghut;torghut-ws`)).toBe(true)
     expect(retained.test(`${name};;`)).toBe(true)
     expect(retained.test(`${name};other;unrelated`)).toBe(true)

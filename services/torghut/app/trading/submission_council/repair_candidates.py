@@ -230,39 +230,6 @@ def certificate_evidence_selection_key(
     )
 
 
-def extract_runtime_summary(
-    hypothesis_summary: Mapping[str, Any] | None,
-) -> tuple[Mapping[str, Any], list[Mapping[str, Any]]]:
-    if not isinstance(hypothesis_summary, Mapping):
-        return {}, []
-    nested_summary = hypothesis_summary.get("summary")
-    if isinstance(nested_summary, Mapping):
-        items_raw = hypothesis_summary.get("items")
-        items = (
-            [
-                cast(Mapping[str, Any], item)
-                for item in cast(Sequence[object], items_raw)
-                if isinstance(item, Mapping)
-            ]
-            if isinstance(items_raw, Sequence)
-            and not isinstance(items_raw, (str, bytes, bytearray))
-            else []
-        )
-        return cast(Mapping[str, Any], nested_summary), items
-    items_raw = hypothesis_summary.get("items")
-    items = (
-        [
-            cast(Mapping[str, Any], item)
-            for item in cast(Sequence[object], items_raw)
-            if isinstance(item, Mapping)
-        ]
-        if isinstance(items_raw, Sequence)
-        and not isinstance(items_raw, (str, bytes, bytearray))
-        else []
-    )
-    return hypothesis_summary, items
-
-
 def refresh_runtime_summary_totals(
     summary: Mapping[str, Any],
     runtime_items: Sequence[Mapping[str, Any]],

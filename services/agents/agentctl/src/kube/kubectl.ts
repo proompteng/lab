@@ -4,6 +4,7 @@ export type KubectlOptions = {
   kubeconfig?: string
   context?: string
   namespace?: string
+  signal?: AbortSignal
 }
 
 export type KubectlResult = {
@@ -45,7 +46,7 @@ const defaultRunner: KubectlRunner = (args, options, stdin) =>
     const proc = execFile(
       'kubectl',
       [...buildKubectlArgs(options), ...args],
-      { encoding: 'utf8', maxBuffer: Infinity },
+      { encoding: 'utf8', maxBuffer: Infinity, signal: options.signal },
       (error, stdout, stderr) => {
         const exitCode = error ? error.code : 0
         if (typeof exitCode !== 'number') {
@@ -71,21 +72,35 @@ export const resetKubectlRunner = () => {
 
 export const runKubectl = (args: string[], options: KubectlOptions, stdin?: string) => runner(args, options, stdin)
 
-export const runKubectlJson = async <T>(args: string[], options: KubectlOptions, stdin?: string): Promise<T> => {
+const readJson = async (
+  args: string[],
+  options: KubectlOptions,
+  stdin?: string,
+  allowEmpty = false,
+): Promise<unknown> => {
   const result = await runKubectl(args, options, stdin)
   const stdout = result.stdout.trim()
-  const stderr = result.stderr.trim()
   if (result.exitCode !== 0) {
-    const message = stderr || stdout || `kubectl ${args.join(' ')} failed`
+    const message = result.stderr.trim() || `kubectl ${args.slice(0, 2).join(' ')} failed`
     throw new KubectlError(message, result.stderr, result.exitCode)
   }
   if (!stdout) {
-    throw new KubectlError(`kubectl ${args.join(' ')} returned empty output`, result.stderr, result.exitCode)
+    if (allowEmpty) return null
+    throw new KubectlError(
+      `kubectl ${args.slice(0, 2).join(' ')} returned empty output`,
+      result.stderr,
+      result.exitCode,
+    )
   }
   try {
-    return JSON.parse(stdout) as T
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new KubectlError(`kubectl ${args.join(' ')} returned non-JSON output: ${message}`, stdout, result.exitCode)
+    return JSON.parse(stdout)
+  } catch {
+    throw new KubectlError(`kubectl ${args.slice(0, 2).join(' ')} returned invalid JSON`)
   }
 }
+
+export const runKubectlJson = async <T>(args: string[], options: KubectlOptions, stdin?: string): Promise<T> =>
+  (await readJson(args, options, stdin)) as T
+
+export const runKubectlOptionalJson = (args: string[], options: KubectlOptions) =>
+  readJson([...args, '--ignore-not-found'], options, undefined, true)

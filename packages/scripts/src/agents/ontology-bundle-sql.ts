@@ -70,6 +70,7 @@ export const isBuiltin = (parts: Node[] | undefined, allowed: ReadonlySet<string
   const name = path.at(-1)
   return name !== undefined && isBuiltinPath(path) && allowed.has(name)
 }
+export const isBuiltinOperator = (parts: Node[] | undefined) => !parts?.length || isBuiltinPath(names(parts))
 
 // Parse once per analysis and hide CTE aliases from the caller's relation policy.
 export const visitReadOnlySelect = async (sql: string, inspect: (node: unknown) => void) => {
@@ -108,7 +109,9 @@ export const visitReadOnlySelect = async (sql: string, inspect: (node: unknown) 
       if (!cte?.ctename || !cte.ctequery || !('SelectStmt' in cte.ctequery)) {
         throw new Error('CTEs must be read-only SELECTs')
       }
-      visitSelect(cte.ctequery.SelectStmt, visible)
+      const { ctequery, ...metadata } = cte
+      visit(metadata, visible)
+      visitSelect(ctequery.SelectStmt, visible)
       // A nonrecursive CTE is visible only after its definition and only in its query's scope.
       visible.add(cte.ctename)
     }
@@ -126,13 +129,17 @@ export const visitReadOnlySelect = async (sql: string, inspect: (node: unknown) 
     }
     if ('RangeVar' in ast) {
       const { catalogname, schemaname, relname } = ast.RangeVar
-      if (!catalogname && !schemaname && relname && visible.has(relname)) return
+      if (!catalogname && !schemaname && relname && visible.has(relname)) {
+        visit(ast.RangeVar, visible)
+        return
+      }
     }
     inspect(node)
     for (const child of Object.values(node)) visit(child, visible)
   }
 
   visitSelect(statement, new Set())
+  return statement
 }
 
 export const readSelectRelations = async (
@@ -156,7 +163,7 @@ export const readSelectRelations = async (
       throw new Error('Use only allowlisted built-in PostgreSQL types')
     }
     const operator = 'A_Expr' in ast ? ast.A_Expr.name : 'SortBy' in ast ? ast.SortBy.useOp : undefined
-    if (operator?.length && !isBuiltinPath(names(operator))) {
+    if (!isBuiltinOperator(operator)) {
       throw new Error('Use only built-in PostgreSQL operators')
     }
     if ('RangeTableSample' in ast) throw new Error('TABLESAMPLE is not supported')

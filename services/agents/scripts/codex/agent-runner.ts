@@ -20,7 +20,6 @@ import {
   resolveAdapter,
 } from '../../src/runner/spec'
 
-import { runCli } from './lib/cli'
 import { ensureFileDirectory } from './lib/fs'
 
 type ExecAgentRunnerStatus = {
@@ -66,7 +65,7 @@ const loadSpecFromEnv = async (): Promise<AgentRunnerSpec | null> => {
   }
 }
 
-export const loadAgentRunnerSpec = async (argv: string[]): Promise<AgentRunnerSpec> => {
+const loadAgentRunnerSpec = async (argv: string[]): Promise<AgentRunnerSpec> => {
   const [specPath] = argv
   if (specPath) {
     return loadSpecFromPath(specPath)
@@ -243,7 +242,7 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
   return exitCode
 }
 
-export const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> => {
+const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> => {
   const spec = normalizeRunnerSpec(rawSpec)
   const adapter = resolveAdapter(spec)
   if (adapter.type === 'codex-app-server') {
@@ -265,9 +264,14 @@ export const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> 
   return runExecAdapter(spec, adapter.provider)
 }
 
-const main = async () => {
-  const spec = await loadAgentRunnerSpec(process.argv.slice(2))
-  return runAgentRunner(spec)
+if (import.meta.main) {
+  try {
+    const spec = await loadAgentRunnerSpec(process.argv.slice(2))
+    // eslint-disable-next-line unicorn/no-process-exit
+    process.exit(await runAgentRunner(spec))
+  } catch (error) {
+    console.error(toErrorMessage(error))
+    // eslint-disable-next-line unicorn/no-process-exit
+    process.exit(1)
+  }
 }
-
-await runCli(import.meta, main)

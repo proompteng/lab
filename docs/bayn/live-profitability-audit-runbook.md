@@ -11,8 +11,9 @@ identity using the [cluster access runbook](../runbooks/galactic-kubernetes-acce
 Use the CNPG-managed `bayn_audit_ro` login, not the application writer or `bayn_research`. Before rollout, provision
 `bayn/bayn-audit-ro-db` through the approved secret-sync path as a `kubernetes.io/basic-auth` Secret with username
 `bayn_audit_ro`, its dedicated password, and label `cnpg.io/reload: "true"`. Confirm that CNPG reconciles the role
-before Bayn runs [migration 0226](../../services/bayn/migrations/0226_audit_reader_grants.ts). If the
-migration was recorded before the role existed, have the database owner apply that migration's guarded SQL block on
+before Bayn runs [migration 0226](../../services/bayn/migrations/0226_audit_reader_grants.ts) and
+[migration 0227](../../services/bayn/migrations/0227_audit_reader_view_grant.ts). If either
+migration was recorded before the role existed, have the database owner apply its guarded SQL block on
 the primary through the approved administration path. Do not edit migration history. Verify the role can read
 `public.orders` but has no write privileges on Bayn tables, and wait for the standby to catch up before running the audit.
 

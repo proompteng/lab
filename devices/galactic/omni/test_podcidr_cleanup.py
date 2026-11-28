@@ -109,6 +109,42 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(self.sandboxes.call_count, calls)
         self.assertEqual((self.state / "result.json").stat().st_mode & 0o777, 0o600)
 
+    def test_slash22_cleanup_archives_leases_across_the_full_subnet(self):
+        plan = {**PLAN, "oldCIDR": "10.244.8.0/22"}
+        (self.lease_dir / "10.244.0.9").rename(self.lease_dir / "10.244.8.9")
+        (self.lease_dir / "10.244.11.254").write_text("old-sandbox-id")
+        (self.lease_dir / "last_reserved_ip.0").write_text("10.244.11.254")
+        subnet_file = self.root / "run/flannel/subnet.env"
+        subnet_file.write_text("FLANNEL_SUBNET=10.244.8.1/22\nFLANNEL_MTU=1400\n")
+        self.run.side_effect = [
+            json.dumps(
+                [
+                    {"ifname": "cni0", "linkinfo": {"info_kind": "bridge"}},
+                    {
+                        "ifname": "flannel.1",
+                        "linkinfo": {"info_kind": "vxlan", "info_data": {"id": 1}},
+                    },
+                ]
+            ),
+            '[{"addr_info":[{"family":"inet","local":"10.244.8.1","prefixlen":22}]}]',
+            "[]",
+            "",
+            "",
+        ]
+
+        result = maintenance.cleanup(plan, self.root)
+        self.assertEqual(result["phase"], "complete", result)
+        self.assertEqual(result["oldCIDR"], plan["oldCIDR"])
+        self.assertEqual(
+            result["leasesArchived"],
+            ["10.244.11.254", "10.244.8.9", "last_reserved_ip.0"],
+        )
+        self.assertEqual(result["linksRemoved"], ["cni0", "flannel.1"])
+        self.assertEqual(
+            (self.state / "leases/last_reserved_ip.0").read_text(), "10.244.11.254"
+        )
+        self.assertFalse(subnet_file.exists())
+
     def test_wrong_host_or_reboot_prevents_any_runtime_action(self):
         self.hostname.return_value = "different"
         with self.assertRaisesRegex(maintenance.MaintenanceError, "wrong host"):
@@ -325,9 +361,11 @@ class CleanupTests(unittest.TestCase):
     def test_plan_limits_network_and_operation_paths(self):
         for key, value in (
             ("operation", "../../outside"),
-            ("oldCIDR", "192.168.0.0/24"),
-            ("oldCIDR", "10.244.0.0/22"),
-            ("oldCIDR", "10.244.0.1/24"),
+            ("oldCIDR", "10.245.8.0/22"),
+            ("oldCIDR", "fd00::/22"),
+            ("oldCIDR", "10.244.8.0/21"),
+            ("oldCIDR", "10.244.8.0/25"),
+            ("oldCIDR", "10.244.9.0/22"),
             ("daemonPodUIDs", []),
             ("daemonPodUIDs", PLAN["daemonPodUIDs"] * 2),
         ):
@@ -336,11 +374,14 @@ class CleanupTests(unittest.TestCase):
                 invalid[key] = value
                 with self.assertRaises((ValueError, maintenance.MaintenanceError)):
                     maintenance.validate_plan(invalid)
-        rollback = copy.deepcopy(PLAN)
-        rollback["oldCIDR"] = "10.244.0.0/23"
-        self.assertEqual(
-            maintenance.validate_plan(rollback), ipaddress.ip_network("10.244.0.0/23")
-        )
+
+    def test_plan_accepts_all_supported_ipv4_prefixes(self):
+        for cidr in ("10.244.0.0/24", "10.244.0.0/23", "10.244.8.0/22"):
+            with self.subTest(cidr=cidr):
+                self.assertEqual(
+                    maintenance.validate_plan({**PLAN, "oldCIDR": cidr}),
+                    ipaddress.ip_network(cidr),
+                )
 
 
 if __name__ == "__main__":

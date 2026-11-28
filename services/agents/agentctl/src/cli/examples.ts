@@ -3,12 +3,13 @@ export const renderExamples = (topic?: string) => {
   if (!normalized) {
     return `Examples:
   agentctl status
+  agentctl fleet
   agentctl get agent
   agentctl init impl --apply
   agentctl run submit --agent demo --impl demo --runtime job --wait
-  agentctl get run --phase Succeeded
+  agentctl run list --active -o wide
   agentctl run logs demo-xxxx --follow
-  agentctl run codex --prompt "Summarize repo" --agent demo --runtime workflow --wait
+  agentctl run codex --inline-prompt "Summarize repo" --repo owner/repo --base main --head codex/summary
   agentctl completion install zsh
 `
   }
@@ -16,7 +17,7 @@ export const renderExamples = (topic?: string) => {
   if (normalized === 'run') {
     return `Run examples:
   agentctl run submit --agent demo --impl demo --runtime workflow --wait
-  agentctl get run --phase Succeeded
+  agentctl run list --active -o wide
   agentctl run logs demo-xxxx --follow
 `
   }
