@@ -77,8 +77,9 @@ const fixture = (
   })
   const audit = vi.fn()
   const verify = vi.fn(async (candidate: string) => {
-    if (candidate !== projectedToken) throw new McpRunIdentityError(401, 'invalid_token')
-    return identity
+    if (candidate === projectedToken) return identity
+    if (candidate === 'other-run-token') return { ...identity, agentRun: 'other-run' }
+    throw new McpRunIdentityError(401, 'invalid_token')
   })
   const handle = createColabGatewayHandler({
     verify,
@@ -102,7 +103,8 @@ const fixture = (
   return {
     handle,
     rpc,
-    call: async (name: string, args = {}) => (await rpc('tools/call', { name, arguments: args })).json(),
+    call: async (name: string, args = {}, token = projectedToken) =>
+      (await rpc('tools/call', { name, arguments: args }, token)).json(),
     google,
     exchange,
     audit,
@@ -171,6 +173,11 @@ it('stays reachable without ADC, and fails closed before any backend tool or OAu
 
 const fourRuntimes = () => ['one', 'two', 'three', 'four'].map((id) => ({ name: `runtimes/${id}` }))
 const runtimeLimit = { error: { data: { code: 'colab_runtime_limit_reached' } } }
+const runtimeAlreadyReserved = { error: { data: { code: 'colab_runtime_already_reserved' } } }
+const deadlineExceededResult: CallToolResult = {
+  isError: true,
+  content: [{ type: 'text', text: '{"error":{"status":"DEADLINE_EXCEEDED"}}' }],
+}
 
 it('counts simultaneous and not-yet-listed creates against the five-runtime cap', async () => {
   const runtimes = fourRuntimes()
@@ -234,6 +241,163 @@ it('fails closed on an unverified count and retains the slot after an unconfirme
   })
   expect(await call('create_runtime', { runtime: {} })).toMatchObject(runtimeLimit)
   expect(create).toHaveBeenCalledTimes(2)
+})
+
+it('allows matching idempotent create_runtime retries after DEADLINE_EXCEEDED at 5/5 capacity while rejecting conflicts', async () => {
+  const runtimes = fourRuntimes()
+  const requestId = '11111111-1111-4111-8111-111111111111'
+  const otherRequestId = '22222222-2222-4222-8222-222222222222'
+  let attempt = 0
+  const retryStarted = Promise.withResolvers<void>()
+  const finishRetry = Promise.withResolvers<void>()
+  const { call } = fixture({
+    callTool: async ({ params }) => {
+      if (params.name === 'list_runtimes') return toolResult({ runtimes })
+      if (params.name === 'delete_runtime') {
+        const index = runtimes.findIndex((runtime) => runtime.name === params.arguments?.name)
+        if (index >= 0) runtimes.splice(index, 1)
+        return toolResult({})
+      }
+      expect(params.name).toBe('create_runtime')
+      attempt++
+      if (attempt === 1) return deadlineExceededResult
+      if (attempt === 2) {
+        retryStarted.resolve()
+        await finishRetry.promise
+      }
+      return toolResult({ name: `runtimes/${params.arguments?.runtimeId}` })
+    },
+  })
+
+  // 1. Initial create_runtime at 4/5 returns DEADLINE_EXCEEDED and retains its 5th slot.
+  expect(
+    await call('create_runtime', {
+      runtime: { region: 'us-central1', machineType: 'n1-standard-4' },
+      runtimeId: 'fifth',
+      requestId,
+    }),
+  ).toMatchObject({ result: { isError: true } })
+
+  // 2. Brand-new runtimeId at 5/5 is rejected by capacity limit.
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth', requestId: otherRequestId })).toMatchObject(
+    runtimeLimit,
+  )
+
+  // 3. Conflicting requestId, mutated runtime spec, or different AgentRun for the reserved runtimeId are rejected.
+  expect(
+    await call('create_runtime', {
+      runtime: { region: 'us-central1', machineType: 'n1-standard-4' },
+      runtimeId: 'fifth',
+      requestId: otherRequestId,
+    }),
+  ).toMatchObject(runtimeAlreadyReserved)
+  expect(
+    await call('create_runtime', {
+      runtime: { region: 'us-central1', machineType: 'a2-highgpu-1g' },
+      runtimeId: 'fifth',
+      requestId,
+    }),
+  ).toMatchObject(runtimeAlreadyReserved)
+  expect(
+    await call(
+      'create_runtime',
+      {
+        runtime: { region: 'us-central1', machineType: 'n1-standard-4' },
+        runtimeId: 'fifth',
+        requestId,
+      },
+      'other-run-token',
+    ),
+  ).toMatchObject(runtimeAlreadyReserved)
+
+  // 4. Matching idempotent retry (case-insensitive UUID, equivalent runtime key order) succeeds at 5/5 capacity.
+  const retry = call('create_runtime', {
+    runtime: { machineType: 'n1-standard-4', region: 'us-central1' },
+    runtimeId: 'fifth',
+    requestId: requestId.toUpperCase(),
+  })
+  try {
+    await retryStarted.promise
+    // A concurrent duplicate retry while the first retry is still in-flight is rejected.
+    expect(
+      await call('create_runtime', {
+        runtime: { machineType: 'n1-standard-4', region: 'us-central1' },
+        runtimeId: 'fifth',
+        requestId,
+      }),
+    ).toMatchObject(runtimeAlreadyReserved)
+  } finally {
+    finishRetry.resolve()
+  }
+  expect(await retry).toMatchObject({ result: { structuredContent: { name: 'runtimes/fifth' } } })
+
+  // 5. Reservation settles cleanly without double-counting once observed by list_runtimes and freed on delete.
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
+  runtimes.push({ name: 'runtimes/fifth' })
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
+  await call('delete_runtime', { name: 'runtimes/one' })
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject({
+    result: { structuredContent: { name: 'runtimes/sixth' } },
+  })
+  expect(attempt).toBe(3)
+})
+
+it('releases a reserved slot when a retried create_runtime permanently fails, and preserves it on ALREADY_EXISTS', async () => {
+  const runtimes = fourRuntimes()
+  const requestId = '33333333-3333-4333-8333-333333333333'
+  const responses: CallToolResult[] = [
+    deadlineExceededResult,
+    { isError: true, content: [{ type: 'text', text: '{"error":{"status":"ALREADY_EXISTS"}}' }] },
+    { isError: true, content: [{ type: 'text', text: '{"error":{"status":"RESOURCE_EXHAUSTED"}}' }] },
+    toolResult({ name: 'runtimes/sixth' }),
+  ]
+  const create = vi.fn(async () => responses.shift()!)
+  const { call } = fixture({
+    callTool: async ({ params }) => (params.name === 'list_runtimes' ? toolResult({ runtimes }) : create()),
+  })
+
+  // Initial create times out -> slot retained.
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'fifth', requestId })).toMatchObject({
+    result: { isError: true },
+  })
+  // Retry gets ALREADY_EXISTS before list_runtimes catches up -> slot stays retained (not undercounted).
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'fifth', requestId })).toMatchObject({
+    result: { isError: true },
+  })
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
+  // Retry permanently fails with RESOURCE_EXHAUSTED -> reservation released so a new runtime fits.
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'fifth', requestId })).toMatchObject({
+    result: { isError: true },
+  })
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject({
+    result: { structuredContent: { name: 'runtimes/sixth' } },
+  })
+  expect(create).toHaveBeenCalledTimes(4)
+})
+
+it('allows a matching idempotent retry even if Google already listed the runtime after DEADLINE_EXCEEDED', async () => {
+  const runtimes = fourRuntimes()
+  const requestId = '44444444-4444-4444-8444-444444444444'
+  let attempt = 0
+  const { call } = fixture({
+    callTool: async ({ params }) => {
+      if (params.name === 'list_runtimes') return toolResult({ runtimes })
+      expect(params.name).toBe('create_runtime')
+      if (++attempt === 1) return deadlineExceededResult
+      return toolResult({ name: 'runtimes/fifth' })
+    },
+  })
+
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'fifth', requestId })).toMatchObject({
+    result: { isError: true },
+  })
+  // Google finished creating the runtime before the client retried the identical request.
+  runtimes.push({ name: 'runtimes/fifth' })
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'fifth', requestId })).toMatchObject({
+    result: { structuredContent: { name: 'runtimes/fifth' } },
+  })
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
+  expect(attempt).toBe(2)
 })
 
 it('bridges MCP discovery and calls with the rotated projected token, without network I/O', async () => {

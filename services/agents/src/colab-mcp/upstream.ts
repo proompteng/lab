@@ -45,9 +45,14 @@ const rejectedStatuses = new Set([
   'ALREADY_EXISTS',
 ])
 
-export const creationRejected = (result: unknown) => {
-  const status = asString(asRecord(asRecord(result)?.error)?.status) ?? asString(asRecord(result)?.status)
-  return status !== null && rejectedStatuses.has(status)
+export const upstreamErrorStatus = (result: unknown) =>
+  asString(asRecord(asRecord(result)?.error)?.status) ?? asString(asRecord(result)?.status)
+
+export const creationRejected = (result: unknown, options: { allowAlreadyExists?: boolean } = {}) => {
+  const status = upstreamErrorStatus(result)
+  if (status === null) return false
+  if (options.allowAlreadyExists && status === 'ALREADY_EXISTS') return false
+  return rejectedStatuses.has(status)
 }
 
 const responseFor = (text: string, contentType: string | undefined, id: string) => {
@@ -121,8 +126,14 @@ export const createColabUpstream = (options: {
       const body = await readBoundedText(response, MAX_RESPONSE_BYTES, deadline)
       const result = responseFor(body, response.headers.get('content-type')?.split(';', 1)[0]?.trim(), id)
       if ('error' in result) {
+        const status = upstreamErrorStatus(result.error.data)
         const rejected = [-32600, -32601, -32602].includes(result.error.code) || creationRejected(result.error.data)
-        throw new ColabError('colab_upstream_error', 'Colab rejected the MCP request.', rejected)
+        throw new ColabError(
+          'colab_upstream_error',
+          'Colab rejected the MCP request.',
+          rejected,
+          status === 'ALREADY_EXISTS',
+        )
       }
       return result.result
     } catch (error) {
