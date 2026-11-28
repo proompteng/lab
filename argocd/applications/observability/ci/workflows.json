@@ -405,6 +405,10 @@
       "pattern": "^Agents full CI(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "jangar",
+      "pattern": "^Jangar CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "bayn",
       "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
     },
