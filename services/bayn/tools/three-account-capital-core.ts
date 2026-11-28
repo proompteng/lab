@@ -123,12 +123,13 @@ const annualizedDeviation = (net: readonly number[]) => {
   return Math.sqrt(sum(net.map((r) => (r - center) ** 2)) / (net.length - 1)) * annualization
 }
 
-const replayDaily = (
+export const replayDaily = (
   daily: readonly DailySession[],
   initialUsd: number,
   sleeve: 'f4' | 'o1',
   sizing: ShareSizing,
   oneWayBps: (typeof costs)[number],
+  onTrade?: (index: number, notionalUsd: number) => void,
 ) => {
   let equity = initialUsd
   let cash = initialUsd
@@ -179,11 +180,13 @@ const replayDaily = (
         }
         const next = { strategy, carry }
         const after = netBook(next)
+        let tradedMicros = 0n
         const fees = sum(
           after.map((qty, j) => {
             const delta = qty - before[j]
             if (delta === 0) return 0
             const notional = usdMicros(Math.abs(delta) * mark(session, j, 'open'))
+            tradedMicros += notional
             return Number(wholeShareCost(notional, delta > 0 ? 'buy' : 'sell', oneWayBps)) / 1_000_000
           }),
         )
@@ -192,6 +195,7 @@ const replayDaily = (
         if (nextCash >= -roundOffUsd && budget <= postFees + roundOffUsd) {
           book = next
           cash = Math.max(0, nextCash)
+          onTrade?.(i, Number(tradedMicros) / 1_000_000)
           settled = true
           break
         }

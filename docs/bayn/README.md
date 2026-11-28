@@ -26,6 +26,7 @@ account, and reconciliation state before operating. Runbooks and research eviden
   see [streaming operations](../../services/bayn/src/market-data/streaming/README.md) for the configured runtime.
 - [Market-data archive](market-data-archive.md) — research storage and the separation from trading.
 - [Macro ETF core](macro-etf-core-architecture.md) — pure planning module, not a registered strategy.
+- [Coordinated macro portfolio v2](macro-portfolio-v2.md) — opt-in F4/O1 sizing, risk controls, and replay protocol.
 - [Test-suite audit](test-suite-audit-2026-11-27.md) — skip inventory and the fast and full CI tiers.
 
 ## Research Evidence

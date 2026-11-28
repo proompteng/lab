@@ -118,7 +118,7 @@ const validateCloses = (input: unknown) => {
   const digest = canonicalHashV1Result(snapshot)
   if (Result.isFailure(digest)) return evidenceFailure('Cannot hash canonical close snapshot', digest.failure)
   if (digest.success !== snapshotHash) return evidenceFailure('Close snapshot SHA-256 mismatch')
-  return Result.succeed({ closes, asOf, calendar })
+  return Result.succeed({ closes, asOf, calendar, snapshotHash })
 }
 
 const prefix = (values: readonly number[]) => {
@@ -239,7 +239,10 @@ const evaluate = (
   policyInput: unknown,
   input: unknown,
   atNextOpen: boolean,
-): Result.Result<readonly MacroEtfCoreSignal[], MacroEtfCoreEvidenceError> => {
+): Result.Result<
+  { readonly observations: readonly MacroEtfCoreSignal[] } & Result.Result.Success<ReturnType<typeof validateCloses>>,
+  MacroEtfCoreEvidenceError
+> => {
   const policy = decodeMacroEtfCorePolicy(policyInput)
   if (Result.isFailure(policy)) return Result.fail(policy.failure)
   const evidence = validateCloses(input)
@@ -333,12 +336,17 @@ const evaluate = (
       }),
     )
   }
-  return Result.succeed(observations)
+  return Result.succeed({ ...evidence.success, observations })
 }
 
+/** The coordinated F4/O1 policy uses the same validated tape and F4 directional reviews. */
+export const readF4SignalHistory = (input: unknown) =>
+  evaluate({ schema: 'bayn.macro-etf-core-policy.v1', profile: Profile.F4 }, input, false)
+
 /** Offline replay. Every review uses only its own and preceding closes; no partial path is returned on invalid evidence. */
-export const replayMacroEtfCoreSignals = (policy: unknown, input: unknown) => evaluate(policy, input, false)
+export const replayMacroEtfCoreSignals = (policy: unknown, input: unknown) =>
+  evaluate(policy, input, false).pipe(Result.map(({ observations }) => observations))
 
 /** Production observation. A valid off-cadence observation returns no target, not a zero allocation. */
 export const computeMacroEtfCoreSignal = (policy: unknown, input: unknown) =>
-  evaluate(policy, input, true).pipe(Result.map((observations) => observations[0]))
+  evaluate(policy, input, true).pipe(Result.map(({ observations }) => observations[0]))
