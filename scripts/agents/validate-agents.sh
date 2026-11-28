@@ -2,9 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
 CI_VALUES_FILE="${ROOT_DIR}/scripts/agents/values-ci.yaml"
+schema_dir="${ROOT_DIR}/schemas/custom"
 # Backward-compatible: older callers used HELM_KUBE_VERSION.
 KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
 DUMMY_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -333,19 +335,21 @@ python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/swarm.pr
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/artifacts.proompteng.ai_artifacts.yaml" artifacts.proompteng.ai v1alpha1 Artifact
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/workspaces.proompteng.ai_workspaces.yaml" workspaces.proompteng.ai v1alpha1 Workspace
 
-if ! git -C "${ROOT_DIR}" diff --exit-code -- "${ROOT_DIR}/schemas/custom"; then
+schema_drift="$(git status --porcelain --untracked-files=all -- "${schema_dir}")"
+if [[ -n "${schema_drift}" ]]; then
+  printf '%s\n' "${schema_drift}" >&2
   echo "schemas/custom is out of date; regenerate and commit the CRD schemas." >&2
   exit 1
 fi
 
-python3 - <<'PY'
+python3 - "${CHART_DIR}" <<'PY'
 import sys
 from pathlib import Path
 import yaml
 
-root = Path(__file__).resolve().parents[2]
-crd_dir = root / "charts" / "agents" / "crds"
-examples_dir = root / "charts" / "agents" / "examples"
+chart_dir = Path(sys.argv[1])
+crd_dir = chart_dir / "crds"
+examples_dir = chart_dir / "examples"
 
 crd_versions = {}
 for path in crd_dir.glob("*.yaml"):
@@ -385,7 +389,6 @@ if errors:
     sys.exit(1)
 PY
 
-schema_dir="${ROOT_DIR}/schemas/custom"
 if ! command -v kubeconform >/dev/null 2>&1; then
   echo "kubeconform is required but not installed" >&2
   exit 1
@@ -422,22 +425,15 @@ schema = {
     "definitions": definitions,
     "$ref": "#/definitions/io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition",
 }
-payload = json.dumps(schema)
-for name in ("CustomResourceDefinition.json", "customresourcedefinition.json"):
-    (base / name).write_text(payload)
+(base / "customresourcedefinition.json").write_text(json.dumps(schema))
 PY
 
 kubeconform --strict --summary \
   --schema-location "${crd_schema_dir}/{{.ResourceKind}}.json" \
   "${CHART_DIR}/crds"/*.yaml
 
-kubeconform --strict --summary --ignore-missing-schemas \
-  --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
+kubeconform --strict --summary \
   --schema-location "${schema_dir}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.ResourceKind}}_{{.Group}}_{{.ResourceAPIVersion}}.json" \
-  --schema-location "${schema_dir}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
   --schema-location default \
   "${CHART_DIR}/examples"/*.yaml
 
