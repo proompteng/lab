@@ -10,10 +10,14 @@ import { expect, it, onTestFinished } from 'vitest'
 
 const entrypoint = fileURLToPath(new URL('../../scripts/codex/agent-runner.ts', import.meta.url))
 
-it('reaps an agy-cli child that ignores SIGTERM before the runner shutdown deadline', async () => {
+it.each([
+  { signal: 'SIGTERM' as const, code: 143, stalled: 'telemetry' },
+  { signal: 'SIGINT' as const, code: 130, stalled: 'log' },
+])('persists agy-cli cancellation on $signal with stalled $stalled', async ({ signal, code, stalled }) => {
   const dir = await mkdtemp(join(tmpdir(), 'runner-agy-signal-'))
   const binaryPath = join(dir, 'hanging-agy')
   const pidPath = join(dir, 'agy.pid')
+  const logPath = join(dir, 'runner.log')
   const statusPath = join(dir, 'status.json')
   const specPath = join(dir, 'agent-runner.json')
   const runPath = join(dir, 'run.json')
@@ -35,13 +39,50 @@ setInterval(() => {}, 1000)
     JSON.stringify({
       provider: 'google',
       payloads: { eventFilePath: runPath },
-      artifacts: { statusPath },
+      artifacts: { statusPath, logPath },
+      providerSpec: { outputArtifacts: [{ name: 'runner-log', path: logPath, key: 'runner.log' }] },
       adapter: { type: 'agy-cli', agy: { binaryPath, prompt: 'block until cancelled' } },
     }),
   )
 
+  let terminalHeartbeat = ''
+  let logUpload = ''
+  const storage = createServer((request, response) => {
+    let body = ''
+    request.setEncoding('utf8').on('data', (chunk: string) => {
+      body += chunk
+    })
+    request.on('end', () => {
+      if (request.url?.endsWith('/runner.log')) {
+        logUpload = body
+        if (stalled === 'log') return
+      } else if (request.url?.includes('/runner-telemetry/') && body.includes('"state":"finished"')) {
+        terminalHeartbeat = body
+        if (stalled === 'telemetry') return
+      }
+      response.end()
+    })
+  })
+  onTestFinished(() => {
+    storage.closeAllConnections()
+    storage.close()
+  })
+  storage.listen(0, '127.0.0.1')
+  await once(storage, 'listening')
+  const address = storage.address()
+  if (!address || typeof address === 'string') throw new Error('fixture storage did not listen on TCP')
+
   const runner = spawn('bun', [entrypoint, specPath], {
-    env: { HOME: dir, PATH: process.env.PATH },
+    env: {
+      HOME: dir,
+      PATH: process.env.PATH,
+      AGENT_RUN_NAMESPACE: 'tests',
+      AGENT_RUN_UID: 'agy-signal-test',
+      AGENTS_ARTIFACTS_ENDPOINT: `http://127.0.0.1:${address.port}`,
+      AGENTS_ARTIFACTS_ACCESS_KEY_ID: 'fixture',
+      AGENTS_ARTIFACTS_SECRET_ACCESS_KEY: 'fixture',
+      AGENTS_ARTIFACTS_BUCKET: 'fixture',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   const closed = once(runner, 'close')
@@ -72,18 +113,28 @@ setInterval(() => {}, 1000)
   })
   await Promise.race([turnStarted.promise, closed, delay(3_000, undefined, { ref: false })])
   expect(stdout, stderr).toContain('"phase":"first_turn_started"')
-  expect(runner.kill('SIGTERM')).toBe(true)
-  expect(await closed).toEqual([143, null])
+  expect(runner.kill(signal)).toBe(true)
+  expect(await closed).toEqual([code, null])
   expect(stderr).not.toContain('shutdown exceeded')
-  expect(JSON.parse(await readFile(statusPath, 'utf8'))).toMatchObject({
+  const status = JSON.parse(await readFile(statusPath, 'utf8'))
+  expect(status).toMatchObject({
     adapter: 'agy-cli',
     status: 'cancelled',
+    exitCode: 130,
     signal: 'SIGKILL',
     telemetry: { state: 'finished' },
   })
   const pid = Number(await readFile(pidPath, 'utf8'))
   expect(() => process.kill(pid, 0)).toThrow()
   reaped = true
+  expect(terminalHeartbeat).toContain('"state":"finished"')
+  expect(logUpload).toContain('"state":"finished"')
+  if (stalled === 'telemetry') {
+    expect(status.telemetry.publishErrors).toBe(1)
+    expect(status.artifacts.outputArtifacts).toContainEqual(expect.objectContaining({ url: 's3://fixture/runner.log' }))
+  } else {
+    expect(status.error).toContain('shutdown budget')
+  }
 })
 
 it.each([
