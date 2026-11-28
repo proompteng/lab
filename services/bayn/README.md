@@ -29,6 +29,7 @@ See the [Bayn documentation index](../../docs/bayn/README.md) for production run
 | Evaluate economics or a proposed strategy     | [Profitability goal](#profitability-goal), [replay and backtesting](#replay-and-backtesting), [research](#independent-jev-instruction-research) |
 | Configure independent Alpaca Paper sleeves    | [Multi-account sleeve runbook](../../docs/bayn/multi-account-sleeve-architecture.md)                                                            |
 | Qualify daily multi-horizon PAPER evidence    | [Profitability master playbook](../../docs/bayn/profitability-master-playbook.md)                                                               |
+| Attribute weekly three-account PAPER results  | [Weekly attribution](#weekly-attribution)                                                                                                       |
 | Build and validate a change                   | [Package scripts](package.json), [validation](#validation), [service guide](AGENTS.md)                                                          |
 
 ## Core contracts
@@ -61,6 +62,79 @@ earlier activation recipes remain in the
 [prior guide](https://github.com/proompteng/lab/blob/55f1aad1e416e03ba4c3a7b9ce14ab2a20b7c4fc/services/bayn/README.md).
 The [October 17 investigation](../../docs/bayn/archive/crypto-entry-research-2026-10-17.md) retains its reproduction and cost
 evidence. Historical recipes and measurements do not establish current deployment, authority or profitable edge.
+
+## Weekly attribution
+
+Run the report offline against the retained [intraday audit](../../docs/bayn/live-profitability-audit-runbook.md) and
+[portfolio receipts](../../docs/bayn/multi-account-sleeve-architecture.md). Supply one audit JSON for a Monday–Sunday
+week and one portfolio receipt per observed execution session. The tool checks hashes, requires three distinct and
+stable account bindings (v3 QQQ/SMH, $10,000 F4, $10,000 O1), and rejects malformed or cross-wired inputs before output.
+
+```sh
+bun services/bayn/tools/bayn-weekly-attribution-report.ts \
+  --audit /private/intraday-week.json \
+  --sleeve-receipt /private/portfolio-monday.json \
+  --sleeve-receipt /private/portfolio-tuesday.json \
+  --account-evidence /private/settled-account-evidence.json \
+  --format markdown
+```
+
+Use `--format json` for machine-readable output. Optionally pass `--scorecard` with the daily qualification scorecard's
+JSON output. The report checks overlapping audit hashes and includes in-week registered sessions in the coverage;
+it displays the upstream qualification gate separately because that gate can cover more than one week. Without a
+registered calendar, the report can only cover the supplied sessions; check the trading dates before sharing it.
+
+**Settled inputs.** The audit v1 has no account ID. The portfolio v1 records pre-open plans and submission outcomes,
+not filled notional or settled account equity. Supply `--account-evidence` to bind the audit and/or supply actual macro
+economics. Assemble it only from independently verified, read-only account and accounting evidence; the tool matches
+the binding but cannot authenticate its origin. Keep this file and the source receipts private:
+
+```json
+{
+  "schemaVersion": "bayn.weekly-attribution-evidence.v1",
+  "intraday": {
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "auditSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "macroSessions": [
+    {
+      "accountId": "22222222-2222-4222-8222-222222222222",
+      "portfolioSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "openingEquityMicros": "10000000000",
+      "closingEquityMicros": "10010000000",
+      "netExternalCashFlowMicros": "0",
+      "tradedNotionalMicros": "1500000000"
+    }
+  ]
+}
+```
+
+The intraday digest is the audit's Bayn canonical JSON SHA-256 (`canonicalHashV1Result` in [`src/hash.ts`](src/hash.ts)),
+not the hash of the formatted file bytes. For each verified macro account and receipt, use previous-session close and
+current-session close for the equity marks, net external transfers in that interval (deposits positive), and the
+two-sided notional of executed fills. Use `0` only for verified zero flows or fills. Equities already account for
+booked trading costs and internal income; do not subtract them again.
+
+- **Economics:** Intraday net is audited realized P&L after booked fees for flat, reconciled sessions. Macro net is
+  the equity change less net external transfers. Combined metrics require all three accounts on aligned dates;
+  an unattested intraday audit is not included. Turnover is weekly executed notional divided by first-session opening
+  equity. Max drawdown uses compounded daily returns with a starting high-water mark. Annualized Sharpe uses at
+  least five daily returns, their sample standard deviation, and √252 (zero risk-free rate). If there are external
+  flows, the P&L is adjusted but risk metrics are unavailable without intraday flow timing.
+- **Slippage / drift / rotation:** The weekly B0 comparison uses pooled unrounded round trips. A weekly mean or
+  median over 2.5 bp is a breach; equality cannot qualify and does not clear a failing daily live audit. F4 drift
+  is the gap from its target dollars to whole shares at the raw reference price, not realized tracking error. O1
+  completion requires a successful PaperSubmit resume with reconciled `NoWholeShareDrift`; acknowledgements and
+  shadow plans do not complete a rotation.
+- **Badges:** `BREACH` takes precedence for reported audit failures, over-budget slippage, or failed/blocked sleeves.
+  `WATCH` covers missing evidence, nonpositive net, and unresolved rotations. `QUALIFYING` describes the supplied
+  evidence, not the multi-week scorecard gate or permission to trade. Unavailable metrics are `null`, never imputed.
+
+**Knowledge proposal.** Add `--emit-knowledge-delta /private/knowledge-delta.json --source-commit <full-git-sha>` to
+create a new private file. Pass the actual source revision used for verification. The rules-only v1 proposal is for the
+[collective-knowledge curator](https://github.com/proompteng/lab/pull/16422); it includes only aggregate findings from
+verified audit samples and/or full-budget F4 sizing reviews. No verified finding means no file. The tool never copies
+receipt identifiers or prose into the proposal and never writes to the ontology, database or broker.
 
 ## Webull live ingestion
 
