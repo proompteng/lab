@@ -1316,17 +1316,19 @@ describe('native OCI build workflows', () => {
   })
 
   it('routes the enabled Agents service images through real Nix OCI attrs', () => {
-    for (const [imageName, packageAttr] of [
-      ['agents-controller', 'agents-controller-image'],
-      ['agents-control-plane', 'agents-control-plane-image'],
-      ['agents-shell', 'agents-shell-image'],
-      ['agents-codex-runner', 'agents-codex-runner-image'],
+    const { jobs } = Bun.YAML.parse(agentsBuildWorkflow) as { jobs: Record<string, unknown> }
+    for (const [job, imageName] of [
+      ['controller-image', 'agents-controller'],
+      ['control-plane-image', 'agents-control-plane'],
+      ['agents-shell-image', 'agents-shell'],
+      ['runner-image', 'agents-codex-runner'],
     ] as const) {
+      const packageAttr = `${imageName}-image`
       expect(agentsImageModule).toContain(`"${packageAttr}"`)
-      expect(agentsBuildWorkflow).toContain(`image_name: ${imageName}`)
-      expect(agentsBuildWorkflow).toContain(`package_attr: ${packageAttr}`)
+      expect(jobs[job]).toMatchObject({
+        with: { image_name: imageName, package_attr: packageAttr, publish_kargo_tag: false },
+      })
     }
-    expect(agentsBuildWorkflow.match(/publish_kargo_tag: false/g)).toHaveLength(4)
     expect(agentsBuildWorkflow).not.toContain('kargo_tag_include_run_id: true')
     expect(agentsBuildWorkflow).not.toContain('release_artifact_name:')
 

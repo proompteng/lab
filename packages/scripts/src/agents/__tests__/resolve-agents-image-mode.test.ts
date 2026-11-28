@@ -41,8 +41,12 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
-  it('runs the published smoke tier when its workflow changes', () => {
-    expect(classifyAgentsImageMode(['.github/workflows/agents-ci.yml'])).toEqual({
+  it.each([
+    '.github/workflows/agents-ci.yml',
+    'packages/scripts/src/agents/resolve-published-agents-images.ts',
+    'packages/scripts/src/agents/resolve-smoke-runner-image.ts',
+  ])('runs the published smoke tier when %s changes', (path) => {
+    expect(classifyAgentsImageMode([path])).toEqual({
       tier: 'published-smoke',
       mode: 'reuse-published-image',
       needsLocalAgentsImage: false,
