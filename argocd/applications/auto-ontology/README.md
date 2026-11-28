@@ -6,6 +6,12 @@ Sync the reviewed revision of Saigak first. Verify the Radeon serves the embeddi
 
 The model settings in the SealedSecret template point to Flamingo, Saigak, and Nemotron Rerank. `DEFAULT_MODELS_API_KEY` supplies the nonempty string the client library requires for these unauthenticated cluster services.
 
+The ingestion worker gives Flamingo up to 180 seconds per HTTP request. In 1.3.0 the NVIDIA SDK otherwise passes an explicit 60-second timeout, overriding the worker setting and dropping column-description batches after retries. The init container passes the worker setting to the SDK constructor. Remove it when the upstream client forwards that setting. After an incremental compile, check the actual number of undescribed attributes on each catalogued source:
+
+```sh
+kubectl -n auto-ontology exec deploy/ingestion -c ingestion -- python -c 'from auto_ontology.semantic.attribute_descriptions import fetch_attributes_to_describe as pending; print({db: len(pending(db)) for db in ("agents", "bayn")})'
+```
+
 ## Verify questions across the Agents and Bayn databases
 
 The UI and MCP send questions without a database selector. Version 1.3.0 can retrieve candidate tables from both databases and then fail to execute SQL that reads from just one. The backend applies the PostgreSQL routing changes from [NVIDIA's upstream fix](https://github.com/NVIDIA/auto-ontology/commit/a12fec75226a54ffc91752cca9538f1f01f760eb) to its pinned image at startup. The tables referenced by the SQL must resolve to one connector. Remove the patch and its init containers when upgrading to a release containing the fix.
@@ -22,6 +28,12 @@ SELECT count(*) FROM public.broker_events WHERE occurred_at < TIMESTAMPTZ '2026-
 From the tailnet, supply a read/chat token in `AUTO_ONTOLOGY_API_TOKEN` and run
 `bun argocd/applications/auto-ontology/verify-queries.ts <agents-count> <bayn-count>`.
 It submits both questions to the private frontend without a source hint and checks the returned SQL relation and count. At release, repeat the two questions in the signed-in UI and with the public MCP server's authenticated `ask_question` tool. Both must agree with the reference counts.
+
+## Non-reasoning Qwen3 thinking control
+
+Flamingo serves `qwen38-flamingo` with vLLM `--reasoning-parser qwen3`. Because `NON_REASONING_MODEL` falls back to `DEFAULT_MODELS_MODEL`, calls through `get_non_reasoning_llm_client()` (including `check_answerable` / `QuestionExtractionLiteModel`) can enter unbounded thinking loops and hit the 120s client timeout.
+
+The backend startup init containers also apply `non-reasoning-thinking.patch` onto `/app/auto_ontology/utils/llm_invoke.py` and mount the patched directory read-only at `/app/auto_ontology/utils`. It injects `"chat_template_kwargs": {"enable_thinking": false}` into `/chat/completions` POST payloads only for `get_non_reasoning_llm_client()` while leaving `get_llm_client()` untouched. Set `AUTO_ONTOLOGY_NON_REASONING_DISABLE_THINKING=false` to bypass this without removing the patch, or remove the patch once a dedicated non-reasoning model or upstream support is configured.
 
 ## PostgreSQL commit durability
 

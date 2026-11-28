@@ -80,9 +80,7 @@ export const buildAuthSecretPath = (config: AuthSecretConfig) => {
 }
 
 export const collectBlockedSecrets = (secrets: string[]) => {
-  const blocked = parseEnvStringList('AGENTS_CONTROLLER_BLOCKED_SECRETS')
-  if (blocked.length === 0) return []
-  const blockedSet = new Set(blocked)
+  const blockedSet = new Set(['colab-mcp-adc', ...parseEnvStringList('AGENTS_CONTROLLER_BLOCKED_SECRETS')])
   return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
 }
 

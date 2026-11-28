@@ -7,6 +7,7 @@ import yaml
 
 CHART = Path(__file__).resolve().parents[1]
 GATEWAY = "agents-auto-ontology-mcp-gateway"
+COLAB_GATEWAY = "agents-colab-mcp-gateway"
 # Service, image, and API settings intentionally differ between deployments.
 ROLE_SPECIFIC_ENV = {
     "AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED",
@@ -184,3 +185,92 @@ class SplitModeParityTest(unittest.TestCase):
                 "Blocked": ("string", '.status.conditions[?(@.type=="Blocked")].reason'),
             },
         )
+
+    def test_colab_gateway_is_single_writer_with_gateway_only_optional_adc(self):
+        self.assertNotIn(("Deployment", COLAB_GATEWAY), render({}))
+        for split in (False, True):
+            with self.subTest(split=split):
+                manifests = render(
+                    {
+                        "controllers": {
+                            "enabled": split,
+                            "image": {"tag": "controller-test"},
+                        },
+                        "colabMcpGateway": {"enabled": True},
+                        "autoOntologyMcpGateway": {"enabled": split},
+                    }
+                )
+                deployment = manifests["Deployment", COLAB_GATEWAY]["spec"]
+                pod = deployment["template"]["spec"]
+                self.assertEqual(deployment["replicas"], 1)
+                self.assertEqual(deployment["strategy"], {"type": "Recreate"})
+                self.assertEqual(
+                    pod["containers"][0]["image"].split(":")[-1], "controller-test"
+                )
+                self.assertEqual(
+                    pod["containers"][0]["command"],
+                    ["bun", "run", "src/colab-mcp/index.ts"],
+                )
+                self.assertEqual(
+                    pod["volumes"],
+                    [
+                        {
+                            "name": "colab-adc",
+                            "secret": {
+                                "secretName": "colab-mcp-adc",
+                                "optional": True,
+                                "defaultMode": 0o440,
+                                "items": [
+                                    {
+                                        "key": "credentials.json",
+                                        "path": "credentials.json",
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                )
+                self.assertEqual(
+                    [
+                        key
+                        for key, value in manifests.items()
+                        if "secretName: colab-mcp-adc" in yaml.safe_dump(value)
+                    ],
+                    [("Deployment", COLAB_GATEWAY)],
+                )
+                self.assertEqual(
+                    self.env(manifests, COLAB_GATEWAY)["COLAB_MAX_CONCURRENT_RUNTIMES"],
+                    {"value": "5"},
+                )
+                self.assertEqual(
+                    self.env(manifests, COLAB_GATEWAY)["COLAB_QUOTA_PROJECT"],
+                    {"value": "proompteng"},
+                )
+                self.assertEqual(
+                    manifests["PodDisruptionBudget", COLAB_GATEWAY]["spec"]["selector"],
+                    deployment["selector"],
+                )
+                self.assertEqual(
+                    manifests["Service", COLAB_GATEWAY]["spec"]["selector"],
+                    deployment["selector"]["matchLabels"],
+                )
+                self.assertEqual(
+                    manifests["ClusterRole", COLAB_GATEWAY]["rules"],
+                    [
+                        {
+                            "apiGroups": ["authentication.k8s.io"],
+                            "resources": ["tokenreviews"],
+                            "verbs": ["create"],
+                        }
+                    ],
+                )
+                self.assertFalse(
+                    manifests["ServiceAccount", "google-triage-runner"][
+                        "automountServiceAccountToken"
+                    ]
+                )
+                self.assertFalse(
+                    manifests["ServiceAccount", "codex-auto-ontology-runner"][
+                        "automountServiceAccountToken"
+                    ]
+                )

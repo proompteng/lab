@@ -425,6 +425,23 @@
       },
       "additionalProperties": false
     },
+    "colabMcpGateway": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "quotaProject": { "type": "string", "minLength": 1 },
+        "maxConcurrentRuntimes": { "type": "integer", "minimum": 1 },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "agentsShell": {
       "type": "object",
       "properties": {

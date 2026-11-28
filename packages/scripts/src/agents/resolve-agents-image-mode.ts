@@ -101,7 +101,9 @@ const AUTO_ONTOLOGY_SYNC_IMAGE_PATHS = new Set([
   'packages/scripts/src/agents/sync-auto-ontology-bundle-core.ts',
 ])
 
-const LINEAR_MCP_RUNNER_SHARED_PATHS = new Set([
+const MCP_RUNNER_SHARED_PATHS = new Set([
+  'services/agents/src/colab-mcp/bridge.ts',
+  'services/agents/src/colab-mcp/config.ts',
   'services/agents/src/linear-mcp/bridge-auth.ts',
   'services/agents/src/linear-mcp/config.ts',
   'services/agents/src/linear-mcp/contract.ts',
@@ -126,7 +128,7 @@ const imageTargetsForPath = (path: string): AgentsImageTarget[] => {
   if (RUNNER_IMAGE_EXACT_PATHS.has(path)) return ['runner']
   if (AUTO_ONTOLOGY_SYNC_IMAGE_PATHS.has(path)) return ['controller']
   if (path.startsWith('packages/codex/')) return [...AGENTS_IMAGE_TARGETS]
-  if (LINEAR_MCP_RUNNER_SHARED_PATHS.has(path)) return ['control-plane', 'controller', 'runner']
+  if (MCP_RUNNER_SHARED_PATHS.has(path)) return ['control-plane', 'controller', 'runner']
   if (path.startsWith('services/agents/src/runner/') || path.startsWith('services/agents/scripts/codex/')) {
     return ['runner']
   }

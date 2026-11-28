@@ -10,7 +10,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
 import { expect, it } from 'vitest'
 
-import { AutoOntologyIdentityError } from './identity'
+import { McpRunIdentityError } from '../server/mcp-run-identity'
 import { createAutoOntologyGatewayHandler } from './server'
 import { createAutoOntologyUpstream } from './upstream'
 
@@ -34,7 +34,7 @@ it('runs the stdio bridge through the HTTP gateway and rereads the projected tok
     upstream,
     maxRequestBytes: 8192,
     verify: async (candidate) => {
-      if (candidate !== token) throw new AutoOntologyIdentityError(401, 'invalid_token')
+      if (candidate !== token) throw new McpRunIdentityError(401, 'invalid_token')
     },
   })
   const http = createServer(async (request, response) => {

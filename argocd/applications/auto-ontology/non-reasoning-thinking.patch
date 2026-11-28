@@ -1,0 +1,145 @@
+--- a/llm_invoke.py
++++ b/llm_invoke.py
+@@ -4,7 +4,9 @@
+ 
+ """LLM client construction and structured-output invocation wrappers."""
+ 
++from collections.abc import Mapping
+ import contextlib
++import json
+ import logging
+ import os
+ import random
+@@ -12,6 +14,7 @@
+ import time
+ import weakref
+ from typing import Iterator, Type, TypeVar
++from urllib.parse import urlsplit
+ 
+ import requests as _requests
+ from langchain_core.language_models import BaseChatModel
+@@ -183,15 +186,95 @@
+     )
+ 
+ 
++def _non_reasoning_disable_thinking() -> bool:
++    """Whether non-reasoning clients disable Qwen3/vLLM thinking tokens."""
++    raw = os.environ.get("AUTO_ONTOLOGY_NON_REASONING_DISABLE_THINKING", "true")
++    return raw.strip().lower() not in {"0", "false", "no", "off"}
++
++
++def _is_chat_completions_post(method: object, url: object) -> bool:
++    """Whether *method* / *url* targets a chat completions POST endpoint."""
++    if str(method).upper() != "POST":
++        return False
++    return urlsplit(str(url)).path.rstrip("/").endswith("/chat/completions")
++
++
++def _with_thinking_disabled(payload: dict) -> dict:
++    """Return a shallow copy of *payload* with thinking disabled by default."""
++    updated = dict(payload)
++    existing = updated.get("chat_template_kwargs")
++    if isinstance(existing, dict):
++        chat_template_kwargs = dict(existing)
++        chat_template_kwargs.setdefault("enable_thinking", False)
++    else:
++        chat_template_kwargs = {"enable_thinking": False}
++    updated["chat_template_kwargs"] = chat_template_kwargs
++    return updated
++
++
++def _has_json_content_type(headers: object) -> bool:
++    if not isinstance(headers, Mapping):
++        return False
++    for key, value in headers.items():
++        if str(key).lower() == "content-type" and "application/json" in str(value).lower():
++            return True
++    return False
++
++
++def _drop_content_length_header(kwargs: dict) -> None:
++    headers = kwargs.get("headers")
++    if not isinstance(headers, Mapping):
++        return
++    if any(str(key).lower() == "content-length" for key in headers):
++        kwargs["headers"] = {
++            key: value
++            for key, value in headers.items()
++            if str(key).lower() != "content-length"
++        }
++
++
+ class _TimeoutSession(_requests.Session):
+     """requests.Session that enforces a default timeout on every request."""
+ 
+-    def __init__(self, timeout: float = LLM_INVOKE_TIMEOUT_S, **kwargs):
++    def __init__(
++        self,
++        timeout: float = LLM_INVOKE_TIMEOUT_S,
++        *,
++        disable_thinking: bool = False,
++        **kwargs,
++    ):
+         super().__init__(**kwargs)
+         self._default_timeout = timeout
++        self._disable_thinking = disable_thinking
+ 
+     def request(self, method, url, **kwargs):
+         kwargs.setdefault("timeout", self._default_timeout)
++        if self._disable_thinking and _is_chat_completions_post(method, url):
++            json_body = kwargs.get("json")
++            if isinstance(json_body, dict):
++                kwargs["json"] = _with_thinking_disabled(json_body)
++            elif json_body is None:
++                data = kwargs.get("data")
++                is_bytes = isinstance(data, (bytes, bytearray))
++                if isinstance(data, str) or is_bytes:
++                    try:
++                        text = data.decode("utf-8") if is_bytes else data
++                    except UnicodeDecodeError:
++                        text = ""
++                    if text and (
++                        _has_json_content_type(kwargs.get("headers"))
++                        or text.lstrip().startswith("{")
++                    ):
++                        try:
++                            parsed = json.loads(text)
++                        except (TypeError, ValueError):
++                            parsed = None
++                        if isinstance(parsed, dict):
++                            encoded = json.dumps(_with_thinking_disabled(parsed))
++                            kwargs["data"] = (
++                                encoded.encode("utf-8") if is_bytes else encoded
++                            )
++                            _drop_content_length_header(kwargs)
+         return super().request(method, url, **kwargs)
+ 
+ 
+@@ -218,6 +301,7 @@
+     base_url: str,
+     temperature: float,
+     max_tokens: int,
++    disable_thinking: bool = False,
+ ) -> BaseChatModel:
+     """Build a chat client for the given model/endpoint.
+ 
+@@ -250,7 +334,10 @@
+         temperature=temperature,
+         max_tokens=max_tokens,
+     )
+-    client._client.get_session_fn = lambda: _TimeoutSession(LLM_INVOKE_TIMEOUT_S)
++    client._client.get_session_fn = lambda: _TimeoutSession(
++        LLM_INVOKE_TIMEOUT_S,
++        disable_thinking=disable_thinking,
++    )
+     return client
+ 
+ 
+@@ -305,6 +392,7 @@
+         base_url=_NON_REASONING_BASE_URL,
+         temperature=temperature,
+         max_tokens=max_tokens,
++        disable_thinking=_non_reasoning_disable_thinking(),
+     )
+     _remember_non_reasoning(client)
+     return client

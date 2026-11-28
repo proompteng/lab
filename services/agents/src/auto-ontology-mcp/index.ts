@@ -1,5 +1,5 @@
+import { createMcpRunIdentityVerifier } from '../server/mcp-run-identity'
 import { resolveAutoOntologyGatewayConfig } from './config'
-import { createAutoOntologyIdentityVerifier } from './identity'
 import { createAutoOntologyGatewayHandler, GATEWAY_NAME } from './server'
 import { createAutoOntologyUpstream } from './upstream'
 
@@ -9,7 +9,14 @@ const server = Bun.serve({
   idleTimeout: Math.ceil(config.upstream.chatTimeoutMs / 1000) + 20,
   maxRequestBodySize: config.maxRequestBytes,
   fetch: createAutoOntologyGatewayHandler({
-    verify: createAutoOntologyIdentityVerifier(config),
+    verify: createMcpRunIdentityVerifier({
+      namespace: config.namespace,
+      audience: config.audience,
+      serviceAccountsByProvider: {
+        codex: config.expectedServiceAccount,
+        google: 'google-triage-runner',
+      },
+    }),
     upstream: createAutoOntologyUpstream(config.upstream),
     maxRequestBytes: config.maxRequestBytes,
   }),

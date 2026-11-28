@@ -6,7 +6,7 @@ sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
 kubeVersion: '>=1.25.0-0'
-version: 0.9.35
+version: 0.9.36
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
@@ -208,6 +208,8 @@ annotations:
           implement: {targetRef: {kind: OrchestrationRun, name: codex-orchestration-run}}
           verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
+    - kind: added
+      description: "Add an opt-in Colab MCP gateway and support additional provider token projections."
     - kind: added
       description: "Allow AgentProviders to opt their service account into Kubernetes API token automount."
     - kind: fixed

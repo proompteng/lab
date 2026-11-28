@@ -7,6 +7,14 @@ spec:
   workload:
     serviceAccountName: google-triage-runner
     automountServiceAccountToken: true
+    serviceAccountToken:
+      audience: agents.proompteng.ai/auto-ontology-mcp
+      expirationSeconds: 600
+      mountPath: /var/run/secrets/agents-auto-ontology-mcp
+    additionalServiceAccountTokens:
+      - audience: agents.proompteng.ai/colab-mcp
+        expirationSeconds: 600
+        mountPath: /var/run/secrets/agents-colab-mcp
   adapter:
     type: agy-cli
     agy:
@@ -26,6 +34,27 @@ spec:
     AGY_CLI_DISABLE_AUTO_UPDATE: "true"
     AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
     AGENTS_ARTIFACTS_BUCKET: agents-artifacts
+  inputFiles:
+    - path: /root/.gemini/config/mcp_config.json
+      content: |-
+        {
+          "mcpServers": {
+            "auto_ontology": {
+              "command": "/usr/local/bin/auto-ontology-mcp-bridge",
+              "env": {
+                "AGENTS_MCP_IDENTITY_TOKEN_PATH": "/var/run/secrets/agents-auto-ontology-mcp/token",
+                "AUTO_ONTOLOGY_MCP_GATEWAY_URL": "http://agents-auto-ontology-mcp-gateway.agents.svc.cluster.local:8080/mcp"
+              }
+            },
+            "colab": {
+              "command": "/usr/local/bin/colab-mcp-bridge",
+              "timeoutSeconds": 660,
+              "env": {
+                "COLAB_MCP_GATEWAY_URL": "http://agents-colab-mcp-gateway.agents.svc.cluster.local:8080/mcp"
+              }
+            }
+          }
+        }
   outputArtifacts:
     - name: runner-result
       path: /workspace/.agent/result.json

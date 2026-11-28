@@ -85,12 +85,15 @@ the reason from the `Blocked` condition. Use `-o wide` to also see:
   - AgentProvider: `spec.workload.automountServiceAccountToken` controls the default Kubernetes API token
     when a Job uses the provider's own service account.
   - AgentProvider: `spec.workload.serviceAccountToken` configures a projected token with required
-    `audience`, 600-3600 second `expirationSeconds`, and absolute `mountPath`.
+    `audience`, 600-3600 second `expirationSeconds`, and absolute `mountPath`. Jobs expose its file path
+    as `AGENTS_MCP_IDENTITY_TOKEN_PATH`. Use `spec.workload.additionalServiceAccountTokens[]` to project
+    other audiences at distinct paths; their clients use `<mountPath>/token`.
 
 The effective runtime service account is resolved consistently for Jobs and Workflows and, when the
-allowlist is configured, must be present in `Agent.spec.security.allowedServiceAccounts`. A projected provider token
-normally disables Kubernetes API token automount. The provider can explicitly opt its own service account in
-without changing the audience or mount path of the separate token.
+allowlist is configured, must be present in `Agent.spec.security.allowedServiceAccounts`. Projected provider tokens
+normally disable Kubernetes API token automount so only the configured rotating audience-bound tokens are mounted. The
+provider can explicitly opt its own service account in without changing the audiences or mount paths of the separate
+tokens.
 
 ## Status Conditions (standard)
 

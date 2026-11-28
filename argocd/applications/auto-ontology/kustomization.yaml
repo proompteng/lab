@@ -10,6 +10,7 @@ configMapGenerator:
   - name: auto-ontology-sql-routing
     files:
       - sql-routing.patch
+      - non-reasoning-thinking.patch
   - name: auto-ontology-oauth-discovery
     files:
       - haproxy.cfg=oauth-discovery.cfg
@@ -21,6 +22,7 @@ helmCharts:
     repo: https://helm.ngc.nvidia.com/nvidia
     valuesFile: values.yaml
 patches:
+  - path: ingestion-timeout.patch.yaml
   - path: sql-routing-deployment.patch.yaml
   # Helm emits this Deployment without a namespace. Match the generated ConfigMap for hash rewriting.
   - target:
@@ -60,6 +62,16 @@ patches:
                     mountPath: /var/lib/postgresql
 
 replacements:
+  - source:
+      kind: Deployment
+      name: ingestion
+      fieldPath: spec.template.spec.containers.[name=ingestion].image
+    targets:
+      - select:
+          kind: Deployment
+          name: ingestion
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=configure-nvidia-timeout].image
   - source:
       kind: Deployment
       name: auto-ontology
