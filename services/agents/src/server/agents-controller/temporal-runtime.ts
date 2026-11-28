@@ -188,16 +188,6 @@ export const createTemporalRuntimeTools = (deps: TemporalRuntimeDependencies) =>
     }
     try {
       await client.workflow.result(handle, temporalCallOptions({ timeoutMs: 500 }))
-      const conditions = deps.buildConditions(agentRun)
-      const updated = upsertCondition(conditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
-      await deps.setStatus(kube, agentRun, {
-        observedGeneration: asRecord(agentRun.metadata)?.generation ?? 0,
-        phase: 'Succeeded',
-        finishedAt: deps.nowIso(),
-        runtimeRef,
-        conditions: updated,
-        vcs: asRecord(agentRun.status)?.vcs ?? undefined,
-      })
     } catch (error) {
       const outcome = classifyTemporalResult(error)
       if (outcome.kind === 'pending') {
@@ -218,7 +208,18 @@ export const createTemporalRuntimeTools = (deps: TemporalRuntimeDependencies) =>
         conditions: updated,
         vcs: asRecord(agentRun.status)?.vcs ?? undefined,
       })
+      return
     }
+    const conditions = deps.buildConditions(agentRun)
+    const updated = upsertCondition(conditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
+    await deps.setStatus(kube, agentRun, {
+      observedGeneration: asRecord(agentRun.metadata)?.generation ?? 0,
+      phase: 'Succeeded',
+      finishedAt: deps.nowIso(),
+      runtimeRef,
+      conditions: updated,
+      vcs: asRecord(agentRun.status)?.vcs ?? undefined,
+    })
   }
 
   return {

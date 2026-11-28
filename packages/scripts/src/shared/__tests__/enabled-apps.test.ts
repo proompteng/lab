@@ -97,6 +97,7 @@ const jangarKustomization = YAML.parse(readFileSync('argocd/applications/jangar/
 }
 const openWebUIValues = YAML.parse(readFileSync('argocd/applications/jangar/openwebui-values.yaml', 'utf8')) as {
   image?: { tag?: string }
+  resources?: unknown
 }
 const saigakStatefulSet = YAML.parse(readFileSync('argocd/applications/saigak/statefulset.yaml', 'utf8')) as {
   spec?: {
@@ -593,6 +594,40 @@ describe('enabled app inventory', () => {
       digest: 'sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901',
     })
     expect(openWebUIValues.image?.tag).toBe('v0.13.4')
+  })
+
+  it('decouples Open WebUI scheduling requests from streaming burst limits', () => {
+    expect(openWebUIValues.resources).toEqual({
+      requests: { cpu: '2', memory: '4Gi' },
+      limits: { cpu: '4', memory: '8Gi' },
+    })
+  })
+
+  it('reclaims Turin workstation CPU without shrinking the Dragonball guest budget', () => {
+    const devbox = YAML.parse(readFileSync('argocd/applications/devbox/statefulset.yaml', 'utf8'))
+
+    expect(devbox).toMatchObject({
+      kind: 'StatefulSet',
+      metadata: { name: 'codex-turin' },
+      spec: {
+        replicas: 1,
+        template: {
+          spec: {
+            runtimeClassName: 'kata-dragonball',
+            nodeSelector: { 'kubernetes.io/hostname': 'turin' },
+            containers: [
+              {
+                name: 'devbox',
+                resources: {
+                  requests: { cpu: '4', memory: '64Gi' },
+                  limits: { cpu: '8', memory: '64Gi' },
+                },
+              },
+            ],
+          },
+        },
+      },
+    })
   })
 
   it('pins both Saigak Ollama containers to the immutable ROCm image', () => {

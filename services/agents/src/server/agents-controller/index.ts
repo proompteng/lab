@@ -22,11 +22,12 @@ import {
 } from '../metrics'
 import { parseNamespaceScopeEnv } from '../namespace-scope'
 import { asRecord, asString, readNested } from '../primitives'
-import { createKubernetesClient, RESOURCE_MAP } from '../kube-types'
+import { createKubernetesClient, isKubeConflict, RESOURCE_MAP } from '../kube-types'
 import { buildResourceFingerprint, shouldApplyStatus } from '../status-utils'
 import { resolveAgentCommsSubscriberConfig } from '../integrations-config'
 import { recordAgentRunLifecycleSpan } from '../tracing'
 import { createAgentRunReconciler } from './agent-run-reconciler'
+import { isAgentRunTemplate } from './agent-run-template'
 import {
   buildArtifactsLimitMessage,
   limitAgentRunStatusArtifacts,
@@ -372,13 +373,17 @@ const getResourceVersion = (payload: Record<string, unknown>) => {
 }
 
 const numericResourceVersion = /^[1-9][0-9]*$/
-const isCoveredByRunList = (resource: Record<string, unknown>, listVersion: string | null) => {
-  const version = getResourceVersion(resource)
-  if (!version || !listVersion || !numericResourceVersion.test(version) || !numericResourceVersion.test(listVersion)) {
-    return false
-  }
+const compareResourceVersions = (version: string | null, other: string | null) => {
+  if (!version || !other) return null
+  if (version === other) return 0
+  if (!numericResourceVersion.test(version) || !numericResourceVersion.test(other)) return null
   // Compare native AgentRun revisions as arbitrary-length decimals (never round them to JS numbers).
-  return version.length < listVersion.length || (version.length === listVersion.length && version <= listVersion)
+  return version.length === other.length ? (version < other ? -1 : 1) : version.length - other.length
+}
+
+const isCoveredByRunList = (resource: Record<string, unknown>, listVersion: string | null) => {
+  const order = compareResourceVersions(getResourceVersion(resource), listVersion)
+  return order !== null && order <= 0
 }
 
 const isKubeNotFoundError = (error: unknown) => {
@@ -603,10 +608,18 @@ const setStatus = async (
     conditions,
   }
   const previousStatus = asRecord(resource.status)
+  const previousPhase = asString(previousStatus?.phase)
+  if (
+    kind === 'AgentRun' &&
+    phase !== previousPhase &&
+    !(phase === 'Template' && isAgentRunTemplate(metadata)) &&
+    (isAgentRunTerminalPhase(previousPhase) || (previousPhase === 'Running' && isQueuedRun({ status: nextStatus })))
+  ) {
+    return
+  }
   if (!shouldApplyStatus(previousStatus, nextStatus)) {
     return
   }
-  const previousPhase = asString(previousStatus?.phase)
   const terminalPhase = kind === 'AgentRun' && isAgentRunTerminalPhase(phase) ? phase : null
   const firstCompletion = terminalPhase !== null && !isAgentRunTerminalPhase(previousPhase)
   const isWorkflowRun =
@@ -614,8 +627,8 @@ const setStatus = async (
     phase !== 'Template' &&
     (readNested(resource, ['spec', 'runtime', 'type']) === 'workflow' ||
       readNested(previousStatus, ['runtimeRef', 'type']) === 'workflow')
-  // A workflow's persisted step/attempt/iteration progress is the completion receipt. Stale writes must not rewind it.
-  const resourceVersion = firstCompletion || isWorkflowRun ? asString(metadata.resourceVersion) : null
+  // Every AgentRun patch is based on this observation, including workflow completion receipts.
+  const resourceVersion = kind === 'AgentRun' ? asString(metadata.resourceVersion) : null
   await kube.applyStatus({
     apiVersion,
     kind,
@@ -865,6 +878,14 @@ const shouldDependencyEventTriggerFullReconcile = (
 
 const DEPENDENCY_RECONCILE = Symbol('dependency-reconcile')
 const RUN_RESYNC = Symbol('run-resync')
+const WAKE_RUNS = Symbol('wake-runs')
+const RUN_CONFLICT_RETRY_MS = 250
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
+
+const releasesRunCapacity = (previous: Record<string, unknown> | undefined, next: Record<string, unknown> | null) =>
+  previous !== undefined &&
+  (readNested(previous, ['status', 'phase']) === 'Running' || isQueuedRun(previous)) &&
+  (!next || isAgentRunTerminalPhase(asString(readNested(next, ['status', 'phase']))))
 
 const enqueueNamespaceTask = (namespace: string, key: string | symbol, task: () => Promise<void>) => {
   const runtime = runtimeMutableState
@@ -922,6 +943,56 @@ const readWhileWatchingRuns = async <T>(
   }
 }
 
+const cancelRunRetry = (namespace: string, name: string) => {
+  const retries = runtimeMutableState.runRetries
+  const key = `${namespace}/${name}`
+  const retry = retries.get(key)
+  if (retry) {
+    clearTimeout(retry.timer)
+    retries.delete(key)
+  }
+}
+
+const scheduleRunRetry = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  name: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+  retryAt: number,
+): void => {
+  const runtime = runtimeMutableState
+  const lifecycleToken = runtime.lifecycleToken
+  const key = `${namespace}/${name}`
+  const scheduled = runtime.runRetries.get(key)
+  if (scheduled?.retryAt === retryAt) return
+  cancelRunRetry(namespace, name)
+  const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(1, retryAt - Date.now()))
+  const timer = setTimeout(() => {
+    runtime.runRetries.delete(key)
+    if (runtime !== runtimeMutableState || lifecycleToken !== runtime.lifecycleToken) return
+    void enqueueRun(kube, namespace, name, state, concurrency)
+  }, delay)
+  timer.unref()
+  runtime.runRetries.set(key, { retryAt, timer })
+}
+
+const wakeCapacityWaiters = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+): void => {
+  // Repo and cluster capacity is shared across namespaces. Coalesce terminal bursts without scanning the run fleet.
+  for (const namespace of state.namespaces.keys()) {
+    if (!state.runs.capacityWaiters(namespace)?.size) continue
+    void enqueueNamespaceTask(namespace, WAKE_RUNS, async () => {
+      for (const name of state.runs.capacityWaiters(namespace) ?? []) {
+        void enqueueRun(kube, namespace, name, state, concurrency)
+      }
+    })
+  }
+}
+
 const enqueueRun = (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
@@ -957,10 +1028,61 @@ const enqueueRun = (
       await recordTerminalIdempotency(namespace, terminalReceipt)
       return
     }
-    if (!run) return
+    if (!run) {
+      cancelRunRetry(namespace, name)
+      return
+    }
     // Always use the latest observation, even if an earlier revision queued this task.
     const memories = Array.from(ensureNamespaceState(state, namespace).memories.values())
-    await reconcileAgentRunWithMetrics(kube, run, namespace, memories, state.runs, concurrency)
+    try {
+      const retryAt = await reconcileAgentRunWithMetrics(kube, run, namespace, memories, state.runs, concurrency)
+      if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
+      const current = state.runs.get(namespace, name)
+      if (
+        typeof retryAt === 'number' &&
+        current &&
+        isQueuedRun(current) &&
+        !readNested(current, ['metadata', 'deletionTimestamp'])
+      ) {
+        scheduleRunRetry(kube, namespace, name, state, concurrency, retryAt)
+      } else {
+        cancelRunRetry(namespace, name)
+      }
+    } catch (error) {
+      if (!isKubeConflict(error)) throw error
+      if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
+      // Retry from a new observation, never by attaching a fresh version to the rejected patch.
+      const receipt = await readWhileWatchingRuns(state, namespace, async (changes) => {
+        const refreshed = await kube.get(RESOURCE_MAP.AgentRun, name, namespace)
+        if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
+        const current = state.runs.get(namespace, name)
+        const order =
+          refreshed && current
+            ? compareResourceVersions(getResourceVersion(refreshed), getResourceVersion(current))
+            : null
+        const superseded = (order !== null && order < 0) || (changes.has(name) && (order === null || order <= 0))
+        if (!superseded) {
+          state.runs.update(namespace, name, refreshed)
+          if (releasesRunCapacity(current, refreshed)) wakeCapacityWaiters(kube, state, concurrency)
+        }
+        // Keep a terminal receipt even if a deletion or replacement arrived during the read.
+        if (
+          refreshed &&
+          (!isAgentRunTerminalPhase(asString(readNested(current, ['status', 'phase']))) ||
+            readNested(refreshed, ['metadata', 'uid']) !== readNested(current, ['metadata', 'uid']))
+        ) {
+          return getTerminalIdempotencyReceipt(refreshed)
+        }
+      })
+      if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
+      if (receipt) {
+        void enqueueRun(kube, namespace, name, state, concurrency, { terminalReceipt: receipt })
+      } else if (state.runs.get(namespace, name)) {
+        scheduleRunRetry(kube, namespace, name, state, concurrency, Date.now() + RUN_CONFLICT_RETRY_MS)
+      } else {
+        cancelRunRetry(namespace, name)
+      }
+    }
   })
 }
 
@@ -992,12 +1114,14 @@ const resyncAgentRunsForNamespace = async (
     }
     const changedNonTerminalRuns = new Set<string>()
     const terminalReceipts: Array<{ name: string; receipt: Record<string, unknown> }> = []
+    let releasedCapacity = false
     for (const [name, run] of byName) {
       const previous = state.runs.get(namespace, name)
       const previousUid = asString(readNested(previous, ['metadata', 'uid']))
       const currentUid = asString(readNested(run, ['metadata', 'uid']))
       const sameObject = previous !== undefined && previousUid === currentUid
       const currentPhase = asString(readNested(run, ['status', 'phase']))
+      if (releasesRunCapacity(previous, run)) releasedCapacity = true
       const receipt = getTerminalIdempotencyReceipt(run)
       if (receipt) {
         const wasTerminal = sameObject && isAgentRunTerminalPhase(asString(readNested(previous, ['status', 'phase'])))
@@ -1026,10 +1150,10 @@ const resyncAgentRunsForNamespace = async (
     }
     ensureNamespaceState(state, namespace).runListVersion = listVersion
     state.runs.replaceNamespace(namespace, byName)
-    return { refreshedRuns: byName, changedNonTerminalRuns, terminalReceipts }
+    return { refreshedRuns: byName, changedNonTerminalRuns, terminalReceipts, releasedCapacity }
   })
   if (!syncResult || lifecycleToken !== runtimeMutableState.lifecycleToken) return
-  const { refreshedRuns, changedNonTerminalRuns, terminalReceipts } = syncResult
+  const { refreshedRuns, changedNonTerminalRuns, terminalReceipts, releasedCapacity } = syncResult
   const candidateRuns: Array<{ name: string; reasons: string[] }> = []
   const retryRuns: string[] = []
   let untouchedRunCount = 0
@@ -1067,10 +1191,10 @@ const resyncAgentRunsForNamespace = async (
       changedNonTerminalRuns.has(name) ||
       (readNested(run, ['metadata', 'deletionTimestamp']) && hasRuntimeFinalizer) ||
       hasPendingWorkflowStep ||
-      (isQueuedRun(run) && !readNested(run, ['status', 'runtimeRef']))
+      isQueuedRun(run)
     ) {
       // Relists may advance runListVersion past watch events for updated non-terminal runs,
-      // deletions, pending/retrying workflow steps, or unblocked queued runs.
+      // deletions and pending/retrying workflow steps. Also retry queued runs, including those already owning a Job.
       retryRuns.push(name)
     }
   }
@@ -1195,6 +1319,7 @@ const resyncAgentRunsForNamespace = async (
   for (const { name, receipt } of terminalReceipts) {
     void enqueueRun(kube, namespace, name, state, concurrency, { terminalReceipt: receipt })
   }
+  if (releasedCapacity) wakeCapacityWaiters(kube, state, concurrency)
 }
 
 const queueAgentRunResync = (
@@ -1310,7 +1435,7 @@ const reconcileAgentRunWithMetrics = async (
 ) => {
   const reconcileStartedAt = Date.now()
   try {
-    await reconcileAgentRun(kube, agentRun, namespace, memories, runs, concurrency)
+    return await reconcileAgentRun(kube, agentRun, namespace, memories, runs, concurrency)
   } finally {
     const durationMs = Date.now() - reconcileStartedAt
     recordReconcileDurationMs(durationMs, { kind: 'agentrun', namespace })
@@ -1465,8 +1590,18 @@ const startNamespaceWatches = async (
     })
     if (isCoveredByRunList(resource, nsState.runListVersion)) return
     const deleted = event.type === 'DELETED'
+    const previous = state.runs.get(namespace, runName)
+    if (previous) {
+      const order = compareResourceVersions(getResourceVersion(resource), getResourceVersion(previous))
+      if (order !== null && order < 0) return
+    }
     nsState.runChangesDuringRead?.set(runName, { resource, deleted })
-    state.runs.update(namespace, runName, deleted ? null : resource)
+    const next = deleted ? null : resource
+    state.runs.update(namespace, runName, next)
+    if (!next || !isQueuedRun(next) || readNested(next, ['metadata', 'deletionTimestamp'])) {
+      cancelRunRetry(namespace, runName)
+    }
+    if (releasesRunCapacity(previous, next)) wakeCapacityWaiters(kube, state, concurrency)
     if (deleted) return
     const terminalReceipt = getTerminalIdempotencyReceipt(resource)
     void enqueueRun(kube, namespace, runName, state, concurrency, { terminalReceipt })
@@ -1747,6 +1882,8 @@ const stopAgentsControllerInternal = () => {
   runtimeMutableState.watchHandles = []
   runtimeMutableState.controllerSnapshot = null
   runtimeMutableState.namespaceQueues.clear()
+  for (const { timer } of runtimeMutableState.runRetries.values()) clearTimeout(timer)
+  runtimeMutableState.runRetries.clear()
   runtimeMutableState.agentRunIngestionState.clear()
   clearAgentsControllerGauges()
   runtimeMutableState.started = false

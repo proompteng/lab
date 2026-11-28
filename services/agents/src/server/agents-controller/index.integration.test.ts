@@ -5366,6 +5366,20 @@ describe('agents controller reconcileAgentRun', () => {
 })
 
 describe('agents controller queue and rate limits', () => {
+  it.each([
+    ['Running', 'Pending'],
+    ['Succeeded', 'Running'],
+    ['Failed', 'Pending'],
+    ['Cancelled', 'Succeeded'],
+  ])('does not regress %s to %s', async (previousPhase, phase) => {
+    const kube = buildKube()
+    const run = buildAgentRun({ status: { phase: previousPhase } })
+
+    await __test.setStatus(kube as never, run, { phase })
+
+    expect(kube.applyStatus).not.toHaveBeenCalled()
+  })
+
   it('blocks AgentRun when queue limit is exceeded', async () => {
     const previousQueue = process.env.AGENTS_CONTROLLER_QUEUE_NAMESPACE
     process.env.AGENTS_CONTROLLER_QUEUE_NAMESPACE = '1'
@@ -5448,7 +5462,19 @@ describe('agents controller queue and rate limits', () => {
     __test.resetControllerRateState()
 
     try {
-      const kube = buildKube()
+      const kube = buildKube({
+        get: vi.fn(async (kind: string) => {
+          if (kind === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'fixture' } },
+            }
+          }
+          if (kind === RESOURCE_MAP.AgentProvider) return { metadata: { name: 'provider-1' }, spec: {} }
+          if (kind === RESOURCE_MAP.ImplementationSpec) return { spec: { text: 'run the fixture' } }
+          return null
+        }),
+      })
       const agentRun = buildAgentRun({
         metadata: {
           name: 'run-rate-1',
@@ -5467,6 +5493,7 @@ describe('agents controller queue and rate limits', () => {
       })
 
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], new AgentRunIndex(), defaultConcurrency)
+      expect(getLastStatus(kube).phase).toBe('Running')
 
       await __test.reconcileAgentRun(kube as never, agentRunTwo, 'agents', [], new AgentRunIndex(), defaultConcurrency)
 
