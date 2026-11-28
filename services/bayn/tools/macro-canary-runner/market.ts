@@ -46,7 +46,9 @@ const calendarWindow = (calendar: Calendar, clock: MarketClock, now: number, anc
       sessions: calendar.slice(0, nextIndex + 1),
       lastDate: last.date,
       lastCloseAt: utcInstantFromEpochMillis(lastClose),
-      barEnd: utcInstantFromEpochMillis(nyTime(next.date, '00:00') - 1),
+      // Bind the SIP daily-bar query ceiling to the completed session close so Alpaca Basic SIP
+      // never rejects the request with HTTP 403 for querying inside the recent-SIP embargo or future dates.
+      barEnd: utcInstantFromEpochMillis(lastClose),
       executionDate: next.date,
       executionOpenAt: utcInstantFromEpochMillis(nextOpen),
       cutoff,
@@ -117,7 +119,8 @@ export const readBars = Effect.fn('macro-rebalance.daily-bars')(function* <S ext
           !/^\d{4}-\d{2}-\d{2}T\d{2}:00:00(?:\.0+)?Z$/.test(bar.t) ||
           bar.l > Math.min(bar.o, bar.c) ||
           bar.h < Math.max(bar.o, bar.c) ||
-          bar.v <= 0
+          bar.v < 0 ||
+          (adjustment === BarAdjustment.Raw && bar.v <= 0)
         )
           return yield* failure(
             'bars',
