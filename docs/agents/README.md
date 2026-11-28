@@ -20,6 +20,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Talos, Omni and BMC shell inspection: `agents-shell-infrastructure.md`
 - Paperless documents and AI tools: `agents-shell-paperless.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
+- Auto Ontology read-only MCP activation: [auto-ontology-mcp.md](auto-ontology-mcp.md)
 - Codex MCP integration: `codex-mcp-agents.md`
 - Workflow-loop launches: `agentrun-workflow-loop-launch-guide.md`
 - CI validation: `ci-validation-plan.md`
