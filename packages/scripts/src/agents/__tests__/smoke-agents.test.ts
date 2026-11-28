@@ -691,7 +691,7 @@ describe('scheduled AgentRun templates', () => {
     })
     expect(objectAt(defaultWorkload, 'topologySpreadConstraints')).toEqual([
       {
-        maxSkew: 16,
+        maxSkew: 4,
         topologyKey: 'kubernetes.io/hostname',
         whenUnsatisfiable: 'ScheduleAnyway',
         labelSelector: { matchExpressions: [{ key: 'agents.proompteng.ai/agent-run', operator: 'Exists' }] },

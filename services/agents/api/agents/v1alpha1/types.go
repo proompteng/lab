@@ -70,11 +70,15 @@ type AgentList struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.spec.agentRef.name`
-// +kubebuilder:printcolumn:name="Succeeded",type=string,JSONPath=`.status.conditions[?(@.type=="Succeeded")].status`
-// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Succeeded")].reason`
-// +kubebuilder:printcolumn:name="StartTime",type=date,JSONPath=`.status.startedAt`
-// +kubebuilder:printcolumn:name="CompletionTime",type=date,JSONPath=`.status.finishedAt`
-// +kubebuilder:printcolumn:name="Runtime",type=string,JSONPath=`.spec.runtime.type`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="Job",type=string,JSONPath=`.status.runtimeRef.name`,description="Backing Job name or other runtime reference"
+// +kubebuilder:printcolumn:name="Head",type=string,JSONPath=`.status.vcs.headBranch`
+// +kubebuilder:printcolumn:name="Blocked",type=string,JSONPath=`.status.conditions[?(@.type=="Blocked")].reason`
+// +kubebuilder:printcolumn:name="Succeeded",type=string,JSONPath=`.status.conditions[?(@.type=="Succeeded")].status`,priority=1
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Succeeded")].reason`,priority=1
+// +kubebuilder:printcolumn:name="StartTime",type=date,JSONPath=`.status.startedAt`,priority=1
+// +kubebuilder:printcolumn:name="CompletionTime",type=date,JSONPath=`.status.finishedAt`,priority=1
+// +kubebuilder:printcolumn:name="Runtime",type=string,JSONPath=`.spec.runtime.type`,priority=1
 type AgentRun struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

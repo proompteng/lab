@@ -125,6 +125,14 @@ autoOntologyMcpGateway:
   apiUrl: http://frontend.auto-ontology.svc.cluster.local:3000
   runnerServiceAccountName: codex-auto-ontology-runner
   tokenAudience: agents.proompteng.ai/auto-ontology-mcp
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # When set, maxUnavailable is used instead of minAvailable.
+    maxUnavailable: ''
+    annotations: {}
+  tolerations: []
+  topologySpreadConstraints: []
   resources:
     requests:
       cpu: 100m
@@ -495,7 +503,6 @@ controller:
     max: 50
     strict: false
   logRetentionSeconds: 604800
-  jobTtlSeconds: 600
   jobTtlSecondsAfterFinished: 600
   runtimeDebrisCleanup:
     mode: disabled
