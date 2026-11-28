@@ -30,8 +30,6 @@ export type OpenWebUiRenderBlob = {
   expiresAt: string
 }
 
-export type OpenWebUIRenderBlob = OpenWebUiRenderBlob
-
 export type OpenWebUiRenderStore = {
   getRenderBlob: (renderId: string) => Promise<OpenWebUiRenderBlob | null>
   setRenderBlob: (blob: OpenWebUiRenderBlob) => Promise<void>
@@ -96,8 +94,6 @@ export const createOpenWebUiRenderBlob = (args: {
     createdAt: new Date().toISOString(),
     expiresAt: args.expiresAt,
   }) satisfies OpenWebUiRenderBlob
-
-export const createOpenWebUIRenderBlob = createOpenWebUiRenderBlob
 
 export const createRedisOpenWebUiRenderStore = (options: OpenWebUiRenderStoreOptions = {}): OpenWebUiRenderStore => {
   const redisConfig = resolveRedisConfig(process.env)
@@ -316,8 +312,6 @@ export const getOpenWebUiRenderStore = () => {
   return store
 }
 
-export const resolveOpenWebUIRenderStore = getOpenWebUiRenderStore
-
 export const setOpenWebUiRenderStoreForTests = (store: OpenWebUiRenderStore | null) => {
   setDefaultRenderStore(store)
 }
@@ -334,5 +328,3 @@ export const resetOpenWebUiRenderStoreForTests = async () => {
     setDefaultRenderStore(null)
   }
 }
-
-export const resetOpenWebUIRenderStoreForTests = resetOpenWebUiRenderStoreForTests

@@ -1,53 +1,19 @@
 import { lstat, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-import { format } from 'oxfmt'
-
-import formatterConfig from '../../../../.oxfmtrc.json'
 import { declaredRelation, readSelectRelations } from './ontology-bundle-sql'
+import { assertSafeOntologyText, disclosureProblem, findOntologyDisclosure } from './ontology-disclosure'
+import { formatOntologyJson, isJsonObject as isObject } from './ontology-json'
 import { readMigrationRelations } from './ontology-migration-relations'
 
 const migrations = new Map([
   ['agents', 'services/agents/src/server/migrations'],
   ['bayn', 'services/bayn/migrations'],
 ])
+const maxRuleTagLength = 25
 const bundleFiles = new Bun.Glob('docs/*/ontology/*knowledge*.json')
-const { printWidth, tabWidth, useTabs } = formatterConfig
-
-const credentialPrefix = /\b(?:auto_ontology_|sk-|AKIA|gh[pousr]_|github_pat_)/u
-const credentialInPattern = /\b(?:auto_ontology_|sk-|AKIA|gh[pousr]_|github_pat_)[\w-]/u
-const secrets = [/\bbearer\s/i, /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]*:[^\s/@]+@/i]
-const personalData = [/\b[\w.%+-]+@[\w.-]+\.[a-z]{2,}\b/i, /\b\d{3}-(?:\d{2}-\d{4}|\d{3}-\d{4})\b/u]
 
 type JsonObject = Record<string, unknown>
-const isObject = (value: unknown): value is JsonObject =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-
-const isSensitive = (value: string, isSchemaPattern = false) =>
-  (isSchemaPattern ? credentialInPattern : credentialPrefix).test(value) ||
-  (isSchemaPattern ? /-----BEGIN [A-Z0-9 ]+-----/u : /-----BEGIN/u).test(value) ||
-  secrets.some((pattern) => pattern.test(value)) ||
-  personalData.some((pattern) => pattern.test(value))
-
-const rejectDisclosure = () => {
-  throw new Error('Possible credential or personal data; remove it before committing')
-}
-
-const checkDisclosure = (value: unknown, schema: boolean) => {
-  const pending: { value: unknown; pattern?: boolean }[] = [{ value }]
-  for (const item of pending) {
-    if (typeof item.value === 'string' && isSensitive(item.value, item.pattern)) {
-      rejectDisclosure()
-    }
-    if (Array.isArray(item.value)) {
-      for (const child of item.value) pending.push({ value: child })
-    } else if (isObject(item.value)) {
-      for (const [key, child] of Object.entries(item.value)) {
-        pending.push({ value: key }, { value: child, pattern: schema && key === 'pattern' })
-      }
-    }
-  }
-}
 
 const object = (value: unknown, path: string, required: string[], optional: string[] = [], ordered = false) => {
   if (!isObject(value)) throw new Error(`${path}: expected an object`)
@@ -115,20 +81,13 @@ const checkBundle = async (
   }
 
   const schema = file.endsWith('.schema.json')
-  checkDisclosure(value, schema)
+  const disclosure = findOntologyDisclosure(value, schema)
+  if (disclosure) throw new Error(disclosure)
   const bayn = owner === 'bayn'
   const delta = file.includes('knowledge-delta')
-  const sorted = JSON.stringify(
-    value,
-    (_, child: unknown) =>
-      !bayn && !schema && isObject(child)
-        ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-        : child,
-    2,
-  )
   // Reprint the parsed value so duplicate keys and ambiguous JSON spellings cannot pass formatting.
-  const canonical = await format('knowledge.json', sorted, { printWidth, tabWidth, useTabs }).catch(() => undefined)
-  if (!canonical || canonical.errors.length || source !== canonical.code) {
+  const canonical = await formatOntologyJson(value, !bayn && !schema).catch(() => undefined)
+  if (source !== canonical) {
     throw new Error(
       `Expected canonical JSON (repository oxfmt layout${bayn || schema ? '' : ', alphabetically sorted keys'})`,
     )
@@ -211,9 +170,7 @@ const checkBundle = async (
     let relations: ReadonlySet<string>
     const sql = text(entry.sql, `${path}.sql`)
     try {
-      relations = await readSelectRelations(sql, (value) => {
-        if (isSensitive(value)) rejectDisclosure()
-      })
+      relations = await readSelectRelations(sql, assertSafeOntologyText)
     } catch (error) {
       throw new Error(`${path}.sql: ${error instanceof Error ? error.message : 'Invalid SQL'}`)
     }
@@ -281,13 +238,18 @@ const checkBundle = async (
       value,
       'bundle',
       [...sectionKeys, 'version', ...(owner === 'agents' ? ['dataSource'] : [])],
-      owner === 'agents' ? ['database'] : ['dataSource', 'database'],
+      owner === 'agents' ? ['database', 'ruleTag'] : ['dataSource', 'database', 'ruleTag'],
     )
     if (bundle.version !== 1) throw new Error('Unsupported knowledge bundle version')
     if (owner === 'agents' && bundle.dataSource !== 'agents-db-next')
       throw new Error('bundle.dataSource: expected agents-db-next')
-    if (bundle.dataSource !== undefined) text(bundle.dataSource, 'bundle.dataSource')
+    const dataSource = bundle.dataSource !== undefined ? text(bundle.dataSource, 'bundle.dataSource') : undefined
     if (bundle.database !== undefined) text(bundle.database, 'bundle.database')
+    const ruleTag = bundle.ruleTag !== undefined ? text(bundle.ruleTag, 'bundle.ruleTag').trim() : undefined
+    const resolvedRuleTag = ruleTag ?? (dataSource !== undefined ? `${dataSource} canonical rule` : undefined)
+    if (resolvedRuleTag !== undefined && resolvedRuleTag.length > maxRuleTagLength) {
+      throw new Error(`bundle.ruleTag: canonical rule tag must be at most ${maxRuleTagLength} characters`)
+    }
   }
 
   const declared =
@@ -308,7 +270,7 @@ export const validateOntologyBundles = async (root: string) => {
   const errors: string[] = []
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
   for (const file of files) {
-    const label = isSensitive(file) ? '<redacted bundle path>' : JSON.stringify(file)
+    const label = disclosureProblem(file) ? '<redacted bundle path>' : JSON.stringify(file)
     const path = join(root, file)
     const owner = file.split('/')[1] ?? ''
     try {

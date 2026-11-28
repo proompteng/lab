@@ -45,8 +45,9 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 ## Agents collective knowledge
 
-`src/agents/curate-ontology-deltas.ts` validates AgentRun proposals against an in-memory copy of the Agents schema and
-updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
+`src/agents/emit-knowledge-delta.ts` emits or checks a canonical proposal pinned to the verified checkout's Git SHA.
+`src/agents/curate-ontology-deltas.ts` validates the selected proposals against an in-memory copy of the Agents schema
+and updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
 
 ## Registry maintenance
 
@@ -76,6 +77,8 @@ Each target declares its installed workspaces and source paths. The planner comp
 following dependencies, optional dependencies, peers, and linked workspaces. An unrelated workspace manifest or lockfile
 change skips the target. Changes to its resolved packages, integrity, shared source, or build configuration still run it.
 Unsupported lockfiles and unresolved required dependencies fail the planner instead of silently skipping validation.
+An optional `only-paths` list requires a nonempty PR diff in which every path matches, including both sides of
+moves. It checks the raw paths before dependency or workspace filtering and is false for non-PR events.
 
 Push events retain path-based selection because Kargo requires groups of published images at one source revision.
 Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
@@ -89,13 +92,14 @@ digests. The baseline values on `main` can reference images removed by registry 
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
-Bayn also publishes images only from `main`. Its PRs retain source builds, type checks, PostgreSQL, archive, ledger,
-replay and production metadata validation. Standalone deployment manifests, Bayn validation scripts, and service
-documentation that is linted run the PR contract checks without starting runtime suites. Manifests read by runtime
-tests, such as `postgres-monitoring.yaml` and the ClickHouse schema, still select runtime validation. Python checks
-run for GEPA inputs; ordinary service test edits skip the independent proof pipeline unless they change its
-PostgreSQL conformance cases. Merge groups and release callers still validate every suite. Replay image and execution
-acceptance share one hosted job and Nix environment, including dependency source boundary checks.
+Bayn also publishes images only from `main`. PRs limited to offline Bayn tools or documentation use the fast tier:
+lint, type checks, and tools unit tests without disposable services. Full-tier inputs include Bayn source (including
+tests), migrations, Bayn GitOps, workflow definitions, and the integration drivers and runtime inputs stored under
+tools and docs. Mixed PRs are not eligible for the fast tier. Standalone contract, formal, and GEPA changes still
+select their owned checks when they don't touch full-tier inputs. The same `Bayn release gate` requires success for
+every selected job and a skip for every unselected job. Merge groups, dispatches, and release callers always run
+every suite. See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
+Replay image and execution acceptance share one hosted job and Nix environment, including dependency boundaries.
 The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
 the controller. Runtime compiler tools retain main-branch publication.

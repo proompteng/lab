@@ -984,6 +984,38 @@ data:
               description: |
                 Requested CPU on the arm64 runner node is above 90% of allocatable CPU for 15 minutes.
                 ARC arm64 runner scale-out may be blocked even if live CPU usage is low.
+      - name: flannel-cbr0-ipam.rules
+        interval: 30s
+        rules:
+          - alert: FlannelCbr0IPAMCapacityHigh
+            # Both target nodes have /23s: 512 addresses minus network, gateway and broadcast.
+            expr: |
+              max by (node) (kubelet_running_pods{job="kubelet",node=~"turin|talos-192-168-1-85"}) / 509 >= 0.8
+            for: 5m
+            labels:
+              severity: warning
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            annotations:
+              summary: Flannel cbr0 address pressure on {{ $labels.node }}
+              description: Running pod sandboxes are at least 80% of usable PodCIDR capacity. Check actual cbr0 leases for IPAM pressure.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
+          - alert: FlannelCbr0SandboxFailures
+            # Kubelet increments this counter in the FailedCreatePodSandBox event path.
+            expr: |
+              max by (node) (
+                increase(kubelet_started_pods_errors_total{job="kubelet",node=~"turin|talos-192-168-1-85"}[5m])
+              ) >= 5
+            labels:
+              severity: critical
+              notify: email
+              team: platform
+              service: flannel-cbr0
+            annotations:
+              summary: Pod sandbox creation failures on {{ $labels.node }}
+              description: At least five sandbox creation failures are estimated in five minutes. Confirm IPAM exhaustion in FailedCreatePodSandBox events before touching leases.
+              runbook_url: docs/runbooks/turin-cni-ipam-exhaustion.md
       - name: torghut-storage-baseline.rules
         interval: 30s
         rules:
@@ -1547,12 +1579,12 @@ data:
             expr: |
               (
                 max by (job, namespace, service) (
-                  up{job="torghut",namespace="torghut",service="torghut-ws"}
+                  up{job="torghut",namespace="bayn",service="torghut-ws"}
                 ) == 0
-                or absent(up{job="torghut",namespace="torghut",service="torghut-ws"})
+                or absent(up{job="torghut",namespace="bayn",service="torghut-ws"})
               )
               and on()
-              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
+              (max(kube_deployment_spec_replicas{namespace="bayn",deployment="torghut-ws"}) > 0)
             for: 5m
             labels:
               severity: critical
@@ -1567,15 +1599,15 @@ data:
             expr: |
               max by (job, namespace, service) (
                 (
-                  torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws"}
+                  torghut_ws_readyz_status{job="torghut",namespace="bayn",service="torghut-ws"}
                   or on (job, namespace, service, instance)
-                  0 * up{job="torghut",namespace="torghut",service="torghut-ws"}
+                  0 * up{job="torghut",namespace="bayn",service="torghut-ws"}
                 )
                 and on (job, namespace, service, instance)
-                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)
+                (up{job="torghut",namespace="bayn",service="torghut-ws"} == 1)
               ) == 0
               and on()
-              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
+              (max(kube_deployment_spec_replicas{namespace="bayn",deployment="torghut-ws"}) > 0)
             for: 2m
             labels:
               severity: critical
@@ -1584,13 +1616,13 @@ data:
             annotations:
               summary: Torghut WS forwarder not ready
               description: |
-                No reachable torghut-ws target reports healthy readiness for 2 minutes while the deployment is enabled. Inspect /readyz Alpaca, Kafka, trade-update and market-data-channel gates. Missing readiness telemetry also fails this check; it runs overnight for crypto feeds.
+                No reachable torghut-ws target reports healthy readiness for 2 minutes while the deployment is enabled. Inspect /readyz Alpaca, Kafka and market-data-channel gates. Missing readiness telemetry also fails this check; it runs overnight for crypto feeds.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSContainerRestarts
             expr: |
               sum by (namespace) (
                 increase(kube_pod_container_status_restarts_total{
-                  namespace="torghut",pod=~"torghut-ws-.*",container="torghut-ws"
+                  namespace="bayn",pod=~"torghut-ws-.*",container="torghut-ws"
                 }[10m])
               ) > 0
             for: 1m
@@ -1607,7 +1639,7 @@ data:
             expr: |
               max_over_time(
                 torghut_ws_desired_symbols_fetch_degraded{
-                  namespace="torghut",
+                  namespace="bayn",
                   service="torghut-ws"
                 }[15m]
               ) >= 1
@@ -1631,7 +1663,7 @@ data:
             expr: |
               rate(
                 torghut_ws_kafka_send_errors_total{
-                  namespace="torghut",
+                  namespace="bayn",
                   service="torghut-ws"
                 }[5m]
               ) > 0
@@ -1647,7 +1679,7 @@ data:
                 sum(
                   rate(
                     torghut_ws_kafka_send_latency_seconds_count{
-                      namespace="torghut",
+                      namespace="bayn",
                       service="torghut-ws"
                     }[5m]
                   )
@@ -1661,14 +1693,14 @@ data:
                 * (hour(vector(time())) < 21)
               )
               and on()
-              (max(torghut_ws_readyz_status{namespace="torghut",service="torghut-ws"}
+              (max(torghut_ws_readyz_status{namespace="bayn",service="torghut-ws"}
                 and on (job, namespace, service, instance)
-                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)) == 1)
+                (up{job="torghut",namespace="bayn",service="torghut-ws"} == 1)) == 1)
             for: 8m
             labels:
               severity: critical
               team: trading
-              namespace: torghut
+              namespace: bayn
               service: torghut-ws
               notify: email
             annotations:
@@ -4274,8 +4306,9 @@ data:
             expr: |
               kube_deployment_status_replicas_available{
                 namespace="torghut",
-                deployment=~"torghut-ws|torghut-ws-options|torghut-ta|torghut-options-ta|torghut-options-catalog|torghut-options-enricher"
+                deployment=~"torghut-ws-options|torghut-ta|torghut-options-ta|torghut-options-catalog|torghut-options-enricher"
               } < 1
+              or kube_deployment_status_replicas_available{namespace="bayn",deployment="torghut-ws"} < 1
             for: 10m
             labels:
               severity: critical

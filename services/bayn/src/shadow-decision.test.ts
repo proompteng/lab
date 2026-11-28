@@ -17,6 +17,7 @@ import { reproduceRecordedStreamingDecision } from './market-data/streaming/reco
 import { streamingFixture, streamingFixtureFromRaw } from './testing/streaming-market-fixture'
 import { executionMarketDataBinding } from './observe-composition/intraday-market-data'
 import { persistIntradayRecordRows } from './market-data/intraday/verification'
+import { EquityCutFeed, SipDelayClass, sipTopics } from './market-data/sip/provenance'
 import { describe, expect, test } from 'bun:test'
 
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
@@ -94,6 +95,7 @@ import {
   executionDecisionPlannerInput,
   decodeObserveShadowDecisionDocument,
   makeExecutionDecisionDocument,
+  reconstructBoundIntradaySnapshot,
   type CycleDecisionDocument,
 } from './shadow-decision-contract'
 import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
@@ -1850,6 +1852,51 @@ describe('intraday shadow decision', () => {
         decodeExecutionDecisionDocument({ ...document, executionMarketDataRows: { bars: [], quotes: [], trades: [] } }),
       ),
     ).toBe(true)
+  })
+
+  test('rejects a reproducible SIP pricing cut bound to a retained IEX signal', async () => {
+    const input = fixture({ AAPL: 0.02 })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }),
+    )
+    const binding = document.bindings.executionMarketData
+    const rows = document.executionMarketDataRows
+    if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3' || rows === undefined)
+      throw new Error('Expected retained streaming execution prices')
+    const pricing = reconstructBoundIntradaySnapshot(binding, rows)
+    if (pricing === undefined) throw new Error('Expected original quotes to reproduce')
+    const query = {
+      ...pricing.manifest,
+      feed: EquityCutFeed.Sip,
+      delayClass: SipDelayClass.RealTimeConsolidated,
+      sourceTopics: sipTopics,
+    }
+    const sip = streamingFixtureFromRaw(
+      {
+        bars: [],
+        trades: [],
+        quotes: pricing.quotes.map((quote) => ({
+          ...quote,
+          feed: query.feed,
+          delayClass: query.delayClass,
+          sourceTopic: sipTopics.quotes,
+        })),
+      },
+      query,
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const mixed = makeExecutionDecisionDocument({
+      ...material,
+      bindings: { ...document.bindings, executionMarketData: value(executionMarketDataBinding(sip.snapshot)) },
+      executionMarketDataRows: sip.rows,
+    })
+    if (Result.isSuccess(mixed)) throw new Error('Accepted pricing from the wrong feed')
+    expect(String(mixed.failure.cause)).toContain('same verified market source and session')
   })
 
   test('persists one deterministic no-trade observation against the exact verified snapshot', async () => {

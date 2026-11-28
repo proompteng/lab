@@ -157,13 +157,14 @@ python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85 --m
 ```
 
 The command uses only the `galactic-lan` Kubernetes context. It checks the reviewed three-node membership, readiness,
-distinct allocator `/23` blocks, current pod addresses, Ceph monitor/OSD/PG recovery, and active/standby CephFS MDS
-placement on separate hosts. `--migrated` requires both a `/23` PodCIDR and a 500-pod cap. Without that flag, the
-preparation gate requires a 250-pod cap; retain that cap during any future Node re-registration until network and
-storage acceptance. Exit code 1 means a failed gate; exit code 2 means live evidence could not be established.
+distinct allocator blocks, current pod addresses, Ceph monitor/OSD/PG recovery, and active/standby CephFS MDS
+placement on separate hosts. Pass `--allocator-prefix` to match the verified controller-manager IPv4 mask (default
+`23`). With `--migrated`, the target must have that prefix and its final cap: 500 pods for `/23` or 1000 for `/22`.
+Without `--migrated`, the preparation gate requires a 250-pod cap throughout Node re-registration, until network
+and storage acceptance. Exit code 1 means a failed gate; exit code 2 means live evidence could not be established.
 A peer's existing address-capacity mismatch is reported separately as a warning.
 
-For a future Node re-registration, first merge a template change lowering only the selected target from 500 to 250.
+For another `/23` Node re-registration, first merge a template change lowering only the selected target from 500 to 250.
 Export fresh live credentials, render the changed template, validate it, inspect the Omni sync dry run, and sync it
 using the commands above. Verify the target's `.status.capacity.pods` is `250` before running the preparation gate or
 draining. After its replacement `/23` network and storage pass acceptance, merge the target's return to 500 and repeat
@@ -175,8 +176,11 @@ snapshot does not back up application volumes, and node membership changes must 
 
 The [Turin and Altra maintenance procedure](../../../docs/runbooks/galactic-turin-podcidr-23-migration-plan.md)
 records the rehearsed Node re-registration, workload availability decision, restoration, and recovery sequence.
+The [Turin /22 upgrade plan](../../../docs/runbooks/turin-slash22-podcidr-upgrade.md) covers a future allocator
+change; switching masks before removing the old Turin Node would make it share an allocator block with Ryzen.
 `podcidr_patch.py` renders temporary Omni patches from a drained target's snapshots; `podcidr_cleanup.py` performs
-the guarded CNI cleanup inside the maintenance static pod. Neither tool authorizes a production drain or a Talos reset.
+the guarded CNI cleanup for old `/22`, `/23` or `/24` allocations inside the maintenance static pod. Neither tool
+assigns PodCIDRs or authorizes a production drain or a Talos reset.
 The cleanup waits for asynchronous bridge detachment and fails if ports remain owned; it never removes attached ports.
 
 Check the gate's failure cases with:

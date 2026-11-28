@@ -17,15 +17,13 @@ Keep application-specific knowledge with the owning application.
 
 ## Finish an AgentRun: propose and retain
 
-Propose a delta only for reusable, verified knowledge. Record the Git commit where the claim was verified (prefer the
-full SHA) and a short, sanitized verification note saying what was checked. Do not attach raw SQL results, logs,
-prompts, credentials, or personal data. Example `knowledge-delta.json`:
+Propose a delta only for reusable, verified knowledge about the Agents platform. In the checkout where the claim was
+verified, create a JSON draft with a short, sanitized verification note saying what was checked. Summarize the
+evidence; do not copy prompts, transcripts, logs, SQL results, credentials, connection URLs, or personal data.
+Example `draft.json`:
 
 ```json
 {
-  "kind": "knowledge-delta",
-  "version": 1,
-  "sourceCommit": "012abcd",
   "verificationNote": "Checked the registered migration and confirmed the terminal phase is persisted.",
   "acronyms": [{ "name": "Terminal phase", "description": "The observed end state of an AgentRun." }]
 }
@@ -34,14 +32,31 @@ prompts, credentials, or personal data. Example `knowledge-delta.json`:
 Include any nonempty combination of `acronyms`, `rules`, and `customAnalyses`. Entries use `name` and `description`;
 analyses also require a single `sql` string. Keep queries bounded and project explicit columns (aggregate `COUNT(*)`
 is fine). Use schema-qualified tables, SELECT subqueries or nonrecursive SELECT CTEs, and approved read-only functions.
-The curator rejects unknown fields, conflicting names, credential patterns, unsafe SQL, and unresolved tables or columns.
+Saved analyses cannot require SQL parameters.
 
-With locked Bun dependencies installed, validate the file before handing it off:
+With locked Bun dependencies installed, emit the proposal to a **new** file in an existing directory:
 
 ```sh
-bun run packages/scripts/src/agents/curate-ontology-deltas.ts \
-  --input "$PROPOSAL_PATH" --bundle docs/agents/ontology/agents-knowledge.json --mode dry-run
+bun run packages/scripts/src/agents/emit-knowledge-delta.ts \
+  --input draft.json --output knowledge-delta.json
 ```
+
+The emitter fills in `kind`, `version`, and `sourceCommit`. If the draft already pins a commit, it must be the full SHA
+of the emitter checkout's `HEAD`; branch names, abbreviated SHAs, and other commits are rejected. The emitter
+rejects unknown fields and recognized credential, personal data, and prompt patterns. It binds saved analyses
+against an in-memory copy of the registered Agents migrations without executing them or contacting a database
+service. On success it writes canonical JSON with sorted keys and a final newline, without overwriting an existing
+file. On rejection it does not publish a file or echo the draft.
+
+Before attaching an existing proposal to a PR, check it without writing. Use the emitter from the checkout pinned
+by the proposal:
+
+```sh
+bun run packages/scripts/src/agents/emit-knowledge-delta.ts --check --input knowledge-delta.json
+```
+
+Check mode rejects noncanonical bytes as well as invalid contents. Pattern checks cannot recognize all personal
+data or unlabeled prompts; review the file for disclosure and verify its claims before sharing it.
 
 Retain the file using the run's existing artifact mechanism and hand off the artifact reference with the completed run
 ID. For opt-in Codex runs, declare an `AgentProvider.spec.outputArtifacts` entry with name `knowledge-delta`, an agreed

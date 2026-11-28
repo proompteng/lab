@@ -5,531 +5,600 @@ import type * as grpc from '@grpc/grpc-js'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import YAML from 'yaml'
+
+import { normalizeKubernetesLabelValue } from '../../../../src/kubernetes-labels'
+import { createImplementationContractTools } from '../../../../src/server/agents-controller/implementation-contract'
 import { runCodex } from '../../codex'
+import type { KubeBackend } from '../../kube/backend'
+import {
+  hasRunUid,
+  isJobRuntime,
+  isTerminalPhase,
+  jobTerminalPhase,
+  readRunObservation,
+  runtimeType,
+} from '../../kube/runs'
 import {
   AGENT_RUN_SPEC,
   callUnary,
-  createCustomObject,
-  deleteJobByName,
-  deleteJobsBySelector,
-  getCustomObjectOptional,
-  isJobRuntime,
   outputResource,
   parseJson,
-  parseKeyValueList,
-  pickPodForRun,
-  RESOURCE_SPECS,
+  readFileContent,
   readNestedValue,
-  resolveAgentRunRuntime,
-  resolvePodContainerName,
-  runLabelSelector,
-  streamPodLogs,
-  toKeyValueEntries,
-  toKeyValueMap,
+  RESOURCE_SPECS,
+} from '../../runtime'
+import { type AgentRunParams, buildAgentRunSpec } from '../../templates/agent-run'
+import { type Transport, TransportService } from '../../transport'
+import { AgentctlContext } from '../context'
+import { asAgentctlError, validationError } from '../errors'
+import { promptText } from '../prompt'
+import { parseRunValues } from '../run-input'
+import { makeRunListCommand } from '../run-list'
+import {
+  DEFAULT_RUN_INTERVAL_MS,
+  DEFAULT_RUN_TIMEOUT_MS,
+  kubeCall,
+  runnerContainer,
+  type Verification,
+  verifyRun,
   waitForRunCompletion,
   waitForRunCompletionKube,
-} from '../../runtime'
-import { normalizeKubernetesLabelValue } from '../../../../src/kubernetes-labels'
-import { TransportService } from '../../transport'
-import { AgentctlContext } from '../context'
-import { asAgentctlError } from '../errors'
-import { promptList, promptText } from '../prompt'
+} from '../run-observation'
 
-type RunSubmitInput = {
-  agent: string
-  impl: string
-  runtime: string
-  runtimeConfig: readonly string[]
-  parameters: readonly string[]
-  idempotencyKey?: string
-  workloadImage?: string
-  cpu?: string
-  memory?: string
-  memoryRef?: string
-  vcsRef?: string
-  vcsPolicyMode?: string
-  vcsPolicyRequired?: boolean
-  wait?: boolean
+const textFlag = (name: string, description: string) => Flag.String(name).pipe(Flag.withDescription(description))
+const optionalText = (name: string, description: string) => Flag.optional(textFlag(name, description))
+const bool = (name: string, description: string) =>
+  Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.withDescription(description))
+const runtimeFlag = Flag.Literals('runtime', ['job', 'workflow', 'temporal', 'custom']).pipe(
+  Flag.withDescription('Runtime adapter to execute the run.'),
+)
+const commonFlags = {
+  inlinePrompt: optionalText(
+    'inline-prompt',
+    'Use literal task text as the inline implementation, without local Codex.',
+  ),
+  promptFile: optionalText('prompt-file', 'Read the inline task text from this file (or - for stdin).'),
+  repo: optionalText('repo', 'Set the VCS repository (owner/name).'),
+  base: optionalText('base', 'Set the VCS base branch.'),
+  head: optionalText('head', 'Set the VCS head branch.'),
+  runtimeConfig: Flag.atLeast(textFlag('runtime-config', 'Set a runtime config key=value; repeat as needed.'), 0),
+  param: Flag.atLeast(
+    textFlag('param', 'Set a run parameter key=value; repeat as needed. Prompt is not a parameter.'),
+    0,
+  ),
+  idempotencyKey: optionalText('idempotency-key', 'Set the controller idempotency key for this task.'),
+  workloadImage: optionalText('workload-image', 'Override the runner image.'),
+  cpu: optionalText('cpu', 'Set the runner CPU request as a Kubernetes quantity.'),
+  memory: Flag.optional(
+    textFlag('memory-request', 'Set the runner memory request as a Kubernetes quantity.').pipe(
+      Flag.withAlias('memory'),
+    ),
+  ),
+  memoryLimit: optionalText('memory-limit', 'Set the runner memory limit (kube only).'),
+  memoryRef: optionalText('memory-ref', 'Reference an Agents Memory resource.'),
+  ttl: Flag.optional(
+    Flag.Int('ttl').pipe(
+      Flag.withDescription('Set AgentRun retention after completion in seconds; 0 disables per-run TTL (kube only).'),
+    ),
+  ),
+  secret: Flag.atLeast(textFlag('secret', 'Reference a Kubernetes Secret by name; repeat as needed (kube only).'), 0),
+  vcs: optionalText('vcs', 'Reference a VersionControlProvider.'),
+  vcsMode: Flag.optional(
+    Flag.Literals('vcs-mode', ['read-write', 'read-only', 'none']).pipe(
+      Flag.withDescription('Set the run VCS access policy.'),
+    ),
+  ),
+  vcsRequired: bool('vcs-required', 'Fail the run when VCS setup is unavailable.'),
+  wait: bool('wait', 'Wait for the submitted run to finish.'),
+  verify: bool(
+    'verify',
+    'Confirm the rendered prompt, inherited service account, and projected MCP token mount (kube only).',
+  ),
 }
+type CommonFlags = { [K in keyof typeof commonFlags]: (typeof commonFlags)[K] extends Flag.Flag<infer A> ? A : never }
 
-const transportErrorTag = (error: unknown) => {
-  if (error && typeof error === 'object' && 'code' in error) return 'GrpcError'
-  return 'KubeError'
-}
+const get = Option.getOrUndefined
 
-const resolvePromptText = (value: Option.Option<string>, question: string, allowEmpty = false, defaultValue?: string) =>
-  Option.isSome(value)
-    ? Effect.succeed(value.value)
-    : Effect.tryPromise({
-        try: () => promptText(question, { allowEmpty, defaultValue }),
-        catch: (error) => asAgentctlError(error, 'ValidationError'),
-      })
-
-const resolvePromptList = (values: readonly string[], question: string) =>
-  values.length > 0
-    ? Effect.succeed(
-        values
-          .flatMap((value) => value.split(','))
-          .map((value) => value.trim())
-          .filter(Boolean),
+const readInputs = (flags: CommonFlags, transport: Transport, implementationRef?: string, codexPrompt?: string) =>
+  Effect.gen(function* () {
+    const parameters = yield* Effect.try({
+      try: () => parseRunValues(flags.param, '--param'),
+      catch: (error) => asAgentctlError(error, 'ValidationError'),
+    })
+    const runtimeConfig = yield* Effect.try({
+      try: () => parseRunValues(flags.runtimeConfig, '--runtime-config'),
+      catch: (error) => asAgentctlError(error, 'ValidationError'),
+    })
+    const inline = get(flags.inlinePrompt)
+    const file = get(flags.promptFile)
+    const ttl = get(flags.ttl)
+    const kubeOnly =
+      inline !== undefined ||
+      file !== undefined ||
+      Option.isSome(flags.memoryLimit) ||
+      ttl !== undefined ||
+      flags.secret.length > 0 ||
+      flags.verify
+    if (transport.mode !== 'kube' && kubeOnly) {
+      return yield* Effect.fail(
+        validationError('Inline prompts, --memory-limit, --ttl, --secret, and --verify require Kubernetes mode.'),
       )
-    : Effect.tryPromise({
-        try: () => promptList(question),
-        catch: (error) => asAgentctlError(error, 'ValidationError'),
-      })
-
-const buildRunSpec = (input: RunSubmitInput) => {
-  const runtimeConfig = toKeyValueMap(parseKeyValueList(input.runtimeConfig))
-  const parameters = toKeyValueMap(parseKeyValueList(input.parameters))
-  const spec: Record<string, unknown> = {
-    agentRef: { name: input.agent },
-    implementationSpecRef: { name: input.impl },
-    runtime: {
-      type: input.runtime,
-      ...(Object.keys(runtimeConfig).length > 0 ? { config: runtimeConfig } : {}),
-    },
-    ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
-  }
-
-  if (input.memoryRef) {
-    spec.memoryRef = { name: input.memoryRef }
-  }
-
-  if (input.vcsRef) {
-    spec.vcsRef = { name: input.vcsRef }
-  }
-
-  const vcsPolicy: Record<string, unknown> = {}
-  if (input.vcsPolicyMode) {
-    vcsPolicy.mode = input.vcsPolicyMode
-  }
-  if (input.vcsPolicyRequired) {
-    vcsPolicy.required = input.vcsPolicyRequired
-  }
-  if (Object.keys(vcsPolicy).length > 0) {
-    spec.vcsPolicy = vcsPolicy
-  }
-
-  if (input.runtime === 'workflow') {
-    spec.workflow = { steps: [{ name: 'implement' }] }
-  }
-
-  if (input.workloadImage || input.cpu || input.memory) {
-    const workload: Record<string, unknown> = {}
-    if (input.workloadImage) {
-      workload.image = input.workloadImage
     }
-    if (input.cpu || input.memory) {
-      workload.resources = { requests: {} as Record<string, string> }
-      if (input.cpu) (workload.resources as { requests: Record<string, string> }).requests.cpu = input.cpu
-      if (input.memory) (workload.resources as { requests: Record<string, string> }).requests.memory = input.memory
+    const sources = [implementationRef, codexPrompt, inline, file].filter((source) => source !== undefined)
+    if (sources.length > 1) {
+      return yield* Effect.fail(
+        validationError('Choose only one of --impl, --prompt, --inline-prompt, or --prompt-file.'),
+      )
     }
-    spec.workload = workload
-  }
+    if (ttl !== undefined && (!Number.isSafeInteger(ttl) || ttl < 0 || ttl > 2_147_483_647)) {
+      return yield* Effect.fail(validationError('--ttl must be between 0 and 2147483647 seconds.'))
+    }
+    if (flags.verify && Object.hasOwn(runtimeConfig, 'serviceAccountName')) {
+      return yield* Effect.fail(
+        validationError('--verify requires provider identity; omit --runtime-config serviceAccountName.'),
+      )
+    }
+    const implementationText =
+      file === undefined
+        ? inline
+        : yield* Effect.tryPromise({
+            try: () => readFileContent(file),
+            catch: (error) => asAgentctlError(error, 'IoError'),
+          })
+    if (implementationText !== undefined && (!implementationText.trim() || implementationText.length > 131_072)) {
+      return yield* Effect.fail(validationError('Inline task text must be non-empty and at most 131072 characters.'))
+    }
+    if (flags.secret.some((name) => !/^[a-z0-9](?:[-.a-z0-9]*[a-z0-9])?$/.test(name))) {
+      return yield* Effect.fail(validationError('--secret expects a Kubernetes Secret name, never a credential value.'))
+    }
+    return {
+      implementationText,
+      runtimeConfig,
+      parameters: {
+        ...parameters,
+        ...(Option.isSome(flags.repo) ? { repository: flags.repo.value } : {}),
+        ...(Option.isSome(flags.base) ? { base: flags.base.value } : {}),
+        ...(Option.isSome(flags.head) ? { head: flags.head.value } : {}),
+      },
+      idempotencyKey: get(flags.idempotencyKey),
+      workloadImage: get(flags.workloadImage),
+      cpu: get(flags.cpu),
+      memory: get(flags.memory),
+      memoryLimit: get(flags.memoryLimit),
+      memoryRef: get(flags.memoryRef),
+      ttl,
+      secrets: flags.secret,
+      vcsRef: get(flags.vcs),
+      vcsPolicyMode: get(flags.vcsMode),
+      vcsPolicyRequired: flags.vcsRequired,
+    }
+  })
 
-  return spec
+const grpcCall = <T>(tryCall: (signal: AbortSignal) => Promise<T>) =>
+  Effect.tryPromise({ try: tryCall, catch: (error) => asAgentctlError(error, 'GrpcError') })
+
+const { buildEventContext } = createImplementationContractTools((params, keys) => {
+  for (const key of keys) {
+    const value = params[key]
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+  }
+  return ''
+})
+
+const readName = (resource: unknown) => {
+  const name = readNestedValue(resource, ['metadata', 'name'])
+  return typeof name === 'string' && name ? name : undefined
 }
 
-const submitRunKube = async (
-  backend: Parameters<typeof createCustomObject>[0],
-  namespace: string,
-  output: string,
-  input: RunSubmitInput,
-) => {
-  const deliveryId = input.idempotencyKey || randomUUID()
-  const manifest: Record<string, unknown> = {
-    apiVersion: `${AGENT_RUN_SPEC.group}/${AGENT_RUN_SPEC.version}`,
-    kind: AGENT_RUN_SPEC.kind,
-    metadata: {
-      generateName: `${input.agent}-`,
-      namespace,
-      labels: {
-        'agents.proompteng.ai/delivery-id': normalizeKubernetesLabelValue(deliveryId),
-      },
-    },
-    spec: buildRunSpec(input),
-  }
-  const resource = await createCustomObject(backend, AGENT_RUN_SPEC, namespace, manifest)
-  outputResource(resource, output)
-  if (input.wait) {
-    const runName = readNestedValue(resource, ['metadata', 'name'])
-    if (typeof runName !== 'string' || !runName) {
-      throw new Error('AgentRun name not available for wait')
+const readVerification = (backend: KubeBackend, namespace: string, input: AgentRunParams) =>
+  Effect.gen(function* () {
+    const agent = yield* kubeCall(() => backend.getCustomObject(RESOURCE_SPECS.agent, namespace, input.agentName))
+    const providerName = readNestedValue(agent, ['spec', 'providerRef', 'name'])
+    if (typeof providerName !== 'string' || !providerName) {
+      return yield* Effect.fail(validationError('--verify requires an Agent with an AgentProvider reference.'))
     }
-    await waitForRunCompletionKube(backend, runName, namespace, output)
-  }
-}
-
-const submitRunGrpc = async (
-  client: Parameters<typeof callUnary>[0],
-  metadata: Parameters<typeof callUnary>[3],
-  namespace: string,
-  output: string,
-  input: RunSubmitInput,
-) => {
-  const response = await callUnary<{
-    resource_json: string
-    record_json: string
-    idempotent?: boolean
-  }>(
-    client,
-    'SubmitAgentRun',
-    {
-      namespace,
-      agent_name: input.agent,
-      implementation_name: input.impl,
-      runtime_type: input.runtime,
-      runtime_config: toKeyValueEntries(parseKeyValueList(input.runtimeConfig)),
-      parameters: toKeyValueEntries(parseKeyValueList(input.parameters)),
-      idempotency_key: input.idempotencyKey ?? '',
-      workload: {
-        image: input.workloadImage ?? '',
-        cpu: input.cpu ?? '',
-        memory: input.memory ?? '',
-      },
-      memory_ref: input.memoryRef ?? '',
-      vcs_ref: input.vcsRef ?? '',
-      vcs_policy_mode: input.vcsPolicyMode ?? '',
-      vcs_policy_required: input.vcsPolicyRequired ?? false,
-    },
-    metadata,
-  )
-
-  if (response.resource_json) {
-    const resource = parseJson(response.resource_json)
-    const runName = readNestedValue(resource, ['metadata', 'name'])
-    if (input.wait && typeof runName === 'string' && runName) {
-      const exitCode = await waitForRunCompletion(client, metadata, runName, namespace, output)
-      if (exitCode !== 0) {
-        throw { _tag: 'GrpcError', message: '' }
+    const provider = yield* kubeCall(() => backend.getCustomObject(RESOURCE_SPECS.provider, namespace, providerName))
+    const serviceAccountName = readNestedValue(provider, ['spec', 'workload', 'serviceAccountName'])
+    const audience = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'audience'])
+    const mountPath = readNestedValue(provider, ['spec', 'workload', 'serviceAccountToken', 'mountPath'])
+    if (
+      typeof serviceAccountName !== 'string' ||
+      !serviceAccountName ||
+      typeof audience !== 'string' ||
+      !audience ||
+      typeof mountPath !== 'string' ||
+      !mountPath
+    ) {
+      return yield* Effect.fail(
+        validationError('--verify requires an AgentProvider with a service account and MCP token projection.'),
+      )
+    }
+    let implementationSpec: Record<string, unknown> =
+      input.implementationText !== undefined ? { text: input.implementationText } : {}
+    if (input.implName && input.implementationText === undefined) {
+      const impl = yield* kubeCall(() => backend.getCustomObject(RESOURCE_SPECS.impl, namespace, input.implName))
+      const spec = readNestedValue(impl, ['spec'])
+      if (spec && typeof spec === 'object' && !Array.isArray(spec)) {
+        implementationSpec = spec as Record<string, unknown>
       }
-      return
     }
-    if (resource) outputResource(resource, output)
+    const prompt = buildEventContext(implementationSpec, input.parameters ?? {}).payload.prompt
+    if (typeof prompt !== 'string' || !prompt.trim()) {
+      return yield* Effect.fail(validationError('--verify requires non-empty implementation text.'))
+    }
+    return { serviceAccountName, audience, mountPath, prompt }
+  })
+
+const submitRun = (
+  transport: Transport,
+  namespace: string,
+  output: string,
+  input: AgentRunParams,
+  wait: boolean,
+  expected?: Verification,
+) =>
+  Effect.gen(function* () {
+    let resource: Record<string, unknown> | null
+    if (transport.mode === 'kube') {
+      const backend = transport.backend
+      const manifest = {
+        apiVersion: `${AGENT_RUN_SPEC.group}/${AGENT_RUN_SPEC.version}`,
+        kind: AGENT_RUN_SPEC.kind,
+        metadata: {
+          // Kubernetes adds five characters to generateName; controller labels require <=63.
+          generateName: `${input.agentName.slice(0, 57)}-`,
+          namespace,
+          labels: {
+            'agents.proompteng.ai/delivery-id': normalizeKubernetesLabelValue(input.idempotencyKey ?? randomUUID()),
+          },
+        },
+        spec: buildAgentRunSpec(input),
+      }
+      resource = yield* kubeCall(() => backend.createCustomObject(AGENT_RUN_SPEC, namespace, manifest))
+    } else {
+      const entries = (values: Record<string, string> = {}) =>
+        Object.entries(values).map(([key, value]) => ({ key, value }))
+      const response = yield* grpcCall(() =>
+        callUnary<{ resource_json: string }>(
+          transport.client,
+          'SubmitAgentRun',
+          {
+            namespace,
+            agent_name: input.agentName,
+            implementation_name: input.implName,
+            runtime_type: input.runtimeType,
+            runtime_config: entries(input.runtimeConfig),
+            parameters: entries(input.parameters),
+            idempotency_key: input.idempotencyKey,
+            workload: { image: input.workloadImage, cpu: input.cpu, memory: input.memory },
+            memory_ref: input.memoryRef,
+            vcs_ref: input.vcsRef,
+            vcs_policy_mode: input.vcsPolicyMode,
+            vcs_policy_required: input.vcsPolicyRequired,
+          },
+          transport.metadata,
+        ),
+      )
+      resource = parseJson(response.resource_json)
+    }
+    const name = readName(resource)
+    if (!name || !resource)
+      return yield* Effect.fail({
+        _tag: transport.mode === 'kube' ? ('KubeError' as const) : ('GrpcError' as const),
+        message: 'Submission returned no AgentRun name; check the namespace before retrying.',
+      })
+    if (expected || wait) console.error(`Submitted AgentRun ${namespace}/${name}.`)
+    if (expected && transport.mode === 'kube') yield* verifyRun(transport.backend, namespace, name, expected)
+    if (!wait) {
+      outputResource(resource, output)
+    } else if (transport.mode === 'kube') {
+      yield* waitForRunCompletionKube(transport.backend, name, namespace, output)
+    } else {
+      yield* waitForRunCompletion(transport.client, transport.metadata, name, namespace, output)
+    }
+  })
+
+const durationMs = (value: string, flag: string) => {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/.exec(value)
+  const units = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }
+  const unit = match?.[2] ?? 's'
+  const ms = match && Object.hasOwn(units, unit) ? Number(match[1]) * units[unit as keyof typeof units] : NaN
+  if (!Number.isFinite(ms) || ms < 1 || ms > 2_147_483_647) {
+    throw validationError(`${flag} expects a positive duration (seconds or ms/s/m/h, e.g. 30s).`)
   }
+  return Math.floor(ms)
 }
 
 export const makeRunCommand = () => {
-  const nameArg = Argument.String('name')
+  const nameArg = Argument.String('name').pipe(Argument.withDescription('AgentRun name in the selected namespace.'))
 
   const submit = Command.make(
     'submit',
     {
-      agent: Flag.String('agent'),
-      impl: Flag.String('impl'),
-      runtime: Flag.String('runtime'),
-      runtimeConfig: Flag.atLeast(Flag.String('runtime-config'), 0),
-      param: Flag.atLeast(Flag.String('param'), 0),
-      idempotencyKey: Flag.optional(Flag.String('idempotency-key')),
-      workloadImage: Flag.optional(Flag.String('workload-image')),
-      cpu: Flag.optional(Flag.String('cpu')),
-      memory: Flag.optional(Flag.String('memory')),
-      memoryRef: Flag.optional(Flag.String('memory-ref')),
-      vcs: Flag.optional(Flag.String('vcs')),
-      vcsMode: Flag.optional(Flag.String('vcs-mode')),
-      vcsRequired: Flag.Boolean('vcs-required').pipe(Flag.withDefault(false)),
-      wait: Flag.Boolean('wait').pipe(Flag.withDefault(false)),
+      agent: textFlag('agent', 'Reference the Agent that will execute the task.'),
+      impl: optionalText('impl', 'Reference an existing ImplementationSpec instead of an inline prompt.'),
+      runtime: runtimeFlag,
+      ...commonFlags,
     },
-    ({
-      agent,
-      impl,
-      runtime,
-      runtimeConfig,
-      param,
-      idempotencyKey,
-      workloadImage,
-      cpu,
-      memory,
-      memoryRef,
-      vcs,
-      vcsMode,
-      vcsRequired,
-      wait,
-    }) =>
+    ({ agent, impl, runtime, ...flags }) =>
       Effect.gen(function* () {
-        const { resolved } = yield* AgentctlContext
+        const {
+          resolved: { namespace, output },
+        } = yield* AgentctlContext
         const transport = yield* TransportService
-        const input: RunSubmitInput = {
-          agent,
-          impl,
-          runtime,
-          runtimeConfig,
-          parameters: param,
-          idempotencyKey: Option.getOrUndefined(idempotencyKey),
-          workloadImage: Option.getOrUndefined(workloadImage),
-          cpu: Option.getOrUndefined(cpu),
-          memory: Option.getOrUndefined(memory),
-          memoryRef: Option.getOrUndefined(memoryRef),
-          vcsRef: Option.getOrUndefined(vcs),
-          vcsPolicyMode: Option.getOrUndefined(vcsMode),
-          vcsPolicyRequired: vcsRequired,
-          wait,
+        const { implementationText, ...inputs } = yield* readInputs(flags, transport, get(impl))
+        if (flags.verify && !isJobRuntime(runtime)) {
+          return yield* Effect.fail(validationError('--verify requires the job or workflow runtime.'))
         }
-        if (transport.mode === 'kube') {
-          yield* Effect.promise(() => submitRunKube(transport.backend, resolved.namespace, resolved.output, input))
-          return
+        const implName = get(impl)
+        if (!implementationText && !implName) {
+          return yield* Effect.fail(validationError('Provide --impl, --inline-prompt, or --prompt-file.'))
         }
-        yield* Effect.promise(() =>
-          submitRunGrpc(transport.client, transport.metadata, resolved.namespace, resolved.output, input),
-        )
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const logs = Command.make(
-    'logs',
-    { name: nameArg, follow: Flag.Boolean('follow').pipe(Flag.withDefault(false)) },
-    ({ name, follow }) =>
-      Effect.gen(function* () {
-        const { resolved } = yield* AgentctlContext
-        const transport = yield* TransportService
-        if (transport.mode === 'kube') {
-          const resource = yield* Effect.promise(() =>
-            getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
-          )
-          if (!resource) throw new Error('AgentRun not found')
-          const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
-          const selector = isJobRuntime(runtimeType) && runtimeName ? `job-name=${runtimeName}` : runLabelSelector(name)
-          const pod = yield* Effect.promise(() => pickPodForRun(transport.backend, resolved.namespace, selector))
-          if (!pod) throw new Error('No pods found for AgentRun')
-          const podName = readNestedValue(pod, ['metadata', 'name'])
-          if (typeof podName !== 'string' || !podName) throw new Error('Pod name not available for logs')
-          const containerName = resolvePodContainerName(pod)
-          yield* Effect.promise(() =>
-            streamPodLogs(transport.backend, resolved.namespace, podName, containerName, follow),
-          )
-          return
+        const input: AgentRunParams = {
+          agentName: agent,
+          runtimeType: runtime,
+          ...inputs,
+          ...(implementationText !== undefined ? { implementationText } : { implName: implName ?? '' }),
         }
-        const stream = (
-          transport.client as unknown as Record<string, (...args: unknown[]) => grpc.ClientReadableStream<unknown>>
-        ).StreamAgentRunLogs
-        if (!stream) throw new Error('StreamAgentRunLogs not available')
-        const call = stream.call(transport.client, { name, namespace: resolved.namespace, follow }, transport.metadata)
-        call.on('data', (entry: { stream?: string; message?: string }) => {
-          const message = entry.message ?? ''
-          if (entry.stream === 'stderr') {
-            process.stderr.write(message)
-          } else {
-            process.stdout.write(message)
-          }
-        })
-        yield* Effect.promise(
-          () =>
-            new Promise<void>((resolve, reject) => {
-              call.on('end', () => resolve())
-              call.on('error', (error: unknown) => reject(error))
-            }),
-        )
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const wait = Command.make('wait', { name: nameArg }, ({ name }) =>
-    Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
-      const transport = yield* TransportService
-      if (transport.mode === 'kube') {
-        yield* Effect.promise(() =>
-          waitForRunCompletionKube(transport.backend, name, resolved.namespace, resolved.output),
-        )
-        return
-      }
-      const exitCode = yield* Effect.promise(() =>
-        waitForRunCompletion(transport.client, transport.metadata, name, resolved.namespace, resolved.output),
-      )
-      if (exitCode !== 0) {
-        throw { _tag: 'GrpcError', message: '' }
-      }
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const cancel = Command.make('cancel', { name: nameArg }, ({ name }) =>
-    Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
-      const transport = yield* TransportService
-      if (transport.mode === 'kube') {
-        const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
-        )
-        if (!resource) throw new Error('AgentRun not found')
-        const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
-        if (runtimeType === 'workflow') {
-          yield* Effect.promise(() =>
-            deleteJobsBySelector(transport.backend, resolved.namespace, runLabelSelector(name)),
-          )
-          console.log('cancelled')
-          return
-        }
-        if (isJobRuntime(runtimeType) && runtimeName) {
-          const deleted = yield* Effect.promise(() =>
-            deleteJobByName(transport.backend, resolved.namespace, runtimeName),
-          )
-          console.log(deleted ? 'cancelled' : 'job not found')
-          return
-        }
-        if (isJobRuntime(runtimeType)) {
-          yield* Effect.promise(() =>
-            deleteJobsBySelector(transport.backend, resolved.namespace, runLabelSelector(name)),
-          )
-          console.log('cancelled')
-          return
-        }
-        throw new Error('No cancellable runtime found for this AgentRun')
-      }
-      const response = yield* Effect.promise(() =>
-        callUnary<{ ok: boolean; message?: string }>(
-          transport.client,
-          'CancelAgentRun',
-          { name, namespace: resolved.namespace },
-          transport.metadata,
-        ),
-      )
-      console.log(response.message ?? 'cancelled')
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
+        const expected =
+          flags.verify && transport.mode === 'kube'
+            ? yield* readVerification(transport.backend, namespace, input)
+            : undefined
+        yield* submitRun(transport, namespace, output, input, flags.wait, expected)
+      }),
+  ).pipe(Command.withDescription('Submit an AgentRun from a referenced or inline task.'))
 
   const codex = Command.make(
     'codex',
     {
-      prompt: Flag.optional(Flag.String('prompt')),
-      agent: Flag.optional(Flag.String('agent')),
-      runtime: Flag.optional(Flag.String('runtime')),
-      runtimeConfig: Flag.atLeast(Flag.String('runtime-config'), 0),
-      param: Flag.atLeast(Flag.String('param'), 0),
-      workloadImage: Flag.optional(Flag.String('workload-image')),
-      cpu: Flag.optional(Flag.String('cpu')),
-      memory: Flag.optional(Flag.String('memory')),
-      memoryRef: Flag.optional(Flag.String('memory-ref')),
-      vcs: Flag.optional(Flag.String('vcs')),
-      vcsMode: Flag.optional(Flag.String('vcs-mode')),
-      vcsRequired: Flag.Boolean('vcs-required').pipe(Flag.withDefault(false)),
-      idempotencyKey: Flag.optional(Flag.String('idempotency-key')),
-      wait: Flag.Boolean('wait').pipe(Flag.withDefault(false)),
+      prompt: optionalText(
+        'prompt',
+        'Ask local Codex to generate an ImplementationSpec from this task. Use --inline-prompt to submit verbatim.',
+      ),
+      agent: textFlag('agent', 'Agent to execute the task (default: codex-agent).').pipe(
+        Flag.withDefault('codex-agent'),
+      ),
+      runtime: runtimeFlag.pipe(Flag.withDefault('workflow')),
+      ...commonFlags,
     },
-    ({
-      prompt,
-      agent,
-      runtime,
-      runtimeConfig,
-      param,
-      workloadImage,
-      cpu,
-      memory,
-      memoryRef,
-      vcs,
-      vcsMode,
-      vcsRequired,
-      idempotencyKey,
-      wait,
-    }) =>
+    ({ prompt, agent, runtime, ...flags }) =>
       Effect.gen(function* () {
-        const { resolved } = yield* AgentctlContext
+        const {
+          resolved: { namespace, output },
+        } = yield* AgentctlContext
         const transport = yield* TransportService
-        const resolvedPrompt = yield* resolvePromptText(prompt, 'Codex prompt')
-        const resolvedAgent = yield* resolvePromptText(agent, 'Agent name')
-        const resolvedRuntime = yield* resolvePromptText(
-          runtime,
-          'Runtime (workflow|job|temporal|custom)',
-          false,
-          'workflow',
-        )
-        const params = yield* resolvePromptList(param, 'Parameters (key=value, comma-separated, optional)')
-        const runtimeParams = yield* resolvePromptList(
-          runtimeConfig,
-          'Runtime config (key=value, comma-separated, optional)',
-        )
-        const resolvedWorkloadImage = Option.getOrUndefined(workloadImage)
-        const resolvedCpu = Option.getOrUndefined(cpu)
-        const resolvedMemory = Option.getOrUndefined(memory)
-        const resolvedMemoryRef = Option.getOrUndefined(memoryRef)
-        const resolvedVcsRef = Option.getOrUndefined(vcs)
-        const resolvedVcsMode = Option.getOrUndefined(vcsMode)
-        const resolvedVcsRequired = vcsRequired
-
-        const spec = yield* Effect.tryPromise({
-          try: () => runCodex(resolvedPrompt),
-          catch: (error) => asAgentctlError(error, 'CodexError'),
-        })
-        let implName: string | null = null
-
-        if (transport.mode === 'kube') {
-          const manifest: Record<string, unknown> = {
-            apiVersion: `${RESOURCE_SPECS.impl.group}/${RESOURCE_SPECS.impl.version}`,
-            kind: RESOURCE_SPECS.impl.kind,
-            metadata: { generateName: 'impl-', namespace: resolved.namespace },
-            spec: {
-              summary: spec.summary,
-              text: spec.text,
-              ...(spec.acceptanceCriteria.length > 0 ? { acceptanceCriteria: spec.acceptanceCriteria } : {}),
-              ...(spec.labels && spec.labels.length > 0 ? { labels: spec.labels } : {}),
-            },
-          }
-          const resource = yield* Effect.promise(() =>
-            createCustomObject(transport.backend, RESOURCE_SPECS.impl, resolved.namespace, manifest),
-          )
-          const nameValue = readNestedValue(resource, ['metadata', 'name'])
-          implName = typeof nameValue === 'string' ? nameValue : null
-        } else {
-          const generatedName = `impl-${randomUUID().slice(0, 8)}`
-          const manifestYaml = YAML.stringify({
-            apiVersion: `${RESOURCE_SPECS.impl.group}/${RESOURCE_SPECS.impl.version}`,
-            kind: RESOURCE_SPECS.impl.kind,
-            metadata: { name: generatedName, namespace: resolved.namespace },
-            spec: {
-              summary: spec.summary,
-              text: spec.text,
-              ...(spec.acceptanceCriteria.length > 0 ? { acceptanceCriteria: spec.acceptanceCriteria } : {}),
-              ...(spec.labels && spec.labels.length > 0 ? { labels: spec.labels } : {}),
-            },
-          })
-          const response = yield* Effect.promise(() =>
-            callUnary<{ json: string }>(
-              transport.client,
-              'ApplyImplementationSpec',
-              { namespace: resolved.namespace, manifest_yaml: manifestYaml },
-              transport.metadata,
-            ),
-          )
-          const resource = parseJson(response.json)
-          const nameValue = readNestedValue(resource, ['metadata', 'name'])
-          implName = typeof nameValue === 'string' ? nameValue : null
+        const { implementationText, ...inputs } = yield* readInputs(flags, transport, undefined, get(prompt))
+        if (flags.verify && !isJobRuntime(runtime)) {
+          return yield* Effect.fail(validationError('--verify requires the job or workflow runtime.'))
         }
-
-        if (!implName) {
-          throw new Error('Unable to resolve ImplementationSpec name')
-        }
-
-        const input: RunSubmitInput = {
-          agent: resolvedAgent,
-          impl: implName,
-          runtime: resolvedRuntime,
-          runtimeConfig: runtimeParams,
-          parameters: params,
-          idempotencyKey: Option.getOrUndefined(idempotencyKey),
-          workloadImage: resolvedWorkloadImage,
-          cpu: resolvedCpu,
-          memory: resolvedMemory,
-          memoryRef: resolvedMemoryRef,
-          vcsRef: resolvedVcsRef,
-          vcsPolicyMode: resolvedVcsMode,
-          vcsPolicyRequired: resolvedVcsRequired,
-          wait,
-        }
-
-        if (transport.mode === 'kube') {
-          yield* Effect.promise(() => submitRunKube(transport.backend, resolved.namespace, resolved.output, input))
+        const base = { agentName: agent, runtimeType: runtime, ...inputs }
+        if (implementationText !== undefined) {
+          const input = { ...base, implementationText }
+          const expected =
+            flags.verify && transport.mode === 'kube'
+              ? yield* readVerification(transport.backend, namespace, input)
+              : undefined
+          yield* submitRun(transport, namespace, output, input, flags.wait, expected)
           return
         }
+        const task =
+          get(prompt) ??
+          (yield* Effect.tryPromise({
+            try: () => promptText('Codex prompt'),
+            catch: (error) => asAgentctlError(error, 'ValidationError'),
+          }))
+        const spec = yield* Effect.tryPromise({
+          try: () => runCodex(task),
+          catch: (error) => asAgentctlError(error, 'CodexError'),
+        })
+        const expected =
+          flags.verify && transport.mode === 'kube'
+            ? yield* readVerification(transport.backend, namespace, { ...base, implementationText: spec.text })
+            : undefined
+        const resourceSpec = RESOURCE_SPECS.impl
+        const manifest = {
+          apiVersion: `${resourceSpec.group}/${resourceSpec.version}`,
+          kind: resourceSpec.kind,
+          metadata: {
+            namespace,
+            ...(transport.mode === 'kube' ? { generateName: 'impl-' } : { name: `impl-${randomUUID().slice(0, 8)}` }),
+          },
+          spec,
+        }
+        const resource =
+          transport.mode === 'kube'
+            ? yield* kubeCall(() => transport.backend.createCustomObject(resourceSpec, namespace, manifest))
+            : yield* grpcCall(async () =>
+                parseJson(
+                  (
+                    await callUnary<{ json: string }>(
+                      transport.client,
+                      'ApplyImplementationSpec',
+                      { namespace, manifest_yaml: YAML.stringify(manifest) },
+                      transport.metadata,
+                    )
+                  ).json,
+                ),
+              )
+        const implName = readName(resource)
+        if (!implName)
+          return yield* Effect.fail({ _tag: 'CodexError', message: 'ImplementationSpec creation returned no name.' })
+        yield* submitRun(transport, namespace, output, { ...base, implName }, flags.wait, expected)
+      }),
+  ).pipe(Command.withDescription('Submit a Codex run from a literal prompt or a locally generated ImplementationSpec.'))
 
-        yield* Effect.promise(() =>
-          submitRunGrpc(transport.client, transport.metadata, resolved.namespace, resolved.output, input),
+  const logs = Command.make(
+    'logs',
+    {
+      name: nameArg,
+      follow: bool('follow', 'Stream new log lines until the pod exits.').pipe(Flag.withAlias('f')),
+      tail: Flag.optional(
+        Flag.Int('tail').pipe(Flag.withDescription('Show the last N lines; -1 shows all (kube only).')),
+      ),
+      since: optionalText('since', 'Show logs newer than this duration, e.g. 10m (kube only).'),
+      timestamps: bool('timestamps', 'Include a timestamp on each line (kube only).'),
+      previous: bool('previous', 'Read logs from the previous container instance (kube only).'),
+    },
+    ({ name, follow, tail, since, timestamps, previous }) =>
+      Effect.gen(function* () {
+        const {
+          resolved: { namespace },
+        } = yield* AgentctlContext
+        const transport = yield* TransportService
+        if (Option.isSome(tail) && (!Number.isSafeInteger(tail.value) || tail.value < -1)) {
+          return yield* Effect.fail(validationError('--tail must be -1 or a non-negative integer.'))
+        }
+        if (transport.mode === 'kube') {
+          const backend = transport.backend
+          const { pod } = yield* kubeCall((signal) => readRunObservation(backend, namespace, name, signal))
+          if (!pod)
+            return yield* Effect.fail({
+              _tag: 'KubeError',
+              message: `No Pod found for AgentRun ${name}; see agentctl describe run ${name}.`,
+            })
+          const container = runnerContainer(pod.spec)?.name ?? pod.spec?.containers?.[0]?.name
+          yield* kubeCall((signal) =>
+            backend.streamPodLogs(
+              namespace,
+              pod.metadata.name,
+              { container, follow, tail: get(tail), since: get(since), timestamps, previous },
+              signal,
+            ),
+          )
+          return
+        }
+        if (Option.isSome(tail) || Option.isSome(since) || timestamps || previous) {
+          return yield* Effect.fail(
+            validationError('--tail, --since, --timestamps, and --previous require Kubernetes mode.'),
+          )
+        }
+        yield* grpcCall(
+          (signal) =>
+            new Promise<void>((resolve, reject) => {
+              const stream = (
+                transport.client as unknown as Record<
+                  string,
+                  (...args: unknown[]) => grpc.ClientReadableStream<{ stream?: string; message?: string }>
+                >
+              ).StreamAgentRunLogs
+              if (!stream) return reject(new Error('StreamAgentRunLogs not available'))
+              const call = stream.call(transport.client, { name, namespace, follow }, transport.metadata)
+              const onAbort = () => call.cancel()
+              signal.addEventListener('abort', onAbort, { once: true })
+              call.once('status', () => signal.removeEventListener('abort', onAbort))
+              call.on('data', (entry) =>
+                (entry.stream === 'stderr' ? process.stderr : process.stdout).write(entry.message ?? ''),
+              )
+              call.on('end', resolve)
+              call.on('error', reject)
+            }),
         )
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
+      }),
+  ).pipe(Command.withDescription('Read logs from the run’s current runner Pod.'))
 
-  const base = Command.make('run', {}, () =>
-    Effect.sync(() => {
-      console.log('Usage: agentctl run <submit|logs|wait|cancel|codex>')
+  const wait = Command.make(
+    'wait',
+    {
+      name: nameArg,
+      timeout: optionalText('timeout', 'Stop waiting after this duration (default: 2h).'),
+      interval: optionalText('interval', 'Poll Kubernetes at this interval (default: 2s).'),
+    },
+    ({ name, timeout, interval }) =>
+      Effect.gen(function* () {
+        const {
+          resolved: { namespace, output },
+        } = yield* AgentctlContext
+        const transport = yield* TransportService
+        const durations = yield* Effect.try({
+          try: () => ({
+            timeout: Option.isSome(timeout) ? durationMs(timeout.value, '--timeout') : DEFAULT_RUN_TIMEOUT_MS,
+            interval: Option.isSome(interval) ? durationMs(interval.value, '--interval') : DEFAULT_RUN_INTERVAL_MS,
+          }),
+          catch: (error) => asAgentctlError(error, 'ValidationError'),
+        })
+        if (transport.mode === 'kube') {
+          yield* waitForRunCompletionKube(
+            transport.backend,
+            name,
+            namespace,
+            output,
+            durations.timeout,
+            durations.interval,
+          )
+        } else {
+          if (Option.isSome(interval))
+            return yield* Effect.fail(validationError('--interval requires Kubernetes mode; gRPC streams status.'))
+          yield* waitForRunCompletion(transport.client, transport.metadata, name, namespace, output, durations.timeout)
+        }
+      }),
+  ).pipe(Command.withDescription('Wait for a terminal run phase, checking Jobs and Pods when the CR lags.'))
+
+  const cancel = Command.make('cancel', { name: nameArg }, ({ name }) =>
+    Effect.gen(function* () {
+      const {
+        resolved: { namespace },
+      } = yield* AgentctlContext
+      const transport = yield* TransportService
+      if (transport.mode === 'kube') {
+        const backend = transport.backend
+        const observation = yield* kubeCall((signal) => readRunObservation(backend, namespace, name, signal))
+        if (!isJobRuntime(runtimeType(observation.run))) {
+          return yield* Effect.fail({
+            _tag: 'KubeError',
+            message: 'No cancellable Job runtime found for this AgentRun.',
+          })
+        }
+        const liveJobs = observation.jobs.filter((job) => !jobTerminalPhase(job) && !job.metadata.deletionTimestamp)
+        if (!liveJobs.length) {
+          if (
+            isTerminalPhase(observation.phase) ||
+            isTerminalPhase(observation.observedPhase) ||
+            observation.jobs.some((job) => job.metadata.deletionTimestamp)
+          ) {
+            console.log(`AgentRun ${name}: no live Jobs to cancel.`)
+            return
+          }
+          return yield* Effect.fail({
+            _tag: 'KubeError',
+            message: `AgentRun ${name} has no live Job to cancel; the run itself was not cancelled.`,
+          })
+        }
+        if (liveJobs.some((job) => !hasRunUid(job, observation.run))) {
+          return yield* Effect.fail({
+            _tag: 'KubeError',
+            message: `Refusing to delete Jobs without matching AgentRun UID evidence for ${name}.`,
+          })
+        }
+        yield* kubeCall(() =>
+          backend.deleteJobs(
+            namespace,
+            liveJobs.map((job) => job.metadata.name),
+          ),
+        )
+        console.log(
+          `Requested cancellation of ${liveJobs.length} Job(s) for AgentRun ${name}; check run status for the outcome.`,
+        )
+        return
+      }
+      const response = yield* grpcCall(() =>
+        callUnary<{ ok: boolean; message?: string }>(
+          transport.client,
+          'CancelAgentRun',
+          { name, namespace },
+          transport.metadata,
+        ),
+      )
+      if (!response.ok)
+        return yield* Effect.fail({
+          _tag: 'GrpcError',
+          message: response.message || 'AgentRun cancellation was not accepted.',
+        })
+      console.log(response.message ?? 'cancelled')
     }),
-  )
+  ).pipe(Command.withDescription('Request cancellation of live Jobs without deleting the AgentRun.'))
 
-  return Command.withSubcommands(base, [submit, logs, wait, cancel, codex])
+  return Command.make('run').pipe(
+    Command.withDescription('Submit, list, and operate AgentRuns.'),
+    Command.withSubcommands([submit, codex, makeRunListCommand(), logs, wait, cancel]),
+  )
 }

@@ -76,19 +76,6 @@ export const resolveAtlasRepository = (rawRepository: string): AtlasRepositoryRe
   return { ok: true, repository: repository || DEFAULT_ATLAS_REPOSITORY }
 }
 
-export const ensureGitRef = async (ref: string): Promise<AtlasRefResult> => {
-  if (!ref) return { ok: false, message: 'Ref is required.' }
-  if (ref.startsWith('-')) return { ok: false, message: 'Invalid ref.' }
-
-  const result = await runGitCommand(['rev-parse', '--verify', ref])
-  if (result.exitCode !== 0) {
-    const detail = result.stderr.trim()
-    return { ok: false, message: detail || 'Ref not found.' }
-  }
-
-  return { ok: true }
-}
-
 export const ensureAtlasCommitAvailable = async (
   commit: string,
   run: GitCommandRunner = runGitCommand,
@@ -105,12 +92,5 @@ export const ensureAtlasCommitAvailable = async (
   if ((await verify()).exitCode !== 0) {
     return { ok: false, message: `Indexed commit ${commit} is unavailable after fetch.` }
   }
-  return { ok: true }
-}
-
-export const ensureFileAtRef = async (ref: string, path: string): Promise<AtlasRefResult> => {
-  if (!path) return { ok: false, message: 'File path is required.' }
-  const result = await runGitCommand(['cat-file', '-e', `${ref}:${path}`])
-  if (result.exitCode !== 0) return { ok: false, message: 'File not found at ref.' }
   return { ok: true }
 }

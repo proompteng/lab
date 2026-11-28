@@ -12,6 +12,20 @@ const workflowText = readFileSync(join(root, workflowFile), 'utf8')
 const workflow = Bun.YAML.parse(workflowText)
 const api = 'repos/proompteng/lab/actions'
 
+const lockfile = (unrelatedVersion: string, baynIntegrity = 'bayn-client-integrity') =>
+  JSON.stringify({
+    lockfileVersion: 1,
+    workspaces: {
+      '': { name: 'root' },
+      'services/bayn': { name: 'bayn', dependencies: { client: '1.0.0' } },
+      'apps/froussard': { name: 'froussard', dependencies: { unrelated: unrelatedVersion } },
+    },
+    packages: {
+      client: ['client@1.0.0', '', {}, baynIntegrity],
+      unrelated: [`unrelated@${unrelatedVersion}`, '', {}, `unrelated-integrity-${unrelatedVersion}`],
+    },
+  })
+
 test('one pending Bayn release can be replaced without cancelling an active publisher', () => {
   expect(workflow.concurrency.queue).toBeUndefined()
   expect(workflow.concurrency['cancel-in-progress']).toBe(false)
@@ -79,11 +93,7 @@ const fixtureAt = (directory: string) => {
   const initial = commit({
     [workflowFile]: workflowText,
     'services/bayn/src/runtime.ts': 'old runtime',
-    'bun.lock': JSON.stringify({
-      lockfileVersion: 1,
-      workspaces: { '': { name: 'root' }, 'services/bayn': { name: 'bayn' } },
-      packages: {},
-    }),
+    'bun.lock': lockfile('1.0.0'),
   })
   const responses = join(directory, 'responses')
   writeFileSync(
@@ -126,12 +136,12 @@ const fixtureAt = (directory: string) => {
   return { initial, commit, history, publisher, plan, git }
 }
 
-test('a manifest-only successor builds unreleased runtime changes even after a successful no-op run', () => {
+test('a lockfile-only successor builds unreleased runtime changes even after a successful no-op run', () => {
   withRepository(({ initial, commit, history, publisher, plan, git }) => {
     const release = commit({ 'services/bayn/src/runtime.ts': 'new runtime' })
-    const skipped = commit({ 'apps/landing/package.json': '{"name":"landing"}' })
-    const latest = commit({ 'apps/froussard/package.json': '{"name":"froussard"}' })
-    expect(git('diff', '--name-only', skipped, latest)).toBe('apps/froussard/package.json')
+    const skipped = commit({ 'bun.lock': lockfile('2.0.0') })
+    const latest = commit({ 'bun.lock': lockfile('3.0.0') })
+    expect(git('diff', '--name-only', skipped, latest)).toBe('bun.lock')
     history([runHistory(3, skipped), runHistory(2, release, 'cancelled'), runHistory(1, initial)])
     publisher(3, skipped, 'skipped')
     publisher(1, initial, 'success')
@@ -139,10 +149,19 @@ test('a manifest-only successor builds unreleased runtime changes even after a s
 
     history([runHistory(4, latest), runHistory(3, skipped), runHistory(1, initial)])
     publisher(4, latest, 'success')
-    commit({ 'apps/froussard/package.json': '{"name":"froussard","version":"2.0.0"}' })
+    commit({ 'bun.lock': lockfile('4.0.0') })
     expect(plan()).toMatchObject({ status: 0, output: 'image=false\n' })
     git('checkout', '--detach', release)
     expect(plan()).toMatchObject({ status: 0, output: 'image=false\n' })
+  })
+})
+
+test('a lockfile-only push publishes if a Bayn dependency resolution changed', () => {
+  withRepository(({ initial, commit, history, publisher, plan }) => {
+    commit({ 'bun.lock': lockfile('1.0.0', 'changed-bayn-client-integrity') })
+    history([runHistory(1, initial)])
+    publisher(1, initial, 'success')
+    expect(plan()).toMatchObject({ status: 0, output: 'image=true\n' })
   })
 })
 
