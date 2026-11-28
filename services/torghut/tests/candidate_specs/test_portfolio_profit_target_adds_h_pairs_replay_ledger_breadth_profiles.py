@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.candidate_specs.support import (
-    Decimal,
+    _CHIP_UNIVERSE_SYMBOLS,
     HYPOTHESIS_CARD_SCHEMA_VERSION,
+    Decimal,
     HypothesisCard,
     Path,
-    _CHIP_UNIVERSE_SYMBOLS,
     _TestCandidateSpecsBase,
     build_hypothesis_cards,
     candidate_spec_from_payload,
@@ -13,6 +15,8 @@ from tests.candidate_specs.support import (
     compile_candidate_specs,
     compile_whitepaper_candidate_specs,
 )
+
+pytestmark = pytest.mark.usefixtures("reuse_execution_profiles")
 
 
 class TestPortfolioProfitTargetAddsHPairsReplayLedgerBreadthProfiles(

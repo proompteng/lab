@@ -1,21 +1,30 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.support import (
-    Decimal,
-    FakeTigerBeetleClient,
-    StrategyRuntimeLedgerBucket,
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest.mock import patch
+
+from app.models import StrategyRuntimeLedgerBucket
+from app.trading.runtime_window_import import (
+    ledger_persistence as runtime_window_import_module,
+)
+from app.trading.runtime_window_import.evidence_gates import (
+    build_regular_session_buckets,
+    runtime_window_import_proof_blockers,
+)
+from app.trading.runtime_window_import.ledger_persistence import (
     journal_tigerbeetle_runtime_ledger_bucket,
+)
+from app.trading.runtime_window_import.observed_buckets import (
+    build_observed_runtime_buckets,
+)
+from app.trading.tigerbeetle_client import FakeTigerBeetleClient
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.support import (
     _runtime_ledger_bucket,
     _runtime_pnl_basis,
-    runtime_window_import_proof_blockers,
     _simulation_report_pnl_basis,
     _TestRuntimeWindowImportBase,
-    build_observed_runtime_buckets,
-    build_regular_session_buckets,
-    datetime,
-    patch,
-    runtime_window_import_module,
-    timezone,
 )
 
 
@@ -61,7 +70,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                 candidate_id="cand",
                 hypothesis_id="hyp",
                 observed_stage="paper",
-                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_started_at=march_6_market_hour(30),
                 bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                 account_label="TORGHUT_SIM",
                 runtime_strategy_name="strategy",
@@ -149,7 +158,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                 candidate_id="cand",
                 hypothesis_id="hyp",
                 observed_stage="paper",
-                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_started_at=march_6_market_hour(30),
                 bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                 account_label="TORGHUT_SIM",
                 runtime_strategy_name="strategy",
@@ -220,7 +229,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                 candidate_id="cand",
                 hypothesis_id="hyp",
                 observed_stage="paper",
-                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_started_at=march_6_market_hour(30),
                 bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                 account_label="TORGHUT_SIM",
                 runtime_strategy_name="strategy",
@@ -279,7 +288,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                 candidate_id="cand",
                 hypothesis_id="hyp",
                 observed_stage="paper",
-                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_started_at=march_6_market_hour(30),
                 bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                 account_label="TORGHUT_SIM",
                 runtime_strategy_name="strategy",
@@ -343,7 +352,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
 
     def test_build_regular_session_buckets_counts_session_samples(self) -> None:
         buckets = build_regular_session_buckets(
-            window_start=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            window_start=march_6_market_hour(30),
             window_end=datetime(2026, 3, 6, 16, 30, tzinfo=timezone.utc),
             bucket_minutes=30,
             sample_minutes=5,
@@ -356,7 +365,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
@@ -537,16 +546,16 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
             ],
-            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            decision_times=[march_6_market_hour(35)],
+            execution_times=[march_6_market_hour(36)],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("50"),
                     **_simulation_report_pnl_basis(),
@@ -570,16 +579,16 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
             ],
-            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            decision_times=[march_6_market_hour(35)],
+            execution_times=[march_6_market_hour(36)],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("50"),
                     "post_cost_expectancy_basis": "realized_strategy_pnl",
@@ -604,16 +613,16 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
             ],
-            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            decision_times=[march_6_market_hour(35)],
+            execution_times=[march_6_market_hour(36)],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("50"),
                     "post_cost_promotion_eligible": True,
@@ -637,16 +646,16 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
             ],
-            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            decision_times=[march_6_market_hour(35)],
+            execution_times=[march_6_market_hour(36)],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("50"),
                     **_runtime_pnl_basis(),
@@ -674,22 +683,22 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
             ],
             decision_times=[
-                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                march_6_market_hour(35),
+                march_6_market_hour(40),
             ],
             execution_times=[
-                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
-                datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+                march_6_market_hour(36),
+                march_6_market_hour(41),
             ],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("100"),
                     "runtime_ledger_bucket": _runtime_ledger_bucket(
@@ -701,7 +710,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                     **_runtime_pnl_basis(),
                 },
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(41),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("1"),
                     "runtime_ledger_bucket": _runtime_ledger_bucket(

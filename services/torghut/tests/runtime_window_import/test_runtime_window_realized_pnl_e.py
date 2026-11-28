@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import cast
+from unittest import TestCase
+
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
-    RuntimeWindowImportTestCaseBase,
     _build_realized_strategy_pnl_rows,
-    _complete_runtime_ledger_bucket,
     _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_tca_materialization_metadata,
-    cast,
-    datetime,
-    timezone,
+)
+from tests.runtime_window_import.ledger_fixtures import (
+    execution_fill,
+    march_6_market_hour,
+)
+from tests.runtime_window_import.runtime_window_import_support import (
+    _complete_runtime_ledger_bucket,
 )
 
 
-class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportRealizedPnlE(TestCase):
     def test_source_backed_round_trip_materializes_nested_fill_economics_over_zero_placeholders(
         self,
     ) -> None:
@@ -95,10 +101,8 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     **common,
                     "execution_id": "execution-buy",
                     "trade_decision_id": "decision-buy",
-                    "computed_at": datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
-                    "execution_event_at": datetime(
-                        2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc
-                    ),
+                    "computed_at": march_6_market_hour(35, 2),
+                    "execution_event_at": march_6_market_hour(35, 2),
                     "side": "buy",
                     "filled_qty": Decimal("0"),
                     "avg_fill_price": Decimal("0"),
@@ -117,10 +121,8 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     **common,
                     "execution_id": "execution-sell",
                     "trade_decision_id": "decision-sell",
-                    "computed_at": datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
-                    "execution_event_at": datetime(
-                        2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc
-                    ),
+                    "computed_at": march_6_market_hour(40, 2),
+                    "execution_event_at": march_6_market_hour(40, 2),
                     "side": "sell",
                     "filled_qty": Decimal("0"),
                     "avg_fill_price": Decimal("0"),
@@ -142,14 +144,14 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     "trade_decision_id": "decision-buy",
                     "decision_hash": "decision-buy",
                     "event_type": "decision",
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                 },
                 {
                     **common,
                     "trade_decision_id": "decision-sell",
                     "decision_hash": "decision-sell",
                     "event_type": "decision",
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(40),
                 },
             ],
             order_lifecycle_rows=[
@@ -157,7 +159,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-new-buy",
                     decision_id="decision-buy",
                     order_id="order-buy",
-                    event_ts=datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(35, 1),
                     event_type="new",
                     side="buy",
                     source_offset=1,
@@ -166,7 +168,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-fill-buy",
                     decision_id="decision-buy",
                     order_id="order-buy",
-                    event_ts=datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(35, 2),
                     event_type="filled",
                     side="buy",
                     nested_filled_qty="1",
@@ -177,7 +179,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-new-sell",
                     decision_id="decision-sell",
                     order_id="order-sell",
-                    event_ts=datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(40, 1),
                     event_type="new",
                     side="sell",
                     source_offset=3,
@@ -186,7 +188,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-fill-sell",
                     decision_id="decision-sell",
                     order_id="order-sell",
-                    event_ts=datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(40, 2),
                     event_type="filled",
                     side="sell",
                     nested_filled_qty="1",
@@ -299,10 +301,8 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     **common,
                     "execution_id": "execution-buy",
                     "trade_decision_id": "decision-buy",
-                    "computed_at": datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
-                    "execution_event_at": datetime(
-                        2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc
-                    ),
+                    "computed_at": march_6_market_hour(35, 2),
+                    "execution_event_at": march_6_market_hour(35, 2),
                     "side": "buy",
                     "filled_qty": Decimal("0"),
                     "avg_fill_price": Decimal("0"),
@@ -317,10 +317,8 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     **common,
                     "execution_id": "execution-sell",
                     "trade_decision_id": "decision-sell",
-                    "computed_at": datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
-                    "execution_event_at": datetime(
-                        2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc
-                    ),
+                    "computed_at": march_6_market_hour(40, 2),
+                    "execution_event_at": march_6_market_hour(40, 2),
                     "side": "sell",
                     "filled_qty": Decimal("0"),
                     "avg_fill_price": Decimal("0"),
@@ -338,14 +336,14 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     "trade_decision_id": "decision-buy",
                     "decision_hash": "decision-buy",
                     "event_type": "decision",
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                 },
                 {
                     **common,
                     "trade_decision_id": "decision-sell",
                     "decision_hash": "decision-sell",
                     "event_type": "decision",
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(40),
                 },
             ],
             order_lifecycle_rows=[
@@ -353,7 +351,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-new-buy",
                     decision_id="decision-buy",
                     order_id="order-buy",
-                    event_ts=datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(35, 1),
                     event_type="new",
                     side="buy",
                     payload_qty=None,
@@ -364,7 +362,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-fill-buy",
                     decision_id="decision-buy",
                     order_id="order-buy",
-                    event_ts=datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(35, 2),
                     event_type="filled",
                     side="buy",
                     payload_qty="1",
@@ -375,7 +373,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-new-sell",
                     decision_id="decision-sell",
                     order_id="order-sell",
-                    event_ts=datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(40, 1),
                     event_type="new",
                     side="sell",
                     payload_qty=None,
@@ -386,7 +384,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     event_id="event-fill-sell",
                     decision_id="decision-sell",
                     order_id="order-sell",
-                    event_ts=datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
+                    event_ts=march_6_market_hour(40, 2),
                     event_type="filled",
                     side="sell",
                     payload_qty="1",
@@ -414,34 +412,24 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
             [
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "buy",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("100"),
-                    "cost_amount": Decimal("0.20"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-buy",
-                    "alpaca_order_id": "order-buy",
-                    "execution_idempotency_key": "buy-order-key",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("101"),
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
-                    "execution_idempotency_key": "sell-order-key",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
+                execution_fill(
+                    computed_at=march_6_market_hour(35),
+                    side="buy",
+                    avg_fill_price=Decimal("100"),
+                    cost_amount=Decimal("0.20"),
+                    decision_hash="decision-buy",
+                    alpaca_order_id="order-buy",
+                    execution_idempotency_key="buy-order-key",
+                ),
+                execution_fill(
+                    computed_at=march_6_market_hour(40),
+                    side="sell",
+                    avg_fill_price=Decimal("101"),
+                    cost_amount=Decimal("0.10"),
+                    decision_hash="decision-sell",
+                    alpaca_order_id="order-sell",
+                    execution_idempotency_key="sell-order-key",
+                ),
             ],
             allow_authoritative_runtime_ledger_materialization=True,
         )
@@ -583,7 +571,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
         rows = _build_realized_strategy_pnl_rows(
             [
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
@@ -609,7 +597,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     },
                 },
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(40),
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
@@ -662,7 +650,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
         rows = _build_realized_strategy_pnl_rows(
             [
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                     "execution_created_at": datetime(
                         2026, 3, 6, 15, 45, tzinfo=timezone.utc
                     ),
@@ -685,7 +673,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                     },
                 },
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(50),
                     "execution_created_at": datetime(
                         2026, 3, 6, 15, 55, tzinfo=timezone.utc
                     ),
@@ -743,51 +731,31 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
             [
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
-                    "execution_created_at": datetime(
-                        2026, 3, 6, 14, 30, 5, tzinfo=timezone.utc
-                    ),
-                    "execution_event_at": datetime(
-                        2026, 3, 6, 14, 35, tzinfo=timezone.utc
-                    ),
-                    "symbol": "AAPL",
-                    "side": "buy",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("100"),
-                    "cost_amount": Decimal("0.20"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-buy",
-                    "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
-                    "execution_created_at": datetime(
-                        2026, 3, 6, 14, 30, 10, tzinfo=timezone.utc
-                    ),
-                    "execution_event_at": datetime(
-                        2026, 3, 6, 14, 40, tzinfo=timezone.utc
-                    ),
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("101"),
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
+                execution_fill(
+                    computed_at=march_6_market_hour(30),
+                    execution_created_at=march_6_market_hour(30, 5),
+                    execution_event_at=march_6_market_hour(35),
+                    side="buy",
+                    avg_fill_price=Decimal("100"),
+                    cost_amount=Decimal("0.20"),
+                    decision_hash="decision-buy",
+                    alpaca_order_id="order-buy",
+                    execution_policy_hash="policy-sha",
+                ),
+                execution_fill(
+                    computed_at=march_6_market_hour(30),
+                    execution_created_at=march_6_market_hour(30, 10),
+                    execution_event_at=march_6_market_hour(40),
+                    side="sell",
+                    avg_fill_price=Decimal("101"),
+                    cost_amount=Decimal("0.10"),
+                    decision_hash="decision-sell",
+                    alpaca_order_id="order-sell",
+                    execution_policy_hash="policy-sha",
+                ),
             ]
         )
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(
-            rows[0]["computed_at"], datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc)
-        )
+        self.assertEqual(rows[0]["computed_at"], march_6_market_hour(40))
         self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))

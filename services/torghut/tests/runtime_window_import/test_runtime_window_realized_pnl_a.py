@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.runtime_window_import_base import (
-    Decimal,
+from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import patch
+
+from scripts import import_hypothesis_runtime_windows as runtime_import_cli
+from scripts.hypothesis_runtime_window_import import cli_parsing as runtime_import_args
+from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
     POST_COST_BASIS_RUNTIME_LEDGER,
-    Path,
-    RuntimeWindowImportTestCaseBase,
-    SimpleNamespace,
-    TemporaryDirectory,
-    _FakeSession,
     _build_realized_strategy_pnl_rows,
     _execution_signed_qty,
     _first_lineage_digest,
@@ -18,39 +21,34 @@ from tests.runtime_window_import.runtime_window_import_base import (
     _runtime_ledger_bucket_profit_proof_present,
     _stable_payload_digest,
     _strategy_name_candidates,
-    datetime,
     main,
-    patch,
-    timezone,
 )
+from tests.runtime_window_import.ledger_fixtures import (
+    execution_fill,
+    march_6_market_hour,
+    paper_import_args,
+    paper_order_event,
+    paper_order_fill,
+    strategy_decision_row,
+)
+from tests.runtime_window_import.runtime_window_import_support import _FakeSession
 
 
-class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
+class TestRuntimeWindowImportRealizedPnlA(TestCase):
     def test_main_requires_source_dsn_or_durable_runtime_ledger_bucket(self) -> None:
-        args = SimpleNamespace(
+        args = paper_import_args(
             run_id="run-missing-source",
             candidate_id="cand-missing-source",
             hypothesis_id="H-CONT-01",
-            observed_stage="paper",
             strategy_family="",
             source_dsn="",
             source_dsn_env="TORGHUT_TEST_MISSING_DSN",
             strategy_name="intraday-tsmom-profit-v2",
-            account_label="TORGHUT_SIM",
-            window_start="2026-03-06T14:30:00Z",
-            window_end="2026-03-06T15:00:00Z",
-            bucket_minutes=30,
-            sample_minutes=5,
             source_manifest_ref="",
             source_kind="",
-            artifact_ref=[],
             delay_adjusted_depth_stress_report_ref="",
             dataset_snapshot_ref="",
             target_metadata_json="",
-            dependency_quorum_decision="allow",
-            continuity_ok="true",
-            drift_ok="true",
-            json=False,
         )
         manifest = SimpleNamespace(
             strategy_family="intraday_continuation",
@@ -59,19 +57,18 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
         )
 
         with (
-            patch(
-                "scripts.import_hypothesis_runtime_windows._parse_args",
-                return_value=args,
-            ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+            patch.object(runtime_import_cli, "_parse_args", return_value=args),
+            patch.object(
+                runtime_import_cli,
+                "resolve_hypothesis_manifest",
                 return_value=(
                     SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
                     manifest,
                 ),
             ),
-            patch(
-                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_durable_buckets",
+            patch.object(
+                runtime_import_cli,
+                "_runtime_ledger_tca_rows_from_durable_buckets",
                 return_value=(
                     [],
                     {
@@ -83,9 +80,8 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
                     },
                 ),
             ),
-            patch(
-                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
-                return_value=_FakeSession(),
+            patch.object(
+                runtime_import_args, "SessionLocal", return_value=_FakeSession()
             ),
             patch.dict("os.environ", {}, clear=True),
         ):
@@ -158,7 +154,7 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
                 return "custom-value"
 
         payload = {
-            "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+            "computed_at": march_6_market_hour(35),
             "notional": Decimal("100.25"),
             "custom": CustomValue(),
         }
@@ -169,7 +165,7 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
                 {
                     "custom": CustomValue(),
                     "notional": Decimal("100.25"),
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                 }
             ),
         )
@@ -210,40 +206,30 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
             [
-                {
-                    "execution_id": "execution-buy",
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "buy",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("100"),
-                    "shortfall_notional": Decimal("99"),
-                    "cost_amount": Decimal("0.20"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-buy",
-                    "alpaca_order_id": "order-buy",
-                    "execution_tca_metric_id": "tca-buy",
-                    "execution_policy_hash": "policy-buy",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
-                {
-                    "execution_id": "execution-sell",
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("101"),
-                    "shortfall_notional": Decimal("99"),
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
-                    "execution_tca_metric_id": "tca-sell",
-                    "execution_policy_hash": "policy-sell",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
+                execution_fill(
+                    execution_id="execution-buy",
+                    computed_at=march_6_market_hour(35),
+                    side="buy",
+                    avg_fill_price=Decimal("100"),
+                    shortfall_notional=Decimal("99"),
+                    cost_amount=Decimal("0.20"),
+                    decision_hash="decision-buy",
+                    alpaca_order_id="order-buy",
+                    execution_tca_metric_id="tca-buy",
+                    execution_policy_hash="policy-buy",
+                ),
+                execution_fill(
+                    execution_id="execution-sell",
+                    computed_at=march_6_market_hour(40),
+                    side="sell",
+                    avg_fill_price=Decimal("101"),
+                    shortfall_notional=Decimal("99"),
+                    cost_amount=Decimal("0.10"),
+                    decision_hash="decision-sell",
+                    alpaca_order_id="order-sell",
+                    execution_tca_metric_id="tca-sell",
+                    execution_policy_hash="policy-sell",
+                ),
             ]
         )
 
@@ -283,7 +269,7 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
         rows = _build_realized_strategy_pnl_rows(
             [
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(35),
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
@@ -298,7 +284,7 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
                     "lineage_hash": "lineage-sha",
                 },
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(40),
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
@@ -347,160 +333,104 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
             [
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "buy",
-                    "filled_qty": Decimal("1"),
-                    "filled_qty_delta": Decimal("1"),
-                    "avg_fill_price": Decimal("100"),
-                    "filled_notional_delta": Decimal("100"),
-                    "fill_quantity_basis": "cumulative_to_delta",
-                    "cost_amount": Decimal("0.20"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-buy",
-                    "alpaca_order_id": "order-buy",
-                    "execution_tca_metric_id": "tca-buy",
-                    "execution_policy_hash": "policy-buy",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("1"),
-                    "filled_qty_delta": Decimal("1"),
-                    "avg_fill_price": Decimal("101"),
-                    "filled_notional_delta": Decimal("101"),
-                    "fill_quantity_basis": "cumulative_to_delta",
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
-                    "execution_tca_metric_id": "tca-sell",
-                    "execution_policy_hash": "policy-sell",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                },
+                execution_fill(
+                    computed_at=march_6_market_hour(35),
+                    side="buy",
+                    filled_qty_delta=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    filled_notional_delta=Decimal("100"),
+                    fill_quantity_basis="cumulative_to_delta",
+                    cost_amount=Decimal("0.20"),
+                    decision_hash="decision-buy",
+                    alpaca_order_id="order-buy",
+                    execution_tca_metric_id="tca-buy",
+                    execution_policy_hash="policy-buy",
+                ),
+                execution_fill(
+                    computed_at=march_6_market_hour(40),
+                    side="sell",
+                    filled_qty_delta=Decimal("1"),
+                    avg_fill_price=Decimal("101"),
+                    filled_notional_delta=Decimal("101"),
+                    fill_quantity_basis="cumulative_to_delta",
+                    cost_amount=Decimal("0.10"),
+                    decision_hash="decision-sell",
+                    alpaca_order_id="order-sell",
+                    execution_tca_metric_id="tca-sell",
+                    execution_policy_hash="policy-sell",
+                ),
             ],
             decision_lifecycle_rows=[
-                {
-                    "trade_decision_id": "decision-buy-id",
-                    "computed_at": datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
-                    "event_type": "decision",
-                    "symbol": "AAPL",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "microbar-cross-sectional-pairs-v1",
-                    "decision_hash": "decision-buy",
-                    "decision_json": {"account": {"equity": "10000"}},
-                    "source_decision_mode": "strategy_signal_paper",
-                    "profit_proof_eligible": True,
-                    "lineage_hash": "lineage-sha",
-                },
-                {
-                    "trade_decision_id": "decision-sell-id",
-                    "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
-                    "event_type": "decision",
-                    "symbol": "AAPL",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "microbar-cross-sectional-pairs-v1",
-                    "decision_hash": "decision-sell",
-                    "decision_json": {"account": {"equity": "10000"}},
-                    "source_decision_mode": "strategy_signal_paper",
-                    "profit_proof_eligible": True,
-                    "lineage_hash": "lineage-sha",
-                },
+                strategy_decision_row(
+                    trade_decision_id="decision-buy-id",
+                    computed_at=march_6_market_hour(34),
+                    decision_hash="decision-buy",
+                    decision_json={"account": {"equity": "10000"}},
+                    profit_proof_eligible=True,
+                ),
+                strategy_decision_row(
+                    trade_decision_id="decision-sell-id",
+                    computed_at=march_6_market_hour(39),
+                    decision_hash="decision-sell",
+                    decision_json={"account": {"equity": "10000"}},
+                    profit_proof_eligible=True,
+                ),
             ],
             order_lifecycle_rows=[
-                {
-                    "execution_order_event_id": "event-new-buy",
-                    "trade_decision_id": "decision-buy-id",
-                    "event_ts": datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
-                    "event_type": "new",
-                    "symbol": "AAPL",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "microbar-cross-sectional-pairs-v1",
-                    "decision_hash": "decision-buy",
-                    "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-buy",
-                    "lineage_hash": "lineage-sha",
-                    "source_topic": "alpaca.trade_updates",
-                    "source_partition": 0,
-                    "source_offset": 100,
-                    "source_window_id": "source-window-new-buy",
-                },
-                {
-                    "execution_order_event_id": "event-new-sell",
-                    "trade_decision_id": "decision-sell-id",
-                    "event_ts": datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
-                    "event_type": "new",
-                    "symbol": "AAPL",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "microbar-cross-sectional-pairs-v1",
-                    "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sell",
-                    "lineage_hash": "lineage-sha",
-                    "source_topic": "alpaca.trade_updates",
-                    "source_partition": 0,
-                    "source_offset": 101,
-                    "source_window_id": "source-window-new-sell",
-                },
-                {
-                    "execution_order_event_id": "event-fill-buy",
-                    "trade_decision_id": "decision-buy-id",
-                    "execution_id": "execution-buy",
-                    "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
-                    "event_type": "filled",
-                    "symbol": "AAPL",
-                    "side": "buy",
-                    "filled_qty": Decimal("1"),
-                    "filled_qty_delta": Decimal("1"),
-                    "avg_fill_price": Decimal("100"),
-                    "filled_notional_delta": Decimal("100"),
-                    "fill_quantity_basis": "cumulative_to_delta",
-                    "cost_amount": Decimal("0.20"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "microbar-cross-sectional-pairs-v1",
-                    "decision_hash": "decision-buy",
-                    "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-buy",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                    "source_topic": "alpaca.trade_updates",
-                    "source_partition": 0,
-                    "source_offset": 102,
-                    "source_window_id": "source-window-fill-buy",
-                },
-                {
-                    "execution_order_event_id": "event-fill-sell",
-                    "trade_decision_id": "decision-sell-id",
-                    "execution_id": "execution-sell",
-                    "event_ts": datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
-                    "event_type": "filled",
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("1"),
-                    "filled_qty_delta": Decimal("1"),
-                    "avg_fill_price": Decimal("101"),
-                    "filled_notional_delta": Decimal("101"),
-                    "fill_quantity_basis": "cumulative_to_delta",
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
-                    "account_label": "TORGHUT_SIM",
-                    "strategy_id": "microbar-cross-sectional-pairs-v1",
-                    "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sell",
-                    "cost_model_hash": "cost-sha",
-                    "lineage_hash": "lineage-sha",
-                    "source_topic": "alpaca.trade_updates",
-                    "source_partition": 0,
-                    "source_offset": 103,
-                    "source_window_id": "source-window-fill-sell",
-                },
+                paper_order_event(
+                    execution_order_event_id="event-new-buy",
+                    trade_decision_id="decision-buy-id",
+                    event_ts=march_6_market_hour(34, 1),
+                    event_type="new",
+                    decision_hash="decision-buy",
+                    alpaca_order_id="order-buy",
+                    execution_policy_hash="policy-buy",
+                    source_offset=100,
+                    source_window_id="source-window-new-buy",
+                ),
+                paper_order_event(
+                    execution_order_event_id="event-new-sell",
+                    trade_decision_id="decision-sell-id",
+                    event_ts=march_6_market_hour(39, 1),
+                    event_type="new",
+                    decision_hash="decision-sell",
+                    alpaca_order_id="order-sell",
+                    execution_policy_hash="policy-sell",
+                    source_offset=101,
+                    source_window_id="source-window-new-sell",
+                ),
+                paper_order_fill(
+                    execution_order_event_id="event-fill-buy",
+                    trade_decision_id="decision-buy-id",
+                    execution_id="execution-buy",
+                    event_ts=march_6_market_hour(35, 1),
+                    event_type="filled",
+                    side="buy",
+                    avg_fill_price=Decimal("100"),
+                    filled_notional_delta=Decimal("100"),
+                    cost_amount=Decimal("0.20"),
+                    decision_hash="decision-buy",
+                    alpaca_order_id="order-buy",
+                    execution_policy_hash="policy-buy",
+                    source_offset=102,
+                    source_window_id="source-window-fill-buy",
+                ),
+                paper_order_fill(
+                    execution_order_event_id="event-fill-sell",
+                    trade_decision_id="decision-sell-id",
+                    execution_id="execution-sell",
+                    event_ts=march_6_market_hour(40, 1),
+                    event_type="filled",
+                    side="sell",
+                    avg_fill_price=Decimal("101"),
+                    filled_notional_delta=Decimal("101"),
+                    cost_amount=Decimal("0.10"),
+                    decision_hash="decision-sell",
+                    alpaca_order_id="order-sell",
+                    execution_policy_hash="policy-sell",
+                    source_offset=103,
+                    source_window_id="source-window-fill-sell",
+                ),
             ],
             allow_authoritative_runtime_ledger_materialization=True,
         )

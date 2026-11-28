@@ -102,13 +102,16 @@ database, browser, and editor validation without rebuilding up to eight platform
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
 Bayn also publishes images only from `main`. PRs limited to offline Bayn tools or documentation use the fast tier:
 lint, type checks, and tools unit tests without disposable services. Full-tier inputs include Bayn source (including
-tests), migrations, Bayn GitOps, workflow definitions, and the integration drivers and runtime inputs stored under
-tools and docs. Mixed PRs are not eligible for the fast tier. Standalone contract, formal, and GEPA changes still
-select their owned checks when they don't touch full-tier inputs. The same `Bayn release gate` requires success for
-every selected job and a skip for every unselected job. Merge groups, dispatches, and release callers always run
-every suite. See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
+tests), migrations, Bayn workflows and their shared workflow/action, and the integration drivers and runtime inputs
+stored under tools and docs. Mixed PRs are not eligible for the fast tier. Bayn GitOps changes select PR contracts
+and keep root manifest validation; the PostgreSQL monitoring ConfigMap and shared ClickHouse archive DDL also select
+the integration suites that execute those inputs. Formal verification and GEPA are selected independently for their
+proof/conformance and strategy/prompt inputs. The same `Bayn release gate` requires success for every selected job
+and a skip for every unselected job. Merge groups, dispatches, and release callers always run every suite.
+See the [Bayn test-suite audit](../../docs/bayn/test-suite-audit-2026-11-27.md) for coverage and fixtures.
 Replay image and execution acceptance share one hosted job and Nix environment, including dependency boundaries.
-The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
+The inference ledger group owns the native equity-short regression with and without TigerBeetle, so the PostgreSQL
+matrix does not repeat the PostgreSQL-only case.
 Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
 the controller. Runtime compiler tools retain main-branch publication.
 Ofz, Tengri, and Nanoagent source validation uses GitHub-hosted runners; native image and KVM jobs retain the cluster

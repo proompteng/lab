@@ -51,11 +51,14 @@ B0/F4/O1/v3, audit, and hash-locked research coverage all remain in place.
   and is an offline input. This runs lint, type checking, and Bun/Python tools unit tests without disposable services.
   CI drivers and integration tests, production build/acceptance inputs, and broker/Restate mutation tools under
   those directories are not eligible.
-- **Full:** service source (including tests), migrations, Bayn GitOps, workflow changes, and Bayn changes that mix
-  offline inputs with files outside the allowlist (including `nix/`). The full tier still requires the proof
-  jobs, all four PostgreSQL shards, streaming and market replay, archive and ledger integration, the replay image
-  and execution observer, source and contract checks, and GEPA. Merge groups, dispatches, and release callers
-  always use this tier.
+- **Full:** service source (including tests), migrations, Bayn workflow and dependency inputs, and Bayn changes that
+  mix offline inputs with files outside the allowlist. The full tier requires source and contract checks, all four
+  unit and PostgreSQL shards, streaming and market replay, archive and ledger integration, and replay image execution.
+- **Contracts and fixtures:** Bayn manifest-only changes run PR contracts plus the root workflow's manifest checks.
+  Changes to the monitoring ConfigMap also run the PostgreSQL suite that executes its queries. Changes to the shared
+  ClickHouse DDL used in the archive fixtures run archive integration, not the full tier.
+- **Formal and GEPA:** proof and execution conformance changes select formal verification; GEPA and strategy/prompt
+  changes select GEPA. Merge groups, dispatches, and release callers always run every suite.
 
 The required check is still **Bayn release gate**. It requires success from every selected job and a skipped
 result from every unselected job. Skips inside credential-free test runs do not replace the full-tier jobs that

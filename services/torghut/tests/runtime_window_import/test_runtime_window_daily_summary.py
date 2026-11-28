@@ -1,20 +1,30 @@
 from __future__ import annotations
 
-from tests.runtime_window_import.support import (
-    Decimal,
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from sqlalchemy import select
+
+from app.models import (
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
-    _runtime_ledger_bucket,
-    runtime_ledger_bucket_blockers,
+)
+from app.trading.runtime_window_import.common import runtime_ledger_bucket_blockers
+from app.trading.runtime_window_import.daily_summary import (
     runtime_ledger_daily_summary_from_observed_buckets,
+)
+from app.trading.runtime_window_import.observed_buckets import (
+    build_observed_runtime_buckets,
+)
+from app.trading.runtime_window_import.persistence import (
+    persist_observed_runtime_windows,
+)
+from tests.runtime_window_import.ledger_fixtures import march_6_market_hour
+from tests.runtime_window_import.support import (
+    _runtime_ledger_bucket,
     _runtime_pnl_basis,
     _TestRuntimeWindowImportBase,
-    build_observed_runtime_buckets,
-    datetime,
-    persist_observed_runtime_windows,
-    select,
-    timezone,
 )
 
 
@@ -175,7 +185,7 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 ),
@@ -186,16 +196,16 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
                 ),
             ],
             decision_times=[
-                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                march_6_market_hour(35),
                 datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
             ],
             execution_times=[
-                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                march_6_market_hour(36),
                 datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
             ],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("100"),
                     "runtime_ledger_bucket": _runtime_ledger_bucket(
@@ -263,7 +273,7 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 ),
@@ -273,11 +283,11 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
                     6,
                 ),
             ],
-            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            decision_times=[march_6_market_hour(35)],
+            execution_times=[march_6_market_hour(36)],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("600"),
                     "runtime_ledger_bucket": _runtime_ledger_bucket(
@@ -373,7 +383,7 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     1,
                 ),
@@ -392,7 +402,7 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
             execution_times=[],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(45),
                     "post_cost_expectancy_basis": "realized_strategy_pnl_after_explicit_costs",
                     "post_cost_promotion_eligible": True,
                     "runtime_ledger_bucket": _runtime_ledger_bucket(
@@ -466,7 +476,7 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     1,
                 ),
@@ -475,7 +485,7 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
             execution_times=[],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(45),
                     "post_cost_expectancy_basis": "realized_strategy_pnl_after_explicit_costs",
                     "post_cost_promotion_eligible": True,
                     "runtime_ledger_bucket": _runtime_ledger_bucket(
@@ -507,16 +517,16 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     6,
                 )
             ],
-            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
-            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            decision_times=[march_6_market_hour(35)],
+            execution_times=[march_6_market_hour(36)],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("40"),
                     "runtime_ledger_bucket": _runtime_ledger_bucket(),
@@ -561,7 +571,7 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
-                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    march_6_market_hour(30),
                     datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
                     40,
                 ),
@@ -572,16 +582,16 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
                 ),
             ],
             decision_times=[
-                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                march_6_market_hour(35),
                 datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
             ],
             execution_times=[
-                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                march_6_market_hour(36),
                 datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
             ],
             tca_rows=[
                 {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "computed_at": march_6_market_hour(36),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("8"),
                     "runtime_ledger_bucket": _runtime_ledger_bucket(
