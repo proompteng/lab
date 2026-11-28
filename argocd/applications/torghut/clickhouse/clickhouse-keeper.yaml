@@ -26,6 +26,10 @@ spec:
               templates:
                 podTemplate: chk-nvme
                 volumeClaimTemplate: chk-nvme-data
+            - name: "2"
+              templates:
+                podTemplate: chk-nvme
+                volumeClaimTemplate: chk-nvme-data
         templates:
           podTemplate: chk-default
           volumeClaimTemplate: chk-data
