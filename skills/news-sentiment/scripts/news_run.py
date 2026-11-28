@@ -30,7 +30,7 @@ def main() -> int:
     parser.add_argument('--run-name')
     args = parser.parse_args()
 
-    _run(str(RUN_API), 'start', '--callback-url', args.callback_url, '--request-id', args.request_id, '--symbol', args.symbol, '--domain', 'news', '--reason', args.reason, '--provider', 'codex-spark', *(('--run-name', args.run_name) if args.run_name else ()))
+    _run(str(RUN_API), 'start', '--callback-url', args.callback_url, '--request-id', args.request_id, '--symbol', args.symbol, '--domain', 'news', '--reason', args.reason, *(('--run-name', args.run_name) if args.run_name else ()))
     _run(str(RUN_API), 'progress', '--callback-url', args.callback_url, '--request-id', args.request_id, '--seq', '1', '--status', 'running', '--message', 'news_collection_started')
     _run(str(VALIDATE), '--domain', 'news', '--file', args.payload_file)
 

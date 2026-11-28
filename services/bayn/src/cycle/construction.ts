@@ -1,4 +1,4 @@
-import { isContinuousMarket, type MarketHours } from '../market-hours'
+import { isContinuousMarket, matchesEquityExecutionSession, type MarketHours } from '../market-hours'
 import { continuousExecutionPolicy } from '../market-hours'
 import { Data, Result, Schema } from 'effect'
 
@@ -266,10 +266,12 @@ export const makeBoundExecutionCalendar = (
   hours: MarketHours,
   window: Pick<CycleWindow, 'executionSessionDate' | 'executionOpenAt' | 'executionCloseAt'>,
 ) => {
-  const session = isContinuousMarket(hours)
-    ? { date: window.executionSessionDate, openAt: window.executionOpenAt, closeAt: window.executionCloseAt }
-    : hours.sessions.find((entry) => entry.date === window.executionSessionDate)
-  return session === undefined
-    ? Result.fail(failure('execution-calendar', 'decode', 'market hours have no selected execution window'))
-    : makeExecutionCalendarObservation({ schemaVersion: hours.schemaVersion, source: hours.source, ...session })
+  const session = {
+    date: window.executionSessionDate,
+    openAt: window.executionOpenAt,
+    closeAt: window.executionCloseAt,
+  }
+  return isContinuousMarket(hours) || matchesEquityExecutionSession(hours, session)
+    ? makeExecutionCalendarObservation({ schemaVersion: hours.schemaVersion, source: hours.source, ...session })
+    : Result.fail(failure('execution-calendar', 'decode', 'market hours have no selected execution window'))
 }

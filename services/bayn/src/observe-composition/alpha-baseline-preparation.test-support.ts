@@ -13,8 +13,8 @@ import {
 } from './alpha-baseline-preparation'
 
 /** Synthetic input fixture only; it is never evidence of an actual provider acquisition. */
-export const preparedAlphaBaselineFixture = (): RecordedAlphaBaselinePreparation => {
-  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)('2026-09-04')
+export const preparedAlphaBaselineFixture = (date = '2026-09-04'): RecordedAlphaBaselinePreparation => {
+  const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)(date)
   const policy = makeIntradayAlphaPolicy(Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument)))
   const calendar = Result.getOrThrow(
     normalizeMarketCalendarResult(
@@ -35,24 +35,13 @@ export const preparedAlphaBaselineFixture = (): RecordedAlphaBaselinePreparation
     imageRepository: 'ghcr.io/proompteng/bayn',
     imageDigest: `sha256:${'d'.repeat(64)}`,
   }
-  const { query } = Result.getOrThrow(alphaBaselinePreparationIdentity(request, executionBuild))
-  const dates = [
-    '2026-08-14',
-    '2026-08-17',
-    '2026-08-18',
-    '2026-08-19',
-    '2026-08-20',
-    '2026-08-21',
-    '2026-08-24',
-    '2026-08-25',
-    '2026-08-26',
-    '2026-08-27',
-    '2026-08-28',
-    '2026-08-31',
-    '2026-09-01',
-    '2026-09-02',
-    '2026-09-03',
-  ].map((day) => Schema.decodeUnknownSync(IsoDateSchema)(day))
+  const { query, nativeSession } = Result.getOrThrow(alphaBaselinePreparationIdentity(request, executionBuild))
+  const dates = Array.from({ length: 23 }, (_, index) => new Date(Date.parse(sessionDate) - (23 - index) * 86_400_000))
+    .filter((day) => day.getUTCDay() !== 0 && day.getUTCDay() !== 6 && day.toISOString().slice(0, 10) !== '2026-11-26')
+    .slice(-14)
+    .map((day) => Schema.decodeUnknownSync(IsoDateSchema)(day.toISOString().slice(0, 10)))
+  const startedAt = new Date(Date.parse(nativeSession.openAt) + 62_000).toISOString()
+  const completedAt = new Date(Date.parse(startedAt) + 1_000).toISOString()
   const intradayDailyRows = query.symbols.flatMap((symbol, index) =>
     dates.map((date, day) => ({
       symbol,
@@ -84,14 +73,18 @@ export const preparedAlphaBaselineFixture = (): RecordedAlphaBaselinePreparation
       acquisition: {
         schemaVersion: 'bayn.intraday-alpha-baseline-acquisition.v1',
         query,
-        startedAt: '2026-09-04T12:01:02.000Z',
-        completedAt: '2026-09-04T12:01:03.000Z',
+        startedAt,
+        completedAt,
         inputs: { intradayDailyRows, checkpointRows, adjustedDailyFallback: null },
         trailingBaseline,
       },
     }),
   )
-  return { contentHash: source.contentHash, payload: source.payload, recordedAt: '2026-09-04T12:01:03.001Z' }
+  return {
+    contentHash: source.contentHash,
+    payload: source.payload,
+    recordedAt: new Date(Date.parse(completedAt) + 1).toISOString(),
+  }
 }
 
 /** Reproducible partial inputs, without claiming they satisfy preopen preparation readiness. */
