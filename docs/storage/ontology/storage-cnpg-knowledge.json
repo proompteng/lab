@@ -1,0 +1,81 @@
+{
+  "acronyms": [
+    {
+      "description": "Backup and Recovery Manager for PostgreSQL. CNPG uses Barman for base backups and WAL archives on clusters configured for object-store backup.",
+      "name": "Barman"
+    },
+    {
+      "description": "Ceph's OSD storage backend. It stores objects directly on block devices and can place metadata on a separate block.db device.",
+      "name": "BlueStore"
+    },
+    {
+      "description": "Ceph File System, the shared filesystem that backs Galactic's rook-cephfs StorageClass for volumes mounted by multiple nodes.",
+      "name": "CephFS"
+    },
+    {
+      "description": "Object Storage Daemon, the Ceph daemon that stores objects and participates in replication, recovery, and scrubbing.",
+      "name": "OSD"
+    },
+    {
+      "description": "Placement Group in Ceph, a logical group of objects mapped together onto OSDs. Its state helps determine whether data is available and fully replicated.",
+      "name": "PG"
+    },
+    {
+      "description": "Point-in-time recovery in PostgreSQL, which restores a base backup and replays a continuous WAL archive to a chosen recovery target.",
+      "name": "PITR"
+    },
+    {
+      "description": "PersistentVolumeClaim, a namespaced Kubernetes request for storage that binds to a PersistentVolume. The volume's reclaim policy determines what happens to backing storage after claim deletion.",
+      "name": "PVC"
+    },
+    {
+      "description": "RADOS Block Device, the Ceph block storage behind Galactic's default rook-ceph-block StorageClass.",
+      "name": "RBD"
+    },
+    {
+      "description": "RADOS Gateway, the Ceph service that exposes S3-compatible object storage.",
+      "name": "RGW"
+    },
+    {
+      "description": "Recovery Point Objective, the maximum acceptable data loss expressed as an interval of time. A backup schedule is not proof that the objective can be met.",
+      "name": "RPO"
+    },
+    {
+      "description": "A Kubernetes resource that requests a point-in-time snapshot of a PVC through a supported CSI driver. A storage snapshot is not necessarily an independent backup.",
+      "name": "VolumeSnapshot"
+    },
+    {
+      "description": "Write-ahead log, PostgreSQL's record of changes used for crash recovery, replication, and point-in-time recovery. This is distinct from the Ceph BlueStore WAL.",
+      "name": "WAL"
+    }
+  ],
+  "customAnalyses": [],
+  "dataSource": "storage",
+  "rules": [
+    {
+      "description": "Budget per instance: sum pool caps across peak client processes, including rollout surges, plus jobs, migrations, and direct sessions. Stay below effective max_connections after reserved slots, leave operator and failover headroom, and verify live usage before raising caps.",
+      "name": "CNPG connection budget"
+    },
+    {
+      "description": "Recover Kubernetes quorum and physical disks before Ceph. Require monitor quorum, intended OSDs up and in, no inactive, stale, or unavailable PGs, and working client storage before restoring dependent workloads. Verify application endpoints and keep real Ceph warnings visible.",
+      "name": "Ceph recovery before workloads"
+    },
+    {
+      "description": "Ceph defaults warn at 85% nearfull, block backfill to an OSD at 90% backfillfull, and block writes at 95% full. Verify effective ratios with ceph osd dump and per-OSD use with ceph osd df. Investigate skew and headroom at nearfull; do not raise thresholds to hide pressure.",
+      "name": "OSD capacity thresholds"
+    },
+    {
+      "description": "Never prune PVCs or snapshots without explicit approval for the exact resources. Verify ownership, reclaim or deletion policy, and rollback dependencies. Before writable RBD repair, snapshot the image and prove it is unmounted and idle; retain the snapshot through the rollback window.",
+      "name": "Protect PVCs and snapshots"
+    },
+    {
+      "description": "Route standby-only audits to the CNPG -ro Service with a least-privileged read-only role. Confirm the endpoint is a ready replica, pg_is_in_recovery() returns true, and replay lag meets the audit's freshness needs. If no standby is available, report it; never silently fall back to -r or -rw.",
+      "name": "Read-only standby for audits"
+    },
+    {
+      "description": "For PITR, verify a usable base backup and continuous archived WAL to the target. Restore into a separate cluster and verify application data before cutover. Compare the gap from the verified recoverable point to the failure or write freeze against the required RPO.",
+      "name": "Verify backup recoverability"
+    }
+  ],
+  "version": 1
+}
