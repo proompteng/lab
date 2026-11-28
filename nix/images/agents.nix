@@ -524,6 +524,7 @@ let
     bun
     nodejs
     openaiCodexCli
+    pstackBundle
     pkgs.bash
     pkgs.cacert
     pkgs.coreutils
