@@ -360,6 +360,68 @@ describe('agents controller startup resync', () => {
     }
   })
 
+  it('preserves terminal idempotency receipts for expired already-terminal runs seeded at startup', async () => {
+    vi.stubEnv('AGENTS_CONTROLLER_IDEMPOTENCY_ENABLED', 'true')
+    const markAgentRunIdempotencyKeyTerminal = vi.fn(async () => {})
+    configureAgentsControllerRuntime({
+      createPrimitivesStore: () =>
+        ({
+          ready: Promise.resolve(),
+          markAgentRunIdempotencyKeyTerminal,
+        }) as never,
+    })
+
+    const namespace = 'agents'
+    const finishedAt = '2026-01-20T00:00:00Z'
+    const expiredTerminalRun = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        namespace,
+        name: 'expired-terminal-run',
+        uid: 'expired-idem-uid',
+        resourceVersion: '100',
+        generation: 1,
+      },
+      spec: {
+        agentRef: { name: 'agent' },
+        idempotencyKey: 'startup-expired-receipt',
+        ttlSecondsAfterFinished: 1,
+      },
+      status: { phase: 'Succeeded', observedGeneration: 1, finishedAt },
+    }
+    const list = vi.fn(async (resource: string) =>
+      resource === RESOURCE_MAP.AgentRun
+        ? { metadata: { resourceVersion: '100' }, items: [expiredTerminalRun] }
+        : { items: [] },
+    )
+    const kube = buildKube({ list })
+    const state = createControllerState()
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      state.runs.update(namespace, 'expired-terminal-run', expiredTerminalRun)
+      await __test.startNamespaceWatches(kube as never, namespace, state, defaultConcurrency, handles, {
+        agentRunResourceVersion: '100',
+      })
+      await awaitNamespaceIdle(namespace)
+
+      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'expired-terminal-run', namespace, {
+        wait: false,
+      })
+      expect(markAgentRunIdempotencyKeyTerminal).toHaveBeenCalledExactlyOnceWith({
+        namespace,
+        agentName: 'agent',
+        idempotencyKey: 'startup-expired-receipt',
+        terminalPhase: 'Succeeded',
+        terminalAt: finishedAt,
+      })
+    } finally {
+      __test.stopWatchHandles(handles)
+      configureAgentsControllerRuntime({ createPrimitivesStore: undefined })
+      __test.getRuntimeMutableState().primitivesStoreRef = null
+    }
+  })
+
   it('reconciles Running workflow continuations observed by periodic relist even when the MODIFIED watch event is covered', async () => {
     vi.stubEnv('AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED', 'true')
     const namespace = 'agents'

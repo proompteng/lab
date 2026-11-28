@@ -1358,7 +1358,9 @@ const reconcileNamespaceState = async (
   if (lifecycleToken !== runtimeMutableState.lifecycleToken) return
   for (const run of runs) {
     const name = asString(readNested(run, ['metadata', 'name']))
-    if (name) void enqueueRun(kube, namespace, name, state, concurrency)
+    if (!name) continue
+    const terminalReceipt = getTerminalIdempotencyReceipt(run)
+    void enqueueRun(kube, namespace, name, state, concurrency, terminalReceipt ? { terminalReceipt } : undefined)
   }
 }
 
