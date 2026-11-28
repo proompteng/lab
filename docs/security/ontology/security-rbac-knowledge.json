@@ -1,0 +1,97 @@
+{
+  "acronyms": [
+    {
+      "description": "Access Control List. Galactic's Tailscale policy controls which tailnet identities can reach tagged nodes and services. Network reachability does not grant Kubernetes API permissions.",
+      "name": "ACL"
+    },
+    {
+      "description": "External Secrets Operator. It reconciles ExternalSecret references through an approved SecretStore or ClusterSecretStore into Kubernetes Secrets. Galactic's 1Password stores read from the vault selected for the workload.",
+      "name": "ESO"
+    },
+    {
+      "description": "JSON Web Token, a format for claims. Kubernetes signs its service account JWTs. Reading a token's claims is not proof that it is authentic, unexpired, or intended for the recipient.",
+      "name": "JWT"
+    },
+    {
+      "description": "Key Management Service. It manages cryptographic keys and operations such as encryption and decryption. Key use requires its own authorization; it is not a substitute for workload identity.",
+      "name": "KMS"
+    },
+    {
+      "description": "The Sealed Secrets client that encrypts Secret data for the target cluster's controller. In the default strict scope, ciphertext is bound to the Secret name and namespace.",
+      "name": "kubeseal"
+    },
+    {
+      "description": "Mutual Transport Layer Security. Both peers authenticate each other during the TLS handshake. The authenticated peer still needs authorization for the requested operation.",
+      "name": "mTLS"
+    },
+    {
+      "description": "A Kubernetes resource that controls ingress or egress for selected Pods when supported by the network plugin. Allow rules are additive and do not replace API or database authorization.",
+      "name": "NetworkPolicy"
+    },
+    {
+      "description": "OpenID Connect, an identity layer on top of OAuth 2.0. A consumer verifies an ID token against its trusted issuer, expected audience, signature, and expiry before using its claims.",
+      "name": "OIDC"
+    },
+    {
+      "description": "Pod Security Standards, the Kubernetes Privileged, Baseline, and Restricted profiles that Pod Security Admission can enforce, audit, or warn on.",
+      "name": "PSS"
+    },
+    {
+      "description": "Role-Based Access Control. Kubernetes Roles and ClusterRoles define allowed API actions; bindings grant those permissions to specific users, groups, or service accounts.",
+      "name": "RBAC"
+    },
+    {
+      "description": "ServiceAccount, a namespace-scoped Kubernetes identity used by workloads. Bind only the permissions needed by that workload.",
+      "name": "SA"
+    },
+    {
+      "description": "The Kubernetes authentication API request that validates a token for the requested audience and returns the authenticated identity. Callers still have to authorize that identity.",
+      "name": "TokenReview"
+    }
+  ],
+  "customAnalyses": [],
+  "dataSource": "security",
+  "rules": [
+    {
+      "description": "Sync only the required keys from the workload's approved 1Password vault and store. An existing SealedSecret remains the source until an explicit migration; never have both controllers write the same Secret. Verify readiness and consumer behavior without printing values.",
+      "name": "Approved external secret sync",
+      "searchTerm": "ExternalSecret"
+    },
+    {
+      "description": "Use galactic-lan on the LAN and galactic-tailscale off LAN through the approved tailnet. Keep API TLS verification enabled. Confirm the context, pass an explicit namespace, and verify identity with kubectl auth whoami. On denial, follow the access runbook rather than switching credentials or widening access.",
+      "name": "Authorized Galactic access",
+      "searchTerm": "Tailscale"
+    },
+    {
+      "description": "Require a successful TokenReview that returns the expected audience and authorized service account. Deny missing, invalid, or mismatched identity and review errors without fallback. Where access is bound to a live workload, verify its object identity and ownership before authorizing it.",
+      "name": "Fail-closed workload authentication",
+      "searchTerm": "TokenReview"
+    },
+    {
+      "description": "Prefer namespace-scoped Roles and RoleBindings. Enumerate resources and verbs; never grant wildcard Secret verbs or wildcards that reach core Secrets. For Agents, allow only get for Secrets referenced by the Agent or AgentRun allowlist. Follow docs/agents/rbac-matrix.md.",
+      "name": "Least-privilege Kubernetes grants",
+      "searchTerm": "RBAC"
+    },
+    {
+      "description": "Use short-lived, rotating projected service account tokens for the intended audience. Disable default API-token automount when it is not needed. Keep the downstream service credential with the gateway, not in the workload.",
+      "name": "Projected service account tokens",
+      "searchTerm": "serviceAccountToken"
+    },
+    {
+      "description": "Use a dedicated read-only database login for catalog access, with SELECT limited to approved views or tables and no ownership, write or create grants, or privileged role memberships. Verify both an allowed read and denied out-of-scope access as that login; network reachability is not a grant.",
+      "name": "Read-only database roles",
+      "searchTerm": "read-only database"
+    },
+    {
+      "description": "Use the owning workload's approved sealing path with the target controller and exact Secret name and namespace. Commit only the encrypted SealedSecret through GitOps. Keep changes to credential identity, destination, or permissions subject to explicit approval.",
+      "name": "Seal secrets for the target workload",
+      "searchTerm": "SealedSecret"
+    },
+    {
+      "description": "Never print secrets, tokens, passwords, rendered Secret data, or database URLs. Keep them out of shell arguments, traces, logs, artifacts, PRs, and catalog entries. Verify resource metadata, required key names, and consumer readiness without disclosing values.",
+      "name": "Secret-free verification",
+      "searchTerm": "credential"
+    }
+  ],
+  "version": 1
+}
