@@ -59,22 +59,21 @@ export const makeMutationStartPostgres = (
   fence: WriterFenceService,
   events: MutationEventPostgres,
 ): MutationStartPostgres => {
+  // All events for a mutation belong to one intent. Discard terminal intents before ranking
+  // their history, but apply the outcome predicate only to the newest event of each mutation.
   const otherUnresolved = (intentId: string) => sql`
       EXISTS (
         SELECT 1
         FROM (
           SELECT DISTINCT ON (events.mutation_id)
-            events.intent_id,
             events.operation,
-            events.event_type,
-            intents.state
+            events.event_type
           FROM mutation_events AS events
           JOIN intents ON intents.intent_id = events.intent_id
+          WHERE intents.intent_id <> ${intentId} AND intents.state <> 'TERMINAL'
           ORDER BY events.mutation_id, events.sequence DESC
         ) AS latest
-        WHERE latest.intent_id <> ${intentId}
-          AND latest.state <> 'TERMINAL'
-          AND (
+        WHERE (
             latest.event_type IN (
               'SUBMIT_STARTED',
               'SUBMIT_UNKNOWN',
