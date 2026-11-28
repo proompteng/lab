@@ -1,0 +1,25 @@
+--- a/main.py
++++ b/main.py
+@@ -18,14 +18,17 @@
+     EntityCoveragePayload,
+ )
+ from auto_ontology.retrieval.text_to_sql.state import AgentState
+-from auto_ontology.utils.llm_invoke import get_llm_client
++from auto_ontology.utils.llm_invoke import get_llm_client, get_non_reasoning_llm_client
+ 
+ logger = logging.getLogger(__name__)
+ 
+ try:
+-    llm_client = get_llm_client()
+-except (ValueError, EnvironmentError, OSError) as exc:
+-    logger.error("Failed to initialize LLM client: %s", exc)
+-    llm_client = None
++    llm_client = get_non_reasoning_llm_client()
++except (ValueError, EnvironmentError, OSError):
++    try:
++        llm_client = get_llm_client()
++    except (ValueError, EnvironmentError, OSError) as exc:
++        logger.error("Failed to initialize LLM client: %s", exc)
++        llm_client = None
+ 
+ steps = create_steps()
