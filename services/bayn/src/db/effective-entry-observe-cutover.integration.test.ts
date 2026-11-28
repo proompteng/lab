@@ -34,6 +34,7 @@ for (const {
   parameterHash,
   protocolHash,
   rejectionMessage,
+  requiresFreshPositionSnapshot = false,
 } of [
   {
     schemaVersion: 'bayn.jev.protocol.v38',
@@ -105,6 +106,7 @@ for (const {
     behaviorHash: retainedV2.strategy.behaviorHash,
     parameterHash: retainedV2.strategy.parameterHash,
     protocolHash: retainedV2.protocolHash,
+    requiresFreshPositionSnapshot: true,
     rejectionMessage:
       'intraday-alpha v2 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
@@ -147,7 +149,7 @@ for (const {
   END $fixture$`)
     yield* sql`INSERT INTO authority_generations VALUES
     ('current','account','jev',${schemaVersion},${behaviorHash},${parameterHash},${protocolHash})`
-    if (migrationId === 229)
+    if (requiresFreshPositionSnapshot)
       yield* sql`INSERT INTO position_snapshots VALUES ('account',0,clock_timestamp(),'initial-flat')`
   })
 
@@ -203,7 +205,7 @@ for (const {
   })
 
   const blockers = [
-    ...(migrationId === 229
+    ...(requiresFreshPositionSnapshot
       ? [
           { name: 'no broker position snapshot', seed: 'DELETE FROM position_snapshots' },
           {
