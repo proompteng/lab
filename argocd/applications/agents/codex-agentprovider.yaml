@@ -6,6 +6,7 @@ spec:
   binary: /usr/local/bin/agent-runner
   workload:
     serviceAccountName: codex-auto-ontology-runner
+    automountServiceAccountToken: true
     serviceAccountToken:
       audience: agents.proompteng.ai/auto-ontology-mcp
       expirationSeconds: 600

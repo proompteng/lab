@@ -4,6 +4,9 @@ metadata:
   name: google
 spec:
   binary: /usr/local/bin/agent-runner
+  workload:
+    serviceAccountName: google-triage-runner
+    automountServiceAccountToken: true
   adapter:
     type: agy-cli
     agy:

@@ -159,7 +159,7 @@ spec:
 `spec.binary` is required. The other current fields are `argsTemplate[]`, string-valued `envTemplate`, `secretEnv[]`
 (`name`, `secretName`, `key`, `optional`), `inputFiles[]` (`path`, `content`), `outputArtifacts[]` (`name`, optional
 `path`, `key`, `url`), optional `health.capacityFailurePolicy` (`degrade` or `block`), optional provider-owned
-`workload` defaults (`image`, `resources.requests`, `resources.limits`, `serviceAccountName`, and
+`workload` defaults (`image`, `resources.requests`, `resources.limits`, `serviceAccountName`, `automountServiceAccountToken`, and
 `serviceAccountToken`). A service-account token has required `audience`, `expirationSeconds` (600–3600), and an
 absolute `mountPath`. The remaining field is a preserved `adapter` map. The chart sample's `codex-app-server` adapter
 is current; arbitrary adapter keys are not a license to invent CRD fields.

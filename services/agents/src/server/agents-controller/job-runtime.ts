@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { quantityToScalar } from '@kubernetes/client-node/dist/util.js'
 
 import { asRecord, asString, readNested } from '../primitives'
-import { resolveEffectiveServiceAccount } from '../primitives-policy'
+import { extractProviderServiceAccount, resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
 import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH } from '../../workspace-cache'
 import { providerUsesControllerAuthSecret, resolveProviderSecretEnv } from './policy'
@@ -825,6 +825,13 @@ export const submitJobRun = async (
     : null
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig, provider)
   const serviceAccountToken = resolveProviderServiceAccountToken(provider)
+  const providerAutomount = readNested(provider, ['spec', 'workload', 'automountServiceAccountToken'])
+  const automountServiceAccountToken =
+    typeof providerAutomount === 'boolean' && serviceAccount === extractProviderServiceAccount(provider)
+      ? providerAutomount
+      : serviceAccountToken
+        ? false
+        : undefined
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
   const usesStandardRunner = workloadImage === runnerDefaultsConfig.defaultRunnerImage
   const runnerAdapterType = asString(readNested(agentRunnerSpec, ['adapter', 'type']))
@@ -1136,7 +1143,7 @@ export const submitJobRun = async (
 
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount,
-    ...(serviceAccountToken ? { automountServiceAccountToken: false } : {}),
+    automountServiceAccountToken,
     restartPolicy: 'Never',
     containers: [
       {

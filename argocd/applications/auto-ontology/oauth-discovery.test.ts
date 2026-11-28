@@ -130,3 +130,22 @@ test('catalog Postgres uses asynchronous commits without replacing its entrypoin
   expect(postgres?.volumeMounts).toEqual([{ name: 'data', mountPath: '/var/lib/postgresql' }])
   expect(spec.volumes).toContainEqual({ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } })
 })
+
+test('SQL routing is patched on the same backend image from a mounted, versioned ConfigMap', () => {
+  type Backend = { spec: { template: { spec: { initContainers: { name: string; image: string }[] } } } }
+  const { spec } = resource<Workload & Backend>('Deployment', 'auto-ontology').spec.template
+  const backend = spec.containers.find(({ name }) => name === 'backend')
+  expect(spec.initContainers.slice(0, 2).map(({ name }) => name)).toEqual(['copy-sql-runtime', 'apply-sql-routing'])
+  expect(spec.initContainers[0].image).toBe(backend?.image)
+  expect(backend?.volumeMounts).toContainEqual({
+    name: 'sql-runtime',
+    mountPath: '/app/auto_ontology/retrieval/text_to_sql',
+    subPath: 'patched',
+    readOnly: true,
+  })
+  const name = spec.volumes?.find((v) => v.name === 'sql-routing')?.configMap?.name
+  expect(name).toMatch(/^auto-ontology-sql-routing-[a-z0-9]+$/)
+  expect(resource<Resource & { data: Record<string, string> }>('ConfigMap', name!).data['sql-routing.patch']).toContain(
+    'def resolve_connector_for_sql(',
+  )
+})

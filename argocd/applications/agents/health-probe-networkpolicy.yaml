@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-health-probes
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: agents
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [agents-auto-ontology-mcp-gateway, agents-shell]
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - protocol: TCP
+          port: 8080

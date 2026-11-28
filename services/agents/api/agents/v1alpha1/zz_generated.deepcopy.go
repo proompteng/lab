@@ -266,6 +266,11 @@ func (in *AgentProviderWorkloadSpec) DeepCopyInto(out *AgentProviderWorkloadSpec
 		*out = new(WorkloadResources)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.AutomountServiceAccountToken != nil {
+		in, out := &in.AutomountServiceAccountToken, &out.AutomountServiceAccountToken
+		*out = new(bool)
+		**out = **in
+	}
 	if in.ServiceAccountToken != nil {
 		in, out := &in.ServiceAccountToken, &out.ServiceAccountToken
 		*out = new(AgentProviderServiceAccountTokenSpec)

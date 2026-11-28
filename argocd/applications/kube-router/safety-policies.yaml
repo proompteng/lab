@@ -10,12 +10,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "-3"
     argocd.argoproj.io/sync-options: Prune=false
 spec:
-  # Keep existing Agents traffic neutral without bypassing the catalog job's allowlist.
+  # Keep other Agents traffic neutral without bypassing the catalog and triage allowlists.
   podSelector:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: NotIn
-        values: [auto-ontology-sync]
+        values: [auto-ontology-sync, agents-observability-query]
+      - key: agents.proompteng.ai/provider
+        operator: NotIn
+        values: [codex, google]
   policyTypes:
     - Ingress
     - Egress
