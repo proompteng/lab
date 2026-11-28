@@ -33,6 +33,9 @@ export const readSnapshot = Effect.fn('macro-rebalance.reconcile')(function* (
 })
 
 export const newPrivateFile = { flag: 'wx', mode: 0o600, noFollow: true } as const
+export const submissionJournalPath = (directory: string, prefix: string) =>
+  join(directory, `${prefix}submissions.jsonl`)
+
 const encoder = new TextEncoder()
 export const writeRecord = Effect.fn('macro-rebalance.persist')(function* (file: FileSystem.File, value: object) {
   const text = yield* Effect.fromResult(canonicalJsonV1Result(value)).pipe(
@@ -68,7 +71,7 @@ export const submitPaperRebalance = Effect.fn('macro-rebalance.submit')(function
   if (orders.length === 0) return
 
   const outputDirectory = dirname(input.output)
-  const journal = yield* fs.open(join(outputDirectory, `${input.journalPrefix}submissions.jsonl`), newPrivateFile)
+  const journal = yield* fs.open(submissionJournalPath(outputDirectory, input.journalPrefix), newPrivateFile)
   const directory = yield* fs.open(outputDirectory, { flag: 'r' })
   yield* directory.sync
   const dispatchDeadline = Math.min(checkedAt + 60_000, window.cutoff)

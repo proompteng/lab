@@ -1,21 +1,112 @@
-import { Clock, Effect, Result } from 'effect'
+import { join } from 'node:path'
+
+import { Clock, Effect, FileSystem, Result, Schema, type PlatformError } from 'effect'
 
 import { OrderSide } from '../../src/execution/contracts'
+import { IsoDateSchema, Sha256Schema } from '../../src/schemas'
 import { defaultMacroCanaryEtfPolicy, macroCanaryEtfs } from '../../src/strategy/macro-canary-etf/policy'
 import { planMacroCanaryEtfRebalance } from '../../src/strategy/macro-canary-etf/rebalance-planner'
-import { compileMacroCanaryEtfSignal } from '../../src/strategy/macro-canary-etf/signals'
+import { compileMacroCanaryEtfSignal, macroCanaryEtfReviewOffset } from '../../src/strategy/macro-canary-etf/signals'
 import { utcInstantFromEpochMillis } from '../../src/time'
-import { BarAdjustment, Side, type Alpaca, type OrderRequest } from '../macro-canary-runner/alpaca'
+import { AccountId, BarAdjustment, Side, type Alpaca, type OrderRequest } from '../macro-canary-runner/alpaca'
 import { TimeInForce } from '../macro-canary-runner/contract'
 import { nyTime, readBars, readWindow } from '../macro-canary-runner/market'
-import { hashEvidence } from '../macro-canary-runner/paper-rebalance'
+import {
+  hashEvidence,
+  newPrivateFile,
+  readSnapshot,
+  submissionJournalPath,
+  writeRecord,
+} from '../macro-canary-runner/paper-rebalance'
 import { cents, microsPerCent, orderPrefix, overnightCapCents, type Snapshot } from '../macro-canary-runner/planner'
-import { DailySleeveFailure, type DailySleeve, type VerifiedCanaryEvidenceInput } from './contract'
+import { orderPrefix as journalPrefix } from '../macro-etf-core-runner/planner'
+import { DailySleeveFailure, SleeveMode, type DailySleeve, type VerifiedCanaryEvidenceInput } from './contract'
 
 const { policy } = defaultMacroCanaryEtfPolicy
 const minimumSessions = Math.max(...policy.features.horizons) + 1
 const integerQuantity = /^\d+(?:\.0+)?$/
 const usableCents = (value: string) => (Number(value) > 0 ? cents(value) : 0)
+const receiptVersion = 'bayn.macro-canary-next-open-sleeve-receipt.v1'
+
+const JournalHeader = Schema.fromJsonString(
+  Schema.Struct({
+    outcome: Schema.String,
+    planSha256: Sha256Schema,
+    plan: Schema.optionalKey(
+      Schema.Struct({
+        sleeveId: Schema.String,
+        accountId: AccountId,
+        verifiedAccountId: AccountId,
+        receipt: Schema.Record(Schema.String, Schema.Unknown),
+      }),
+    ),
+  }),
+)
+const ReviewedReduction = Schema.Struct({
+  mode: Schema.Literal(SleeveMode.PaperSubmit),
+  signalSession: IsoDateSchema,
+  executionSession: IsoDateSchema,
+  sleeveSha256: Sha256Schema,
+  target: Schema.Struct({ review: Schema.Literal(true), policyHash: Sha256Schema }),
+  effectiveTargetWeights: Schema.Record(Schema.Literals(macroCanaryEtfs), Schema.Finite),
+})
+
+const rotationFailure = (code: string) => new DailySleeveFailure({ stage: 'rotation', code })
+const rotationFileFailure = (cause: PlatformError.PlatformError) =>
+  new DailySleeveFailure({
+    stage: 'rotation',
+    code: 'CanaryRotationFileOperationFailed',
+    cause: { kind: cause.reason._tag },
+  })
+
+const readPendingRotation = Effect.fn('multi-account-daily-sleeves.read-pending-rotation')(function* (
+  sleeve: DailySleeve,
+  outputDirectory: string,
+  reviewSignalSession: string,
+  reviewExecutionSession: string,
+  sleeveSha256: string,
+) {
+  const fs = yield* FileSystem.FileSystem
+  const prefix = journalPrefix(sleeve.accountId, reviewExecutionSession)
+  const completionPath = join(outputDirectory, `${prefix}${sleeve.sleeveId}-o1-complete.json`)
+  if (yield* fs.exists(completionPath).pipe(Effect.mapError(rotationFileFailure))) return undefined
+
+  // The reduction's reviewed target was fsynced before any order POST, even if the final receipt was lost.
+  const journal = yield* fs.readFileString(submissionJournalPath(outputDirectory, prefix)).pipe(
+    Effect.catchIf(
+      ({ reason }) => reason._tag === 'NotFound',
+      () => Effect.void,
+    ),
+    Effect.mapError(rotationFileFailure),
+  )
+  if (journal === undefined) return undefined
+  const invalid = rotationFailure('InvalidCanaryRotationJournal')
+  const { outcome, plan, planSha256 } = yield* Schema.decodeUnknownEffect(JournalHeader)(
+    journal.split('\n', 1)[0],
+  ).pipe(Effect.mapError(() => invalid))
+  if (
+    outcome !== 'prepared' ||
+    plan === undefined ||
+    plan.sleeveId !== sleeve.sleeveId ||
+    plan.receipt['schemaVersion'] !== receiptVersion ||
+    plan.receipt['phase'] !== 'reduce'
+  )
+    return undefined
+
+  const { planSha256: receiptSha256, ...material } = plan.receipt
+  if (receiptSha256 !== planSha256 || (yield* hashEvidence(material)) !== planSha256) return yield* invalid
+  const source = yield* Schema.decodeUnknownEffect(ReviewedReduction)(material).pipe(Effect.mapError(() => invalid))
+  if (
+    plan.accountId !== sleeve.accountId ||
+    plan.verifiedAccountId !== sleeve.accountId ||
+    source.signalSession !== reviewSignalSession ||
+    source.executionSession !== reviewExecutionSession ||
+    source.sleeveSha256 !== sleeveSha256 ||
+    source.target.policyHash !== defaultMacroCanaryEtfPolicy.policyHash
+  )
+    return yield* rotationFailure('CanaryRotationBindingMismatch')
+  return { source, planSha256, completionPath }
+})
 
 const reconcileInventory = (snapshot: Snapshot, sleeve: DailySleeve) =>
   Result.gen(function* () {
@@ -59,6 +150,7 @@ export const prepareCanaryRebalance = Effect.fn('multi-account-daily-sleeves.can
   snapshotSha256: string,
   sleeve: DailySleeve,
   evidence: VerifiedCanaryEvidenceInput | undefined,
+  outputDirectory: string,
 ) {
   const now = yield* Clock.currentTimeMillis
   const window = yield* readWindow(alpaca, now, policy.historyStartSession, minimumSessions)
@@ -101,6 +193,17 @@ export const prepareCanaryRebalance = Effect.fn('multi-account-daily-sleeves.can
   const target = yield* Effect.fromResult(compileMacroCanaryEtfSignal(defaultMacroCanaryEtfPolicy, market)).pipe(
     Effect.mapError((cause) => new DailySleeveFailure({ stage: 'signal', code: cause._tag, cause })),
   )
+  const sleeveSha256 = yield* hashEvidence({
+    accountId: sleeve.accountId,
+    sleeveId: sleeve.sleeveId,
+    capitalBudgetCents: sleeve.capitalBudgetCents,
+    activeSymbols: sleeve.activeSymbols,
+  })
+  const reviewIndex = dates.length - 1 - macroCanaryEtfReviewOffset(policy, dates.length)
+  const pending = target.review
+    ? undefined
+    : yield* readPendingRotation(sleeve, outputDirectory, dates[reviewIndex], calendar[reviewIndex + 1], sleeveSha256)
+  const actionable = target.review || pending !== undefined
   const inventory = yield* Effect.fromResult(reconcileInventory(snapshot, sleeve))
   const { account } = snapshot
   if (account.account_blocked || account.trading_blocked || account.trade_suspended_by_user)
@@ -118,7 +221,7 @@ export const prepareCanaryRebalance = Effect.fn('multi-account-daily-sleeves.can
     Math.min(usableCents(account.cash), usableCents(account.buying_power), budgetCents - inventory.managedCents),
   )
   const accountEvidence = evidence.accounts.find((entry) => entry.accountId === sleeve.accountId)
-  if (target.review && (accountEvidence === undefined || accountEvidence.snapshotSha256 !== snapshotSha256))
+  if (actionable && (accountEvidence === undefined || accountEvidence.snapshotSha256 !== snapshotSha256))
     return yield* new DailySleeveFailure({
       stage: 'reconcile',
       code: 'UnverifiedCanaryAccountEvidence',
@@ -127,7 +230,7 @@ export const prepareCanaryRebalance = Effect.fn('multi-account-daily-sleeves.can
 
   // An exclusion removes this sleeve's authority over a symbol, including sells and SHY carry.
   const excluded = new Set(sleeve.excludeSymbols)
-  const targetWeights = { ...target.targetWeights }
+  const targetWeights = { ...(pending?.source.effectiveTargetWeights ?? target.targetWeights) }
   for (const symbol of macroCanaryEtfs) if (excluded.has(symbol)) targetWeights[symbol] = 0
   if (rawSizingBars.some(({ bar }) => bar.c < 1 || bar.c > 100_000))
     return yield* new DailySleeveFailure({ stage: 'sizing', code: 'InvalidCanaryRawReference' })
@@ -139,7 +242,7 @@ export const prepareCanaryRebalance = Effect.fn('multi-account-daily-sleeves.can
   )
   const plan = yield* Effect.fromResult(
     planMacroCanaryEtfRebalance(defaultMacroCanaryEtfPolicy, {
-      target: { ...target, targetWeights },
+      target: { ...target, review: actionable, targetWeights },
       executionSession: window.executionDate,
       equityMicros: BigInt(budgetCents) * BigInt(microsPerCent),
       spendableCashMicros: BigInt(spendableCents) * BigInt(microsPerCent),
@@ -174,26 +277,47 @@ export const prepareCanaryRebalance = Effect.fn('multi-account-daily-sleeves.can
   if (observedAt >= window.cutoff)
     return yield* new DailySleeveFailure({ stage: 'calendar', code: 'CanaryPlanningWindowExpired' })
   const receipt = {
-    schemaVersion: 'bayn.macro-canary-next-open-sleeve-receipt.v1',
+    schemaVersion: receiptVersion,
     ...binding,
     mode: sleeve.mode,
     broker: 'alpaca-paper',
+    sleeveSha256,
     snapshotSha256,
     observedAt: utcInstantFromEpochMillis(observedAt),
     target,
+    resumedRotation:
+      pending === undefined ? null : { signalSession: pending.source.signalSession, planSha256: pending.planSha256 },
     effectiveTargetWeights: targetWeights,
     rawSizingBars,
     budgetCents,
     spendableCents,
-    remainingOneWayTurnoverBps: target.review ? (accountEvidence?.remainingOneWayTurnoverBps ?? null) : null,
+    remainingOneWayTurnoverBps: actionable ? (accountEvidence?.remainingOneWayTurnoverBps ?? null) : null,
     phase: plan.phase,
     holdReason: plan.phase === 'hold' ? plan.reason : null,
     orders,
   }
+  const planSha256 = yield* hashEvidence(receipt)
+  if (
+    pending !== undefined &&
+    plan.phase === 'hold' &&
+    plan.reason === 'NoWholeShareDrift' &&
+    sleeve.mode === SleeveMode.PaperSubmit
+  ) {
+    // Acknowledgements are not fills. Close only after a fresh verified snapshot has no actionable drift.
+    const fresh = yield* readSnapshot(alpaca, sleeve.accountId)
+    if ((yield* hashEvidence(fresh)) !== snapshotSha256) return yield* rotationFailure('CanaryRotationInventoryChanged')
+    const fs = yield* FileSystem.FileSystem
+    const marker = yield* fs.open(pending.completionPath, newPrivateFile).pipe(Effect.mapError(rotationFileFailure))
+    yield* writeRecord(marker, { ...binding, snapshotSha256, planSha256, reviewPlanSha256: pending.planSha256 }).pipe(
+      Effect.catchTag('PlatformError', (cause) => Effect.fail(rotationFileFailure(cause))),
+    )
+    const directory = yield* fs.open(outputDirectory, { flag: 'r' }).pipe(Effect.mapError(rotationFileFailure))
+    yield* directory.sync.pipe(Effect.mapError(rotationFileFailure))
+  }
   return {
     window,
-    plan: { ...receipt, planSha256: yield* hashEvidence(receipt) },
-    targetExposure: target.review
+    plan: { ...receipt, planSha256 },
+    targetExposure: actionable
       ? macroCanaryEtfs
           .filter((symbol) => !excluded.has(symbol))
           .map((symbol) => ({

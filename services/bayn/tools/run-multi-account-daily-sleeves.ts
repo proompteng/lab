@@ -156,6 +156,7 @@ const prepare = Effect.fn('multi-account-daily-sleeves.prepare')(function* (
   alpaca: Alpaca,
   snapshot: Effect.Success<ReturnType<typeof readSnapshot>>,
   evidence: VerifiedCanaryEvidenceInput | undefined,
+  outputDirectory: string,
 ) {
   const snapshotSha256 = yield* hashEvidence(snapshot).pipe(Effect.mapError(operationalFailure('reconcile')))
   if (sleeve.profile === CanaryProfile.O1) {
@@ -165,6 +166,7 @@ const prepare = Effect.fn('multi-account-daily-sleeves.prepare')(function* (
       snapshotSha256,
       sleeve,
       evidence,
+      outputDirectory,
     ).pipe(
       Effect.mapError((cause) => (cause instanceof DailySleeveFailure ? cause : operationalFailure('plan')(cause))),
     )
@@ -216,7 +218,8 @@ export const runDailySleeves = Effect.fn('multi-account-daily-sleeves.run')(func
         )
   // Reserve the requested path before network or mutation. A duplicate output never authorizes another run.
   const output = yield* fs.open(options.output, newPrivateFile).pipe(Effect.mapError(fileFailure('receipt')))
-  const directory = yield* fs.open(dirname(options.output), { flag: 'r' }).pipe(Effect.mapError(fileFailure('receipt')))
+  const outputDirectory = dirname(options.output)
+  const directory = yield* fs.open(outputDirectory, { flag: 'r' }).pipe(Effect.mapError(fileFailure('receipt')))
   yield* directory.sync.pipe(Effect.mapError(fileFailure('receipt')))
 
   const outcomes: SleeveOutcome[] = []
@@ -250,7 +253,7 @@ export const runDailySleeves = Effect.fn('multi-account-daily-sleeves.run')(func
 
     const { alpaca, snapshot } = reconciled.success
     const verified = { ...binding, verifiedAccountId: snapshot.account.id }
-    const prepared = yield* Effect.result(prepare(sleeve, alpaca, snapshot, evidence))
+    const prepared = yield* Effect.result(prepare(sleeve, alpaca, snapshot, evidence, outputDirectory))
     if (Result.isFailure(prepared)) {
       outcomes.push({ ...verified, disposition: 'failed', plan: null, error: describeFailure(prepared.failure) })
       continue

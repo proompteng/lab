@@ -201,13 +201,14 @@ timeframe:"1Day", adjustment:"all", bars, rawSizingBars}`: calendar is ordered s
    policy anchor through execution, adjusted bars are session-major and policy-universe ordered
    `{session,symbol,open,high,low,close,volume}`, and raw sizing rows are `{symbol,bar}` in policy order
    using the validated Alpaca raw bar object. Hash the material with Bayn's canonical JSON v1 SHA-256.
-2. On a review day, independently reconcile each O1 account's positions/availability, cash, outstanding
-   orders and corporate actions through the next-open boundary. Establish its remaining rolling-year
-   one-way turnover bps from fills; do not use the 60,000 bps ceiling as an estimate for an existing book.
+2. On a review day or while resuming a pending rotation, independently reconcile each O1 account's
+   positions/availability, cash, outstanding orders and corporate actions through the next-open boundary.
+   Establish its remaining rolling-year one-way turnover bps from fills; do not use the 60,000 bps ceiling
+   as an estimate for an existing book.
    The `snapshotSha256` binds the decoded `{account,positions,openOrders}` (positions ordered by symbol,
    orders by ID); if account evidence is missing the receipt exposes the observed digest for comparison.
    The adapter will not place an order with missing/stale evidence, unavailable or fractional managed
-   shares, or open orders. Off-cadence O1 needs market evidence, but not the per-account entry.
+   shares, or open orders. Off-cadence O1 needs only market evidence if it has no pending rotation.
 3. Have the independent verifier publish a private, read-only attestation of the verified evidence. The tool
    checks exact SHA/date bindings, not the trustworthiness of the verifier. Withhold O1 if verification or
    the trusted evidence source is unavailable. Use separate manifest runs to qualify core while onboarding O1;
@@ -215,12 +216,12 @@ timeframe:"1Day", adjustment:"all", bars, rawSizingBars}`: calendar is ordered s
 
 Evidence contract (schema `bayn.macro-canary-next-open-evidence.v1`):
 
-| Field                               | Value                                                                                                                                          |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schemaVersion`                     | `bayn.macro-canary-next-open-evidence.v1`                                                                                                      |
-| `signalSession`, `executionSession` | ISO exchange session dates from verified market evidence                                                                                       |
-| `marketSha256`                      | 64 lowercase hex characters                                                                                                                    |
-| `accounts`                          | Array of `{accountId, snapshotSha256, remainingOneWayTurnoverBps}`; no duplicate UUIDs; empty only when no O1 account requires review evidence |
+| Field                               | Value                                                                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schemaVersion`                     | `bayn.macro-canary-next-open-evidence.v1`                                                                                                              |
+| `signalSession`, `executionSession` | ISO exchange session dates from verified market evidence                                                                                               |
+| `marketSha256`                      | 64 lowercase hex characters                                                                                                                            |
+| `accounts`                          | Array of `{accountId, snapshotSha256, remainingOneWayTurnoverBps}`; no duplicate UUIDs; empty only when no O1 account has a review or pending rotation |
 
 ### Run and check
 
@@ -240,12 +241,12 @@ bun services/bayn/tools/run-multi-account-daily-sleeves.ts \
 Run after **20:15 America/New_York** on a completed exchange session and before **two minutes before the next
 regular open** (normally 09:28 ET). The broker calendar and clock must corroborate this window; the runner
 checks complete SIP bars and separately sourced raw sizing prices. Never retry by relaxing data or clock checks.
-Check a review date as well as a non-review date. Confirm `allBrokerAccountsVerified: true`, a `shadow`
-disposition for each sleeve, no POSTs/orders at Alpaca and complete aggregate evidence. Confirm QQQ is in both
+Check a review date and a non-review date without a pending rotation. Confirm `allBrokerAccountsVerified: true`,
+a `shadow` disposition for each sleeve, no POSTs/orders at Alpaca and complete aggregate evidence. Confirm QQQ is in both
 active universes and compare its target to the corresponding strategy on an eligible review; a zero weight
-from the signal is valid, an imposed QQQ exclusion is not. On non-review dates there is no actionable new
-target contribution. Target cents are model exposure sized against current sleeve budgets, not positions,
-submitted notional, or fill evidence.
+from the signal is valid, an imposed QQQ exclusion is not. An off-cadence run contributes target exposure only
+while resuming a pending rotation. Target cents are model exposure sized against current sleeve budgets, not
+positions, submitted notional, or fill evidence.
 
 To enable Paper, change only the approved sleeve's mode to `PaperSubmit` and add
 `--confirm-paper-submit` to the same command with a **new** output path. Review the matching account receipt
@@ -254,14 +255,24 @@ for all runs that touch those accounts; do not run the standalone paper writers 
 them concurrently. The paper path checks exact unchanged account state, history since the signal close
 (including terminal orders), and the live clock again before any mutation.
 
+O1 plans reductions before additions. If a review produces a reduction batch, later sessions use its original
+effective target from the prepared submission journal, not the off-cadence signal. A resumed plan reports the
+original review session and plan SHA as `resumedRotation`. Every continuation requires fresh market and
+account evidence and uses current sizing prices, actual available cash, and the verified remaining turnover.
+A partial fill or lack of capacity does not itself complete the rotation; the Paper runner records completion
+only after current reconciled holdings no longer have actionable drift. The next scheduled
+review supersedes the previous target. Keep the same sleeve/account binding, capital budget, active symbols,
+and private directory while resuming. Shadow can inspect a pending rotation without recording completion.
+
 The final canonical JSON is a single `bayn.multi-account-daily-sleeves-receipt.v1`; verify
 `portfolioSha256` over the canonical payload without the hash field. A redacted typed sleeve failure yields a receipt
 and nonzero status after manifest validation. Planning failures withhold all paper writes. Dispatch failure
 withholds later writes; previously acknowledged orders in other accounts are not rolled back. An interrupted
 process can leave no final receipt or an incomplete output file. The separately fsynced account/session journal
 retains the prepared plan, each attempted request and acknowledgements. A dispatch without a verified ack is
-**uncertain**: stop and look up its `client_order_id` on the verified Paper account. Never delete its journal,
-change the output directory, or retry uncertain submissions. Do not share the private receipts.
+**uncertain**: stop and look up its `client_order_id` on the verified Paper account before attesting the next
+snapshot. Never delete its journal or rotation completion record, change the output directory, or retry
+uncertain submissions. Do not share the private receipts.
 
 ### Reference CronJob (not installed)
 
