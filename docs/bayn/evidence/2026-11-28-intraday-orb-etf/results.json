@@ -1,0 +1,2642 @@
+{
+  "schema": "bayn.research.wave-23d.intraday-orb-etf.v1",
+  "registrationCommit": "e63ec8d22a74ea5d2b4074d919323dcaee2a17a9",
+  "source": {
+    "bucket": "agents-artifacts",
+    "manifest": {
+      "key": "bayn-research-datasets/2026-11-27-sip-multiyear/MANIFEST.json",
+      "sha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead"
+    },
+    "calendar": {
+      "key": "bayn-research-datasets/2026-11-27/calendar_2024_2026.json",
+      "sha256": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71"
+    },
+    "tapeKey": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+    "rows": 3923737,
+    "tape": {
+      "key": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+      "bytes": 80649568,
+      "sha256": "105972d7825b4deb14a30295fab153b1e734929e1c321642964ec8d35bbbc697",
+      "raw": {
+        "bytes": 273982883,
+        "sha256": "c053ede2875ad791c99aae517db9efa9a4587b08c9907d55e0960dade59d567e"
+      }
+    }
+  },
+  "coverage": {
+    "archiveRows": 3923737,
+    "scopedOutsideRthRows": 61122,
+    "sessions": 729,
+    "earlyCloses": 6,
+    "bySymbol": {
+      "QQQ": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      },
+      "SPY": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      },
+      "IWM": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      },
+      "SMH": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      },
+      "XLK": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      },
+      "XLF": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      },
+      "XLE": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      },
+      "XLI": {
+        "expectedBars": 56646,
+        "observedBars": 56646,
+        "missingBars": 0
+      }
+    }
+  },
+  "protocol": {
+    "firstDate": "2024-01-02",
+    "lastDate": "2026-11-25",
+    "capital": 100000,
+    "etfs": ["QQQ", "SPY", "IWM", "SMH", "XLK", "XLF", "XLE", "XLI"],
+    "barMinutes": 5,
+    "widths": [15, 30],
+    "referenceSessions": 20,
+    "maxOpeningRvRatio": 0.8,
+    "minOpeningRvol": 1.25,
+    "lastSignalMinute": 115,
+    "costs": [0, 2, 5, 10],
+    "primaryCost": 5,
+    "bootstrap": {
+      "draws": 10000,
+      "meanBlock": 5,
+      "seed": 600965729
+    },
+    "baselineId": "B0/30/1.4/opposite_band/inverse_vol_parity",
+    "orbWeight": 0.2,
+    "minimumActiveDays": 30,
+    "maxAbsoluteCorrelation": 0.3,
+    "alpha": 0.025
+  },
+  "outOfSample": [
+    {
+      "trainThrough": "2024-12-31",
+      "trainSessions": 252,
+      "from": "2025-01-02",
+      "through": "2025-12-31",
+      "sessions": 250,
+      "training": [
+        {
+          "width": 15,
+          "dailySharpe": -0.0465353525975986
+        },
+        {
+          "width": 30,
+          "dailySharpe": 0.009781444865365202
+        }
+      ],
+      "selectedWidth": 30,
+      "b0": {
+        "execution": {
+          "activeDays": 119,
+          "confirmedRoundTrips": 182,
+          "longRoundTrips": 85,
+          "shortRoundTrips": 97,
+          "confirmedEntryFills": 182,
+          "confirmedExitFills": 182,
+          "unresolvedDays": [],
+          "heldGapBarsOnConfirmedTrips": 0,
+          "latestConfirmedExitEt": "15:45",
+          "maxClosedEntryNotionalUsdPerDay": 99914.2,
+          "confirmedRawTurnoverUsd": 18321475.1431,
+          "turnoverCapital": 183.214751431,
+          "breakEvenRoundTripBps": 15.916785069013711
+        },
+        "costs": [
+          {
+            "bp": 0,
+            "netUsd": 14580.949099999982,
+            "sharpe": 1.2406639166492204,
+            "maxDrawdown": 0.0423484066088442,
+            "positiveMeanP": null,
+            "versusB0": null
+          },
+          {
+            "bp": 2,
+            "netUsd": 12748.801585689998,
+            "sharpe": 1.0866272917159048,
+            "maxDrawdown": 0.04679414684963357,
+            "positiveMeanP": null,
+            "versusB0": null
+          },
+          {
+            "bp": 5,
+            "netUsd": 10000.580314224997,
+            "sharpe": 0.8543774095930573,
+            "maxDrawdown": 0.05655048935731677,
+            "positiveMeanP": 0.18498150184981502,
+            "versusB0": null
+          },
+          {
+            "bp": 10,
+            "netUsd": 5420.2115284500005,
+            "sharpe": 0.4645752708624271,
+            "maxDrawdown": 0.08237305062116373,
+            "positiveMeanP": null,
+            "versusB0": null
+          }
+        ]
+      },
+      "variants": [
+        {
+          "width": 15,
+          "gated": true,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 1299,
+            "rvolGate": 590,
+            "signalUnavailable": 0,
+            "noBreakout": 2,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 76,
+              "confirmedRoundTrips": 109,
+              "longRoundTrips": 63,
+              "shortRoundTrips": 46,
+              "confirmedEntryFills": 109,
+              "confirmedExitFills": 109,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 61692.78,
+              "confirmedRawTurnoverUsd": 2698024.6826,
+              "turnoverCapital": 26.980246826,
+              "breakEvenRoundTripBps": 4.934008234191351
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 665.6037999999953,
+                "sharpe": 0.48855904922742077,
+                "maxDrawdown": 0.010656616559781895,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.010749151944378659,
+                  "blendedNetUsd": 11797.880039999991,
+                  "blendedSharpe": 1.2539058031606978,
+                  "blendedMaxDrawdown": 0.03405467183096311,
+                  "netLiftUsd": -2783.069060000001,
+                  "sharpeLift": 0.013241886511477396,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 395.80133173999536,
+                "sharpe": 0.2902723386554692,
+                "maxDrawdown": 0.010835174517723312,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.008904745450179273,
+                  "blendedNetUsd": 10278.201534899996,
+                  "blendedSharpe": 1.0943164040712572,
+                  "blendedMaxDrawdown": 0.03715314067560149,
+                  "netLiftUsd": -2470.600050789999,
+                  "sharpeLift": 0.007689112355352412,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -8.902370650004364,
+                "sharpe": -0.0065139304639887504,
+                "maxDrawdown": 0.01110342457883684,
+                "positiveMeanP": 0.49705029497050296,
+                "versusB0": {
+                  "correlation": 0.006093672374292231,
+                  "blendedNetUsd": 7998.683777249998,
+                  "blendedSharpe": 0.8536719062398361,
+                  "blendedMaxDrawdown": 0.0455302804181843,
+                  "netLiftUsd": -2001.8965369749997,
+                  "sharpeLift": -0.0007055033532211707,
+                  "netLiftP": 0.8086191380861913
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -683.4085413000049,
+                "sharpe": -0.4968608901258404,
+                "maxDrawdown": 0.012076673328307197,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.001320859666825677,
+                  "blendedNetUsd": 4199.487514499998,
+                  "blendedSharpe": 0.44971846870257537,
+                  "blendedMaxDrawdown": 0.06751391779483384,
+                  "netLiftUsd": -1220.724013949999,
+                  "sharpeLift": -0.014856802159851745,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 76,
+              "confirmedRoundTrips": 109,
+              "longRoundTrips": 63,
+              "shortRoundTrips": 46,
+              "confirmedEntryFills": 109,
+              "confirmedExitFills": 109,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 61651.25,
+              "confirmedRawTurnoverUsd": 2697893.6295000003,
+              "turnoverCapital": 26.978936295000004,
+              "breakEvenRoundTripBps": 3.746050581643197
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 505.32229999999765,
+                "sharpe": 0.38940646632749965,
+                "maxDrawdown": 0.009302524481574648,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.0070981102107296485,
+                  "blendedNetUsd": 11765.823740000002,
+                  "blendedSharpe": 1.251181615995938,
+                  "blendedMaxDrawdown": 0.03445370880247023,
+                  "netLiftUsd": -2815.1253600000005,
+                  "sharpeLift": 0.010517699346717535,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 235.5329370499976,
+                "sharpe": 0.1812834346281418,
+                "maxDrawdown": 0.009479840210961377,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.00871100300977871,
+                  "blendedNetUsd": 10246.147855961994,
+                  "blendedSharpe": 1.0914910739994979,
+                  "blendedMaxDrawdown": 0.037643680899925425,
+                  "netLiftUsd": -2502.6537297279992,
+                  "sharpeLift": 0.004863782283593077,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -169.15110737500245,
+                "sharpe": -0.12981212980713813,
+                "maxDrawdown": 0.00997116631841588,
+                "positiveMeanP": 0.5513448655134486,
+                "versusB0": {
+                  "correlation": -0.01115112102539276,
+                  "blendedNetUsd": 7966.634029905001,
+                  "blendedSharpe": 0.8506992049837019,
+                  "blendedMaxDrawdown": 0.0463484337578951,
+                  "netLiftUsd": -2033.9462843200006,
+                  "sharpeLift": -0.0036782046093554177,
+                  "netLiftP": 0.8124187581241876
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -843.6245147500023,
+                "sharpe": -0.6424559618562924,
+                "maxDrawdown": 0.015039039139404187,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.015245203826540913,
+                  "blendedNetUsd": 4167.44431980999,
+                  "blendedSharpe": 0.4465129395362005,
+                  "blendedMaxDrawdown": 0.06833191820391826,
+                  "netLiftUsd": -1252.7672086400003,
+                  "sharpeLift": -0.01806233132622659,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        },
+        {
+          "width": 15,
+          "gated": false,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 0,
+            "rvolGate": 0,
+            "signalUnavailable": 0,
+            "noBreakout": 125,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 250,
+              "confirmedRoundTrips": 1875,
+              "longRoundTrips": 984,
+              "shortRoundTrips": 891,
+              "confirmedEntryFills": 1875,
+              "confirmedExitFills": 1875,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 99687.385,
+              "confirmedRawTurnoverUsd": 46391050.027899995,
+              "turnoverCapital": 463.91050027899996,
+              "breakEvenRoundTripBps": 5.518720741307364
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 12800.962499999947,
+                "sharpe": 1.3458227205932463,
+                "maxDrawdown": 0.05887301658413413,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.10162184819317541,
+                  "blendedNetUsd": 14224.95178,
+                  "blendedSharpe": 1.4544654011950893,
+                  "blendedMaxDrawdown": 0.03814742189409481,
+                  "netLiftUsd": -355.99732000000836,
+                  "sharpeLift": 0.2138014845458689,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 8161.857497209951,
+                "sharpe": 0.8583665511595658,
+                "maxDrawdown": 0.0675159063888211,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.09929166113352776,
+                  "blendedNetUsd": 11831.412767993992,
+                  "blendedSharpe": 1.2122361935221957,
+                  "blendedMaxDrawdown": 0.04327885853401514,
+                  "netLiftUsd": -917.388817696008,
+                  "sharpeLift": 0.12560890180629092,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": 1203.1999930249624,
+                "sharpe": 0.12659611181146105,
+                "maxDrawdown": 0.10645609366980757,
+                "positiveMeanP": 0.43585641435856415,
+                "versusB0": {
+                  "correlation": 0.09577862136536024,
+                  "blendedNetUsd": 8241.104249985001,
+                  "blendedSharpe": 0.8468173765466476,
+                  "blendedMaxDrawdown": 0.06207363032003932,
+                  "netLiftUsd": -1759.4760642400086,
+                  "sharpeLift": -0.007560033046409731,
+                  "netLiftP": 0.7647235276472353
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -10394.562513950039,
+                "sharpe": -1.0944497620087514,
+                "maxDrawdown": 0.18279893580496465,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.08988365049152973,
+                  "blendedNetUsd": 2257.2567199699843,
+                  "blendedSharpe": 0.2329276460632928,
+                  "blendedMaxDrawdown": 0.09691366085286324,
+                  "netLiftUsd": -3162.954808480007,
+                  "sharpeLift": -0.2316476247991343,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 250,
+              "confirmedRoundTrips": 1875,
+              "longRoundTrips": 984,
+              "shortRoundTrips": 891,
+              "confirmedEntryFills": 1875,
+              "confirmedExitFills": 1875,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 100295.34999999999,
+              "confirmedRawTurnoverUsd": 46391589.17999999,
+              "turnoverCapital": 463.91589179999994,
+              "breakEvenRoundTripBps": 4.408163109190562
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 10225.084599999993,
+                "sharpe": 1.1359706701683288,
+                "maxDrawdown": 0.06053240912647073,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.129997749675797,
+                  "blendedNetUsd": 13709.77619999999,
+                  "blendedSharpe": 1.3989591157074255,
+                  "blendedMaxDrawdown": 0.03871812894862148,
+                  "netLiftUsd": -871.1728999999998,
+                  "sharpeLift": 0.1582951990582051,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 5585.925681999988,
+                "sharpe": 0.6207591040459333,
+                "maxDrawdown": 0.07885256991925615,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.1281676453011294,
+                  "blendedNetUsd": 11316.226404951996,
+                  "blendedSharpe": 1.1569766173493432,
+                  "blendedMaxDrawdown": 0.04468733269678504,
+                  "netLiftUsd": -1432.5751807380013,
+                  "sharpeLift": 0.07034932563343843,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -1372.8126950000033,
+                "sharpe": -0.1526232449756675,
+                "maxDrawdown": 0.12346420807685776,
+                "positiveMeanP": 0.5413458654134586,
+                "versusB0": {
+                  "correlation": 0.12540199813217637,
+                  "blendedNetUsd": 7725.9017123799995,
+                  "blendedSharpe": 0.7920469622257105,
+                  "blendedMaxDrawdown": 0.06510160561896594,
+                  "netLiftUsd": -2274.6786018450002,
+                  "sharpeLift": -0.06233044736734683,
+                  "netLiftP": 0.8144185581441856
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -12970.709989999998,
+                "sharpe": -1.4429404885920534,
+                "maxDrawdown": 0.20119514654722204,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.1207435431484726,
+                  "blendedNetUsd": 1742.0272247600021,
+                  "blendedSharpe": 0.1792945556685189,
+                  "blendedMaxDrawdown": 0.10008214754205846,
+                  "netLiftUsd": -3678.1843036900027,
+                  "sharpeLift": -0.2852807151939082,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        },
+        {
+          "width": 30,
+          "gated": true,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 1359,
+            "rvolGate": 563,
+            "signalUnavailable": 0,
+            "noBreakout": 11,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 47,
+              "confirmedRoundTrips": 67,
+              "longRoundTrips": 38,
+              "shortRoundTrips": 29,
+              "confirmedEntryFills": 67,
+              "confirmedExitFills": 67,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 49300.24,
+              "confirmedRawTurnoverUsd": 1658870.8548000003,
+              "turnoverCapital": 16.588708548000003,
+              "breakEvenRoundTripBps": 14.085542543826987
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 1168.3048000000022,
+                "sharpe": 1.4054968508892651,
+                "maxDrawdown": 0.004195447140728836,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.10935823935093611,
+                  "blendedNetUsd": 11898.420239999994,
+                  "blendedSharpe": 1.2628794132656875,
+                  "blendedMaxDrawdown": 0.033976997067027614,
+                  "netLiftUsd": -2682.5288599999985,
+                  "sharpeLift": 0.022215496616467156,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 1002.417714520002,
+                "sharpe": 1.2162239460280353,
+                "maxDrawdown": 0.004496189820550889,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.10890549150153246,
+                  "blendedNetUsd": 10399.524811455998,
+                  "blendedSharpe": 1.105704235383796,
+                  "blendedMaxDrawdown": 0.03748573387888432,
+                  "netLiftUsd": -2349.2767742339993,
+                  "sharpeLift": 0.019076943667891255,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": 753.587086300002,
+                "sharpe": 0.9246991413663492,
+                "maxDrawdown": 0.004948585079667112,
+                "positiveMeanP": 0.16328367163283672,
+                "versusB0": {
+                  "correlation": 0.10791313325402065,
+                  "blendedNetUsd": 8151.181668640005,
+                  "blendedSharpe": 0.8687111347230004,
+                  "blendedMaxDrawdown": 0.04573342788644785,
+                  "netLiftUsd": -1849.3986455849986,
+                  "sharpeLift": 0.014333725129943131,
+                  "netLiftP": 0.7973202679732027
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": 338.869372600002,
+                "sharpe": 0.42193444346722647,
+                "maxDrawdown": 0.005706013279478839,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.10539387680266825,
+                  "blendedNetUsd": 4403.94309727999,
+                  "blendedSharpe": 0.47091357475392837,
+                  "blendedMaxDrawdown": 0.06681044543215564,
+                  "netLiftUsd": -1016.2684311699982,
+                  "sharpeLift": 0.006338303891501251,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 47,
+              "confirmedRoundTrips": 67,
+              "longRoundTrips": 38,
+              "shortRoundTrips": 29,
+              "confirmedEntryFills": 67,
+              "confirmedExitFills": 67,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 49267.68,
+              "confirmedRawTurnoverUsd": 1658883.5845000003,
+              "turnoverCapital": 16.588835845000002,
+              "breakEvenRoundTripBps": 12.812900313560371
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 1062.7555000000104,
+                "sharpe": 1.3686608077149747,
+                "maxDrawdown": 0.004580710848482217,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.10624049644249645,
+                  "blendedNetUsd": 11877.310380000003,
+                  "blendedSharpe": 1.2608884509341698,
+                  "blendedMaxDrawdown": 0.033943375702461975,
+                  "netLiftUsd": -2703.6387199999986,
+                  "sharpeLift": 0.020224534284949414,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 896.8671415500103,
+                "sharpe": 1.1639364650363961,
+                "maxDrawdown": 0.004881862297957951,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.10589958892812232,
+                  "blendedNetUsd": 10378.414696861997,
+                  "blendedSharpe": 1.1036722369298668,
+                  "blendedMaxDrawdown": 0.03758783276287614,
+                  "netLiftUsd": -2370.3868888279985,
+                  "sharpeLift": 0.01704494521396205,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": 648.0346038750105,
+                "sharpe": 0.849267490537859,
+                "maxDrawdown": 0.005339176635923648,
+                "positiveMeanP": 0.18298170182981702,
+                "versusB0": {
+                  "correlation": 0.10505174410736795,
+                  "blendedNetUsd": 8130.071172155,
+                  "blendedSharpe": 0.8666209264016432,
+                  "blendedMaxDrawdown": 0.04583542917973071,
+                  "netLiftUsd": -1870.5091420699969,
+                  "sharpeLift": 0.01224351680858593,
+                  "netLiftP": 0.7995200479952005
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": 233.3137077500105,
+                "sharpe": 0.30923921798905174,
+                "maxDrawdown": 0.00621868225088551,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.10271412171958443,
+                  "blendedNetUsd": 4382.831964309992,
+                  "blendedSharpe": 0.4687358251065861,
+                  "blendedMaxDrawdown": 0.06701160676703477,
+                  "netLiftUsd": -1037.3795641399963,
+                  "sharpeLift": 0.004160554244159009,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        },
+        {
+          "width": 30,
+          "gated": false,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 0,
+            "rvolGate": 0,
+            "signalUnavailable": 0,
+            "noBreakout": 335,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 250,
+              "confirmedRoundTrips": 1665,
+              "longRoundTrips": 902,
+              "shortRoundTrips": 763,
+              "confirmedEntryFills": 1665,
+              "confirmedExitFills": 1665,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 99695.45000000001,
+              "confirmedRawTurnoverUsd": 41181075.845800005,
+              "turnoverCapital": 411.81075845800007,
+              "breakEvenRoundTripBps": 1.5909204568943165
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 3275.7907999999816,
+                "sharpe": 0.37875981496782796,
+                "maxDrawdown": 0.09361164690149515,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.17392884113029275,
+                  "blendedNetUsd": 12319.917439999994,
+                  "blendedSharpe": 1.2505923246428161,
+                  "blendedMaxDrawdown": 0.036515261616584804,
+                  "netLiftUsd": -2261.031660000003,
+                  "sharpeLift": 0.009928407993595734,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -842.3167845800178,
+                "sharpe": -0.0974770656140039,
+                "maxDrawdown": 0.10250557546560468,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.17203416701379612,
+                  "blendedNetUsd": 10030.577911635984,
+                  "blendedSharpe": 1.0202180921347193,
+                  "blendedMaxDrawdown": 0.04176514305863044,
+                  "netLiftUsd": -2718.223674054003,
+                  "sharpeLift": -0.06640919958118552,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -7019.478161450015,
+                "sharpe": -0.8133352113134765,
+                "maxDrawdown": 0.11772585136192704,
+                "positiveMeanP": 0.8036196380361964,
+                "versusB0": {
+                  "correlation": 0.16916628687631977,
+                  "blendedNetUsd": 6596.568619089996,
+                  "blendedSharpe": 0.6727896830462626,
+                  "blendedMaxDrawdown": 0.05481335039769253,
+                  "netLiftUsd": -3404.011695135005,
+                  "sharpeLift": -0.18158772654679467,
+                  "netLiftP": 0.8617138286171383
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -17314.74712290002,
+                "sharpe": -2.0099880096670786,
+                "maxDrawdown": 0.18312780614400015,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.16432458271109424,
+                  "blendedNetUsd": 873.2197981799948,
+                  "blendedSharpe": 0.08941667405739065,
+                  "blendedMaxDrawdown": 0.08710723087103955,
+                  "netLiftUsd": -4546.9917302700005,
+                  "sharpeLift": -0.3751585968050365,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 250,
+              "confirmedRoundTrips": 1665,
+              "longRoundTrips": 902,
+              "shortRoundTrips": 763,
+              "confirmedEntryFills": 1665,
+              "confirmedExitFills": 1665,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 99738.86,
+              "confirmedRawTurnoverUsd": 41181206.452799976,
+              "turnoverCapital": 411.8120645279998,
+              "breakEvenRoundTripBps": 1.1331074540879034
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 2333.136600000029,
+                "sharpe": 0.2761833015309146,
+                "maxDrawdown": 0.09601202254998908,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.19738805458442463,
+                  "blendedNetUsd": 12131.386599999994,
+                  "blendedSharpe": 1.228442786883569,
+                  "blendedMaxDrawdown": 0.03681638057138081,
+                  "netLiftUsd": -2449.5624999999936,
+                  "sharpeLift": -0.012221129765651373,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -1784.98404527997,
+                "sharpe": -0.21144876219919068,
+                "maxDrawdown": 0.10493601835389721,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.19576075374174717,
+                  "blendedNetUsd": 9842.044459495999,
+                  "blendedSharpe": 0.9985310205833711,
+                  "blendedMaxDrawdown": 0.04352247252414354,
+                  "netLiftUsd": -2906.757126193995,
+                  "sharpeLift": -0.08809627113253371,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -7962.165013199968,
+                "sharpe": -0.9441462373416404,
+                "maxDrawdown": 0.12969789869263004,
+                "positiveMeanP": 0.8405159484051595,
+                "versusB0": {
+                  "correlation": 0.19329030331039884,
+                  "blendedNetUsd": 6408.03124874001,
+                  "blendedSharpe": 0.6518596838950618,
+                  "blendedMaxDrawdown": 0.05659741127989204,
+                  "netLiftUsd": -3592.5490654849928,
+                  "sharpeLift": -0.20251772569799553,
+                  "netLiftP": 0.8722127787221278
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -18257.46662639996,
+                "sharpe": -2.1681468271207502,
+                "maxDrawdown": 0.19537370785099495,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.18910009718807433,
+                  "blendedNetUsd": 684.675897480006,
+                  "blendedSharpe": 0.06991664166414917,
+                  "blendedMaxDrawdown": 0.08808542378607509,
+                  "netLiftUsd": -4735.535630969995,
+                  "sharpeLift": -0.39465862919827793,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "trainThrough": "2025-12-31",
+      "trainSessions": 502,
+      "from": "2026-01-02",
+      "through": "2026-11-25",
+      "sessions": 227,
+      "training": [
+        {
+          "width": 15,
+          "dailySharpe": -0.018791708119890373
+        },
+        {
+          "width": 30,
+          "dailySharpe": 0.0371128036558339
+        }
+      ],
+      "selectedWidth": 30,
+      "b0": {
+        "execution": {
+          "activeDays": 114,
+          "confirmedRoundTrips": 180,
+          "longRoundTrips": 84,
+          "shortRoundTrips": 96,
+          "confirmedEntryFills": 180,
+          "confirmedExitFills": 180,
+          "unresolvedDays": [],
+          "heldGapBarsOnConfirmedTrips": 0,
+          "latestConfirmedExitEt": "15:45",
+          "maxClosedEntryNotionalUsdPerDay": 99851.395,
+          "confirmedRawTurnoverUsd": 18426790.132323,
+          "turnoverCapital": 184.26790132323,
+          "breakEvenRoundTripBps": 20.893027096709307
+        },
+        "costs": [
+          {
+            "bp": 0,
+            "netUsd": 19249.57127700001,
+            "sharpe": 2.43687147088429,
+            "maxDrawdown": 0.02623048872344047,
+            "positiveMeanP": null,
+            "versusB0": null
+          },
+          {
+            "bp": 2,
+            "netUsd": 17406.892263767702,
+            "sharpe": 2.212149933186776,
+            "maxDrawdown": 0.030087697926564627,
+            "positiveMeanP": null,
+            "versusB0": null
+          },
+          {
+            "bp": 5,
+            "netUsd": 14642.873743919261,
+            "sharpe": 1.8709318255594707,
+            "maxDrawdown": 0.03594060279267208,
+            "positiveMeanP": 0.032296770322967704,
+            "versusB0": null
+          },
+          {
+            "bp": 10,
+            "netUsd": 10036.176210838508,
+            "sharpe": 1.292371767986776,
+            "maxDrawdown": 0.04587855160356735,
+            "positiveMeanP": null,
+            "versusB0": null
+          }
+        ]
+      },
+      "variants": [
+        {
+          "width": 15,
+          "gated": true,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 1223,
+            "rvolGate": 497,
+            "signalUnavailable": 0,
+            "noBreakout": 6,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 64,
+              "confirmedRoundTrips": 90,
+              "longRoundTrips": 46,
+              "shortRoundTrips": 44,
+              "confirmedEntryFills": 90,
+              "confirmedExitFills": 90,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 62062.020000000004,
+              "confirmedRawTurnoverUsd": 2222369.8299,
+              "turnoverCapital": 22.223698299,
+              "breakEvenRoundTripBps": -2.0326040874138456
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": -225.85989999999748,
+                "sharpe": -0.19600969274500712,
+                "maxDrawdown": 0.02116777775259704,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.09253384526096191,
+                  "blendedNetUsd": 15354.485041600008,
+                  "blendedSharpe": 2.436333760178476,
+                  "blendedMaxDrawdown": 0.020929063053049535,
+                  "netLiftUsd": -3895.086235400002,
+                  "sharpeLift": -0.0005377107058137653,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -448.0968829899981,
+                "sharpe": -0.3897307220404938,
+                "maxDrawdown": 0.022021180538600804,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.09459047116647919,
+                  "blendedNetUsd": 13835.894434416163,
+                  "blendedSharpe": 2.2040671730694696,
+                  "blendedMaxDrawdown": 0.024069827147879308,
+                  "netLiftUsd": -3570.99782935154,
+                  "sharpeLift": -0.008082760117306353,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -781.452357474998,
+                "sharpe": -0.6811610723487729,
+                "maxDrawdown": 0.023305641369264052,
+                "positiveMeanP": 0.7325267473252675,
+                "versusB0": {
+                  "correlation": -0.09767731164548042,
+                  "blendedNetUsd": 11558.008523640408,
+                  "blendedSharpe": 1.8513617485754814,
+                  "blendedMaxDrawdown": 0.02882605157198559,
+                  "netLiftUsd": -3084.865220278851,
+                  "sharpeLift": -0.01957007698398927,
+                  "netLiftP": 0.9714028597140286
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -1337.0448149499973,
+                "sharpe": -1.1662635748884078,
+                "maxDrawdown": 0.02565387182157952,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.1027852534785995,
+                  "blendedNetUsd": 7761.532005680808,
+                  "blendedSharpe": 1.2532352043433213,
+                  "blendedMaxDrawdown": 0.03687562367306185,
+                  "netLiftUsd": -2274.6442051577014,
+                  "sharpeLift": -0.03913656364345486,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 64,
+              "confirmedRoundTrips": 90,
+              "longRoundTrips": 46,
+              "shortRoundTrips": 44,
+              "confirmedEntryFills": 90,
+              "confirmedExitFills": 90,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 62161.149999999994,
+              "confirmedRawTurnoverUsd": 2222747.6333,
+              "turnoverCapital": 22.227476333,
+              "breakEvenRoundTripBps": -2.284978251201409
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": -253.9464999999944,
+                "sharpe": -0.23682260066566335,
+                "maxDrawdown": 0.02037091844964989,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.10103099645572627,
+                  "blendedNetUsd": 15348.867721600012,
+                  "blendedSharpe": 2.435793280155705,
+                  "blendedMaxDrawdown": 0.020906160887915193,
+                  "netLiftUsd": -3900.703555400002,
+                  "sharpeLift": -0.001078190728584616,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -476.22126332999466,
+                "sharpe": -0.4448604879735038,
+                "maxDrawdown": 0.021224277745076847,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.10314684934324703,
+                  "blendedNetUsd": 13830.269558348165,
+                  "blendedSharpe": 2.2034849610848974,
+                  "blendedMaxDrawdown": 0.024047279007973765,
+                  "netLiftUsd": -3576.6227054195397,
+                  "sharpeLift": -0.008664972101878554,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -809.6334083249952,
+                "sharpe": -0.7572702738190885,
+                "maxDrawdown": 0.022508678788645597,
+                "positiveMeanP": 0.7510248975102489,
+                "versusB0": {
+                  "correlation": -0.10629633242225778,
+                  "blendedNetUsd": 11552.372313470407,
+                  "blendedSharpe": 1.8507177255848373,
+                  "blendedMaxDrawdown": 0.028804045988098603,
+                  "netLiftUsd": -3090.5014304488504,
+                  "sharpeLift": -0.020214099974633415,
+                  "netLiftP": 0.9716028397160283
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -1365.3203166499954,
+                "sharpe": -1.2753344162482216,
+                "maxDrawdown": 0.024661059014088438,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": -0.11143357652602362,
+                  "blendedNetUsd": 7755.87690534081,
+                  "blendedSharpe": 1.252491183948919,
+                  "blendedMaxDrawdown": 0.0368545539927283,
+                  "netLiftUsd": -2280.2993054977005,
+                  "sharpeLift": -0.0398805840378571,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        },
+        {
+          "width": 15,
+          "gated": false,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 0,
+            "rvolGate": 0,
+            "signalUnavailable": 0,
+            "noBreakout": 158,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 227,
+              "confirmedRoundTrips": 1658,
+              "longRoundTrips": 848,
+              "shortRoundTrips": 810,
+              "confirmedEntryFills": 1658,
+              "confirmedExitFills": 1658,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 99503.455,
+              "confirmedRawTurnoverUsd": 40894654.150900014,
+              "turnoverCapital": 408.94654150900016,
+              "breakEvenRoundTripBps": -3.4430021459638915
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": -7040.019100000007,
+                "sharpe": -0.9252553379355299,
+                "maxDrawdown": 0.15467291531366656,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.38138311255896884,
+                  "blendedNetUsd": 13991.653201600004,
+                  "blendedSharpe": 1.9869575880575838,
+                  "blendedMaxDrawdown": 0.03394694455183023,
+                  "netLiftUsd": -5257.918075400003,
+                  "sharpeLift": -0.44991388282670597,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -11129.484515089993,
+                "sharpe": -1.4631462436884208,
+                "maxDrawdown": 0.1820758038973913,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.3804731728521888,
+                  "blendedNetUsd": 11699.616907996164,
+                  "blendedSharpe": 1.667483645927462,
+                  "blendedMaxDrawdown": 0.038463746878429794,
+                  "netLiftUsd": -5707.275355771543,
+                  "sharpeLift": -0.544666287259314,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -17263.682637725,
+                "sharpe": -2.270494914879187,
+                "maxDrawdown": 0.2267764735317641,
+                "positiveMeanP": 0.9897010298970103,
+                "versusB0": {
+                  "correlation": 0.37897561619186815,
+                  "blendedNetUsd": 8261.562467590404,
+                  "blendedSharpe": 1.1834634585593105,
+                  "blendedMaxDrawdown": 0.04534206637014171,
+                  "netLiftUsd": -6381.311276328852,
+                  "sharpeLift": -0.6874683670001602,
+                  "netLiftP": 0.9999000099990001
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -27487.346175449988,
+                "sharpe": -3.617227760218492,
+                "maxDrawdown": 0.31045314438099325,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.3761189500725583,
+                  "blendedNetUsd": 2531.471733580806,
+                  "blendedSharpe": 0.36535502157268906,
+                  "blendedMaxDrawdown": 0.05992829138068578,
+                  "netLiftUsd": -7504.704477257701,
+                  "sharpeLift": -0.927016746414087,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 227,
+              "confirmedRoundTrips": 1658,
+              "longRoundTrips": 848,
+              "shortRoundTrips": 810,
+              "confirmedEntryFills": 1658,
+              "confirmedExitFills": 1658,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 99519.81,
+              "confirmedRawTurnoverUsd": 40895789.87830003,
+              "turnoverCapital": 408.95789878300036,
+              "breakEvenRoundTripBps": -3.8676967597569085
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": -7908.625700000023,
+                "sharpe": -1.0787089415048405,
+                "maxDrawdown": 0.14630829580076332,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.3794111327399349,
+                  "blendedNetUsd": 13817.931881600007,
+                  "blendedSharpe": 1.9716413819472873,
+                  "blendedMaxDrawdown": 0.031656941401256966,
+                  "netLiftUsd": -5431.639395400005,
+                  "sharpeLift": -0.46523008893700246,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -11998.204687830028,
+                "sharpe": -1.6369012024686203,
+                "maxDrawdown": 0.17744082854867982,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.3788160595176402,
+                  "blendedNetUsd": 11525.872873448163,
+                  "blendedSharpe": 1.6504670317335122,
+                  "blendedMaxDrawdown": 0.03617305451303621,
+                  "netLiftUsd": -5881.019390319547,
+                  "sharpeLift": -0.5616829014532638,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -18132.57316957503,
+                "sharpe": -2.4746058148570826,
+                "maxDrawdown": 0.22723368480103479,
+                "positiveMeanP": 0.9942005799420058,
+                "versusB0": {
+                  "correlation": 0.37779826791515236,
+                  "blendedNetUsd": 8087.784361220402,
+                  "blendedSharpe": 1.1639377452963435,
+                  "blendedMaxDrawdown": 0.04305062057357434,
+                  "netLiftUsd": -6555.089382698855,
+                  "sharpeLift": -0.7069940802631272,
+                  "netLiftP": 0.9998000199980002
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -28356.520639150007,
+                "sharpe": -3.8716494780078587,
+                "maxDrawdown": 0.3119206544244354,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.3757594305671731,
+                  "blendedNetUsd": 2357.6368408408025,
+                  "blendedSharpe": 0.3417915405161222,
+                  "blendedMaxDrawdown": 0.05821096683420535,
+                  "netLiftUsd": -7678.539369997706,
+                  "sharpeLift": -0.9505802274706538,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        },
+        {
+          "width": 30,
+          "gated": true,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 1327,
+            "rvolGate": 437,
+            "signalUnavailable": 0,
+            "noBreakout": 9,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 33,
+              "confirmedRoundTrips": 43,
+              "longRoundTrips": 25,
+              "shortRoundTrips": 18,
+              "confirmedEntryFills": 43,
+              "confirmedExitFills": 43,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 37356.51,
+              "confirmedRawTurnoverUsd": 1061248.8448,
+              "turnoverCapital": 10.612488448,
+              "breakEvenRoundTripBps": 4.42582719690515
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 234.84520000000094,
+                "sharpe": 0.27088650145361604,
+                "maxDrawdown": 0.008765964209404786,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.13583020834585882,
+                  "blendedNetUsd": 15446.62606160001,
+                  "blendedSharpe": 2.4343356313627575,
+                  "blendedMaxDrawdown": 0.021313815704470773,
+                  "netLiftUsd": -3802.9452154000005,
+                  "sharpeLift": -0.002535839521532246,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 128.7203155200008,
+                "sharpe": 0.14868160121008936,
+                "maxDrawdown": 0.009429925768501324,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.13259393949836534,
+                  "blendedNetUsd": 13951.257874118164,
+                  "blendedSharpe": 2.207371840115752,
+                  "blendedMaxDrawdown": 0.024415557793121878,
+                  "netLiftUsd": -3455.634389649541,
+                  "sharpeLift": -0.00477809307102417,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -30.467011199999277,
+                "sharpe": -0.03523583945476292,
+                "maxDrawdown": 0.010426663816881732,
+                "positiveMeanP": 0.5112488751124887,
+                "versusB0": {
+                  "correlation": 0.12742419024538185,
+                  "blendedNetUsd": 11708.20559289541,
+                  "blendedSharpe": 1.8627066577870117,
+                  "blendedMaxDrawdown": 0.029112448165279248,
+                  "netLiftUsd": -2934.6681510238523,
+                  "sharpeLift": -0.008225167772458963,
+                  "netLiftP": 0.97000299970003
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -295.7792223999992,
+                "sharpe": -0.3420252874035389,
+                "maxDrawdown": 0.01209001918343211,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.1180127803206707,
+                  "blendedNetUsd": 7969.785124190809,
+                  "blendedSharpe": 1.278163688099579,
+                  "blendedMaxDrawdown": 0.03706094032499807,
+                  "netLiftUsd": -2066.3910866477017,
+                  "sharpeLift": -0.014208079887197078,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 33,
+              "confirmedRoundTrips": 43,
+              "longRoundTrips": 25,
+              "shortRoundTrips": 18,
+              "confirmedEntryFills": 43,
+              "confirmedExitFills": 43,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 37388.34,
+              "confirmedRawTurnoverUsd": 1061162.07,
+              "turnoverCapital": 10.611620700000001,
+              "breakEvenRoundTripBps": 5.284018491162275
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": 280.36000000000195,
+                "sharpe": 0.3338527691268584,
+                "maxDrawdown": 0.0077676424121532195,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.13191052336629444,
+                  "blendedNetUsd": 15455.72902160001,
+                  "blendedSharpe": 2.43636052179079,
+                  "blendedMaxDrawdown": 0.021351919698511357,
+                  "netLiftUsd": -3793.8422554000017,
+                  "sharpeLift": -0.0005109490934995797,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": 174.2437930000019,
+                "sharpe": 0.2078628475869175,
+                "maxDrawdown": 0.007996795575138438,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.12881084886597238,
+                  "blendedNetUsd": 13960.362569614166,
+                  "blendedSharpe": 2.209338804004023,
+                  "blendedMaxDrawdown": 0.024454036963497683,
+                  "netLiftUsd": -3446.5296941535403,
+                  "sharpeLift": -0.002811129182752836,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": 15.0694825000018,
+                "sharpe": 0.01800960392623356,
+                "maxDrawdown": 0.00899305745497403,
+                "positiveMeanP": 0.48495150484951505,
+                "versusB0": {
+                  "correlation": 0.12383829266920247,
+                  "blendedNetUsd": 11717.312891635407,
+                  "blendedSharpe": 1.8645879775786505,
+                  "blendedMaxDrawdown": 0.029151498890324867,
+                  "netLiftUsd": -2925.560852283852,
+                  "sharpeLift": -0.006343847980820216,
+                  "netLiftP": 0.9691030896910309
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -250.2210349999983,
+                "sharpe": -0.2992289996472694,
+                "maxDrawdown": 0.010655619169264607,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.11473345142820357,
+                  "blendedNetUsd": 7978.896761670808,
+                  "blendedSharpe": 1.2799070733536217,
+                  "blendedMaxDrawdown": 0.03710096770974192,
+                  "netLiftUsd": -2057.2794491677014,
+                  "sharpeLift": -0.01246469463315436,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        },
+        {
+          "width": 30,
+          "gated": false,
+          "skippedSymbolDays": {
+            "openingUnavailable": 0,
+            "referenceUnavailable": 0,
+            "volatilityGate": 0,
+            "rvolGate": 0,
+            "signalUnavailable": 0,
+            "noBreakout": 346,
+            "noWholeShare": 0
+          },
+          "nextOpen": {
+            "execution": {
+              "activeDays": 227,
+              "confirmedRoundTrips": 1470,
+              "longRoundTrips": 755,
+              "shortRoundTrips": 715,
+              "confirmedEntryFills": 1470,
+              "confirmedExitFills": 1470,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 99388.495,
+              "confirmedRawTurnoverUsd": 36246382.45170001,
+              "turnoverCapital": 362.4638245170001,
+              "breakEvenRoundTripBps": -0.009785086842068795
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": -17.733700000036478,
+                "sharpe": -0.002543672882411274,
+                "maxDrawdown": 0.11790428717347734,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.6019003117354043,
+                  "blendedNetUsd": 15396.110281599995,
+                  "blendedSharpe": 2.125134751058284,
+                  "blendedMaxDrawdown": 0.026286568944400512,
+                  "netLiftUsd": -3853.4609954000093,
+                  "sharpeLift": -0.3117367198260057,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -3642.371945170035,
+                "sharpe": -0.5227488832643581,
+                "maxDrawdown": 0.14321116459970407,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.6010166440721413,
+                  "blendedNetUsd": 13197.039421980158,
+                  "blendedSharpe": 1.8280996334441197,
+                  "blendedMaxDrawdown": 0.030605232479251843,
+                  "netLiftUsd": -4209.852841787549,
+                  "sharpeLift": -0.38405029974265625,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -9079.329312925027,
+                "sharpe": -1.3040614333027392,
+                "maxDrawdown": 0.18673878642145791,
+                "positiveMeanP": 0.8808119188081192,
+                "versusB0": {
+                  "correlation": 0.5994243807152135,
+                  "blendedNetUsd": 9898.433132550403,
+                  "blendedSharpe": 1.3780565880210847,
+                  "blendedMaxDrawdown": 0.037457738385931916,
+                  "netLiftUsd": -4744.440611368859,
+                  "sharpeLift": -0.492875237538386,
+                  "netLiftP": 0.9994000599940006
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -18140.924925850035,
+                "sharpe": -2.608370209252914,
+                "maxDrawdown": 0.26065168692274765,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.5960439340997956,
+                  "blendedNetUsd": 4400.755983500801,
+                  "blendedSharpe": 0.6172451853718135,
+                  "blendedMaxDrawdown": 0.05066683299533803,
+                  "netLiftUsd": -5635.420227337708,
+                  "sharpeLift": -0.6751265826149626,
+                  "netLiftP": null
+                }
+              }
+            ]
+          },
+          "delayedEntry": {
+            "execution": {
+              "activeDays": 227,
+              "confirmedRoundTrips": 1470,
+              "longRoundTrips": 755,
+              "shortRoundTrips": 715,
+              "confirmedEntryFills": 1470,
+              "confirmedExitFills": 1470,
+              "unresolvedDays": [],
+              "heldGapBarsOnConfirmedTrips": 0,
+              "latestConfirmedExitEt": "15:55",
+              "maxClosedEntryNotionalUsdPerDay": 99437.36499999999,
+              "confirmedRawTurnoverUsd": 36245042.30080003,
+              "turnoverCapital": 362.4504230080003,
+              "breakEvenRoundTripBps": -0.9019028789843185
+            },
+            "costs": [
+              {
+                "bp": 0,
+                "netUsd": -1634.4753999999982,
+                "sharpe": -0.23609112546815966,
+                "maxDrawdown": 0.12775004038050386,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.60773204571692,
+                  "blendedNetUsd": 15072.761941600005,
+                  "blendedSharpe": 2.0804818100158684,
+                  "blendedMaxDrawdown": 0.02616797036682328,
+                  "netLiftUsd": -4176.809335400001,
+                  "sharpeLift": -0.3563896608684214,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 2,
+                "netUsd": -5258.979630079999,
+                "sharpe": -0.7599623232137488,
+                "maxDrawdown": 0.15182875030128007,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.6071356444383146,
+                  "blendedNetUsd": 12873.717884998168,
+                  "blendedSharpe": 1.7831753413271685,
+                  "blendedMaxDrawdown": 0.03052623228953355,
+                  "netLiftUsd": -4533.174378769544,
+                  "sharpeLift": -0.4289745918596075,
+                  "netLiftP": null
+                }
+              },
+              {
+                "bp": 5,
+                "netUsd": -10695.7359752,
+                "sharpe": -1.5464988059151916,
+                "maxDrawdown": 0.19535850472725713,
+                "positiveMeanP": 0.9276072392760724,
+                "versusB0": {
+                  "correlation": 0.6059766150348607,
+                  "blendedNetUsd": 9575.151800095407,
+                  "blendedSharpe": 1.3328120397496857,
+                  "blendedMaxDrawdown": 0.037425627587478694,
+                  "netLiftUsd": -5067.721943823853,
+                  "sharpeLift": -0.538119785809785,
+                  "netLiftP": 0.9996000399960004
+                }
+              },
+              {
+                "bp": 10,
+                "netUsd": -19756.996550400007,
+                "sharpe": -2.858764920090533,
+                "maxDrawdown": 0.26967451243670193,
+                "positiveMeanP": null,
+                "versusB0": {
+                  "correlation": 0.6033224589694686,
+                  "blendedNetUsd": 4077.541658590806,
+                  "blendedSharpe": 0.5717107569274852,
+                  "blendedMaxDrawdown": 0.05173983780963287,
+                  "netLiftUsd": -5958.634552247705,
+                  "sharpeLift": -0.7206610110592909,
+                  "netLiftP": null
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "pooled": {
+    "from": "2025-01-02",
+    "through": "2026-11-25",
+    "sessions": 477,
+    "b0": {
+      "execution": {
+        "activeDays": 233,
+        "confirmedRoundTrips": 362,
+        "longRoundTrips": 169,
+        "shortRoundTrips": 193,
+        "confirmedEntryFills": 362,
+        "confirmedExitFills": 362,
+        "unresolvedDays": [],
+        "heldGapBarsOnConfirmedTrips": 0,
+        "latestConfirmedExitEt": "15:45",
+        "maxClosedEntryNotionalUsdPerDay": 99914.2,
+        "confirmedRawTurnoverUsd": 36748265.27542302,
+        "turnoverCapital": 367.4826527542302,
+        "breakEvenRoundTripBps": 18.41203666265337
+      },
+      "costs": [
+        {
+          "bp": 0,
+          "netUsd": 33830.520376999986,
+          "sharpe": 1.704336926428631,
+          "maxDrawdown": 0.0423484066088442,
+          "positiveMeanP": null,
+          "versusB0": null
+        },
+        {
+          "bp": 2,
+          "netUsd": 30155.693849457697,
+          "sharpe": 1.5229130261494186,
+          "maxDrawdown": 0.04679414684963357,
+          "positiveMeanP": null,
+          "versusB0": null
+        },
+        {
+          "bp": 5,
+          "netUsd": 24643.45405814426,
+          "sharpe": 1.2487213032455526,
+          "maxDrawdown": 0.05655048935731677,
+          "positiveMeanP": 0.047595240475952406,
+          "versusB0": null
+        },
+        {
+          "bp": 10,
+          "netUsd": 15456.38773928851,
+          "sharpe": 0.7869494780183343,
+          "maxDrawdown": 0.08237305062116373,
+          "positiveMeanP": null,
+          "versusB0": null
+        }
+      ]
+    },
+    "selected": {
+      "skippedSymbolDays": {
+        "openingUnavailable": 0,
+        "referenceUnavailable": 0,
+        "volatilityGate": 2686,
+        "rvolGate": 1000,
+        "signalUnavailable": 0,
+        "noBreakout": 20,
+        "noWholeShare": 0
+      },
+      "nextOpen": {
+        "execution": {
+          "activeDays": 80,
+          "confirmedRoundTrips": 110,
+          "longRoundTrips": 63,
+          "shortRoundTrips": 47,
+          "confirmedEntryFills": 110,
+          "confirmedExitFills": 110,
+          "unresolvedDays": [],
+          "heldGapBarsOnConfirmedTrips": 0,
+          "latestConfirmedExitEt": "15:55",
+          "maxClosedEntryNotionalUsdPerDay": 49300.24,
+          "confirmedRawTurnoverUsd": 2720119.699600001,
+          "turnoverCapital": 27.201196996000007,
+          "breakEvenRoundTripBps": 10.316825397105427
+        },
+        "costs": [
+          {
+            "bp": 0,
+            "netUsd": 1403.1500000000033,
+            "sharpe": 0.8247362823459968,
+            "maxDrawdown": 0.00866552520265551,
+            "positiveMeanP": null,
+            "versusB0": {
+              "correlation": 0.11734678828369949,
+              "blendedNetUsd": 27345.0463016,
+              "blendedSharpe": 1.717303225185712,
+              "blendedMaxDrawdown": 0.033976997067027614,
+              "netLiftUsd": -6485.4740753999995,
+              "sharpeLift": 0.012966298757081107,
+              "netLiftP": null
+            }
+          },
+          {
+            "bp": 2,
+            "netUsd": 1131.1380300400024,
+            "sharpe": 0.6679622006588454,
+            "maxDrawdown": 0.009337040246593986,
+            "positiveMeanP": null,
+            "versusB0": {
+              "correlation": 0.11568766305819272,
+              "blendedNetUsd": 24350.782685574162,
+              "blendedSharpe": 1.533057428336511,
+              "blendedMaxDrawdown": 0.03748573387888432,
+              "netLiftUsd": -5804.911163883541,
+              "sharpeLift": 0.01014440218709245,
+              "netLiftP": null
+            }
+          },
+          {
+            "bp": 5,
+            "netUsd": 723.1200751000029,
+            "sharpe": 0.4295159457317353,
+            "maxDrawdown": 0.01034922840374708,
+            "positiveMeanP": 0.25637436256374363,
+            "versusB0": {
+              "correlation": 0.11288845727274507,
+              "blendedNetUsd": 19859.38726153541,
+              "blendedSharpe": 1.2545801924473508,
+              "blendedMaxDrawdown": 0.04573342788644785,
+              "netLiftUsd": -4784.066796608849,
+              "sharpeLift": 0.005858889201798112,
+              "netLiftP": 0.9473052694730527
+            }
+          },
+          {
+            "bp": 10,
+            "netUsd": 43.0901502000026,
+            "sharpe": 0.025761398971488297,
+            "maxDrawdown": 0.012049445475495246,
+            "positiveMeanP": null,
+            "versusB0": {
+              "correlation": 0.10740919011289272,
+              "blendedNetUsd": 12373.728221470798,
+              "blendedSharpe": 0.7855260492873324,
+              "blendedMaxDrawdown": 0.06681044543215564,
+              "netLiftUsd": -3082.6595178176995,
+              "sharpeLift": -0.0014234287310018745,
+              "netLiftP": null
+            }
+          }
+        ]
+      },
+      "delayedEntry": {
+        "execution": {
+          "activeDays": 80,
+          "confirmedRoundTrips": 110,
+          "longRoundTrips": 63,
+          "shortRoundTrips": 47,
+          "confirmedEntryFills": 110,
+          "confirmedExitFills": 110,
+          "unresolvedDays": [],
+          "heldGapBarsOnConfirmedTrips": 0,
+          "latestConfirmedExitEt": "15:55",
+          "maxClosedEntryNotionalUsdPerDay": 49267.68,
+          "confirmedRawTurnoverUsd": 2720045.6544999997,
+          "turnoverCapital": 27.200456544999998,
+          "breakEvenRoundTripBps": 9.875683503899895
+        },
+        "costs": [
+          {
+            "bp": 0,
+            "netUsd": 1343.1155000000122,
+            "sharpe": 0.8284009770249182,
+            "maxDrawdown": 0.007686570398824588,
+            "positiveMeanP": null,
+            "versusB0": {
+              "correlation": 0.11381167571064123,
+              "blendedNetUsd": 27333.039401599995,
+              "blendedSharpe": 1.7169103590907597,
+              "blendedMaxDrawdown": 0.033943375702461975,
+              "netLiftUsd": -6497.480975399998,
+              "sharpeLift": 0.012573432662128736,
+              "netLiftP": null
+            }
+          },
+          {
+            "bp": 2,
+            "netUsd": 1071.1109345500117,
+            "sharpe": 0.6635549193501735,
+            "maxDrawdown": 0.007926222647214654,
+            "positiveMeanP": null,
+            "versusB0": {
+              "correlation": 0.11225665409007131,
+              "blendedNetUsd": 24338.777266476165,
+              "blendedSharpe": 1.5326164306533288,
+              "blendedMaxDrawdown": 0.03758783276287614,
+              "netLiftUsd": -5816.916582981541,
+              "sharpeLift": 0.009703404503910162,
+              "netLiftP": null
+            }
+          },
+          {
+            "bp": 5,
+            "netUsd": 663.1040863750125,
+            "sharpe": 0.41298465755207364,
+            "maxDrawdown": 0.008935543772841226,
+            "positiveMeanP": 0.25807419258074193,
+            "versusB0": {
+              "correlation": 0.10960488763689619,
+              "blendedNetUsd": 19847.384063790403,
+              "blendedSharpe": 1.254069941153358,
+              "blendedMaxDrawdown": 0.04583542917973071,
+              "netLiftUsd": -4796.0699943538475,
+              "sharpeLift": 0.005348637907805376,
+              "netLiftP": 0.9475052494750525
+            }
+          },
+          {
+            "bp": 10,
+            "netUsd": -16.90732724998756,
+            "sharpe": -0.01058583038116633,
+            "maxDrawdown": 0.010630963763122336,
+            "positiveMeanP": null,
+            "versusB0": {
+              "correlation": 0.10435040100210308,
+              "blendedNetUsd": 12361.728725980804,
+              "blendedSharpe": 0.7849090879429018,
+              "blendedMaxDrawdown": 0.06701160676703477,
+              "netLiftUsd": -3094.659013307699,
+              "sharpeLift": -0.002040390075432441,
+              "netLiftP": null
+            }
+          }
+        ]
+      }
+    },
+    "variants": [
+      {
+        "width": 15,
+        "gated": true,
+        "skippedSymbolDays": {
+          "openingUnavailable": 0,
+          "referenceUnavailable": 0,
+          "volatilityGate": 2522,
+          "rvolGate": 1087,
+          "signalUnavailable": 0,
+          "noBreakout": 8,
+          "noWholeShare": 0
+        },
+        "nextOpen": {
+          "execution": {
+            "activeDays": 140,
+            "confirmedRoundTrips": 199,
+            "longRoundTrips": 109,
+            "shortRoundTrips": 90,
+            "confirmedEntryFills": 199,
+            "confirmedExitFills": 199,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 62062.020000000004,
+            "confirmedRawTurnoverUsd": 4920394.512499999,
+            "turnoverCapital": 49.20394512499999,
+            "breakEvenRoundTripBps": 1.787433503077253
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 439.7438999999969,
+              "sharpe": 0.17490290218034485,
+              "maxDrawdown": 0.0210304511593834,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": -0.02925230533501782,
+                "blendedNetUsd": 27152.365081599994,
+                "blendedSharpe": 1.7106024072903285,
+                "blendedMaxDrawdown": 0.03405467183096311,
+                "netLiftUsd": -6678.1552954000035,
+                "sharpeLift": 0.006265480861697537,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": -52.29555125000253,
+              "sharpe": -0.020810297331301453,
+              "maxDrawdown": 0.021935887743162685,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": -0.03101761081891093,
+                "blendedNetUsd": 24114.09596931616,
+                "blendedSharpe": 1.522985191648877,
+                "blendedMaxDrawdown": 0.03715314067560149,
+                "netLiftUsd": -6041.597880141541,
+                "sharpeLift": 0.00007216549945843198,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": -790.3547281250023,
+              "sharpe": -0.3144161818563577,
+              "maxDrawdown": 0.023307683909430055,
+              "positiveMeanP": 0.6713328667133287,
+              "versusB0": {
+                "correlation": -0.03370132486636867,
+                "blendedNetUsd": 19556.69230089042,
+                "blendedSharpe": 1.2394110927836637,
+                "blendedMaxDrawdown": 0.0455302804181843,
+                "netLiftUsd": -5086.76175725385,
+                "sharpeLift": -0.009310210461888957,
+                "netLiftP": 0.9519048095190481
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": -2020.4533562500026,
+              "sharpe": -0.8011333941609812,
+              "maxDrawdown": 0.025828186298456512,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": -0.03823863738819285,
+                "blendedNetUsd": 11961.019520180807,
+                "blendedSharpe": 0.7617748186293987,
+                "blendedMaxDrawdown": 0.06751391779483384,
+                "netLiftUsd": -3495.3682191077,
+                "sharpeLift": -0.025174659388935594,
+                "netLiftP": null
+              }
+            }
+          ]
+        },
+        "delayedEntry": {
+          "execution": {
+            "activeDays": 140,
+            "confirmedRoundTrips": 199,
+            "longRoundTrips": 109,
+            "shortRoundTrips": 90,
+            "confirmedEntryFills": 199,
+            "confirmedExitFills": 199,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 62161.149999999994,
+            "confirmedRawTurnoverUsd": 4920641.262800002,
+            "turnoverCapital": 49.20641262800002,
+            "breakEvenRoundTripBps": 1.0217196766624725
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 251.37580000000355,
+              "sharpe": 0.1060394942866811,
+              "maxDrawdown": 0.020270319140526127,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": -0.042907385410782345,
+                "blendedNetUsd": 27114.6914616,
+                "blendedSharpe": 1.7089310951339434,
+                "blendedMaxDrawdown": 0.03445370880247023,
+                "netLiftUsd": -6715.828915399996,
+                "sharpeLift": 0.004594168705312374,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": -240.68832627999615,
+              "sharpe": -0.10153532955869705,
+              "maxDrawdown": 0.021175228076650177,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": -0.04456897609139384,
+                "blendedNetUsd": 24076.417414310166,
+                "blendedSharpe": 1.5212226722855031,
+                "blendedMaxDrawdown": 0.037643680899925425,
+                "netLiftUsd": -6079.276435147541,
+                "sharpeLift": -0.0016903538639154725,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": -978.7845156999979,
+              "sharpe": -0.4124439154287385,
+              "maxDrawdown": 0.022546261906663756,
+              "positiveMeanP": 0.7162283771622838,
+              "versusB0": {
+                "correlation": -0.047072593815595844,
+                "blendedNetUsd": 19519.006343375415,
+                "blendedSharpe": 1.2375147816864451,
+                "blendedMaxDrawdown": 0.0463484337578951,
+                "netLiftUsd": -5124.447714768852,
+                "sharpeLift": -0.011206521559107507,
+                "netLiftP": 0.9528047195280472
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": -2208.944831399997,
+              "sharpe": -0.9262009165916384,
+              "maxDrawdown": 0.025869334921755804,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": -0.05124412641632444,
+                "blendedNetUsd": 11923.321225150798,
+                "blendedSharpe": 0.7596649884903461,
+                "blendedMaxDrawdown": 0.06833191820391826,
+                "netLiftUsd": -3533.0665141377003,
+                "sharpeLift": -0.02728448952798812,
+                "netLiftP": null
+              }
+            }
+          ]
+        }
+      },
+      {
+        "width": 15,
+        "gated": false,
+        "skippedSymbolDays": {
+          "openingUnavailable": 0,
+          "referenceUnavailable": 0,
+          "volatilityGate": 0,
+          "rvolGate": 0,
+          "signalUnavailable": 0,
+          "noBreakout": 283,
+          "noWholeShare": 0
+        },
+        "nextOpen": {
+          "execution": {
+            "activeDays": 477,
+            "confirmedRoundTrips": 3533,
+            "longRoundTrips": 1832,
+            "shortRoundTrips": 1701,
+            "confirmedEntryFills": 3533,
+            "confirmedExitFills": 3533,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 99687.385,
+            "confirmedRawTurnoverUsd": 87285704.17880002,
+            "turnoverCapital": 872.8570417880002,
+            "breakEvenRoundTripBps": 1.3200199171674216
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 5760.943399999936,
+              "sharpe": 0.33531007624314574,
+              "maxDrawdown": 0.13791702253026172,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.20290576225758733,
+                "blendedNetUsd": 28216.604981600012,
+                "blendedSharpe": 1.6681423971462466,
+                "blendedMaxDrawdown": 0.03814742189409481,
+                "netLiftUsd": -5613.915395400011,
+                "sharpeLift": -0.036194529282384424,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": -2967.627017880049,
+              "sharpe": -0.1727862883502925,
+              "maxDrawdown": 0.17844229087931995,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.20101530061169826,
+                "blendedNetUsd": 23531.029675990158,
+                "blendedSharpe": 1.3948007436375647,
+                "blendedMaxDrawdown": 0.04327885853401514,
+                "netLiftUsd": -6624.664173467551,
+                "sharpeLift": -0.12811228251185391,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": -16060.482644700041,
+              "sharpe": -0.9355526300263682,
+              "maxDrawdown": 0.2780193141054561,
+              "positiveMeanP": 0.8966103389661034,
+              "versusB0": {
+                "correlation": 0.1981315507174116,
+                "blendedNetUsd": 16502.66671757541,
+                "blendedSharpe": 0.9818016337359922,
+                "blendedMaxDrawdown": 0.06207363032003932,
+                "netLiftUsd": -8140.787340568862,
+                "sharpeLift": -0.2669196695095605,
+                "netLiftP": 0.9925007499250075
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": -37881.9086894,
+              "sharpe": -2.208320580523373,
+              "maxDrawdown": 0.4523266650235901,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.19320294145287573,
+                "blendedNetUsd": 4788.7284535507915,
+                "blendedSharpe": 0.2864421538760161,
+                "blendedMaxDrawdown": 0.11650774275750819,
+                "netLiftUsd": -10667.659285737705,
+                "sharpeLift": -0.5005073241423181,
+                "netLiftP": null
+              }
+            }
+          ]
+        },
+        "delayedEntry": {
+          "execution": {
+            "activeDays": 477,
+            "confirmedRoundTrips": 3533,
+            "longRoundTrips": 1832,
+            "shortRoundTrips": 1701,
+            "confirmedEntryFills": 3533,
+            "confirmedExitFills": 3533,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 100295.34999999999,
+            "confirmedRawTurnoverUsd": 87287379.05829997,
+            "turnoverCapital": 872.8737905829997,
+            "breakEvenRoundTripBps": 0.5307660569010333
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 2316.4588999999737,
+              "sharpe": 0.1414271594985978,
+              "maxDrawdown": 0.13892761946534216,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.2208483845945083,
+                "blendedNetUsd": 27527.708081599983,
+                "blendedSharpe": 1.6281067401139542,
+                "blendedMaxDrawdown": 0.03871812894862148,
+                "netLiftUsd": -6302.812295400006,
+                "sharpeLift": -0.07623018631467682,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": -6412.279005830041,
+              "sharpe": -0.3916086323891628,
+              "maxDrawdown": 0.1950589856345054,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.21940475845586507,
+                "blendedNetUsd": 22842.099278400165,
+                "blendedSharpe": 1.3544094467855423,
+                "blendedMaxDrawdown": 0.04468733269678504,
+                "netLiftUsd": -7313.594571057542,
+                "sharpeLift": -0.16850357936387628,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": -19505.385864575033,
+              "sharpe": -1.1917356409001842,
+              "maxDrawdown": 0.2965873013919903,
+              "positiveMeanP": 0.9512048795120488,
+              "versusB0": {
+                "correlation": 0.21719099038024223,
+                "blendedNetUsd": 15813.686073600396,
+                "blendedSharpe": 0.9409834682978153,
+                "blendedMaxDrawdown": 0.06510160561896594,
+                "netLiftUsd": -8829.767984543852,
+                "sharpeLift": -0.3077378349477373,
+                "netLiftP": 0.9954004599540046
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": -41327.23062914999,
+              "sharpe": -2.5266150640895004,
+              "maxDrawdown": 0.47348937428303384,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.213376159092781,
+                "blendedNetUsd": 4099.664065600806,
+                "blendedSharpe": 0.2452090407124629,
+                "blendedMaxDrawdown": 0.11964325769738227,
+                "netLiftUsd": -11356.723673687708,
+                "sharpeLift": -0.5417404373058714,
+                "netLiftP": null
+              }
+            }
+          ]
+        }
+      },
+      {
+        "width": 30,
+        "gated": true,
+        "skippedSymbolDays": {
+          "openingUnavailable": 0,
+          "referenceUnavailable": 0,
+          "volatilityGate": 2686,
+          "rvolGate": 1000,
+          "signalUnavailable": 0,
+          "noBreakout": 20,
+          "noWholeShare": 0
+        },
+        "nextOpen": {
+          "execution": {
+            "activeDays": 80,
+            "confirmedRoundTrips": 110,
+            "longRoundTrips": 63,
+            "shortRoundTrips": 47,
+            "confirmedEntryFills": 110,
+            "confirmedExitFills": 110,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 49300.24,
+            "confirmedRawTurnoverUsd": 2720119.699600001,
+            "turnoverCapital": 27.201196996000007,
+            "breakEvenRoundTripBps": 10.316825397105427
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 1403.1500000000033,
+              "sharpe": 0.8247362823459968,
+              "maxDrawdown": 0.00866552520265551,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.11734678828369949,
+                "blendedNetUsd": 27345.0463016,
+                "blendedSharpe": 1.717303225185712,
+                "blendedMaxDrawdown": 0.033976997067027614,
+                "netLiftUsd": -6485.4740753999995,
+                "sharpeLift": 0.012966298757081107,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": 1131.1380300400024,
+              "sharpe": 0.6679622006588454,
+              "maxDrawdown": 0.009337040246593986,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.11568766305819272,
+                "blendedNetUsd": 24350.782685574162,
+                "blendedSharpe": 1.533057428336511,
+                "blendedMaxDrawdown": 0.03748573387888432,
+                "netLiftUsd": -5804.911163883541,
+                "sharpeLift": 0.01014440218709245,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": 723.1200751000029,
+              "sharpe": 0.4295159457317353,
+              "maxDrawdown": 0.01034922840374708,
+              "positiveMeanP": 0.25637436256374363,
+              "versusB0": {
+                "correlation": 0.11288845727274507,
+                "blendedNetUsd": 19859.38726153541,
+                "blendedSharpe": 1.2545801924473508,
+                "blendedMaxDrawdown": 0.04573342788644785,
+                "netLiftUsd": -4784.066796608849,
+                "sharpeLift": 0.005858889201798112,
+                "netLiftP": 0.9473052694730527
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": 43.0901502000026,
+              "sharpe": 0.025761398971488297,
+              "maxDrawdown": 0.012049445475495246,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.10740919011289272,
+                "blendedNetUsd": 12373.728221470798,
+                "blendedSharpe": 0.7855260492873324,
+                "blendedMaxDrawdown": 0.06681044543215564,
+                "netLiftUsd": -3082.6595178176995,
+                "sharpeLift": -0.0014234287310018745,
+                "netLiftP": null
+              }
+            }
+          ]
+        },
+        "delayedEntry": {
+          "execution": {
+            "activeDays": 80,
+            "confirmedRoundTrips": 110,
+            "longRoundTrips": 63,
+            "shortRoundTrips": 47,
+            "confirmedEntryFills": 110,
+            "confirmedExitFills": 110,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 49267.68,
+            "confirmedRawTurnoverUsd": 2720045.6544999997,
+            "turnoverCapital": 27.200456544999998,
+            "breakEvenRoundTripBps": 9.875683503899895
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 1343.1155000000122,
+              "sharpe": 0.8284009770249182,
+              "maxDrawdown": 0.007686570398824588,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.11381167571064123,
+                "blendedNetUsd": 27333.039401599995,
+                "blendedSharpe": 1.7169103590907597,
+                "blendedMaxDrawdown": 0.033943375702461975,
+                "netLiftUsd": -6497.480975399998,
+                "sharpeLift": 0.012573432662128736,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": 1071.1109345500117,
+              "sharpe": 0.6635549193501735,
+              "maxDrawdown": 0.007926222647214654,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.11225665409007131,
+                "blendedNetUsd": 24338.777266476165,
+                "blendedSharpe": 1.5326164306533288,
+                "blendedMaxDrawdown": 0.03758783276287614,
+                "netLiftUsd": -5816.916582981541,
+                "sharpeLift": 0.009703404503910162,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": 663.1040863750125,
+              "sharpe": 0.41298465755207364,
+              "maxDrawdown": 0.008935543772841226,
+              "positiveMeanP": 0.25807419258074193,
+              "versusB0": {
+                "correlation": 0.10960488763689619,
+                "blendedNetUsd": 19847.384063790403,
+                "blendedSharpe": 1.254069941153358,
+                "blendedMaxDrawdown": 0.04583542917973071,
+                "netLiftUsd": -4796.0699943538475,
+                "sharpeLift": 0.005348637907805376,
+                "netLiftP": 0.9475052494750525
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": -16.90732724998756,
+              "sharpe": -0.01058583038116633,
+              "maxDrawdown": 0.010630963763122336,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.10435040100210308,
+                "blendedNetUsd": 12361.728725980804,
+                "blendedSharpe": 0.7849090879429018,
+                "blendedMaxDrawdown": 0.06701160676703477,
+                "netLiftUsd": -3094.659013307699,
+                "sharpeLift": -0.002040390075432441,
+                "netLiftP": null
+              }
+            }
+          ]
+        }
+      },
+      {
+        "width": 30,
+        "gated": false,
+        "skippedSymbolDays": {
+          "openingUnavailable": 0,
+          "referenceUnavailable": 0,
+          "volatilityGate": 0,
+          "rvolGate": 0,
+          "signalUnavailable": 0,
+          "noBreakout": 681,
+          "noWholeShare": 0
+        },
+        "nextOpen": {
+          "execution": {
+            "activeDays": 477,
+            "confirmedRoundTrips": 3135,
+            "longRoundTrips": 1657,
+            "shortRoundTrips": 1478,
+            "confirmedEntryFills": 3135,
+            "confirmedExitFills": 3135,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 99695.45000000001,
+            "confirmedRawTurnoverUsd": 77427458.29749995,
+            "turnoverCapital": 774.2745829749996,
+            "breakEvenRoundTripBps": 0.8415766632766103
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 3258.057099999947,
+              "sharpe": 0.20841195594764225,
+              "maxDrawdown": 0.11431016170699415,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.3321912006111319,
+                "blendedNetUsd": 27716.027721599996,
+                "blendedSharpe": 1.6138889136492942,
+                "blendedMaxDrawdown": 0.036515261616584804,
+                "netLiftUsd": -6114.492655400012,
+                "sharpeLift": -0.09044801277933678,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": -4484.688729750054,
+              "sharpe": -0.28709317678499563,
+              "maxDrawdown": 0.1587484859301722,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.33048244441926,
+                "blendedNetUsd": 23227.617333616123,
+                "blendedSharpe": 1.3560201882640561,
+                "blendedMaxDrawdown": 0.04176514305863044,
+                "netLiftUsd": -6928.076515841557,
+                "sharpeLift": -0.16689283788536247,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": -16098.807474375077,
+              "sharpe": -1.0316711696195924,
+              "maxDrawdown": 0.25484310245113984,
+              "positiveMeanP": 0.9315068493150684,
+              "versusB0": {
+                "correlation": 0.3278240525729192,
+                "blendedNetUsd": 16495.001751640397,
+                "blendedSharpe": 0.9664468721644616,
+                "blendedMaxDrawdown": 0.05481335039769253,
+                "netLiftUsd": -8148.452306503866,
+                "sharpeLift": -0.28227443108109107,
+                "netLiftP": 0.9832016798320168
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": -35455.67204875005,
+              "sharpe": -2.2756560231050518,
+              "maxDrawdown": 0.4234478804175009,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.32314368197961185,
+                "blendedNetUsd": 5273.975781680794,
+                "blendedSharpe": 0.3106410416499325,
+                "blendedMaxDrawdown": 0.09915965162401019,
+                "netLiftUsd": -10182.41195760771,
+                "sharpeLift": -0.47630843636840176,
+                "netLiftP": null
+              }
+            }
+          ]
+        },
+        "delayedEntry": {
+          "execution": {
+            "activeDays": 477,
+            "confirmedRoundTrips": 3135,
+            "longRoundTrips": 1657,
+            "shortRoundTrips": 1478,
+            "confirmedEntryFills": 3135,
+            "confirmedExitFills": 3135,
+            "unresolvedDays": [],
+            "heldGapBarsOnConfirmedTrips": 0,
+            "latestConfirmedExitEt": "15:55",
+            "maxClosedEntryNotionalUsdPerDay": 99738.86,
+            "confirmedRawTurnoverUsd": 77426248.75359996,
+            "turnoverCapital": 774.2624875359995,
+            "breakEvenRoundTripBps": 0.1804714063375165
+          },
+          "costs": [
+            {
+              "bp": 0,
+              "netUsd": 698.6612000000275,
+              "sharpe": 0.04543591893531887,
+              "maxDrawdown": 0.12494605020926453,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.3502261252659053,
+                "blendedNetUsd": 27204.14854160002,
+                "blendedSharpe": 1.581660184947284,
+                "blendedMaxDrawdown": 0.03681638057138081,
+                "netLiftUsd": -6626.371835399993,
+                "sharpeLift": -0.122676741481347,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 2,
+              "netUsd": -7043.963675359971,
+              "sharpe": -0.45836756229616915,
+              "maxDrawdown": 0.17912659171651346,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.3487992962712539,
+                "blendedNetUsd": 22715.762344494153,
+                "blendedSharpe": 1.3240225566148622,
+                "blendedMaxDrawdown": 0.04352247252414354,
+                "netLiftUsd": -7439.931504963536,
+                "sharpeLift": -0.19889046953455636,
+                "netLiftP": null
+              }
+            },
+            {
+              "bp": 5,
+              "netUsd": -18657.900988399957,
+              "sharpe": -1.2151260198754856,
+              "maxDrawdown": 0.27559378506217047,
+              "positiveMeanP": 0.9586041395860414,
+              "versusB0": {
+                "correlation": 0.3465608542663271,
+                "blendedNetUsd": 15983.183048835408,
+                "blendedSharpe": 0.9348719109150969,
+                "blendedMaxDrawdown": 0.05659741127989204,
+                "netLiftUsd": -8660.271009308846,
+                "sharpeLift": -0.3138493923304557,
+                "netLiftP": 0.9881011898810119
+              }
+            },
+            {
+              "bp": 10,
+              "netUsd": -38014.46317679993,
+              "sharpe": -2.4786673875556846,
+              "maxDrawdown": 0.4458266227829619,
+              "positiveMeanP": null,
+              "versusB0": {
+                "correlation": 0.3425709595893741,
+                "blendedNetUsd": 4762.217556070812,
+                "blendedSharpe": 0.2799759769504813,
+                "blendedMaxDrawdown": 0.10157921056204466,
+                "netLiftUsd": -10694.170183217693,
+                "sharpeLift": -0.5069735010678529,
+                "netLiftP": null
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "verdict": "DO NOT PROMOTE",
+  "gates": {
+    "complete": true,
+    "enoughActivity": true,
+    "standalone": {
+      "positiveAt5And10InBothFolds": false,
+      "significantPooledMean": false,
+      "delayedNetPositive": true
+    },
+    "alongsideB0": {
+      "positiveLiftAt5And10InBothFolds": false,
+      "lowAbsoluteCorrelation": true,
+      "positiveSharpeLift": true,
+      "significantPairedLift": false,
+      "delayedLiftPositive": false
+    }
+  }
+}

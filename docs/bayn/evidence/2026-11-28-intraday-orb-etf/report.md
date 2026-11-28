@@ -78,3 +78,80 @@ Then require either:
 The 0.025 threshold budgets 0.05 across the two prespecified promotion paths. A pass would only justify
 separate prospective qualification. Other waves have used overlapping data and a fixed modern ETF universe
 is not a survivorship-free screen; these folds are chronological OOS, not new blind market history.
+
+## Result: DO NOT PROMOTE
+
+The walk-forward selector picked **30 minutes in both folds**. At 5 bp it earned **$723.12** on the
+fixed $100,000 reference across 477 OOS sessions (Sharpe **0.430**, MaxDD **1.035%**). The pooled
+one-sided bootstrap p was **0.2564** against the 0.025 threshold, and 2026 lost money at both 5 and
+10 bp. The positive pooled estimate does not establish a durable standalone edge.
+
+Correlation to B0 at 5 bp was **0.113** across the same 477 sessions, including cash days. That is low
+co-movement, not evidence of positive diversifying alpha. The 80/20 blend earned **$19,859.39** versus
+**$24,643.45** for B0, giving up **$4,784.07**. The blend cut modeled drawdown from **5.655%** to
+**4.573%** but raised Sharpe by only **0.006** (1.255 vs. 1.249). The one-sided paired p for positive
+net lift was **0.9473**. The blend failed the registered net-lift gates in both folds; reducing B0
+exposure is not by itself evidence of an ORB edge. Differences are calculated before rounding.
+
+### Walk-forward selection
+
+Train Sharpes below are daily and unannualized, based only on data before that fold. Net is USD
+after the specified round-trip penalty. Counts are closed round trips, not individual fills.
+
+| OOS fold | Train Sharpe 15m / 30m | Selected | Round trips | Turnover / capital | 5 bp net | 10 bp net |
+| -------- | ---------------------- | -------- | ----------: | -----------------: | -------: | --------: |
+| 2025     | −0.04654 / +0.00978    | 30m      |          67 |            16.589× |  $753.59 |   $338.87 |
+| 2026     | −0.01879 / +0.03711    | 30m      |          43 |            10.612× |  −$30.47 |  −$295.78 |
+
+### Pooled 2025–2026 cost and fill stress
+
+All rows use the same 477-session OOS calendar. Dollar P&L and turnover are modeled at fixed sizing;
+turnover includes both sides of each round trip at their raw opens. The other width and the ungated
+rows are diagnostics, not replacements for the walk-forward selection.
+
+| Book / fill clock               | Round trips | Turnover / capital |   0 bp net |   2 bp net |    5 bp net |   10 bp net | 5 bp Sharpe |
+| ------------------------------- | ----------: | -----------------: | ---------: | ---------: | ----------: | ----------: | ----------: |
+| Selected (gated 30m), next open |         110 |            27.201× |  $1,403.15 |  $1,131.14 |     $723.12 |      $43.09 |       0.430 |
+| Selected (gated 30m), +5m entry |         110 |            27.200× |  $1,343.12 |  $1,071.11 |     $663.10 |     −$16.91 |       0.413 |
+| Gated 15m, next open            |         199 |            49.204× |    $439.74 |    −$52.30 |    −$790.35 |  −$2,020.45 |      −0.314 |
+| Ungated 15m, next open          |       3,533 |           872.857× |  $5,760.94 | −$2,967.63 | −$16,060.48 | −$37,881.91 |      −0.936 |
+| Ungated 30m, next open          |       3,135 |           774.275× |  $3,258.06 | −$4,484.69 | −$16,098.81 | −$35,455.67 |      −1.032 |
+| B0, same-tape control           |         362 |           367.483× | $33,830.52 | $30,155.69 |  $24,643.45 |  $15,456.39 |       1.249 |
+
+- **Activity is limited by the gates, not by missing bars.** Of 3,816 OOS symbol-sessions, 2,686
+  failed compression, 1,000 of the 1,130 remaining failed RVOL, and 20 of the 130 that passed both
+  had no breakout. The 110 round trips were 63 long and 47 short on 80 active sessions. The largest
+  daily sum of entry notionals was $49,300.24; the per-symbol budget is set at the signal close and
+  does not use the later fill price to resize.
+- **Turnover and fill timing limit the economics.** The selected next-open path turned $2,720,119.70
+  two-sided. A 5 bp penalty consumed $680.03 of gross P&L. Pooled break-even fell from 10.317 bp to
+  9.876 bp under the one-bar delay; the same 110 orders held to the same exits earned $60.02 less at
+  5 bp than the next-open path. The 2026 next-open fold broke even at only 4.426 bp.
+- **The archive limits execution claims.** No selected entries or scheduled exits were unresolved in
+  either fill scenario. All modeled selected exits are same-session at the registered 15:55/12:55
+  bar open; B0's latest modeled OOS exit was 15:45. A bar open is an aggregate's first eligible print,
+  not a quote or evidence of trading at the window boundary. Finalized archive bars do not certify
+  first-arrival latency, executable liquidity, borrow, costs, or live eligible share lots. See
+  [Alpaca's bar specification](https://docs.alpaca.markets/us/docs/market-data-faq#how-are-bars-aggregated).
+
+### Receipts and reproduction
+
+The [registration commit](https://github.com/proompteng/lab/commit/e63ec8d22a74ea5d2b4074d919323dcaee2a17a9)
+was published before any Wave 23D price-tape read. The [machine-readable receipt](results.json) binds the
+manifest and calendar and records the authenticated compressed and decoded tape hashes and lengths.
+All 3,923,737 rows were counted. After discarding 61,122 outside-RTH rows for the eight enrolled names,
+each had exactly 56,646 of 56,646 expected five-minute slots: 453,168 observed bars across the 729
+sessions, six of them early closes. The OOS sample stops on November 25, 2026; it is not three full
+OOS years. No external prices or generated bars entered the study.
+
+With read-only access to the registered `agents-artifacts` archive, run from the repository root:
+
+```sh
+bun services/bayn/tools/research-intraday-orb-etf.ts /tmp/w23d-replay.json
+bunx oxfmt /tmp/w23d-replay.json
+cmp /tmp/w23d-replay.json docs/bayn/evidence/2026-11-28-intraday-orb-etf/results.json
+```
+
+The command requires a new output path; it will not overwrite an existing receipt. The JSON retains
+full-precision costs, B0 and blend metrics, fill counts, gate dispositions, and the delayed-entry stress
+for each variant and fold. This result changes no Bayn policy or execution path.
