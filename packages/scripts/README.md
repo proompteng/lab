@@ -45,8 +45,9 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 ## Agents collective knowledge
 
-`src/agents/curate-ontology-deltas.ts` validates AgentRun proposals against an in-memory copy of the Agents schema and
-updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
+`src/agents/emit-knowledge-delta.ts` emits or checks a canonical proposal pinned to the verified checkout's Git SHA.
+`src/agents/curate-ontology-deltas.ts` validates the selected proposals against an in-memory copy of the Agents schema
+and updates the Git bundle only with `--mode write`. Follow the [collective knowledge workflow](../../docs/agents/collective-knowledge-workflow.md).
 
 ## Registry maintenance
 
