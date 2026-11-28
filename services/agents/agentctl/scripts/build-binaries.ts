@@ -8,9 +8,21 @@ const root = resolve(scriptDir, '..')
 const entry = resolve(root, 'src/index.ts')
 const distDir = resolve(root, 'dist')
 
+const signBinary = async (codesign: string, path: string) => {
+  const proc = Bun.spawn([codesign, '-s', '-', '--force', path], {
+    stderr: 'inherit',
+    stdout: 'inherit',
+  })
+  const exitCode = await proc.exited
+  if (exitCode !== 0) {
+    throw new Error(`codesign failed for ${path} with exit code ${exitCode}`)
+  }
+}
+
 export const buildBinaries = async (argv: string[]) => {
   const targets = resolveTargets(argv, process.env.AGENTCTL_TARGETS)
   const hostLabel = resolveHostTarget().label
+  const codesign = process.platform === 'darwin' ? Bun.which('codesign') : null
 
   await mkdir(distDir, { recursive: true })
 
@@ -25,7 +37,10 @@ export const buildBinaries = async (argv: string[]) => {
         entry,
         '--compile',
         '--compile-autoload-package-json',
-        '--format=cjs',
+        '--format=esm',
+        // Protobuf's dynamic require needs a binding to use Buffer in the ESM bundle.
+        '--banner',
+        'const require = import.meta.require;',
         '--target',
         target.bunTarget,
         '--outfile',
@@ -44,11 +59,15 @@ export const buildBinaries = async (argv: string[]) => {
     }
 
     await chmod(output, 0o755)
+    const signer = target.platform === 'darwin' ? codesign : null
+    if (signer) await signBinary(signer, output)
 
     if (target.label === hostLabel) {
       const hostBinary = resolve(distDir, 'agentctl')
       await copyFile(output, hostBinary)
       await chmod(hostBinary, 0o755)
+      // Copying the executable can invalidate its Mach-O signature.
+      if (signer) await signBinary(signer, hostBinary)
       console.log(`Linked host binary → ${hostBinary}`)
     }
   }

@@ -132,59 +132,61 @@ const startMockServer = async () => {
   }
 }
 
+const runVersionCheck = async (binaryPath: string, [command, ...args]: [string, ...string[]], timeoutMs: number) => {
+  const proc = Bun.spawn([binaryPath, command, ...args], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+
+  if (exitCode !== 0) {
+    throw new Error(`agentctl ${command} failed with exit code ${exitCode}\n${stderr || stdout}`)
+  }
+  return { stdout, stderr }
+}
+
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
   const envServer = process.env.AGENTCTL_VALIDATE_SERVER?.trim()
-  const useMock = options.useMock || (!options.server && !envServer)
   if (options.useMock && options.server) {
     throw new Error('--mock cannot be combined with --server')
   }
-  const mockServer = useMock ? await startMockServer() : null
-  const server = options.server ?? envServer ?? mockServer?.address
+
   const binaryPath = resolveBinary(options.binaryPath)
-
-  if (!server) {
-    throw new Error('No gRPC server address resolved')
-  }
-
   if (!existsSync(binaryPath)) {
     throw new Error(`agentctl binary not found at ${binaryPath}; run bun run build:bin first`)
   }
 
-  let stdout = ''
-  let stderr = ''
-  let exitCode = 1
+  const { stdout: clientVersion } = await runVersionCheck(binaryPath, ['--version'], options.timeoutMs)
+  if (!/^agentctl v\S+/.test(clientVersion.trim())) {
+    throw new Error('agentctl --version output missing client version')
+  }
 
+  const useMock = options.useMock || (!options.server && !envServer)
+  const mockServer = useMock ? await startMockServer() : null
   try {
-    const proc = Bun.spawn([binaryPath, 'version', '--grpc', '--server', server], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-
-    const timeout = setTimeout(() => {
-      proc.kill()
-    }, options.timeoutMs)
-
-    ;[stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-
-    clearTimeout(timeout)
-  } finally {
-    if (mockServer) {
-      await mockServer.close()
+    const server = mockServer?.address ?? options.server ?? envServer
+    if (!server) {
+      throw new Error('No gRPC server address resolved')
     }
-  }
 
-  if (exitCode !== 0) {
-    throw new Error(`agentctl failed with exit code ${exitCode}\n${stderr || stdout}`)
-  }
-
-  const output = `${stdout}${stderr}`.trim()
-  if (!output.toLowerCase().includes('agentctl') || !output.toLowerCase().includes('server')) {
-    throw new Error(`agentctl version output missing server info:\n${output}`)
+    const { stdout, stderr } = await runVersionCheck(
+      binaryPath,
+      ['version', '--grpc', '--server', server],
+      options.timeoutMs,
+    )
+    const output = `${stdout}${stderr}`.trim()
+    if (!output.toLowerCase().includes('agentctl') || !output.toLowerCase().includes('server')) {
+      throw new Error(`agentctl version output missing server info:\n${output}`)
+    }
+  } finally {
+    await mockServer?.close()
   }
 
   console.log('agentctl compiled binary validated')
