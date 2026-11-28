@@ -844,13 +844,19 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
               : recoveryRecords(String(action.threadId), options),
         })
         return
+      case 'background-codex-runs':
       case 'active-codex-runs': {
         const existing = [...runs.values()].filter(
           (run) =>
             run.agentId === action.agentId &&
             (!action.threadId || run.threadId === action.threadId) &&
+            run.threadId !== action.excludeThreadId &&
             !['succeeded', 'failed', 'cancelled', 'rejected'].includes(String(run.state.phase)),
         )
+        if (action.action === 'background-codex-runs') {
+          result = { runs: existing, incomplete: false }
+          break
+        }
         if (existing.length) {
           result = existing
           break
@@ -4366,6 +4372,67 @@ test('retire a turn completed in recovered history after its live start arrived 
   }
 })
 
+test('restores an accepted message on reload and only matches its exact native echo', async ({ page }) => {
+  const text = 'Use the earlier example.'
+  const run: TengriCodexRun = {
+    runId: '88888888-8888-4888-8888-888888888888',
+    agentId: 'microvm-ada',
+    threadId: 'thread-accepted',
+    state: { phase: 'needs_reconciliation', turnId: null, reason: 'Waiting for the original receipt.' },
+    acceptedMessage: { text, attachmentPaths: [] },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-previous',
+            status: 'completed',
+            items: [{ id: 'earlier', type: 'userMessage', clientId: 'previous', content: [{ type: 'text', text }] }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-accepted'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const messages = chat.getByText(text, { exact: true })
+  await expect(messages).toHaveCount(2)
+  await page.reload()
+  await expect(messages).toHaveCount(2)
+  await emitCodexEvent(page, {
+    sequence: 42,
+    method: 'item/started',
+    kind: 'user-message',
+    threadId: run.threadId,
+    turnId: 'turn-native',
+    itemId: 'native-echo',
+    approvalId: '',
+    text,
+    rawJson: JSON.stringify({
+      params: {
+        item: { id: 'native-echo', type: 'userMessage', clientId: run.runId, content: [{ type: 'text', text }] },
+      },
+    }),
+  })
+  await emitCodexEvent(page, {
+    sequence: 43,
+    method: 'item/agentMessage/delta',
+    kind: 'assistant-text',
+    threadId: run.threadId,
+    turnId: 'turn-native',
+    itemId: 'native-reply',
+    approvalId: '',
+    text: 'The original run is responding.',
+    rawJson: '{}',
+  })
+  await expect(chat.getByText('The original run is responding.', { exact: true })).toBeVisible()
+  await expect(messages).toHaveCount(2)
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
 test('uses the current session to recover the accepted run without another send', async ({ page }) => {
   const run: TengriCodexRun = {
     runId: '88888888-8888-4888-8888-888888888888',
@@ -7417,6 +7484,30 @@ test('reconciles a lost archive response by reading the native index without res
 test('stops idle chat polling while retaining minute-level connection checks', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page)
+  const incoming: TengriCodexRun = {
+    runId: '77777777-7777-4777-8777-777777777777',
+    agentId: 'microvm-ada',
+    threadId: 'thread-background',
+    state: {
+      phase: 'waiting_for_approval',
+      turnId: 'turn-background',
+      approvals: [{ approvalId: 'background:1', raw: {} }],
+    },
+  }
+  let approvalPending = false
+  let discoveryReads = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (approvalPending && route.request().method() === 'POST') {
+      const action = route.request().postDataJSON()
+      if (action.action === 'active-codex-runs' && !action.threadId) {
+        discoveryReads += 1
+        return route.fulfill({ json: { result: [incoming] } })
+      }
+      if (action.action === 'codex-run' && action.runId === incoming.runId)
+        return route.fulfill({ json: { result: incoming } })
+    }
+    return route.fallback()
+  })
   await page.goto('/')
   await page.getByRole('textbox', { name: 'Message your agent' }).fill('An unsent draft')
   // Wait for the initial chat recovery before advancing its timers.
@@ -7429,6 +7520,24 @@ test('stops idle chat polling while retaining minute-level connection checks', a
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(2)
   await page.clock.runFor(60_000)
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(3)
+
+  approvalPending = true
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    threadId: incoming.threadId,
+    turnId: 'turn-background',
+    itemId: 'command-background',
+    text: '',
+    approvalId: 'background:1',
+    rawJson: '{}',
+  })
+  const row = page.locator('[data-conversation-id="thread-background"]')
+  await expect(row).toHaveAttribute('aria-description', 'Approval needed')
+  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toHaveValue('An unsent draft')
+  await page.clock.runFor(20_000)
+  expect(discoveryReads).toBe(1)
 })
 
 test('runs another conversation while keeping each active response unarchivable', async ({ page }) => {
@@ -10308,6 +10417,104 @@ for (const resolution of ['local response', 'server event'] as const) {
   }
 }
 
+test('surfaces a background approval and resolves that run from a phone-sized workspace', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '33333333-3333-4333-8333-333333333333',
+    agentId: 'microvm-ada',
+    threadId: 'thread-alpha',
+    state: { phase: 'running', turnId: 'turn-alpha' },
+  }
+  const threadStore: ThreadStore = {
+    threads: [
+      { id: 'thread-alpha', title: 'Alpha', updatedAt: 1, archived: false },
+      { id: 'thread-beta', title: 'Beta', updatedAt: 51, archived: false },
+    ],
+  }
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    preserveDraftStorageOnReload: true,
+    threadStore,
+    resumeThreadRawJsonById: { [run.threadId]: JSON.stringify({ thread: { name: 'Alpha', turns: [] } }) },
+  })
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('tengri-thread:microvm-ada'))
+      localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const alpha = chat.locator('[data-conversation-id="thread-alpha"]')
+  const beta = chat.locator('[data-conversation-id="thread-beta"]')
+  await expect(alpha).toHaveAttribute('aria-description', 'Response in progress')
+  await beta.click()
+  await expect(beta).toHaveAttribute('aria-current', 'true')
+  const deadline = new Date(Date.now() + 28 * 60_000)
+  Object.assign(run, { approvalDeadlineMs: deadline.getTime() })
+  run.state = {
+    phase: 'waiting_for_approval',
+    turnId: 'turn-alpha',
+    approvals: [
+      {
+        approvalId: 'process-identity:17',
+        raw: {
+          id: 17,
+          method: 'item/commandExecution/requestApproval',
+          params: { threadId: 'thread-alpha', turnId: 'turn-alpha', command: 'echo review-me', cwd: '/workspace' },
+        },
+      },
+    ],
+  }
+  await expect(alpha).toHaveAttribute('aria-description', 'Approval needed')
+  await expect(alpha).toContainText('Needs you')
+  await expect(chat.getByRole('region', { name: 'Pending approvals' })).toHaveCount(0)
+
+  for (let index = 0; index < 49; index += 1) {
+    threadStore.threads.push({
+      id: `thread-recent-${index}`,
+      title: `Recent chat ${index}`,
+      updatedAt: index + 2,
+      archived: false,
+    })
+  }
+  await page.setViewportSize({ width: 320, height: 680 })
+  await page.reload()
+  const conversations = chat.getByRole('button', { name: 'Show conversations', exact: true })
+  await expect(conversations).toHaveAttribute('aria-expanded', 'false')
+  await expect(conversations).toHaveAttribute('aria-description', 'Conversations need approval')
+  await expect(chat.getByRole('article', { name: 'Codex approval' })).toHaveCount(0)
+  await conversations.click()
+  await expect(chat.getByRole('dialog', { name: 'Conversations', exact: true })).toBeVisible()
+  await expect(beta).toHaveAttribute('aria-current', 'true')
+  await expect(chat.getByRole('button', { name: 'Load older chats' })).toBeVisible()
+  await expect(alpha).toContainText('Needs you')
+  await expect(alpha.getByText('Alpha', { exact: true })).toBeVisible()
+  expect(mock.actions.some((action) => action.action === 'list-threads' && action.cursor)).toBe(false)
+  await alpha.click()
+  const approval = chat.getByRole('article', { name: 'Codex approval' })
+  await expect(approval).toContainText('echo review-me')
+  await expect(approval.locator('time')).toHaveAttribute('datetime', deadline.toISOString())
+  await expect(chat.locator('[data-approval-review="process-identity:17"]')).toBeFocused()
+  await approval.getByRole('button', { name: 'Approve once', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'resolve-approval'))
+    .toMatchObject([{ agentId: run.agentId, runId: run.runId, approvalId: 'process-identity:17' }])
+  await expect(approval).toHaveCount(0)
+  await expect(conversations).not.toHaveAttribute('aria-description', 'Conversations need approval')
+  run.state = { phase: 'running', turnId: 'turn-alpha' }
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Working')
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: run.threadId,
+    turnId: 'turn-alpha',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
+})
+
 test('recovers the exact durable run and pending approval with empty browser storage', async ({ page }) => {
   const runId = '33333333-3333-4333-8333-333333333333'
   const mock = await mockTengri(page, {
@@ -10347,6 +10554,131 @@ test('recovers the exact durable run and pending approval with empty browser sto
   const action = mock.actions.find((action) => action.action === 'resolve-approval')
   expect(action?.approvalId).toBe('process-identity:17')
   expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
+})
+
+test('rediscovers a pending approval after failed and incomplete background lookups', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '33333333-3333-4333-8333-333333333333',
+    agentId: 'microvm-ada',
+    threadId: 'thread-alpha',
+    state: {
+      phase: 'waiting_for_approval',
+      turnId: 'turn-alpha',
+      approvals: [
+        {
+          approvalId: 'process:17',
+          raw: {
+            id: 17,
+            method: 'item/commandExecution/requestApproval',
+            params: { threadId: 'thread-alpha', turnId: 'turn-alpha', command: 'echo review-me' },
+          },
+        },
+      ],
+    },
+  }
+  await mockTengri(page, {
+    durableRun: run,
+    threadStore: {
+      threads: [
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
+      ],
+    },
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-beta'))
+  let backgroundReads = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'background-codex-runs') {
+      backgroundReads += 1
+      if (backgroundReads === 1) {
+        return route.fulfill({ status: 503, json: { error: 'Background status is temporarily unavailable' } })
+      }
+      if (backgroundReads === 2) return route.fulfill({ json: { result: { runs: [], incomplete: true } } })
+    }
+    return route.fallback()
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect.poll(() => backgroundReads).toBeGreaterThan(0)
+  await expect(chat.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(chat.locator('[data-conversation-id="thread-alpha"]')).toHaveAttribute(
+    'aria-description',
+    'Approval needed',
+  )
+  expect(backgroundReads).toBe(3)
+  await expect(chat.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
+})
+
+test('discovers a replacement approval while an older background run is still tracked', async ({ page }) => {
+  const previous: TengriCodexRun = {
+    runId: '33333333-3333-4333-8333-333333333333',
+    agentId: 'microvm-ada',
+    threadId: 'thread-alpha',
+    state: { phase: 'running', turnId: 'turn-original' },
+  }
+  const replacement: TengriCodexRun = {
+    ...previous,
+    runId: '44444444-4444-4444-8444-444444444444',
+    approvalDeadlineMs: Date.now() + 30 * 60_000,
+    state: {
+      phase: 'waiting_for_approval',
+      turnId: 'turn-replacement',
+      approvals: [
+        {
+          approvalId: 'replacement:18',
+          raw: {
+            id: 18,
+            method: 'item/commandExecution/requestApproval',
+            params: { threadId: 'thread-alpha', turnId: 'turn-replacement', command: 'echo replacement' },
+          },
+        },
+      ],
+    },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: previous,
+    threadStore: {
+      threads: [
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
+      ],
+    },
+  })
+  let replaced = false
+  let backgroundReads = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action === 'background-codex-runs') {
+      backgroundReads += 1
+      if (replaced && action.excludeThreadId === 'thread-beta')
+        return route.fulfill({ json: { result: { runs: [replacement], incomplete: false } } })
+    }
+    if (action.action === 'codex-run' && action.runId === replacement.runId)
+      return route.fulfill({ json: { result: replacement } })
+    if (replaced && action.action === 'active-codex-runs' && action.threadId === previous.threadId)
+      return route.fulfill({ json: { result: [replacement] } })
+    return route.fallback()
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const alpha = chat.locator('[data-conversation-id="thread-alpha"]')
+  await expect(alpha).toHaveAttribute('aria-description', 'Response in progress')
+  await chat.locator('[data-conversation-id="thread-beta"]').click()
+  await expect.poll(() => backgroundReads).toBeGreaterThan(0)
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'codex-run' && action.runId === previous.runId))
+    .toBe(true)
+  replaced = true
+  await expect(alpha).toHaveAttribute('aria-description', 'Approval needed', { timeout: 15_000 })
+  await alpha.click()
+  const approval = chat.getByRole('article', { name: 'Codex approval' })
+  await expect(approval).toContainText('echo replacement')
+  await approval.getByRole('button', { name: 'Approve once', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'resolve-approval'))
+    .toMatchObject([{ runId: replacement.runId, approvalId: 'replacement:18' }])
 })
 
 test('reuses active-run snapshots without duplicate status polling and fetches the final result', async ({ page }) => {

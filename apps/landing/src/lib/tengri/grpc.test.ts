@@ -519,6 +519,7 @@ beforeAll(async () => {
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
+        incomplete: Boolean(call.request.excludeThreadId),
         runs:
           call.request.id === 'agent-empty'
             ? []
@@ -528,6 +529,9 @@ beforeAll(async () => {
                   agentId: call.request.id,
                   threadId: 'thread-selected',
                   stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+                  ...(call.request.threadId === 'thread-selected' && {
+                    acceptedMessage: { text: 'Retained input', attachmentPaths: [] },
+                  }),
                 },
               ],
       })
@@ -550,6 +554,20 @@ beforeAll(async () => {
       }
       receivedMetadata = call.metadata
       receivedRequest = call.request
+      if (call.request.agentId === 'agent-approval') {
+        callback(null, {
+          runId: call.request.runId,
+          agentId: call.request.agentId,
+          threadId: 'thread-selected',
+          stateJson: JSON.stringify({
+            phase: 'waiting_for_approval',
+            turnId: 'turn-selected',
+            approvals: [{ approvalId: 'approval-selected', raw: {} }],
+          }),
+          approvalDeadlineMs: '1775000000000',
+        })
+        return
+      }
       callback(null, {
         runId: call.request.runId,
         agentId: call.request.agentId,
@@ -854,7 +872,9 @@ describe('Tengri gRPC BFF transport', () => {
   })
   test('recovers the server-owned active run and distinguishes an empty workspace', async () => {
     const { getActiveCodexRuns } = await import('./grpc')
-    expect(await getActiveCodexRuns(identity, 'agent-test')).toEqual([
+    const { runs, incomplete } = await getActiveCodexRuns(identity, 'agent-test')
+    expect(incomplete).toBe(false)
+    expect(runs).toEqual([
       {
         runId: '11111111-1111-4111-8111-111111111111',
         agentId: 'agent-test',
@@ -863,17 +883,40 @@ describe('Tengri gRPC BFF transport', () => {
       },
     ])
     expect(receivedRequest).toEqual({ id: 'agent-test', threadId: '' })
-    expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
+    expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual({ runs: [], incomplete: false })
   })
   test('carries the selected conversation in the signed active-run request', async () => {
     const { getActiveCodexRuns } = await import('./grpc')
-    const runs = await getActiveCodexRuns(identity, 'agent-test', 'thread-selected')
+    const { runs } = await getActiveCodexRuns(identity, 'agent-test', 'thread-selected')
     expect(receivedRequest).toEqual({ id: 'agent-test', threadId: 'thread-selected' })
     expect(runs).toHaveLength(1)
     expect(runs[0]?.threadId).toBe('thread-selected')
+    expect(runs[0]?.acceptedMessage).toEqual({ text: 'Retained input', attachmentPaths: [] })
     const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
     expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))
+  })
+  test('carries the worker approval deadline through the signed run read', async () => {
+    const { getCodexRun } = await import('./grpc')
+    const pending = await getCodexRun(identity, 'agent-approval', '11111111-1111-4111-8111-111111111111')
+    expect(pending).toMatchObject({
+      state: { phase: 'waiting_for_approval', approvals: [{ approvalId: 'approval-selected' }] },
+      approvalDeadlineMs: 1_775_000_000_000,
+    })
+  })
+  test('signs the excluded conversation and rejects it in background discovery results', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    const { runs, incomplete } = await getActiveCodexRuns(identity, 'agent-test', { excludeThreadId: 'thread-open' })
+    expect(incomplete).toBe(true)
+    expect(runs[0]?.threadId).toBe('thread-selected')
+    expect(receivedRequest).toMatchObject({ id: 'agent-test', excludeThreadId: 'thread-open' })
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
+    expect(metadataValue('x-tengri-signature')).toBe(
+      expectedSignature(method, { id: 'agent-test', excludeThreadId: 'thread-open' }),
+    )
+    expect(
+      await rejection(getActiveCodexRuns(identity, 'agent-test', { excludeThreadId: 'thread-selected' })),
+    ).toMatchObject({ message: 'Invalid active run scope', status: 503 })
   })
   test('rejects an out-of-scope active-run response instead of treating the selected conversation as idle', async () => {
     const { getActiveCodexRuns } = await import('./grpc')

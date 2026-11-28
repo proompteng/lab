@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isCodexAttachmentPath } from './codex-images'
 
 const turnId = z.string().min(1).max(160)
 const reason = z.string().min(1).max(2048)
@@ -28,6 +29,14 @@ export const codexRunSchema = z.strictObject({
   agentId: z.string().min(1),
   threadId: z.string().min(1),
   state: codexRunStateSchema,
+  approvalDeadlineMs: z.int().positive().max(8_640_000_000_000_000).optional(),
+  acceptedMessage: z
+    .strictObject({
+      text: z.string().max(64 << 10),
+      attachmentPaths: z.array(z.string().refine(isCodexAttachmentPath)).max(4),
+    })
+    .refine((message) => Boolean(message.text.trim() || message.attachmentPaths.length))
+    .optional(),
 })
 
 export type TengriCodexRun = z.infer<typeof codexRunSchema>

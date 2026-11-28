@@ -57,7 +57,7 @@ import {
   type TengriCodexImage,
 } from '@/lib/tengri/codex-images'
 import { cn } from '@/lib/utils'
-import { AgentSessionList } from './agent-session-list'
+import { AgentSessionList, type ConversationActivity } from './agent-session-list'
 import { CodexQuestionCard } from './codex-question-card'
 import { codexQuestionRequest } from './codex-question-model'
 import type { QuestionRequest } from './codex-question-model'
@@ -196,10 +196,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [activeTurnId, setActiveTurnId] = useState('')
   const [runId, setRunId] = useState('')
   const [runRecovered, setRunRecovered] = useState(false)
+  const [reviewApprovalId, setReviewApprovalId] = useState('')
   const recoverInitialRun = useRef(true)
   const [workspaceRuns, setWorkspaceRuns] = useState<TengriCodexRun[]>([])
+  const workspaceRunsRef = useRef(workspaceRuns)
+  workspaceRunsRef.current = workspaceRuns
   const backgroundRunObservers = useRef(new Map<string, { stop: () => void }>())
   const [runRecoveryRevision, setRunRecoveryRevision] = useState(0)
+  const [backgroundDiscoveryRevision, setBackgroundDiscoveryRevision] = useState(0)
   const [run, setRun] = useState<TengriCodexRun | null>(null)
   const recoveredRunRef = useRef<TengriCodexRun | undefined>(undefined)
   const activeRunsRecoveryFailure = useRef<Error | undefined>(undefined)
@@ -404,6 +408,64 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }, [account?.authenticated, agentId, threadId, activeTurnId, runRecoveryRevision])
 
   useEffect(() => {
+    if (!account?.authenticated || !active || (!threadId && !backgroundDiscoveryRevision)) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let discovering = false
+    async function discoverBackgroundRuns() {
+      if (controller.signal.aborted || discovering || document.hidden) return
+      clearTimeout(timer)
+      discovering = true
+      let retry = false
+      const excludeThreadId = threadIdRef.current
+      const before = new Map(workspaceRunsRef.current.map((run) => [run.threadId, run.runId]))
+      try {
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS)])
+        const discovered = excludeThreadId
+          ? await runTengriAction<{ runs: TengriCodexRun[]; incomplete: boolean }>(
+              { action: 'background-codex-runs', agentId, excludeThreadId },
+              signal,
+            )
+          : {
+              runs: await runTengriAction<TengriCodexRun[]>({ action: 'active-codex-runs', agentId }, signal),
+              incomplete: false,
+            }
+        if (controller.signal.aborted) return
+        setWorkspaceRuns((current) => {
+          const byThread = new Map(current.map((run) => [run.threadId, run]))
+          let changed = false
+          for (const run of discovered.runs) {
+            if (run.agentId !== agentId || run.threadId === threadIdRef.current || codexRunIsTerminal(run)) continue
+            const known = byThread.get(run.threadId)
+            if (known && (known.runId === run.runId || known.runId !== before.get(run.threadId))) continue
+            byThread.set(run.threadId, run)
+            changed = true
+          }
+          return changed ? [...byThread.values()] : current
+        })
+        retry = discovered.incomplete
+      } catch {
+        // Conversation recovery has its own scoped read and remains available.
+        retry = true
+      } finally {
+        discovering = false
+        if (!controller.signal.aborted && !document.hidden && (retry || threadId)) {
+          timer = setTimeout(() => void discoverBackgroundRuns(), retry ? 3000 : 10_000)
+        }
+      }
+    }
+    void discoverBackgroundRuns()
+    window.addEventListener('focus', discoverBackgroundRuns)
+    document.addEventListener('visibilitychange', discoverBackgroundRuns)
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+      window.removeEventListener('focus', discoverBackgroundRuns)
+      document.removeEventListener('visibilitychange', discoverBackgroundRuns)
+    }
+  }, [account?.authenticated, active, agentId, backgroundDiscoveryRevision, threadId])
+
+  useEffect(() => {
     const observers = backgroundRunObservers.current
     const backgroundRuns = new Map(
       workspaceRuns
@@ -447,7 +509,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             next?.agentId === candidate.agentId &&
             next.threadId === candidate.threadId &&
             next.runId === candidate.runId &&
-            next.state.phase !== phase
+            (next.state.phase !== phase || next.state.phase === 'waiting_for_approval')
           ) {
             phase = next.state.phase
             setWorkspaceRuns((runs) =>
@@ -718,6 +780,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     setThreadId(stored)
     setSessionRevision(0)
     setArchivedThread('')
+    setReviewApprovalId('')
   }, [agentId, setCurrentActiveTurnId])
 
   useLayoutEffect(() => {
@@ -952,6 +1015,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       if (resolvedApprovalId) retireApproval(resolvedApprovalId)
       if (event.kind === 'approval' && resolvedApprovals.current.has(event.approvalId)) return
       if (
+        !currentThread &&
+        ((event.kind === 'approval' && event.threadId) || event.method === 'tengri/replayWarning')
+      ) {
+        setBackgroundDiscoveryRevision((current) => current + 1)
+      }
+      if (
         codexEventIsIndependentOfThreadSnapshot(event) ||
         codexResolvedApprovalId(event) ||
         codexEventConfirmsRuntimeReady(event) ||
@@ -1125,16 +1194,30 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     item.questionRequest?.fields.some((field) => !answeredAsyncQuestions.has(field.key)),
   )
 
+  useLayoutEffect(() => {
+    if (!reviewApprovalId || !threadReady || compactDrawerOpen) return
+    const target = conversationRef.current?.querySelector<HTMLElement>(
+      `[data-approval-review="${CSS.escape(reviewApprovalId)}"]`,
+    )
+    if (!target) return
+    setFollowingConversation(false)
+    setReviewApprovalId('')
+    target.scrollIntoView({ block: 'nearest' })
+    target.focus({ preventScroll: true })
+  }, [reviewApprovalId, threadReady, compactDrawerOpen, renderedEvents])
+
   const transcriptCards = [
     ...historyItems.map((item) => {
       const update = restoredItemUpdates.get(item.id)
       return {
         id: item.id,
         kind: item.kind,
+        turnId: item.turnId,
+        clientId: item.clientId,
         imageGeneration: update?.imageGeneration ?? item.imageGeneration,
         text: update?.text ?? item.text,
         card: update ? (
-          renderEvent(update)
+          renderTranscriptEvent(update)
         ) : item.questionRequest ? (
           renderAsyncQuestions(item.id, item.questionRequest, item.text)
         ) : (
@@ -1154,15 +1237,33 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       .map((update) => ({
         id: update.event.itemId || codexEventWrapperKey(update.event),
         kind: update.event.kind,
+        turnId: update.event.turnId || undefined,
+        clientId: update.event.kind === 'user-message' ? codexEventClientTurnIds(update.event)[0]?.[0] : undefined,
         imageGeneration: update.imageGeneration,
         text: update.text,
-        card: renderEvent(update),
+        card: renderTranscriptEvent(update),
       })),
   ]
   const currentSubmissions = submittedPrompts.filter((prompt) => prompt.threadId === threadId)
+  const accepted = runMatchesThread ? run?.acceptedMessage : undefined
+  const restoredSubmission: SubmittedPrompt | undefined =
+    accepted && !currentSubmissions.some((prompt) => prompt.clientId === runId)
+      ? {
+          id: runId,
+          clientId: runId,
+          threadId,
+          durable: true,
+          text: [accepted.text, ...accepted.attachmentPaths.map((path) => `[Local image: ${path}]`)]
+            .filter(Boolean)
+            .join('\n'),
+          previousItemIds: new Set(
+            transcriptCards.filter((item) => !runTurnId || item.turnId !== runTurnId).map((item) => item.id),
+          ),
+        }
+      : undefined
   const { pending: pendingPrompts, matches: livePromptMatches } = reconcileSubmittedPrompts(
     transcriptCards,
-    currentSubmissions,
+    restoredSubmission ? [...currentSubmissions, restoredSubmission] : currentSubmissions,
   )
   // A live echo can be evicted or excluded by a later snapshot. Retire our accepted
   // copy only once authoritative history contains it, while suppressing live duplicates.
@@ -1216,6 +1317,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
       id: prompt.id,
       kind: 'user-message',
+      turnId: undefined,
+      clientId: prompt.clientId,
       text: prompt.text,
       imageGeneration: undefined,
       card: (
@@ -1230,6 +1333,17 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     })
   }
 
+  function renderTranscriptEvent(update: (typeof renderedEvents)[number]) {
+    const card = renderEvent(update)
+    return card && update.event.kind === 'approval' && update.event.approvalId ? (
+      <div key={update.event.approvalId} data-approval-review={update.event.approvalId} tabIndex={-1}>
+        {card}
+      </div>
+    ) : (
+      card
+    )
+  }
+
   function renderEvent({
     event,
     text,
@@ -1238,6 +1352,22 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     imageGeneration,
   }: (typeof renderedEvents)[number]) {
     if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest, text)
+    const deadlineMs =
+      event.kind === 'approval' &&
+      runMatchesThread &&
+      run?.state.phase === 'waiting_for_approval' &&
+      run.state.approvals.some(({ approvalId }) => approvalId === event.approvalId)
+        ? run.approvalDeadlineMs
+        : undefined
+    const deadline = deadlineMs === undefined ? undefined : new Date(deadlineMs)
+    const approvalDeadline = deadline ? (
+      <p className="text-label-12 text-zinc-400">
+        Respond by{' '}
+        <time dateTime={deadline.toISOString()}>
+          {new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(deadline)}
+        </time>
+      </p>
+    ) : undefined
     const question = codexQuestionRequest(event)
     if (question)
       return (
@@ -1246,6 +1376,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           agentId={agentId}
           runId={runMatchesThread ? runId : ''}
           approvalId={event.approvalId}
+          deadline={approvalDeadline}
           request={question}
           onAnswered={() => retireApproval(event.approvalId)}
         />
@@ -1263,6 +1394,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         activityTitle={activityTitle}
         imageGeneration={imageGeneration}
         approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
+        approvalDeadline={approvalDeadline}
         approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}
         kind={event.kind}
@@ -1423,7 +1555,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       }
       setSubmittedPrompts((current) =>
         current.map((submitted) =>
-          submitted.id === submissionId ? { ...submitted, threadId: currentThread.id } : submitted,
+          submitted.id === submissionId
+            ? { ...submitted, threadId: currentThread.id, clientId: operation.id }
+            : submitted,
         ),
       )
       if (operation.turnId) {
@@ -1453,6 +1587,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           )
           sentOperation = { key: operationKey, id: operation.id }
           submission.current = { threadId: currentThread.id, operation }
+          setSubmittedPrompts((current) =>
+            current.map((submitted) =>
+              submitted.id === submissionId ? { ...submitted, clientId: operation.id } : submitted,
+            ),
+          )
         }
       }
       if (!operation.turnId) {
@@ -1781,22 +1920,24 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
 
   function newConversation() {
     if (!canChangeConversation) return
+    setReviewApprovalId('')
     showChat()
     removeStoredThread(agentId)
     resetTranscriptUi('')
     focusComposerAfterConversationChange()
   }
 
-  function switchConversation(nextThreadId: string) {
+  function switchConversation(nextThreadId: string, approvalId?: string) {
     if (!canChangeConversation) return
+    setReviewApprovalId(approvalId ?? '')
     showChat()
     if (nextThreadId !== threadIdRef.current) {
       writeStoredThread(agentId, nextThreadId)
       resetTranscriptUi(nextThreadId)
     }
-    if (window.matchMedia('(pointer:coarse)').matches) {
+    if (approvalId || window.matchMedia('(pointer:coarse)').matches) {
       focusComposerRequested.current = false
-      setSidebarOpen(false)
+      if (!sidebarWide) setSidebarOpen(false)
     } else focusComposerAfterConversationChange()
   }
 
@@ -1859,18 +2000,27 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
       ),
   )
+  const sidebarRuns = workspaceRuns.filter((candidate) => !runMatchesThread || candidate.threadId !== threadId)
+  if (runMatchesThread && run) sidebarRuns.push(run)
+  const threadActivity = new Map<string, ConversationActivity>()
+  for (const candidate of sidebarRuns) {
+    if (codexRunIsTerminal(candidate)) continue
+    const state = candidate.state
+    const pending =
+      state.phase === 'waiting_for_approval'
+        ? state.approvals.find(({ approvalId }) => !resolvedApprovals.current.has(approvalId))
+        : undefined
+    threadActivity.set(candidate.threadId, { phase: state.phase, approvalId: pending?.approvalId })
+  }
+  if (threadId && !threadActivity.has(threadId) && (activeTurnId || submittingHere)) {
+    threadActivity.set(threadId, { phase: 'running' })
+  }
+  const sidebarHasApprovals = !sidebarOpen && Array.from(threadActivity.values()).some(({ approvalId }) => approvalId)
   const conversationLoading = Boolean(
     threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
   )
   const runObservationUnavailable = Boolean(activeRunsRecoveryFailure.current || runRecoveryFailure.current)
   const showRecoveryStop = canStopRun && !showStopAction && Boolean(runStatus || runObservationUnavailable)
-  const threadPhases = new Map(
-    workspaceRuns
-      .filter((candidate) => !codexRunIsTerminal(candidate))
-      .map((candidate) => [candidate.threadId, candidate.state.phase]),
-  )
-  if (runPending && runPhase) threadPhases.set(threadId, runPhase)
-  else if (activeTurnId || submittingHere) threadPhases.set(threadId, 'running')
   const agentStatus = runObservationUnavailable
     ? 'Status unavailable'
     : connectionNotice
@@ -1956,7 +2106,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           agentId={agentId}
           enabled={account.authenticated}
           selected={threadId ? { id: threadId, unavailable: conversationMissing } : null}
-          threadPhases={threadPhases}
+          threadActivity={threadActivity}
           canSelect={canChangeConversation}
           revision={sessionRevision}
           onSelect={switchConversation}
@@ -1972,10 +2122,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             aria-expanded={sidebarOpen}
             aria-controls={sidebarId}
             aria-label={sidebarOpen ? 'Hide conversations' : 'Show conversations'}
+            aria-description={sidebarHasApprovals ? 'Conversations need approval' : undefined}
             onClick={() => setSidebarOpen((open) => !open)}
             className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 outline-none hover:bg-white/5 hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 active:bg-white/10 [@media(pointer:coarse)]:size-11"
           >
             <PanelLeft className="size-3.5" aria-hidden="true" />
+            {sidebarHasApprovals ? (
+              <span className="absolute top-1 right-1 size-1.5 rounded-full bg-zinc-300" aria-hidden="true" />
+            ) : null}
           </button>
           <span className="text-heading-14 text-zinc-200">Codex</span>
           <span className="min-w-0 truncate text-label-12 text-zinc-400" aria-label="Agent status" role="status">

@@ -82,6 +82,13 @@ pub(crate) struct Image {
     pub revision: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AcceptedMessage {
+    pub text: String,
+    pub attachment_paths: Vec<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Envelope {
@@ -244,6 +251,65 @@ pub(crate) struct Snapshot {
     workspace_uid: String,
     digest: String,
     pub state: State,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_deadline_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_message: Option<AcceptedMessage>,
+}
+
+impl Snapshot {
+    fn observe(
+        &mut self,
+        next: State,
+        observed_at_ms: u64,
+        run_deadline_ms: u64,
+        approval_window: &mut Option<ApprovalWindow>,
+    ) {
+        *approval_window = ApprovalWindow::observe(
+            approval_window.take(),
+            &next,
+            observed_at_ms,
+            run_deadline_ms,
+        );
+        self.approval_deadline_ms = approval_window
+            .as_ref()
+            .filter(|_| matches!(next, State::WaitingForApproval { .. }))
+            .map(|window| window.deadline_ms);
+        self.state = next;
+    }
+}
+
+struct ApprovalWindow {
+    ids: Vec<String>,
+    deadline_ms: u64,
+}
+
+impl ApprovalWindow {
+    fn observe(
+        previous: Option<Self>,
+        state: &State,
+        observed_at_ms: u64,
+        run_deadline_ms: u64,
+    ) -> Option<Self> {
+        match state {
+            State::WaitingForApproval { approvals, .. } => {
+                let mut ids: Vec<String> = approvals
+                    .iter()
+                    .map(|approval| approval.approval_id.clone())
+                    .collect();
+                ids.sort_unstable();
+                if previous.as_ref().is_some_and(|window| window.ids == ids) {
+                    return previous;
+                }
+                Some(Self {
+                    ids,
+                    deadline_ms: run_deadline_ms.min(observed_at_ms.saturating_add(30 * 60 * 1000)),
+                })
+            }
+            State::Recovering { .. } => previous,
+            _ => None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -334,7 +400,7 @@ pub(crate) async fn submit(
                 .into_body()
                 .map_err(client_error)
         },
-        || read(&principal, &input.id, Some(digest.clone())),
+        || read(&principal, &input.id, Some(digest.clone()), false),
     )
     .await
 }
@@ -397,45 +463,76 @@ pub(crate) async fn read(
     principal: &Principal,
     id: &str,
     digest: Option<String>,
+    include_message: bool,
 ) -> Result<Snapshot, Status> {
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
     recover_status("status", || async {
         reader::client()?
-            .status(&Query {
-                run_id: id.into(),
-                owner_hash: principal.owner_hash.clone(),
-                workspace_uid: principal.context.workspace_uid.clone(),
-                digest: digest.clone(),
-                expires_at_ms: crate::ofz::now_ms()? + 2000,
-            })
+            .status(
+                &Query {
+                    run_id: id.into(),
+                    owner_hash: principal.owner_hash.clone(),
+                    workspace_uid: principal.context.workspace_uid.clone(),
+                    digest: digest.clone(),
+                    expires_at_ms: crate::ofz::now_ms()? + 2000,
+                },
+                include_message,
+            )
             .await
     })
     .await
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct ActiveRuns {
+    pub(crate) runs: Vec<Snapshot>,
+    pub(crate) incomplete: bool,
+}
+
 pub(crate) async fn active(
     principal: &Principal,
     thread_id: &str,
-) -> Result<Vec<Snapshot>, Status> {
+    exclude_thread_id: Option<&str>,
+) -> Result<ActiveRuns, Status> {
+    use futures::{StreamExt, stream::FuturesUnordered};
+
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
-    tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
+    let mut observed = ActiveRuns::default();
+    let result = tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
         let claims = active_claims(principal).await?;
-        futures::future::try_join_all(
-            claims
-                .iter()
-                .filter(|claim| claim.owner_hash == principal.owner_hash)
-                // Scope before reading snapshots: an unavailable conversation must not
-                // prevent observing another. A failed selected read still fails closed.
-                .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
-                .map(|claim| read(principal, &claim.run_id, None)),
-        )
-        .await
+        // Scope before reading snapshots so a selected read observes only its own run.
+        let reads = claims
+            .iter()
+            .filter(|claim| claim.owner_hash == principal.owner_hash)
+            .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
+            .filter(|claim| exclude_thread_id != Some(claim.thread_id.as_str()))
+            .map(|claim| read(principal, &claim.run_id, None, !thread_id.is_empty()));
+        if exclude_thread_id.is_some() {
+            // Discovery adds observed runs. An omitted run remains tracked by its exact reader.
+            let mut pending = reads.collect::<FuturesUnordered<_>>();
+            while let Some(snapshot) = pending.next().await {
+                match snapshot {
+                    Ok(snapshot) => observed.runs.push(snapshot),
+                    Err(_) => observed.incomplete = true,
+                }
+            }
+            return Ok(());
+        }
+        observed.runs = futures::future::try_join_all(reads).await?;
+        Ok::<(), Status>(())
     })
-    .await
-    .map_err(|_| {
-        crate::metrics::global().record_run_read_failure();
-        Status::unavailable("active run recovery timed out")
-    })?
+    .await;
+    match result {
+        Ok(result) => result.map(|()| observed),
+        Err(_) => {
+            crate::metrics::global().record_run_read_failure();
+            if exclude_thread_id.is_some() && !observed.runs.is_empty() {
+                observed.incomplete = true;
+                return Ok(observed);
+            }
+            Err(Status::unavailable("active run recovery timed out"))
+        }
+    }
 }
 
 pub(crate) async fn thread_active(principal: &Principal, thread_id: &str) -> Result<bool, Status> {
@@ -575,7 +672,22 @@ impl TengriAgentRun {
             workspace_uid: admission.claim.workspace_uid.clone(),
             digest: admission.digest.clone(),
             state: State::Accepted,
+            approval_deadline_ms: None,
+            accepted_message: None,
         };
+        // The message is immutable and must not be rewritten on each state update.
+        ctx.set(
+            "accepted_message",
+            Json(AcceptedMessage {
+                text: admission.input.text.trim().to_owned(),
+                attachment_paths: admission
+                    .input
+                    .images
+                    .iter()
+                    .map(|image| image.path.clone())
+                    .collect(),
+            }),
+        );
         // A slow cross-partition claim must not hide an already admitted run from its caller.
         ctx.set("snapshot", Json(snapshot.clone()));
         let workspace =
@@ -605,7 +717,8 @@ impl TengriAgentRun {
         if !snapshot.state.terminal() {
             ctx.set("snapshot", Json(snapshot.clone()));
         }
-        let mut approval_started_at = None;
+        let run_deadline_ms = started_at.saturating_add(24 * 60 * 60 * 1000);
+        let mut approval_window: Option<ApprovalWindow> = None;
         let mut recovery_attempt = 0_u32;
         let mut principal = admission.principal.clone();
         let mut recovery_wait = 0_u64;
@@ -637,18 +750,20 @@ impl TengriAgentRun {
                     State::NeedsReconciliation { .. } | State::AuthorizationRequired { .. }
                 )
             {
-                snapshot.state = ctx
+                let (next, observed_at_ms) = ctx
                     .run(|| async {
                         let next = self
                             .service
                             .reconcile_durable_run(&principal, &admission.input, &snapshot.state)
                             .await;
                         crate::metrics::global().observe_run_recovery(&next);
-                        Ok(Json(next))
+                        let observed_at_ms = crate::ofz::now_ms().map_err(terminal)?;
+                        Ok(Json((next, observed_at_ms)))
                     })
                     .name("reconcile_dispatch_receipt")
                     .await?
                     .into_inner();
+                snapshot.observe(next, observed_at_ms, run_deadline_ms, &mut approval_window);
                 if !snapshot.state.terminal() {
                     ctx.set("snapshot", Json(snapshot.clone()));
                 }
@@ -702,28 +817,10 @@ impl TengriAgentRun {
             let now: u64 = ctx
                 .run(|| async { Ok(crate::ofz::now_ms().map_err(terminal)?) })
                 .await?;
-            match &snapshot.state {
-                State::WaitingForApproval { approvals, .. } => {
-                    let ids: Vec<String> = approvals
-                        .iter()
-                        .map(|approval| approval.approval_id.clone())
-                        .collect();
-                    if approval_started_at
-                        .as_ref()
-                        .is_none_or(|(previous, _)| previous != &ids)
-                    {
-                        approval_started_at = Some((ids, now));
-                    }
-                }
-                State::Recovering { .. } => {}
-                _ => approval_started_at = None,
-            }
-            if stop.is_none()
-                && (now.saturating_sub(started_at) >= 24 * 60 * 60 * 1000
-                    || approval_started_at
-                        .as_ref()
-                        .is_some_and(|(_, at)| now.saturating_sub(*at) >= 30 * 60 * 1000))
-            {
+            let stop_deadline_ms = approval_window
+                .as_ref()
+                .map_or(run_deadline_ms, |window| window.deadline_ms);
+            if stop.is_none() && now >= stop_deadline_ms {
                 let bytes: [u8; 16] = Sha256::digest(format!("{}:budget-stop", admission.input.id))
                     [..16]
                     .try_into()
@@ -740,7 +837,7 @@ impl TengriAgentRun {
             let changed =
                 if stop.is_none() && matches!(snapshot.state, State::WaitingForGuest { .. }) {
                     let next = self.start_run(&ctx, &admission).await?;
-                    (next != snapshot.state).then_some(next)
+                    (next != snapshot.state).then_some((next, now))
                 } else {
                     ctx.run(|| async {
                         let next = if let Some(stop) = &stop {
@@ -753,20 +850,25 @@ impl TengriAgentRun {
                                 .await
                         };
                         crate::metrics::global().observe_run_recovery(&next);
-                        Ok(Json((next != snapshot.state).then_some(next)))
+                        if next == snapshot.state {
+                            return Ok(Json(None));
+                        }
+                        let observed_at_ms = crate::ofz::now_ms().map_err(terminal)?;
+                        Ok(Json(Some((next, observed_at_ms))))
                     })
                     .name("observe_codex_turn")
                     .await?
                     .into_inner()
                 };
-            if let Some(next) = changed {
-                snapshot.state = next;
+            if let Some((next, observed_at_ms)) = changed {
+                snapshot.observe(next, observed_at_ms, run_deadline_ms, &mut approval_window);
                 if !snapshot.state.terminal() {
                     ctx.set("snapshot", Json(snapshot.clone()));
                 }
             }
         }
         if snapshot.state.terminal() {
+            snapshot.approval_deadline_ms = None;
             ctx.run(|| async {
                 self.service
                     .release_run_pin(&principal, &admission.input)
@@ -822,13 +924,15 @@ impl TengriAgentRun {
         }
         if control.method == "turn/interrupt" {
             if !snapshot.state.terminal() {
-                if let Some(key) = ctx.get::<String>("recovery_key").await? {
-                    ctx.resolve_promise(&key, Json(control.principal.clone()));
-                }
+                let principal = control.principal.clone();
                 ctx.object_client::<TengriWorkspaceRunsClient>(&snapshot.workspace_uid)
                     .store_stop(Json(control))
                     .call()
                     .await?;
+                // A woken run reads the Stop receipt immediately.
+                if let Some(key) = ctx.get::<String>("recovery_key").await? {
+                    ctx.resolve_promise(&key, Json(principal));
+                }
             }
             return Ok(Json(ControlResult {
                 delivered: true,

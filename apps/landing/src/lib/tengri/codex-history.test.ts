@@ -31,6 +31,28 @@ function read(input: Response, signal?: AbortSignal) {
   return readCodexHistory(input, 'thread-one', signal, (record) => new Error(String(record.error)))
 }
 
+test('reads the thread metadata and cancels the stream before history arrives', async () => {
+  let cancelled = false
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(metadata) + '\n'))
+    },
+    cancel() {
+      cancelled = true
+    },
+  })
+  const input = new Response(body, { headers: { 'Content-Type': 'application/x-ndjson' } })
+  const thread = await readCodexHistory(
+    input,
+    'thread-one',
+    undefined,
+    (record) => new Error(String(record.error)),
+    true,
+  )
+  expect(thread.rawJson).toBe(metadata.rawJson)
+  expect(cancelled).toBe(true)
+})
+
 test('restores more than 10 MiB across bounded pages without losing items, empty turns, or event cursors', async () => {
   const text = 'x'.repeat(6 * 1024 * 1024)
   const restored = await read(

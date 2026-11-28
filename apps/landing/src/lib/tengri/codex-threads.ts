@@ -18,6 +18,10 @@ const nativeThreadPage = z.object({
   nextCursor: z.string().min(1).max(4096).nullable().optional(),
 })
 
+const nativeThreadMetadata = z.object({
+  thread: z.object({ name: z.string().nullish(), preview: z.string().nullish() }),
+})
+
 export type TengriCodexThreadSummary = { id: string; title: string; updatedAt: number }
 export type TengriCodexThreadPage = { threads: TengriCodexThreadSummary[]; nextCursor: string | null }
 
@@ -25,6 +29,12 @@ export function codexThreadTitle(value: string) {
   const title = value.trim().replace(/\s+/g, ' ')
   if (!title) return 'New chat'
   return title.length > 48 ? `${title.slice(0, 45).trimEnd()}…` : title
+}
+
+export function parseCodexThreadMetadataTitle(raw: string) {
+  const { thread } = nativeThreadMetadata.parse(JSON.parse(raw))
+  const title = thread.name?.trim() || thread.preview?.trim()
+  return title ? codexThreadTitle(title) : undefined
 }
 
 export function parseCodexThreadPage(raw: string): TengriCodexThreadPage {

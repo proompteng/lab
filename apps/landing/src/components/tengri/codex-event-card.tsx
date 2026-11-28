@@ -41,6 +41,7 @@ type CodexEventCardProps = {
   images?: readonly TengriCodexImage[]
   imageGeneration?: CodexImageGeneration
   approvalDecisions?: readonly CodexApprovalDecision[]
+  approvalDeadline?: ReactNode
   approvalId?: string
   approvalTitle?: string
   kind: TengriCodexEventKind
@@ -55,6 +56,7 @@ export const CodexEventCard = memo(function CodexEventCard({
   images,
   imageGeneration,
   approvalDecisions = ['approve-once', 'approve-session', 'deny'],
+  approvalDeadline,
   approvalId,
   approvalTitle,
   kind,
@@ -132,6 +134,7 @@ export const CodexEventCard = memo(function CodexEventCard({
                   {text || 'Codex is requesting approval.'}
                 </p>
               )}
+              {approvalDeadline ? <div className="mt-1.5">{approvalDeadline}</div> : null}
               <div className="mt-2 flex flex-wrap items-center gap-1">
                 {approvalDecisions.includes('approve-once') ? (
                   <Button

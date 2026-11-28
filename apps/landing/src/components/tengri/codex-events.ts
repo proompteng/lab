@@ -46,6 +46,8 @@ export type CodexTranscriptItem = {
     'assistant-text' | 'file-diff' | 'plan' | 'reasoning-summary' | 'tool-call' | 'tool-output' | 'user-message'
   >
   text: string
+  turnId?: string
+  clientId?: string
   eventSequence?: number
   activityTitle?: string
   questionRequest?: QuestionRequest
@@ -90,10 +92,12 @@ export type SubmittedPrompt = {
   threadId: string
   text: string
   previousItemIds: ReadonlySet<string>
+  clientId?: string
+  durable?: true
 }
 
 export function reconcileSubmittedPrompts(
-  items: readonly { id: string; kind: TengriCodexEventKind; text: string }[],
+  items: readonly { id: string; kind: TengriCodexEventKind; text: string; clientId?: string }[],
   submitted: readonly SubmittedPrompt[],
 ) {
   const acknowledged = new Set<string>()
@@ -102,13 +106,23 @@ export function reconcileSubmittedPrompts(
   const pending: { prompt: SubmittedPrompt; beforeItemId: string | undefined }[] = []
   const normalize = (text: string) => text.replace(/\[Local image: [^\]]*\]/g, '[Image]').trim()
   for (const prompt of submitted) {
-    const match = items.find(
-      (item) =>
-        item.kind === 'user-message' &&
-        !prompt.previousItemIds.has(item.id) &&
-        !matchedItems.has(item.id) &&
-        normalize(item.text) === normalize(prompt.text),
-    )
+    const exact = prompt.clientId
+      ? items.find(
+          (item) => item.kind === 'user-message' && item.clientId === prompt.clientId && !matchedItems.has(item.id),
+        )
+      : undefined
+    const match =
+      exact ??
+      (prompt.durable
+        ? undefined
+        : items.find(
+            (item) =>
+              item.kind === 'user-message' &&
+              (!prompt.clientId || !item.clientId) &&
+              !prompt.previousItemIds.has(item.id) &&
+              !matchedItems.has(item.id) &&
+              normalize(item.text) === normalize(prompt.text),
+          ))
     if (match) {
       acknowledged.add(prompt.id)
       matchedItems.add(match.id)
@@ -649,11 +663,15 @@ export function codexTranscriptFromThread(
     const seen = new Set<string>()
     for (const turnValue of turns) {
       const turn = record(turnValue)
+      const turnId = boundedIdentifier(turn.id, 256)
       const items = Array.isArray(turn.items) ? turn.items : []
       for (const itemValue of items) {
         const item = record(itemValue)
         const transcriptItem = transcriptItemFromCodex(string(item.id), string(item.type), item)
         if (transcriptItem && !seen.has(transcriptItem.id)) {
+          if (turnId) transcriptItem.turnId = turnId
+          const clientId = transcriptItem.kind === 'user-message' ? boundedIdentifier(item.clientId, 160) : ''
+          if (clientId) transcriptItem.clientId = clientId
           const activityTitle = codexItemActivityTitle(item)
           if (activityTitle) transcriptItem.activityTitle = activityTitle
           const imageGeneration = codexGeneratedImageState(item)

@@ -549,6 +549,11 @@
   },
   {
     "surface": "bff",
+    "operation": "background-codex-runs",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "codex-run",
     "action": "ACTION_CODEX_CONTROL"
   },

@@ -286,6 +286,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         crate::grpc::proto::GetActiveCodexRunsRequest {
             id: "agent-test".into(),
             thread_id: String::new(),
+            exclude_thread_id: None,
         },
         &control,
         path,

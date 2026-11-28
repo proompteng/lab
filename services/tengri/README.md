@@ -544,6 +544,11 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
+Run status includes `approval_deadline_ms` while a turn is waiting for approval. The worker records the deadline when
+it observes the pending approval set, with a thirty-minute budget capped by the run deadline. That same deadline drives
+the worker's budget Stop. Recovery of the same set preserves the deadline, including when the guest returns its IDs in
+a different order. A new pending set gets its own budget within the run limit.
+
 Guest API 10 requires conversation-scoped pending-operation fences and retains direct file metadata and canonical UUID operation identities for every submission and
 control, plus confirmed native command cleanup before reporting cancellation. The web BFF, controller and guest must
 agree on this version; the operation inventory rejects drift. Older guests require a fenced cold replacement on their
