@@ -157,8 +157,10 @@ const mock = (options: MockOptions = {}) => {
         expect(symbols).toEqual(seed ? [...macroInputs] : [...etfs])
         expect(start).toBe(seed ? 0 : raw ? prior : prior - 319)
         const end = seed ? prior - 320 : prior
-        const endBoundary = seed ? end + 1 : prior + 1
-        expect(params.get('end')).toBe(new Date(Date.parse(timestamps[endBoundary]) - 1).toISOString())
+        const expectedEnd = seed
+          ? new Date(Date.parse(timestamps[end + 1]) - 1).toISOString()
+          : timestamp(previousDate, options.earlyClose === true ? '13:00' : '16:00')
+        expect(params.get('end')).toBe(expectedEnd)
         const selected = series(symbols, start, end, raw)
         const paged = !raw && !seed
         const page = params.get('page_token')

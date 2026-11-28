@@ -1,7 +1,7 @@
 # Graf Codex Research Workflow
 
 - Temporal: Graf starts a worker on `graf-codex-research`, connects to the in-cluster namespace (default `default`), and owns the orchestration history for Codex research requests.
-- Agents: Graf submits `AgentRun` resources through `POST /v1/agent-runs` on the Agents control plane. The `graf-codex-agent` provider runs the generalized Codex app-server harness and uploads the declared artifact.
+- Agents: Graf submits `AgentRun` resources through `POST /v1/agent-runs` on the Agents control plane. The configured provider runs the generalized Codex app-server harness and uploads the declared artifact.
 - Artifacts: Graf downloads the artifact from the Agents-owned `agents-artifacts` bucket after the AgentRun reaches `Succeeded`.
 
 ## Configuration
@@ -16,7 +16,7 @@ Set the following secrets/configmaps for the Knative Graf service:
 | `TEMPORAL_IDENTITY`                     | Worker identity string sent to Temporal.                                                   | `graf`                                   |
 | `AGENTS_BASE_URL`                       | Agents control-plane URL.                                                                  | `http://agents.agents.svc.cluster.local` |
 | `AGENTS_NAMESPACE`                      | Namespace where Graf AgentRuns are created.                                                | `agents`                                 |
-| `AGENTS_GRAF_AGENT_NAME`                | Agent resource Graf submits against.                                                       | `graf-codex-agent`                       |
+| `AGENTS_GRAF_AGENT_NAME`                | Agent resource Graf submits against.                                                       | Unset                                    |
 | `AGENTS_SERVICE_ACCOUNT_NAME`           | ServiceAccount used by the runner Job.                                                     | `agents-sa`                              |
 | `AGENTS_SECRET_BINDING_REF`             | SecretBinding required by Agents admission.                                                | `codex-github-token`                     |
 | `AGENTS_RUN_SECRETS`                    | Comma-separated secrets requested by the run.                                              | `github-token,codex-auth,graf-api,...`   |
@@ -75,12 +75,7 @@ cat payload.json \
 
 ## Agents Runtime
 
-Graf uses the generic Agents CRDs in `argocd/applications/agents`:
-
-```bash
-kubectl -n agents apply -f argocd/applications/agents/graf-codex-agentprovider.yaml
-kubectl -n agents apply -f argocd/applications/agents/graf-codex-agent.yaml
-```
+Galactic has retired the dedicated Graf agent. Both research endpoints return HTTP 503 until an explicit compatible Agent is configured with `AGENTS_GRAF_AGENT_NAME`.
 
 The AgentProvider ships the prompt through the versioned runner contract, executes the Codex app-server adapter, and uploads `/workspace/lab/codex-artifact.json` as the `codex-artifact` output artifact. Graf computes the bucket/key before the AgentRun finishes and downloads that object after the run succeeds.
 
