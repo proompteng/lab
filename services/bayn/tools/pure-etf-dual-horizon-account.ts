@@ -1,7 +1,8 @@
+import { elapsedDays } from './research-lib/calendar'
 import { borrow, etfs as canaryEtfs, mix, sellFee } from './etf-canary-macro-protocol'
 import { executionRule } from './etf-canary-macro-signals'
 import { etfs as premiaEtfs } from './multi-asset-risk-premia-protocol'
-import { elapsedDays, etfs, type DailyFrame } from './pure-etf-dual-horizon-data'
+import { etfs, type DailyFrame } from './pure-etf-dual-horizon-data'
 import { noiseRosters, type NoiseId, type NoiseOrder } from './pure-etf-dual-horizon-noise'
 
 export const initialEquity = 100_000
