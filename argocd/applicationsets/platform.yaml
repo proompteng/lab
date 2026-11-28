@@ -467,11 +467,15 @@ spec:
               - name: nemotron-rerank
                 path: argocd/applications/nemotron-rerank
                 namespace: nemotron-rerank
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
                 automation: manual
                 enabled: "true"
               - name: auto-ontology
                 path: argocd/applications/auto-ontology
                 namespace: auto-ontology
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
                 automation: manual
                 enabled: "true"
               - name: torghut-cuda-ranker
