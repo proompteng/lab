@@ -220,6 +220,37 @@ test('v2 margin reduces inventory when a lower debit limit binds after a favorab
   expect(plan.cashMicros).toBeGreaterThanOrEqual(-usd(49_000))
 })
 
+test('v2 margin forces reductions when existing holdings become non-marginable', () => {
+  const { book, signal, mark } = setup(0.8)
+  signal.weights[asset.QQQ] = 0.7
+  const policy = v2(MacroRiskMode.Margin)
+  const { hash } = Result.getOrThrow(decodeMacroEtfCorePolicyV2(policy))
+  const plan = Result.getOrThrow(
+    planMacroEtfCoreRebalanceV2(
+      policy,
+      { ...signal, policyHash: hash, riskState: MacroRiskState.Normal, priorEquityMicros: book.priorEquityMicros },
+      {
+        ...book,
+        marks: [mark('SPY'), mark('QQQ')].map((row) => ({ ...row, marginable: false })),
+        positions: [
+          { symbol: 'SPY', shares: 800n },
+          { symbol: 'QQQ', shares: 700n },
+        ],
+        cashMicros: -usd(50_000),
+        settledCashMicros: 0n,
+        debitCapMicros: usd(50_000),
+        oneWayBps: 0,
+      },
+    ),
+  )
+  expect(plan.deadband).toBe(false)
+  expect(plan.orders.map(({ symbol, side, shares }) => [symbol, side, shares])).toEqual([
+    ['SPY', 'sell', 267n],
+    ['QQQ', 'sell', 234n],
+  ])
+  expect(plan.cashMicros).toBeGreaterThanOrEqual(0n)
+})
+
 test('v2 brake bypasses the deadband, reduces only, and halts in cash', () => {
   const { book, signal } = setup(0.04)
   const sleeve = { ...book, settledCashMicros: 0n }

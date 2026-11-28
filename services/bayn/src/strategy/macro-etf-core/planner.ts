@@ -239,6 +239,19 @@ export const planBoundMacroEtfRebalance = (
     const fundedGross = min(grossCapMicros, postFeeEquity + debit)
     const grossWeight = fixedWeight(sum)
     budget = grossWeight === 0n ? postFeeEquity : min(postFeeEquity, (fundedGross * weightScale) / grossWeight)
+    if (margin > equity * bpsScale) {
+      // Reserve collateral for protected shares before scaling the adjustable targets.
+      let protectedMargin = 0n
+      let marginWeight = 0n
+      for (const { protectedSymbol, held, price, weight, marginRate } of rows) {
+        if (protectedSymbol) protectedMargin += held * price * marginRate
+        else marginWeight += fixedWeight(weight) * marginRate
+      }
+      if (marginWeight > 0n) {
+        const collateral = max(0n, postFeeEquity * bpsScale - protectedMargin)
+        budget = min(budget, (collateral * weightScale) / marginWeight)
+      }
+    }
   }
   const changes = rows.map((row) => ({
     ...row,
