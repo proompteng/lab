@@ -6,7 +6,7 @@ import { preparedReplayAlphaBaselineFixture } from './alpha-prepared-baseline.te
 import { PreparedReplayAlphaObservationSchema, ReplayAlphaObservationSchema } from './alpha-report'
 import { IntradayAlphaPhase, intradayAlphaEquityMarketProfile } from '../strategy/intraday-alpha/policy'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
-import { loadSharedJevProtocol } from '../strategy'
+import { activeStrategyBehaviorHash, loadActiveStrategyProtocol, loadSharedJevProtocol } from '../strategy'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { replayTestInstruments } from '../testing/replay-instruments'
@@ -690,8 +690,16 @@ durableTest.each([
           const commandPath = trading ? `${directory}/backtest-command.js` : `${import.meta.dir}/../backtest-command.ts`
           const commandRuntime = trading ? Bun.which('node') : process.execPath
           if (commandRuntime === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
-          if (trading)
-            yield* writeCompiledReplayCommand(commandPath, undefined, alphaFixture === null ? undefined : build)
+          if (trading) {
+            const activeBuild = {
+              ...rootBuild,
+              strategyBehaviorHash: activeStrategyBehaviorHash,
+              strategyParameterHash: Result.getOrThrow(
+                canonicalHashV1Result(Result.getOrThrow(loadActiveStrategyProtocol())),
+              ),
+            }
+            yield* writeCompiledReplayCommand(commandPath, undefined, alphaFixture === null ? undefined : activeBuild)
+          }
           const receipt = JSON.stringify(prepared.sourceReceipt.value)
           yield* fs.writeFileString(
             inputPath,

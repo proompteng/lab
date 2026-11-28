@@ -22,4 +22,18 @@ describe('parseGlobalFlags', () => {
     expect(flags.noInput).toBe(true)
     expect(argv).toEqual(['delete', 'agent', 'demo'])
   })
+
+  it('preserves explicit negation and stops at the positional separator', () => {
+    const { argv, flags } = parseGlobalFlags([
+      '--tls',
+      '--no-tls',
+      '--address=fixture',
+      '-o=json',
+      'explain',
+      '--',
+      '--no-input',
+    ])
+    expect(flags).toEqual({ tls: false, address: 'fixture', output: 'json' })
+    expect(argv).toEqual(['explain', '--', '--no-input'])
+  })
 })

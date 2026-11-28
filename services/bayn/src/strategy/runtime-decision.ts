@@ -60,6 +60,7 @@ export const runtimeDecisionMatchesStrategy = (
     case 'bayn.entry-ablation-target.v1':
     case 'bayn.repeated-momentum-target.v1':
     case 'bayn.intraday-alpha-target.v2':
+    case 'bayn.intraday-alpha-target.v3':
     case 'bayn.jev-exit-target.v5':
       return strategyName === 'jev'
     case 'bayn.intraday-momentum.target.v3':
@@ -112,11 +113,18 @@ export const isProtectedEntryTarget = <Decision extends RecordedRuntimeStrategyD
       | 'bayn.entry-ablation-target.v1'
       | 'bayn.repeated-momentum-target.v1'
       | 'bayn.intraday-alpha-target.v2'
+      | 'bayn.intraday-alpha-target.v3'
   }
 > =>
   isChartEntryTarget(decision) ||
   decision?.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
-  decision?.schemaVersion === 'bayn.intraday-alpha-target.v2'
+  isIntradayAlphaTarget(decision)
+
+export const isIntradayAlphaTarget = (
+  decision: { readonly schemaVersion: string } | undefined,
+): decision is IntradayAlphaTarget =>
+  decision?.schemaVersion === 'bayn.intraday-alpha-target.v2' ||
+  decision?.schemaVersion === 'bayn.intraday-alpha-target.v3'
 
 export const isMiddayAlphaTarget = (
   decision: RecordedRuntimeStrategyDecision | undefined,
@@ -128,7 +136,7 @@ export const isBrokerManagedAlphaTarget = (
 ): decision is IntradayAlphaTarget & {
   readonly phase: IntradayAlphaPhase.MiddayReversion | IntradayAlphaPhase.NoiseAreaTrend
 } =>
-  decision?.schemaVersion === 'bayn.intraday-alpha-target.v2' &&
+  isIntradayAlphaTarget(decision) &&
   (decision.phase === IntradayAlphaPhase.MiddayReversion || decision.phase === IntradayAlphaPhase.NoiseAreaTrend)
 
 export const protectedEntryBuyPriceCeilings = (
@@ -159,7 +167,7 @@ export const protectedEntrySellPriceFloors = (
 export const protectedEntryShortEligibility = (
   decision: RecordedRuntimeStrategyDecision | undefined,
 ): Readonly<Record<string, EquityShortEligibility>> => {
-  if (!isChartEntryTarget(decision) && decision?.schemaVersion !== 'bayn.intraday-alpha-target.v2') return {}
+  if (!isChartEntryTarget(decision) && !isIntradayAlphaTarget(decision)) return {}
   const observation = decision.evidence.observation
   if (!('equityShortEligibility' in observation) || observation.equityShortEligibility === undefined) return {}
   return Object.fromEntries(

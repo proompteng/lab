@@ -119,7 +119,6 @@ const productBuildScripts = [
   readRepoFile('packages/scripts/src/synthesis/build-image.ts'),
 ]
 const productDeployScripts = [
-  readRepoFile('packages/scripts/src/app/deploy-service.ts'),
   readRepoFile('packages/scripts/src/docs/deploy-service.ts'),
   readRepoFile('packages/scripts/src/proompteng/deploy-service.ts'),
   readRepoFile('packages/scripts/src/olden/deploy-service.ts'),
@@ -922,27 +921,26 @@ describe('native OCI build workflows', () => {
     expect(headlampWorkflow).not.toContain("- 'flake.nix'")
   })
 
-  it('checks default Bun dependency closures when their dependency inputs change', () => {
+  it('gates Bun image publication on the dependency closure', () => {
     for (const workflow of [oiratWorkflow, bumbaWorkflow, froussardWorkflow, signalPublisherBuildWorkflow]) {
-      const triggers = workflow.slice(0, workflow.indexOf('concurrency:'))
-      expect(triggers.match(/- 'bun\.lock'/g)).toHaveLength(2)
-      for (const input of [
+      const { on } = Bun.YAML.parse(workflow) as { on: Record<string, { paths: string[] }> }
+      const dependencyInputs = [
+        'bun.lock',
         'nix/images/bun-workspace-service.nix',
         'nix/images/bun-workspace-deps-source.nix',
         'nix/images/bun-workspace-deps-source.test.sh',
-        '.github/workflows/nix-bun-dependency-closure.yml',
-      ]) {
-        expect(triggers.split(`- '${input}'`)).toHaveLength(input.startsWith('.github/') ? 2 : 3)
+      ]
+      expect(on.push.paths).toEqual(expect.arrayContaining(dependencyInputs))
+      expect(on.push.paths).not.toContain('nix/check-bun-dependency-closure.sh')
+      if (workflow === signalPublisherBuildWorkflow) {
+        expect(on.pull_request.paths).toEqual(
+          expect.arrayContaining([...dependencyInputs, '.github/workflows/nix-bun-dependency-closure.yml']),
+        )
+        expect(on.pull_request.paths).not.toContain('nix/check-bun-dependency-closure.sh')
       }
-      expect(triggers).not.toContain("- 'nix/check-bun-dependency-closure.sh'")
       expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
       expect(workflow).toMatch(/needs: (dependency-closure|\[dependency-closure, test\])/)
     }
-  })
-
-  it('validates Bumba pull requests when the Temporal SDK changes', () => {
-    const pullRequestTrigger = bumbaWorkflow.match(/\n  pull_request:\n([\s\S]*?)\n  workflow_dispatch:/)?.[1]
-    expect(pullRequestTrigger).toContain("- 'packages/temporal-bun-sdk/**'")
   })
 
   it('allows Nix dockerTools archives without Docker repo tags', () => {
@@ -1415,6 +1413,13 @@ describe('native OCI build workflows', () => {
   })
 
   it('routes enabled product app image builds through real Nix OCI attrs', () => {
+    const product = Bun.YAML.parse(productNixWorkflow) as {
+      on: { push: { paths: string[] } }
+      jobs: { changes: { steps: { id?: string; with?: { filters: string } }[] } }
+    }
+    const planner = product.jobs.changes.steps.find((step) => step.id === 'filter')
+    if (!planner?.with) throw new Error('Missing product image planner')
+    const productInputs = Bun.YAML.parse(planner.with.filters) as Record<string, string[]>
     for (const [service, packageAttr] of [
       ['proompteng', 'proompteng-image'],
       ['app', 'app-image'],
@@ -1427,11 +1432,12 @@ describe('native OCI build workflows', () => {
       expect(productNixWorkflow).toContain(`package_attr: ${packageAttr}`)
       expect(productNixWorkflow).toContain('publish_kargo_tag: true')
       expect(productNixWorkflow).not.toContain('release_artifact_name:')
+      expect(productInputs[service]).toContain('packages/design/**')
     }
 
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
+    expect(product.on.push.paths).toContain('packages/design/**')
     expect(productNixWorkflow.match(/- '\.github\/workflows\/nix-oci-build-common\.yml'/g)).toBeNull()
     expect(flake).toContain('"olden-image"')
     expect(repoFileExists('nix/images/olden.nix')).toBe(true)

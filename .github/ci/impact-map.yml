@@ -1,9 +1,8 @@
 version: 1
 
-# This file is the path ownership contract for pull-request.yml. Keep service
-# workflows for expensive, service-specific validation; list those workflows as
-# delegated targets so the router can explain why they run without duplicating
-# their jobs.
+# Path ownership for the router matrix and path-only delegation. Reusable PR
+# services that need Bun dependency selection use the affected-inputs batch in
+# pull-request.yml instead of duplicating their paths here.
 targets:
   planner:
     kind: planner
@@ -93,7 +92,6 @@ targets:
       - argocd/applications/proompteng/admin-network-policy.yaml
       - argocd/applications/relay/network-policy.yaml
       - argocd/applications/restate/networkpolicy.yaml
-      - argocd/applications/restate-example/networkpolicy.yaml
       - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
       - argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml
       - argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml
@@ -181,6 +179,8 @@ targets:
       - services/ofz/test-ha-manifests.sh
       - services/ofz/tests/ha_manifests.py
       - scripts/cluster-upgrades/temporal_*.py
+      - argocd/applications/auto-ontology/*.cfg
+      - argocd/applications/auto-ontology/*.test.ts
       - argocd/**/*.yaml
       - argocd/**/*.yml
       - argocd/**/*.river
@@ -246,6 +246,7 @@ targets:
       - packages/temporal-bun-sdk/**/*.spec.tsx
     paths:
       - .github/workflows/agents-ci.yml
+      - docs/agents/ontology/**
       - flake.lock
       - flake.nix
       - nix/images/agents.nix
@@ -277,15 +278,8 @@ targets:
       - docs/agents/agentctl-cli-design.md
       - docs/agents/agentctl-release.md
 
-  bumba:
-    kind: delegated
-    workflow: bumba-ci
-    paths:
-      - services/bumba/**
-
-  jangar:
-    kind: delegated
-    workflow: jangar-ci
+  jangar-inventory:
+    kind: validation
     exclude:
       - services/agents/src/**/*.test.ts
       - services/agents/src/**/*.test.tsx
@@ -296,10 +290,6 @@ targets:
       - services/agents/src/**/*.generated.ts
       - services/agents/src/**/*.generated.tsx
     paths:
-      - packages/temporal-bun-sdk/src/**
-      - packages/temporal-bun-sdk/package.json
-      - packages/temporal-bun-sdk/tsconfig.json
-      - patches/effect@4.1.4.patch
       - services/jangar/**
       - services/agents/src/app-routes/**
       - services/agents/src/components/control-plane/**
@@ -316,15 +306,7 @@ targets:
       - services/agents/src/server/start-runtime.ts
       - services/agents/src/server/orchestration-controller.ts
       - services/agents/src/server/supporting-primitives-controller.ts
-      - packages/scripts/src/jangar/**
-      - argocd/applications/jangar/**
       - docs/jangar/architecture-inventory.md
-
-  froussard:
-    kind: delegated
-    workflow: froussard-ci
-    paths:
-      - apps/froussard/**
 
   orbit-salvage:
     kind: delegated
@@ -356,12 +338,6 @@ targets:
     paths:
       - services/khoshut/**
       - argocd/applications/khoshut/**
-
-  oirat:
-    kind: delegated
-    workflow: oirat-ci
-    paths:
-      - services/oirat/**
 
   reestr:
     kind: delegated

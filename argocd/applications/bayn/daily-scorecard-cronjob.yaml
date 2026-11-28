@@ -12,15 +12,15 @@ spec:
   timeZone: America/New_York
   schedule: "35 20 * * 1-5"
   concurrencyPolicy: Forbid
-  # Enable only after the approved SELECT-only audit login and account binding are provisioned.
-  suspend: true
+  suspend: false
   startingDeadlineSeconds: 1800
-  successfulJobsHistoryLimit: 5
-  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 1
       activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 3600
       template:
         metadata:
           labels:
@@ -60,18 +60,15 @@ spec:
                 - name: BAYN_SCORECARD_POSTGRES_USERNAME
                   valueFrom:
                     secretKeyRef:
-                      name: bayn-scorecard-db-ro
+                      name: bayn-audit-ro-db
                       key: username
                 - name: BAYN_SCORECARD_POSTGRES_PASSWORD
                   valueFrom:
                     secretKeyRef:
-                      name: bayn-scorecard-db-ro
+                      name: bayn-audit-ro-db
                       key: password
                 - name: BAYN_AUDIT_ACCOUNT_ID
-                  valueFrom:
-                    secretKeyRef:
-                      name: bayn-scorecard-db-ro
-                      key: account-id
+                  value: "c0111180-21b2-4d7e-aef0-48e7abb9ad6d"
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

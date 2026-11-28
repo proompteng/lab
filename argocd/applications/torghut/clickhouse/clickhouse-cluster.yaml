@@ -129,6 +129,15 @@ spec:
       notebook/result_overflow_mode: throw
       notebook/max_memory_usage: 2147483648
       notebook/max_threads: 4
+      auto_ontology_ro/readonly: 1
+      auto_ontology_ro/max_execution_time: 30
+      auto_ontology_ro/max_result_rows: 50000
+      auto_ontology_ro/result_overflow_mode: break
+      auto_ontology_ro/max_memory_usage: 2147483648
+      # Match the connector's fixed result settings and let probes shorten, never remove, the deadline.
+      auto_ontology_ro/constraints/max_execution_time/changeable_in_readonly: 1
+      auto_ontology_ro/constraints/max_execution_time/min: 1
+      auto_ontology_ro/constraints/max_execution_time/max: 30
     zookeeper:
       nodes:
         - host: keeper-torghut-keeper
@@ -213,6 +222,26 @@ spec:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16
+      torghut_audit_ro/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: torghut-audit-ro-clickhouse
+            key: password_sha256_hex
+      torghut_audit_ro/profile: auto_ontology_ro
+      torghut_audit_ro/quota: default
+      torghut_audit_ro/default_database: signal
+      torghut_audit_ro/networks/ip:
+        - 10.244.0.0/16
+      # Explicit SELECT grants replace legacy allow_databases, which grants broader permissions.
+      torghut_audit_ro/grants/query:
+        - GRANT SELECT ON signal.intraday_quotes_v1
+        - GRANT SELECT ON signal.intraday_trades_v1
+        - GRANT SELECT ON signal.crypto_market_events_v1
+        - GRANT SELECT ON signal.intraday_bars_1m_v2
+        - GRANT SELECT ON signal.adjusted_daily_bars_v2
+        - GRANT SELECT ON signal.intraday_features_v1
+        - GRANT SELECT ON signal.exchange_sessions_v1
+        - GRANT SELECT ON signal.snapshot_manifests_v2
     clusters:
       - name: default
         layout:

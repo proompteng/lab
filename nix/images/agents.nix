@@ -13,12 +13,12 @@ let
   pythonPackages = pkgs.python312Packages;
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
   runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
-  pstackVersion = "0.9.30";
-  pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
+  pstackVersion = "0.9.159";
+  pstackCommit = "6d25df69f0baf6600807d82975d75139f3b1ab92";
 
   pstackArchive = pkgs.fetchurl {
     url = "https://github.com/michael-denyer/pstack-claude/archive/${pstackCommit}.tar.gz";
-    hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0=";
+    hash = "sha256-dtC7o5ombOIT+Zbow5730fShruncV/YJMZzXVTEXotY=";
   };
 
   pstackBundle = pkgs.stdenvNoCC.mkDerivation {
@@ -34,8 +34,7 @@ let
       cp -R plugins/pstack "$out/opt/agents-shell/pstack"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/SKILL.md"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/references/codex-tools.md"
-      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54
-      test "$(find "$out/opt/agents-shell/pstack/.codex-plugin/prompts" -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
+      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 68
       runHook postInstall
     '';
   };
@@ -293,12 +292,26 @@ let
     "@proompteng/temporal-bun-sdk"
   ];
 
+  # Package only the sync CLI's WASM parser and its dependency, not the scripts workspace.
+  # Keep the archive hashes aligned with bun.lock. Zod is already in the Agents runtime.
+  libpgQueryVersion = (lib.importJSON (repoRoot + "/packages/scripts/package.json")).dependencies.libpg-query;
+  libpgQueryArchive = pkgs.fetchurl {
+    url = "https://registry.npmjs.org/libpg-query/-/libpg-query-${libpgQueryVersion}.tgz";
+    hash = "sha512-JHoTTsuDC85VBQj74iUo61+k74dNU/ef/s3nTPnld7wX+jPUq8oNrAPi1g+CNtj0TK8YoRTQn9ROPGN4/RGVsQ==";
+  };
+  pgsqlTypesArchive = pkgs.fetchurl {
+    url = "https://registry.npmjs.org/@pgsql/types/-/types-18.0.0.tgz";
+    hash = "sha512-jtAY4JU7jdVYZ/Vv3zlZqVP+FRWZokyCLKPPCnAApiaJAElpyyiMC3HRiquBu29kSrVs+rkqZD50SUIb/zyEGw==";
+  };
+
   serviceSourcePaths = [
     "charts/agents/crds"
+    "docs/agents/ontology/agents-knowledge.json"
     "packages/agent-contracts"
     "packages/codex"
     "packages/cx-tools"
     "packages/otel"
+    "packages/scripts/src/agents"
     "packages/temporal-bun-sdk"
     "services/agents"
   ];
@@ -409,6 +422,15 @@ let
     cp -R "$TMPDIR/work/services/agents/.output" "$out/app/services/agents/.output"
     copyWorkspaceNodeModules "$TMPDIR/work/services/agents/node_modules" "$out/app/services/agents/node_modules"
 
+    syncDir="$out/app/services/agents/scripts/auto-ontology-sync"
+    mkdir -p "$syncDir/node_modules/libpg-query" "$syncDir/node_modules/@pgsql/types"
+    tar -xzf ${libpgQueryArchive} --strip-components=1 -C "$syncDir/node_modules/libpg-query"
+    tar -xzf ${pgsqlTypesArchive} --strip-components=1 -C "$syncDir/node_modules/@pgsql/types"
+    bun build "$TMPDIR/work/packages/scripts/src/agents/sync-auto-ontology-bundle.ts" --target bun \
+      --external libpg-query --external zod --outfile "$syncDir/sync-auto-ontology-bundle.js"
+    bun --no-install "$syncDir/sync-auto-ontology-bundle.js" \
+      --bundle "$TMPDIR/work/docs/agents/ontology/agents-knowledge.json" --mode dry-run
+
     chmod +x \
       "$out/app/services/agents/scripts/agents-shell-entrypoint.sh" \
       "$out/app/services/agents/scripts/install-agents-shell-pstack.sh"
@@ -502,6 +524,7 @@ let
     bun
     nodejs
     openaiCodexCli
+    pstackBundle
     pkgs.bash
     pkgs.cacert
     pkgs.coreutils

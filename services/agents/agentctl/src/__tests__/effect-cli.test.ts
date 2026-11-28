@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import * as grpc from '@grpc/grpc-js'
 import { loadSync } from '@grpc/proto-loader'
+import { REQUIRED_CRDS } from '../kube/fleet'
 
 const entry = resolve(import.meta.dir, '../index.ts')
 let directory: string
@@ -22,8 +23,43 @@ beforeAll(async () => {
   await writeFile(
     kubectl,
     `#!/bin/sh
+if [ -n "$AGENTCTL_FIXTURE_RESPONSES" ]; then
+  exec "${process.execPath}" "${resolve(directory, 'kubectl-fixture.ts')}" "$@"
+fi
 printf '%s\\n' "$@" > "$AGENTCTL_FIXTURE_ARGS"
 printf '%s\\n' '{"items":[],"metadata":{"name":"fixture"}}'
+`,
+  )
+  await writeFile(
+    resolve(directory, 'kubectl-fixture.ts'),
+    String.raw`
+import { appendFileSync, readFileSync } from 'node:fs'
+const fixture = JSON.parse(readFileSync(process.env.AGENTCTL_FIXTURE_RESPONSES, 'utf8'))
+const raw = process.argv.slice(2)
+const args = [...raw]
+while (['--kubeconfig', '--context', '-n'].includes(args[0])) args.splice(0, 2)
+const [verb, resource] = args
+const manifest = verb === 'create' ? JSON.parse(await Bun.stdin.text()) : undefined
+appendFileSync(process.env.AGENTCTL_FIXTURE_TRACE, JSON.stringify({ args: raw, manifest }) + '\n')
+if (manifest) {
+  console.log(JSON.stringify({ ...manifest, metadata: { ...manifest.metadata, name: 'verification' } }))
+} else if (verb === 'delete') {
+  console.log('job deleted')
+} else if (verb === 'logs') {
+  console.log('runner fixture log')
+} else {
+  const field = args[args.indexOf('--field-selector') + 1]
+  const response = fixture[verb + ' ' + resource + ' ' + field] ?? fixture[verb + ' ' + resource]
+  if (response && response.error) {
+    console.error(response.error)
+    process.exit(1)
+  } else if (response) {
+    console.log(JSON.stringify(response))
+  } else if (!args.includes('--ignore-not-found')) {
+    console.error('unexpected kubectl call: ' + verb + ' ' + resource)
+    process.exit(1)
+  }
+}
 `,
   )
   await chmod(kubectl, 0o755)
@@ -33,8 +69,12 @@ afterAll(async () => {
   await rm(directory, { recursive: true, force: true })
 })
 
-const run = async (args: string[]) => {
-  const child = Bun.spawn([process.execPath, entry, ...args], { env, stdout: 'pipe', stderr: 'pipe' })
+const run = async (args: string[], overrides?: NodeJS.ProcessEnv) => {
+  const child = Bun.spawn([process.execPath, entry, ...args], {
+    env: { ...env, ...overrides },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
   const timeout = setTimeout(() => child.kill('SIGKILL'), 4000)
   try {
     const [exitCode, stdout, stderr] = await Promise.all([
@@ -56,7 +96,15 @@ describe('Effect CLI entry point', () => {
       expect(result.exitCode).toBe(0)
       expect(result.stdout).toContain('agentctl')
       expect(result.stdout).toContain('--namespace')
+      expect(result.stdout.match(/^GLOBAL FLAGS$/gim)).toHaveLength(1)
+      expect(result.stdout).toMatch(/^DESCRIPTION$/m)
+      expect(result.stdout).toMatch(/--context.*Use this kubeconfig context/)
+      expect(result.stdout).not.toMatch(/^  (create|init|list|run|submit|wait|logs|cancel|codex)\s*$/m)
     }
+    const submitHelp = await run(['run', 'submit', '--help'])
+    expect(submitHelp.stdout).toMatch(/--prompt-file.*Read the inline task text/)
+    expect(submitHelp.stdout).toMatch(/--verify.*Confirm the rendered prompt/)
+    expect(submitHelp.stdout.match(/^GLOBAL FLAGS$/gim)).toHaveLength(1)
     for (const args of [['not-a-command'], ['run', 'submit'], ['get', 'agent', '--unknown']]) {
       const result = await run(args)
       expect(result.exitCode).toBe(2)
@@ -83,6 +131,23 @@ describe('Effect CLI entry point', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('kind: ImplementationSpec')
     expect(result.stdout).toContain('    - first\n    - second')
+  })
+
+  it('uses the same global flags to save config without shadowed local flags', async () => {
+    const overrides = { XDG_CONFIG_HOME: resolve(directory, 'config-fixture') }
+    const result = await run(['config', 'set', '-n', 'fixture', '--context', 'galactic-fixture', '--no-tls'], overrides)
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse((await run(['config', 'view'], overrides)).stdout)).toEqual({
+      namespace: 'fixture',
+      context: 'galactic-fixture',
+      tls: false,
+    })
+    expect((await run(['config', 'set', '--context', 'new-fixture'], overrides)).exitCode).toBe(0)
+    expect(JSON.parse((await run(['config', 'view'], overrides)).stdout)).toEqual({
+      namespace: 'fixture',
+      context: 'new-fixture',
+      tls: false,
+    })
   })
 
   it('generates and installs completion scripts', async () => {
@@ -157,5 +222,494 @@ describe('Effect CLI entry point', () => {
         child.kill()
       }
     }
+  })
+})
+
+const agentRuns = 'agentruns.agents.proompteng.ai'
+const runLabel = 'agents.proompteng.ai/agent-run'
+const runUid = 'agents.proompteng.ai/run-uid'
+const account = 'codex-auto-ontology-runner'
+const audience = 'agents.proompteng.ai/auto-ontology-mcp'
+const mountPath = '/var/run/secrets/agents-auto-ontology-mcp'
+const promptText = 'Verify the fixture workflow.'
+const fixtureRun = (name: string, phase: string, date: string) => ({
+  apiVersion: 'agents.proompteng.ai/v1alpha1',
+  kind: 'AgentRun',
+  metadata: { name, uid: `${name}-uid`, namespace: 'fixture', creationTimestamp: date },
+  spec: {
+    agentRef: { name: 'codex-agent' },
+    runtime: { type: 'job' },
+    parameters: { head: `codex/${name}` },
+  },
+  status: { phase, conditions: [{ type: 'Ready', status: 'False', reason: 'WaitingForController' }] },
+})
+const fixtureJob = (name: string, suffix: string, status: object, uid = `${name}-uid`) => ({
+  metadata: {
+    name: `${name}-${suffix}`,
+    uid: `${name}-${suffix}-uid`,
+    labels: { [runLabel]: name, [runUid]: uid },
+  },
+  status,
+})
+const stale = fixtureRun('finished', 'Pending', '2026-07-01T00:00:00Z')
+const queued = fixtureRun('queued', 'Pending', '2026-07-03T00:00:00Z')
+const running = fixtureRun('running', 'Running', '2026-07-02T00:00:00Z')
+const done = fixtureJob('finished', 'job', { conditions: [{ type: 'Complete', status: 'True' }] })
+const active = fixtureJob('running', 'job', { active: 1 })
+const livePod = {
+  metadata: {
+    name: 'running-pod',
+    uid: 'running-pod-uid',
+    labels: { 'batch.kubernetes.io/job-name': active.metadata.name, [runLabel]: 'running', [runUid]: 'running-uid' },
+  },
+  spec: {
+    nodeName: 'node-arm',
+    serviceAccountName: account,
+    containers: [{ name: 'sidecar' }, { name: 'agent-runner' }],
+  },
+  status: { phase: 'Running' },
+}
+
+const baseFixture = {
+  [`get ${agentRuns}`]: { items: [stale, queued, running] },
+  [`get ${agentRuns}/finished`]: stale,
+  [`get ${agentRuns}/queued`]: queued,
+  [`get ${agentRuns}/running`]: running,
+  'get jobs.batch': { items: [done, active] },
+  'get pods': { items: [livePod] },
+}
+
+const fixture = async (name: string, data: Record<string, unknown>) => {
+  const file = resolve(directory, `${name}.json`)
+  const trace = resolve(directory, `${name}-trace`)
+  await writeFile(file, JSON.stringify(data))
+  await writeFile(trace, '')
+  return {
+    run: (args: string[]) =>
+      run(['-n', 'fixture', '--context', 'galactic-fixture', ...args], {
+        AGENTCTL_FIXTURE_RESPONSES: file,
+        AGENTCTL_FIXTURE_TRACE: trace,
+      }),
+    requests: async () =>
+      (await readFile(trace, 'utf8'))
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line): { args: string[]; manifest?: Record<string, unknown> } => JSON.parse(line)),
+  }
+}
+
+describe('Kubernetes fleet operations', () => {
+  it('shares workload joins, sorting, filters, and raw JSON across run lists', async () => {
+    const client = await fixture('listing', baseFixture)
+    const table = await client.run(['run', 'list', '-o', 'wide'])
+    expect(table.exitCode, table.stderr).toBe(0)
+    expect(table.stderr).toBe('')
+    const rows = table.stdout
+      .trim()
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/))
+    expect(rows[0]).toEqual(['NAME', 'AGENT', 'PHASE', 'POD_PHASE', 'NODE', 'HEAD', 'AGE', 'SA', 'DESYNC', 'JOB'])
+    expect(rows.slice(1).map(([name]) => name)).toEqual(['queued', 'running', 'finished'])
+    expect(rows[2]).toContain('node-arm')
+    expect(rows[2]).toContain('codex/running')
+    expect(rows[2]).toContain(account)
+    expect(rows[3]).toContain('Pending->Succeeded')
+    expect((await client.requests()).map(({ args }) => args[5]).sort()).toEqual(
+      [agentRuns, 'jobs.batch', 'pods'].sort(),
+    )
+
+    const filtered = await client.run(['list', 'run', '--stale', '-o', 'json'])
+    expect(filtered.exitCode).toBe(0)
+    expect(filtered.stderr).toBe('')
+    expect(JSON.parse(filtered.stdout)).toEqual({ items: [stale] })
+    const activeRuns = await client.run(['get', 'runs', '--active', '--sort-by', 'phase', '--limit', '1', '-o', 'json'])
+    expect(activeRuns.exitCode).toBe(0)
+    expect(JSON.parse(activeRuns.stdout)).toEqual({ items: [queued] })
+    const sorted = await client.run(['run', 'list', '--sort-by', 'name', '-o', 'json'])
+    expect(JSON.parse(sorted.stdout)).toEqual({ items: [stale, queued, running] })
+
+    expect((await client.run(['list', 'run', '--limit', '0'])).exitCode).toBe(2)
+    expect((await client.run(['get', 'agent', '--active'])).exitCode).toBe(2)
+  }, 10_000)
+
+  it('reports health separately from remediation and exposes capacity without dumping deployment env', async () => {
+    const deploy = (name: string, ready = 1) => ({
+      metadata: { name, generation: 4 },
+      spec: { replicas: 1 },
+      status: { readyReplicas: ready, availableReplicas: ready, observedGeneration: 4 },
+    })
+    const controllers = {
+      ...deploy('agents-controllers'),
+      spec: {
+        ...deploy('agents-controllers').spec,
+        template: {
+          spec: {
+            containers: [
+              {
+                name: 'agents-controllers',
+                env: [
+                  { name: 'DATABASE_URL', value: 'omitted-from-output' },
+                  { name: 'AGENTS_CONTROLLER_CONCURRENCY_CLUSTER', value: '160' },
+                  { name: 'AGENTS_CONTROLLER_RATE_NAMESPACE', value: '240' },
+                  { name: 'AGENTS_CONTROLLER_RATE_REPO', valueFrom: { configMapKeyRef: { name: 'cfg', key: 'rate' } } },
+                  { name: 'AGENTS_LEADER_ELECTION_LEASE_NAME', value: 'leader-fixture' },
+                  { name: 'AGENTS_LEADER_ELECTION_LEASE_NAMESPACE', value: 'leases' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }
+    const client = await fixture('capacity', {
+      ...baseFixture,
+      'get namespace/fixture': { metadata: { name: 'fixture' } },
+      'get deployment': { items: [deploy('agents'), controllers, deploy('agents-shell', 0)] },
+      'get crd': {
+        items: REQUIRED_CRDS.filter(
+          (name) => !name.startsWith('versioncontrolproviders') && !name.startsWith('swarms'),
+        ).map((name) => ({ metadata: { name }, status: { conditions: [{ type: 'Established', status: 'True' }] } })),
+      },
+      'get leases.coordination.k8s.io': {
+        items: [
+          {
+            metadata: { name: 'leader-fixture' },
+            spec: { holderIdentity: 'controller-1', renewTime: '2026-07-01T00:00:00Z', leaseDurationSeconds: 60 },
+          },
+        ],
+      },
+      'get clusters.postgresql.cnpg.io/agents-db-next': {
+        metadata: { name: 'agents-db-next' },
+        spec: { instances: 2 },
+        status: { phase: 'Cluster in healthy state', readyInstances: 2 },
+      },
+      'get nodes': {
+        items: [
+          {
+            metadata: { name: 'node-arm' },
+            status: { nodeInfo: { architecture: 'arm64' }, allocatable: { cpu: '16', memory: '64Gi', pods: '250' } },
+          },
+        ],
+      },
+    })
+
+    const status = await client.run(['status'])
+    expect(status.exitCode).toBe(0)
+    for (const label of [
+      'deployment/agents',
+      'deployment/agents-controllers',
+      'deployment/agents-shell',
+      'deployment/agents-auto-ontology-mcp-gateway',
+      'agents-db-next',
+      'controller-1',
+      'renewTime',
+      '18/20',
+      'versioncontrolproviders.agents.proompteng.ai',
+      'swarms.swarm.proompteng.ai',
+      '1 stale',
+      'RUNNING_PODS',
+      'node-arm',
+    ]) {
+      expect(status.stdout).toContain(label)
+    }
+    expect(status.stdout).not.toContain('Remediation:')
+    const details = await client.run(['diagnose', '-o', 'json'])
+    expect(details.exitCode).toBe(0)
+    const diagnose = JSON.parse(details.stdout)
+    expect(diagnose.crds).toHaveLength(20)
+    expect(diagnose.hints.join(' ')).toContain('run list --stale')
+    expect(diagnose.hints.join(' ')).toContain('GitOps CRD sync')
+    expect(diagnose.hints.join(' ')).toContain('kubectl -n leases describe lease/leader-fixture')
+    expect(diagnose.hints.join(' ')).toContain('describe deployment/agents-shell')
+    const capacity = await client.run(['capacity'])
+    expect(capacity.exitCode).toBe(0)
+    expect(capacity.stdout).toContain('3 total, 2 active, 1 pending, 1 stale')
+    expect(capacity.stdout).toMatch(/node-arm\s+1\s+arm64\s+1\s+250\s+16\s+64Gi/)
+    expect(capacity.stdout).toMatch(/AGENTS_CONTROLLER_CONCURRENCY_CLUSTER\s+160/)
+    expect(capacity.stdout).toMatch(/AGENTS_CONTROLLER_RATE_REPO\s+\(valueFrom\)/)
+    expect(capacity.stdout).not.toContain('omitted-from-output')
+  }, 10_000)
+
+  it('does not report forbidden CRD or workload reads as absent resources or zero counts', async () => {
+    const client = await fixture('denied', {
+      ...baseFixture,
+      'get jobs.batch': { error: 'Error from server (Forbidden)' },
+      'get crd': { error: 'Error from server (Forbidden)' },
+    })
+    const result = await client.run(['diagnose', '-o', 'json'])
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout)
+    expect(body.runs).toBeNull()
+    expect(body.crds.every((crd: { status: string }) => crd.status === 'unknown')).toBe(true)
+    expect(body.unavailable).toContain('jobs: access forbidden')
+    expect(body.hints.join(' ')).toContain('kubectl auth can-i')
+  })
+
+  it('finishes a stale Pending run from its completed Job, without changing raw CR JSON', async () => {
+    const client = await fixture('wait', baseFixture)
+    const result = await client.run(['run', 'wait', 'finished', '--timeout', '1s', '--interval', '50ms', '-o', 'json'])
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual(stale)
+    expect(result.stderr).toContain('Job finished-job indicates Succeeded; CR phase is still Pending')
+    expect(await client.requests()).toHaveLength(3)
+    const timeout = await client.run(['run', 'wait', 'queued', '--timeout', '100ms', '--interval', '25ms'])
+    expect(timeout.exitCode).toBe(3)
+    expect(timeout.stderr).toContain('Timed out waiting for AgentRun queued')
+  })
+
+  it('passes pod log flags and cancels only live jobs for the current run UID', async () => {
+    const client = await fixture('actions', {
+      ...baseFixture,
+      'get jobs.batch': {
+        items: [
+          active,
+          done,
+          fixtureJob('running', 'older', { succeeded: 1 }),
+          fixtureJob('running', 'recycled', { active: 1 }, 'old-uid'),
+        ],
+      },
+    })
+    const logs = await client.run([
+      'run',
+      'logs',
+      'running',
+      '-f',
+      '--tail',
+      '25',
+      '--since',
+      '10m',
+      '--timestamps',
+      '--previous',
+    ])
+    expect(logs.exitCode, logs.stderr).toBe(0)
+    expect(logs.stdout).toBe('runner fixture log\n')
+    expect((await client.requests()).at(-1)?.args.slice(4)).toEqual([
+      'logs',
+      'pod/running-pod',
+      '-c',
+      'agent-runner',
+      '-f',
+      '--tail=25',
+      '--since=10m',
+      '--timestamps',
+      '--previous',
+    ])
+    const cancel = await client.run(['run', 'cancel', 'running'])
+    expect(cancel.exitCode).toBe(0)
+    expect(cancel.stdout).toContain('Requested cancellation of 1 Job(s)')
+    const noOp = await client.run(['run', 'cancel', 'finished'])
+    expect(noOp.stdout).toContain('no live Jobs to cancel')
+    expect(
+      (await client.requests()).filter(({ args }) => args[4] === 'delete').map(({ args }) => args.slice(4)),
+    ).toEqual([['delete', '--ignore-not-found', '--wait=false', 'job/running-job']])
+  })
+})
+
+describe('AgentRun prompt and verification boundary', () => {
+  const verificationRun = fixtureRun('verification', 'Running', '2026-07-01T00:00:00Z')
+  const podSpec = {
+    ...livePod.spec,
+    containers: [
+      {
+        name: 'agent-runner',
+        env: [{ name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH', value: `${mountPath}/token` }],
+        volumeMounts: [
+          { name: 'mcp', mountPath, readOnly: true },
+          { name: 'spec', mountPath: '/workspace/run.json', subPath: 'run.json' },
+        ],
+      },
+    ],
+    volumes: [
+      { name: 'mcp', projected: { sources: [{ serviceAccountToken: { audience, path: 'token' } }] } },
+      { name: 'spec', configMap: { name: 'verification-spec-step-1-attempt-1' } },
+    ],
+  }
+  const data = {
+    [`get ${agentRuns}/verification`]: verificationRun,
+    'get agents.agents.proompteng.ai/codex-agent': { spec: { providerRef: { name: 'codex' } } },
+    'get agentproviders.agents.proompteng.ai/codex': {
+      spec: { workload: { serviceAccountName: account, serviceAccountToken: { audience, mountPath } } },
+    },
+    'get jobs.batch': { items: [fixtureJob('verification', 'job', { active: 1 })] },
+    'get pods': {
+      items: [
+        {
+          ...livePod,
+          metadata: {
+            name: 'verification-pod',
+            uid: 'verification-pod-uid',
+            labels: { [runLabel]: 'verification', [runUid]: 'verification-uid', 'job-name': 'verification-job' },
+          },
+          spec: podSpec,
+        },
+      ],
+    },
+    'get configmap/verification-spec-step-1-attempt-1': {
+      metadata: { name: 'verification-spec-step-1-attempt-1' },
+      data: { 'run.json': JSON.stringify({ prompt: promptText, ignored: 'unprinted-payload' }) },
+    },
+    'get events': { items: [] },
+    'get events involvedObject.uid=verification-pod-uid': {
+      items: [
+        {
+          metadata: { name: 'scheduled' },
+          involvedObject: { kind: 'Pod', name: 'verification-pod', uid: 'verification-pod-uid' },
+          reason: 'Scheduled',
+          message: 'Assigned to node-arm',
+          type: 'Normal',
+          lastTimestamp: '2026-07-01T00:00:01Z',
+        },
+      ],
+    },
+  }
+
+  it('rejects prompt overrides before local Codex, filesystem reads, or kubectl', async () => {
+    const client = await fixture('rejected', {})
+    const variants = [
+      ['run', 'submit', '--agent', 'codex-agent', '--runtime', 'job', '--prompt-file', '/missing/task'],
+      ['run', 'codex', '--prompt-file', '/missing/task'],
+      ['init', 'run', '--apply'],
+    ]
+    for (const args of variants) {
+      const result = await client.run([...args, '--param', 'prompt=not-a-parameter'])
+      expect(result.exitCode).toBe(2)
+      expect(result.stderr).toContain('--param prompt=... is not supported')
+    }
+    expect(await client.requests()).toEqual([])
+  })
+
+  it('submits a literal prompt file and confirms provider identity and mounted workload evidence', async () => {
+    const client = await fixture('verified', data)
+    const file = resolve(directory, 'task.md')
+    await writeFile(file, `${promptText}\n`)
+    const result = await client.run([
+      'run',
+      'codex',
+      '--prompt-file',
+      file,
+      '--repo',
+      'owner/project',
+      '--base',
+      'main',
+      '--head',
+      'codex/branch',
+      '--memory-request',
+      '1Gi',
+      '--memory-limit',
+      '2Gi',
+      '--ttl',
+      '0',
+      '--secret',
+      'allowed-one',
+      '--secret',
+      'allowed-two',
+      '--verify',
+      '-o',
+      'json',
+    ])
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toContain('Verified AgentRun verification')
+    expect(result.stderr).not.toContain(promptText)
+    const body = JSON.parse(result.stdout)
+    expect(body.spec).toEqual({
+      agentRef: { name: 'codex-agent' },
+      implementation: { inline: { text: `${promptText}\n` } },
+      parameters: { repository: 'owner/project', base: 'main', head: 'codex/branch' },
+      runtime: { type: 'workflow' },
+      workflow: { steps: [{ name: 'implement' }] },
+      ttlSecondsAfterFinished: 0,
+      secrets: ['allowed-one', 'allowed-two'],
+      workload: { resources: { requests: { memory: '1Gi' }, limits: { memory: '2Gi' } } },
+    })
+    expect((await client.requests()).filter(({ manifest }) => manifest).map(({ manifest }) => manifest?.kind)).toEqual([
+      'AgentRun',
+    ])
+  })
+
+  it('reports a verification mismatch without exposing the rendered prompt or retrying create', async () => {
+    const client = await fixture('verify-mismatch', data)
+    const result = await client.run([
+      'run',
+      'submit',
+      '--agent',
+      'codex-agent',
+      '--runtime',
+      'job',
+      '--inline-prompt',
+      'different task',
+      '--verify',
+    ])
+    expect(result.exitCode).toBe(3)
+    expect(result.stderr).toContain('Submitted AgentRun fixture/verification')
+    expect(result.stderr).toContain('run.json.prompt does not match the task text')
+    expect(result.stderr).not.toContain(promptText)
+    expect((await client.requests()).filter(({ manifest }) => manifest)).toHaveLength(1)
+  })
+
+  it('renders parameterized ImplementationSpec placeholders before verifying run.json.prompt', async () => {
+    const renderedPrompt = 'Compile owner/project on codex/branch for #42'
+    const implData = {
+      ...data,
+      'get implementationspecs.agents.proompteng.ai/parameterized-impl': {
+        spec: {
+          text: 'Compile ${repository} on {{parameters.head}} for #${issueNumber}',
+          source: { provider: 'github', externalId: 'owner/project#42' },
+        },
+      },
+      'get configmap/verification-spec-step-1-attempt-1': {
+        metadata: { name: 'verification-spec-step-1-attempt-1' },
+        data: { 'run.json': JSON.stringify({ prompt: renderedPrompt }) },
+      },
+    }
+    const client = await fixture('verify-parameterized-impl', implData)
+    const result = await client.run([
+      'run',
+      'submit',
+      '--agent',
+      'codex-agent',
+      '--impl',
+      'parameterized-impl',
+      '--runtime',
+      'job',
+      '--repo',
+      'owner/project',
+      '--head',
+      'codex/branch',
+      '--verify',
+      '-o',
+      'json',
+    ])
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toContain('Verified AgentRun verification')
+  })
+
+  it('describes workload identity, mounted prompt and scoped Events but keeps -o json/yaml raw', async () => {
+    const client = await fixture('description', data)
+    const result = await client.run(['describe', 'run', 'verification'])
+    expect(result.exitCode).toBe(0)
+    for (const detail of [
+      'Running',
+      'WaitingForController',
+      'verification-job',
+      'verification-pod',
+      'node-arm',
+      account,
+      'projected into agent-runner',
+      promptText,
+      'Recent Events',
+      'Assigned to node-arm',
+    ]) {
+      expect(result.stdout).toContain(detail)
+    }
+    expect(result.stdout).not.toContain('unprinted-payload')
+    const count = (await client.requests()).length
+    const json = await client.run(['describe', 'run', 'verification', '-o', 'json'])
+    const yaml = await client.run(['describe', 'run', 'verification', '-o', 'yaml'])
+    expect(json.exitCode).toBe(0)
+    expect(JSON.parse(json.stdout)).toEqual(verificationRun)
+    expect(yaml.stdout).toContain('kind: AgentRun')
+    expect(yaml.stdout).not.toContain('Recent Events')
+    expect(await client.requests()).toHaveLength(count + 2)
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { runInNewContext } from 'node:vm'
 
 import YAML from 'yaml'
 
@@ -33,6 +34,7 @@ describe('Tengri image workflow', () => {
         string,
         {
           if?: string
+          needs?: string
           uses?: string
           'runs-on'?: string
           strategy?: { matrix: { architecture: string[]; image: string[]; include: unknown[] } }
@@ -50,7 +52,7 @@ describe('Tengri image workflow', () => {
     const mainPublication =
       "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
     expect(workflow.on).not.toHaveProperty('merge_group')
-    expect(workflow.jobs.build?.if).toBe(mainPublication)
+    expect(workflow.jobs.build?.needs).toBe('changes')
     expect(workflow.jobs.publish?.if).toBe(mainPublication)
     expect(workflow.jobs.build?.['runs-on']).toBe('${{ matrix.runner }}')
     expect(workflow.jobs.publish?.['runs-on']).toBe('arc-amd64')
@@ -67,7 +69,24 @@ describe('Tengri image workflow', () => {
       ],
     })
     expect(workflow.jobs['validate-kvm']).toBeUndefined()
-    expect(workflow.jobs.validate?.if).toBe("github.event.action != 'edited' || github.event.changes.base")
+    expect(workflow.jobs.validate?.needs).toBe('changes')
+    for (const [event_name, ref, action, baseChanged, result, changed, validate, build] of [
+      ['pull_request', 'refs/pull/42/merge', 'synchronize', false, 'skipped', '', true, false],
+      ['pull_request', 'refs/pull/42/merge', 'edited', false, 'skipped', '', false, false],
+      ['pull_request', 'refs/pull/42/merge', 'edited', true, 'skipped', '', true, false],
+      ['push', 'refs/heads/main', '', false, 'success', 'false', false, false],
+      ['push', 'refs/heads/main', '', false, 'success', 'true', true, true],
+      ['workflow_dispatch', 'refs/heads/main', '', false, 'success', 'true', true, true],
+      ['workflow_dispatch', 'refs/heads/topic', '', false, 'success', 'true', true, false],
+    ] as const) {
+      const context = {
+        github: { event_name, ref, event: { action, changes: { base: baseChanged } } },
+        needs: { changes: { result, outputs: { changed } } },
+        cancelled: () => false,
+      }
+      expect(runInNewContext(workflow.jobs.validate.if ?? '', context)).toBe(validate)
+      expect(runInNewContext(workflow.jobs.build.if ?? '', context)).toBe(build)
+    }
     expect(workflow.jobs.validate?.uses).toBe('./.github/workflows/tengri-validation.yml')
     const steps = workflow.jobs.build.steps
     const publisher = workflow.jobs.publish.steps
@@ -104,9 +123,8 @@ describe('Tengri image workflow', () => {
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
     expect(ofz.on).toHaveProperty('workflow_call')
     expect(ofz.on).not.toHaveProperty('merge_group')
-    expect(ofz.jobs['build-ofz'].if).toBe(mainPublication)
     expect(ofz.jobs['build-ofz'].needs).toBe('validate')
-    expect(ofz.jobs.validate.if).toBeUndefined()
+    expect(ofz.jobs.validate.needs).toBe('changes')
     const ofzChecks = ofz.jobs.validate.steps.map((step: { run?: string }) => step.run ?? '').join('\n')
     expect(ofzChecks).not.toMatch(/bash services\/ofz\/test-control\.sh control\b/)
     expect(ofzChecks.match(/bash services\/tengri\/test-database-failover\.sh\b/g)).toHaveLength(1)

@@ -61,7 +61,7 @@ const metrics = {
   realizedMicros: money,
   eodUnrealizedMicros: money,
   directFeesMicros: UnsignedMicros,
-  unallocatedPostedFeesMicros: UnsignedMicros,
+  unallocatedPostedFeesMicros: Micros,
   netRealizedMicros: money,
   tradedNotionalMicros: UnsignedMicros,
   annualizedTurnoverContribution: bps,
