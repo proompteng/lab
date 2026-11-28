@@ -58,6 +58,7 @@ import { Spotlight } from './spotlight'
 import { TengriMark } from './tengri-mark'
 import { TerminalApp } from './terminal-app'
 import { focusWindowContent } from './window-focus'
+import { useDesktopActivity } from './use-desktop-activity'
 
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
@@ -298,6 +299,7 @@ export function ReadyDesktop({
   const [finderRequest, setFinderRequest] = useState<TargetedFinderOpenRequest | null>(null)
   const [dirtyCodeWindows, setDirtyCodeWindows] = useState<Set<string>>(() => new Set())
   const [committedTransition, setCommittedTransition] = useState<CommittedTransition | null>(null)
+  useDesktopActivity(agent.id, agent.runtimeEpoch, busyAction === null && committedTransition === null)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [hydratedDesktopId, setHydratedDesktopId] = useState<string | null>(null)

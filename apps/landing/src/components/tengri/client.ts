@@ -95,6 +95,7 @@ export async function runTengriAction<Result>(
   options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
   scope.active.set(controller, {
     blocksLifecycle:
+      action.action !== 'record-activity' &&
       action.action !== 'codex-models' &&
       action.action !== 'list-threads' &&
       action.action !== 'resume-thread' &&

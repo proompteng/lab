@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, Weak},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -106,7 +106,7 @@ pub(crate) enum ControlActivity {
 pub struct ActivityTracker {
     client: Client,
     namespace: Arc<str>,
-    last_write: Arc<Mutex<HashMap<String, Instant>>>,
+    pending: Arc<Mutex<HashMap<String, tokio::sync::watch::Sender<DateTime<Utc>>>>>,
     admissions: Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
 }
 
@@ -115,7 +115,7 @@ impl ActivityTracker {
         Self {
             client,
             namespace: namespace.into(),
-            last_write: Arc::new(Mutex::new(HashMap::new())),
+            pending: Default::default(),
             admissions: Default::default(),
         }
     }
@@ -209,16 +209,42 @@ impl ActivityTracker {
         ))
     }
 
-    pub async fn touch_now(&self, agent_id: &str, now: DateTime<Utc>) -> Result<(), kube::Error> {
+    pub async fn touch_now(&self, agent_id: &str, now: DateTime<Utc>) -> anyhow::Result<()> {
         let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-        agents
-            .patch(
-                agent_id,
-                &PatchParams::default(),
-                &Patch::Merge(activity_metadata_patch(now)),
-            )
-            .await?;
-        Ok(())
+        for _ in 0..3 {
+            let Some(agent) = agents.get_opt(agent_id).await? else {
+                return Ok(());
+            };
+            if agent.metadata.deletion_timestamp.is_some()
+                || agent.spec.desired_state != crate::crd::MicroVMDesiredState::Running
+                || agent
+                    .annotations()
+                    .get(ACTIVE_RUN_ANNOTATION)
+                    .is_some_and(|v| is_idle_sleep_claim(v))
+                || last_activity_at(&agent)
+                    .and_then(|value| DateTime::parse_from_rfc3339(&value).ok())
+                    .is_some_and(|at| at >= now)
+            {
+                return Ok(());
+            }
+            let mut patch = activity_metadata_patch(now);
+            patch["metadata"]["uid"] =
+                json!(agent.uid().context("activity workspace UID required")?);
+            patch["metadata"]["resourceVersion"] = json!(
+                agent
+                    .resource_version()
+                    .context("activity resource version required")?
+            );
+            match agents
+                .patch(agent_id, &PatchParams::default(), &Patch::Merge(patch))
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(kube::Error::Api(error)) if error.code == 409 => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        anyhow::bail!("workspace activity changed concurrently; retry")
     }
 
     async fn touch_agent_work(
@@ -241,29 +267,35 @@ impl ActivityTracker {
     }
 
     pub fn touch(&self, agent_id: &str) {
-        let now = Instant::now();
-        let should_write = self.last_write.lock().is_ok_and(|mut writes| {
-            writes
-                .retain(|_, touched_at| now.duration_since(*touched_at) < Duration::from_secs(300));
-            match writes.get(agent_id) {
-                Some(touched_at) if now.duration_since(*touched_at) < ACTIVITY_WRITE_INTERVAL => {
-                    false
-                }
-                _ => {
-                    writes.insert(agent_id.to_owned(), now);
-                    true
-                }
-            }
-        });
-        if !should_write {
+        let mut pending = self.pending.lock().expect("activity queue lock");
+        if let Some(sender) = pending.get(agent_id)
+            && !sender.is_closed()
+        {
+            sender.send_replace(Utc::now());
             return;
         }
-
+        let (sender, mut latest) = tokio::sync::watch::channel(Utc::now());
+        pending.insert(agent_id.to_owned(), sender);
+        drop(pending);
         let tracker = self.clone();
         let agent_id = agent_id.to_owned();
         tokio::spawn(async move {
-            if let Err(error) = tracker.touch_now(&agent_id, Utc::now()).await {
-                warn!(agent_id, error = %error, "failed to record authenticated agent activity");
+            let mut retry_delay = Duration::from_secs(1);
+            loop {
+                let at = *latest.borrow_and_update();
+                if let Err(error) = tracker.touch_now(&agent_id, at).await {
+                    warn!(agent_id, error = %error, "failed to record authenticated agent activity");
+                    tokio::time::sleep(retry_delay).await;
+                    retry_delay = (retry_delay * 2).min(ACTIVITY_WRITE_INTERVAL);
+                    continue;
+                }
+                retry_delay = Duration::from_secs(1);
+                tokio::time::sleep(ACTIVITY_WRITE_INTERVAL).await;
+                let mut pending = tracker.pending.lock().expect("activity queue lock");
+                if !latest.has_changed().unwrap_or(false) {
+                    pending.remove(&agent_id);
+                    break;
+                }
             }
         });
     }
@@ -395,13 +427,25 @@ mod tests {
     #[tokio::test]
     async fn activity_heartbeat_has_one_metadata_writer() {
         let now = Utc::now();
-        let response_microvm = test_microvm(now);
+        let mut response_microvm = test_microvm(now);
+        response_microvm.metadata.uid = Some("11111111-1111-4111-8111-111111111111".into());
+        response_microvm.metadata.resource_version = Some("7".into());
         let (service, mut handle) =
             tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
         let client = Client::new(service, "tengri");
         let tracker = ActivityTracker::new(client, "tengri".to_owned());
 
         let heartbeat = tokio::spawn(async move { tracker.touch_now("agent", now).await });
+        let (request, response) = handle.next_request().await.expect("current activity state");
+        assert_eq!(request.method(), http::Method::GET);
+        response.send_response(
+            Response::builder()
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&response_microvm).unwrap(),
+                ))
+                .unwrap(),
+        );
         let (request, response) = handle
             .next_request()
             .await
@@ -427,6 +471,9 @@ mod tests {
             Some(&json!(now.to_rfc3339())),
         );
         assert!(body.get("status").is_none());
+        assert!(body.get("spec").is_none());
+        assert_eq!(body["metadata"]["uid"], response_microvm.uid().unwrap());
+        assert_eq!(body["metadata"]["resourceVersion"], "7");
         response.send_response(
             Response::builder()
                 .status(StatusCode::OK)
@@ -787,6 +834,161 @@ mod tests {
         assert!(has_idle_sleep_claim(&agent));
         agent.spec.runtime_epoch = "another-runtime".into();
         assert!(!has_idle_sleep_claim(&agent));
+    }
+
+    fn activity_fixture(
+        failed_writes: usize,
+    ) -> (
+        ActivityTracker,
+        Arc<Mutex<MicroVM>>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut agent = test_microvm(Utc::now());
+        agent.metadata.uid = Some("11111111-1111-4111-8111-111111111111".into());
+        agent.metadata.resource_version = Some("1".into());
+        agent.spec.power.idle_timeout_minutes = 1;
+        let state = Arc::new(Mutex::new(agent));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let observed = state.clone();
+        let attempts = writes.clone();
+        let service = tower::service_fn(move |request: Request<KubeBody>| {
+            let observed = observed.clone();
+            let attempts = attempts.clone();
+            async move {
+                let mut status = StatusCode::OK;
+                let body = if request.method() == http::Method::PATCH {
+                    let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                    if attempt < failed_writes {
+                        status = StatusCode::INTERNAL_SERVER_ERROR;
+                        json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"InternalError","message":"fixture activity write failed","code":500})
+                    } else {
+                        let bytes = request.into_body().collect_bytes().await.unwrap();
+                        let patch: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                        let mut agent = observed.lock().unwrap();
+                        agent.metadata.annotations.get_or_insert_default().insert(
+                            LAST_ACTIVITY_ANNOTATION.into(),
+                            patch["metadata"]["annotations"][LAST_ACTIVITY_ANNOTATION]
+                                .as_str()
+                                .unwrap()
+                                .into(),
+                        );
+                        let version = agent.resource_version().unwrap().parse::<u64>().unwrap() + 1;
+                        agent.metadata.resource_version = Some(version.to_string());
+                        json!(*agent)
+                    }
+                } else {
+                    assert_eq!(request.method(), http::Method::GET);
+                    json!(*observed.lock().unwrap())
+                };
+                Ok::<_, std::convert::Infallible>(
+                    Response::builder()
+                        .status(status)
+                        .header(http::header::CONTENT_TYPE, "application/json")
+                        .body(KubeBody::from(body.to_string().into_bytes()))
+                        .unwrap(),
+                )
+            }
+        });
+        (
+            ActivityTracker::new(Client::new(service, "tengri"), "tengri".into()),
+            state,
+            writes,
+        )
+    }
+
+    async fn settle_activity() {
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn activity_flushes_the_last_interaction_in_a_throttled_burst() {
+        use std::sync::atomic::Ordering;
+        let (tracker, state, writes) = activity_fixture(0);
+        tracker.touch("agent");
+        settle_activity().await;
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        tokio::time::advance(Duration::from_secs(18)).await;
+        let latest = Utc::now();
+        tracker.touch("agent");
+        settle_activity().await;
+        tokio::time::advance(Duration::from_secs(3)).await;
+        settle_activity().await;
+        let agent = state.lock().unwrap();
+        let saved = DateTime::parse_from_rfc3339(&last_activity_at(&agent).unwrap()).unwrap();
+        assert!(
+            saved >= latest,
+            "the last interaction in the burst was discarded"
+        );
+        assert!(!idle_deadline_passed(
+            &agent,
+            latest + chrono::Duration::minutes(1) - chrono::Duration::microseconds(1)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn activity_retries_a_failed_write_without_another_interaction() {
+        use std::sync::atomic::Ordering;
+        let (tracker, state, writes) = activity_fixture(1);
+        let latest = Utc::now();
+        tracker.touch("agent");
+        settle_activity().await;
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        settle_activity().await;
+        assert!(
+            writes.load(Ordering::SeqCst) >= 2,
+            "a failed activity write was never retried"
+        );
+        let saved = last_activity_at(&state.lock().unwrap()).unwrap();
+        assert!(DateTime::parse_from_rfc3339(&saved).unwrap() >= latest);
+    }
+
+    #[tokio::test]
+    async fn delayed_activity_cannot_replace_a_newer_timestamp() {
+        let (tracker, state, _) = activity_fixture(0);
+        let current = Utc::now();
+        state
+            .lock()
+            .unwrap()
+            .metadata
+            .annotations
+            .get_or_insert_default()
+            .insert(LAST_ACTIVITY_ANNOTATION.into(), current.to_rfc3339());
+        tracker
+            .touch_now("agent", current - chrono::Duration::seconds(18))
+            .await
+            .unwrap();
+        assert_eq!(
+            last_activity_at(&state.lock().unwrap()),
+            Some(current.to_rfc3339())
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn queued_activity_cannot_cross_a_sleep_reservation_and_releases_its_worker() {
+        use std::sync::atomic::Ordering;
+        let (tracker, state, writes) = activity_fixture(0);
+        tracker.touch("agent");
+        settle_activity().await;
+        let saved = last_activity_at(&state.lock().unwrap());
+        tracker.touch("agent");
+        {
+            let mut agent = state.lock().unwrap();
+            let claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
+            agent
+                .annotations_mut()
+                .insert(ACTIVE_RUN_ANNOTATION.into(), claim);
+        }
+        tokio::time::advance(ACTIVITY_WRITE_INTERVAL).await;
+        settle_activity().await;
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        assert_eq!(last_activity_at(&state.lock().unwrap()), saved);
+        tokio::time::advance(ACTIVITY_WRITE_INTERVAL).await;
+        settle_activity().await;
+        assert!(tracker.pending.lock().unwrap().is_empty());
     }
 
     #[test]

@@ -186,6 +186,10 @@ export async function getAgent(identity: PlatformIdentity, id: string) {
   return normalizeAgent(await unary<RawAgent>('getAgent', { id }, identity))
 }
 
+export async function recordAgentActivity(identity: PlatformIdentity, id: string, signal?: AbortSignal) {
+  await unary('recordAgentActivity', { id }, identity, TENGRI_UNARY_TIMEOUT_MS, signal)
+}
+
 export async function sleepAgent(identity: PlatformIdentity, id: string, workspaceUid: string, operationId: string) {
   return setRuntime(identity, id, workspaceUid, { operationId, action: 'sleep', agentId: id, workspaceUid }, false)
 }

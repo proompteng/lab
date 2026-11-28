@@ -57,6 +57,11 @@
   },
   {
     "surface": "controller",
+    "operation": "RecordAgentActivity",
+    "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "controller",
     "operation": "StatFile",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -440,6 +445,11 @@
   {
     "surface": "bff",
     "operation": "update-power-settings",
+    "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "bff",
+    "operation": "record-activity",
     "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
   },
   {
