@@ -35,6 +35,13 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: tailscale
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agents
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agents-shell
+              app.kubernetes.io/component: agents-shell
       ports:
         - protocol: TCP
           port: 8000
@@ -53,6 +60,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: paperless
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: paperless-agent-bootstrap
       ports:
         - protocol: TCP
           port: 6379

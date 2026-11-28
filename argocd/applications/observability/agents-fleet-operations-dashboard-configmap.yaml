@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agents-fleet-operations-dashboard
+  namespace: observability
+data:
+  agents-fleet-operations.json: |
+    {
+      "uid": "agents-fleet-operations",
+      "title": "Agents Fleet Operations",
+      "schemaVersion": 39,
+      "version": 1,
+      "editable": true,
+      "tags": ["agents", "fleet"],
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Active concurrency vs cap",
+          "description": "Running AgentRuns and configured controller limits, both fleet-wide and by watched namespace.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(max by (namespace) (agents_active_concurrency{job=\"agents\",service=\"agents-controllers\",scope=\"namespace\"}))", "legendFormat": "fleet active", "refId": "A" },
+            { "expr": "max(agents_concurrency_limit{job=\"agents\",service=\"agents-controllers\",scope=\"cluster\"})", "legendFormat": "fleet cap", "refId": "B" },
+            { "expr": "max by (namespace) (agents_active_concurrency{job=\"agents\",service=\"agents-controllers\",scope=\"namespace\"})", "legendFormat": "{{namespace}} active", "refId": "C" },
+            { "expr": "max by (namespace) (agents_concurrency_limit{job=\"agents\",service=\"agents-controllers\",scope=\"namespace\"})", "legendFormat": "{{namespace}} cap", "refId": "D" }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Queue depth",
+          "description": "Current Pending and Queued AgentRuns from controller resyncs.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "max by (namespace) (agents_agent_queue_depth{job=\"agents\",service=\"agents-controllers\",scope=\"namespace\",source=\"snapshot\"})", "legendFormat": "{{namespace}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "AgentRun outcomes",
+          "description": "Terminal state transitions persisted by the controller.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (outcome) (rate(agents_agent_run_outcomes_total{job=\"agents\",service=\"agents-controllers\"}[$__rate_interval]))", "legendFormat": "{{outcome}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "AgentRun failure rate",
+          "description": "Failed runs as a share of failed and successful runs. Cancelled runs are excluded.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+          "targets": [
+            { "expr": "100 * (sum(rate(agents_agent_run_outcomes_total{job=\"agents\",service=\"agents-controllers\",outcome=\"Failed\"}[$__rate_interval])) or vector(0)) / (sum(rate(agents_agent_run_outcomes_total{job=\"agents\",service=\"agents-controllers\",outcome=~\"Succeeded|Failed\"}[$__rate_interval])) > 0)", "legendFormat": "failure rate", "refId": "A" }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Controller reconcile p95",
+          "description": "AgentRun reconciliation duration, including Kubernetes and runtime operations.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.95, sum by (namespace, le) (rate(agents_reconcile_duration_ms_bucket{job=\"agents\",service=\"agents-controllers\",kind=\"agentrun\"}[$__rate_interval])))", "legendFormat": "{{namespace}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Untouched backlog and orphan pods",
+          "description": "AgentRuns not yet observed by the controller and stale terminal Pods eligible for cleanup.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "max by (namespace) (agents_agentrun_untouched_backlog{job=\"agents\",service=\"agents-controllers\"})", "legendFormat": "{{namespace}} untouched", "refId": "A" },
+            { "expr": "max by (namespace) (agents_runtime_debris_orphan_pods{job=\"agents\",service=\"agents-controllers\"})", "legendFormat": "{{namespace}} orphan pods", "refId": "B" }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Runner token throughput",
+          "description": "Completed-run token accounting. Cached input is part of input; reasoning is part of output.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (direction, model, effort) (rate(agents_runner_tokens_total{job=\"agents\",service=\"agents-controllers\"}[$__rate_interval]))", "legendFormat": "{{direction}} · {{model}} / {{effort}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Cached input",
+          "description": "Cached input divided by total input, by model and effort.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+          "targets": [
+            { "expr": "100 * sum by (model, effort) (rate(agents_runner_tokens_total{job=\"agents\",service=\"agents-controllers\",direction=\"cached_input\"}[$__rate_interval])) / (sum by (model, effort) (rate(agents_runner_tokens_total{job=\"agents\",service=\"agents-controllers\",direction=\"input\"}[$__rate_interval])) > 0)", "legendFormat": "{{model}} / {{effort}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "ChatGPT Pro weekly quota",
+          "description": "Last account quota observed on completed runners, only for seven-day windows. Missing or expired observations are not zero usage.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+          "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+          "targets": [
+            { "expr": "max by (limit_id) (agents_runner_quota_used_percent{job=\"agents\",service=\"agents-controllers\"})", "legendFormat": "{{limit_id}}", "refId": "A" },
+            { "expr": "vector(85)", "legendFormat": "warning threshold", "refId": "B" }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "Runner duration p95",
+          "description": "Elapsed runner time for completed AgentRuns.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.95, sum by (outcome, model, effort, le) (rate(agents_runner_run_duration_seconds_bucket{job=\"agents\",service=\"agents-controllers\"}[$__rate_interval])))", "legendFormat": "{{outcome}} · {{model}} / {{effort}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 11,
+          "title": "Pod CPU",
+          "description": "CPU usage by Pod (top 15 at each sample).",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+          "fieldConfig": { "defaults": { "unit": "cores" }, "overrides": [] },
+          "targets": [
+            { "expr": "topk(15, sum by (pod) (rate(container_cpu_usage_seconds_total{job=\"kubelet-cadvisor\",namespace=\"agents\",container!=\"\",container!=\"POD\"}[$__rate_interval])))", "legendFormat": "{{pod}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 12,
+          "title": "Pod RAM",
+          "description": "Memory working set by Pod (top 15 at each sample). Memory-backed emptyDirs can contribute to this value.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            { "expr": "topk(15, sum by (pod) (container_memory_working_set_bytes{job=\"kubelet-cadvisor\",namespace=\"agents\",container!=\"\",container!=\"POD\"}))", "legendFormat": "{{pod}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 13,
+          "title": "Runner workspace tmpfs",
+          "description": "Used bytes on the runner’s /workspace tmpfs, sampled by the app-server heartbeat. Excludes other mounts and non-tmpfs workspaces.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            { "expr": "topk(15, max by (pod) (agents_runner_workspace_tmpfs_used_bytes{job=\"agents\",service=\"agents-alloy\",namespace=\"agents\"}))", "legendFormat": "{{pod}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 14,
+          "title": "agents-db-next health",
+          "description": "CNPG metrics availability and collection errors per database Pod.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "up{job=\"cnpg-postgres\",namespace=\"agents\",cluster=\"agents-db-next\"}", "legendFormat": "{{pod}} up", "refId": "A" },
+            { "expr": "cnpg_collector_last_collection_error{job=\"cnpg-postgres\",namespace=\"agents\",cluster=\"agents-db-next\"}", "legendFormat": "{{pod}} collection error", "refId": "B" }
+          ]
+        },
+        {
+          "id": 15,
+          "title": "Runner telemetry publish errors",
+          "description": "Telemetry publication failures reported by completed runners.",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 56 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (agent) (rate(agents_runner_telemetry_publish_errors_total{job=\"agents\",service=\"agents-controllers\"}[$__rate_interval]))", "legendFormat": "{{agent}}", "refId": "A" }
+          ]
+        }
+      ]
+    }

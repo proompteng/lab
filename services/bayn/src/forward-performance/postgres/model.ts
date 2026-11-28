@@ -102,6 +102,12 @@ export const CycleDecisionRow = Schema.Struct({
   document: Schema.Unknown,
   created_at: Schema.Date,
 })
+export const CycleDecisionJsonRow = Schema.Struct({
+  cycle_id: Sha256,
+  decision_hash: Sha256,
+  document_json: Schema.NullOr(Schema.String),
+  created_at: Schema.Date,
+})
 export type VerifiedCycleDecisionRow = Omit<typeof CycleDecisionRow.Type, 'document'> & {
   readonly document: CycleDecisionDocument | RetainedJevExecutionDecisionDocument
 }
@@ -227,6 +233,8 @@ export interface ForwardPerformancePostgresEvidence {
   readonly ambiguousBrokerFeeCount?: number
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
   readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
+  readonly alphaDecisions?: readonly import('../alpha-decisions').NativeAlphaDecisionEvidence[]
+  readonly unverifiedAlphaDecisionHashes?: readonly string[]
   readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[]
   readonly receipts: readonly AccountingReceipt[]

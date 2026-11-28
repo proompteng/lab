@@ -26,7 +26,7 @@ export type ChatConfig = OpenAIConfig & {
 
 type EnvSource = Record<string, string | undefined>
 
-const DEFAULT_MODELS = ['gpt-6-astra']
+const DEFAULT_MODELS = ['gpt-6.2-sol']
 const DEFAULT_CODEX_MAX_INPUT_CHARS = 1_048_576
 
 const parseModelsEnv = (raw: string | undefined) => {

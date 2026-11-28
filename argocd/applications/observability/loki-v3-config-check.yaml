@@ -10,6 +10,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       automountServiceAccountToken: false
@@ -22,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: verify
-          image: docker.io/grafana/loki:3.7.7
+          image: docker.io/grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
           # Validate the full rendered configuration without starting services
           # or expanding credential placeholders.
           args:

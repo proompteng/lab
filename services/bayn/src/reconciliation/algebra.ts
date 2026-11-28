@@ -372,45 +372,74 @@ const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlg
     }),
   )
 
-export const verifyAccountingHistory = (
-  history: readonly {
-    readonly transaction: AccountingTransaction
-    readonly fill: Fill
-    readonly prior: PositionCost
-  }[],
-  ledger: number,
-): Result.Result<readonly PreparedAccounting[], ReconciliationAlgebraFailure> =>
-  Result.gen(function* () {
-    const prepared: PreparedAccounting[] = []
-    for (const { transaction, fill, prior } of history) {
-      const expected = yield* Result.mapError(
-        prepareAccounting(
-          transaction.brokerEventId,
-          fill,
-          prior,
-          ledger,
-          transaction.schemaVersion === equityShortAccountingSchemaVersion
-            ? AccountingInventorySide.Short
-            : AccountingInventorySide.Long,
-        ),
-        (cause): ReconciliationAlgebraFailure => ({
-          _tag: 'AccountingPlanFailed',
-          transactionId: transaction.transactionId,
-          brokerEventId: transaction.brokerEventId,
-          cause,
-        }),
-      )
-      // Reconstruction verifies the expected hashes; compare every stored field, including its claimed hashes.
-      if (!isDeepStrictEqual(transaction, expected.transaction))
-        return yield* fail({
-          _tag: 'AccountingTransactionMismatch',
-          transactionId: transaction.transactionId,
-          brokerEventId: transaction.brokerEventId,
+interface AccountingHistoryRow {
+  readonly transaction: AccountingTransaction
+  readonly fill: Fill
+  readonly prior: PositionCost
+}
+
+export const makeAccountingHistoryVerifier = (ledger: number) => {
+  type VerifiedRow = { readonly input: AccountingHistoryRow; readonly accounting: PreparedAccounting }
+  let previous = new Map<string, VerifiedRow>()
+
+  return (
+    history: readonly AccountingHistoryRow[],
+  ): Result.Result<readonly PreparedAccounting[], ReconciliationAlgebraFailure> =>
+    Result.gen(function* () {
+      const next = new Map<string, VerifiedRow>()
+      const prepared: PreparedAccounting[] = []
+      for (const row of history) {
+        const { transaction, fill, prior } = row
+        const cached = previous.get(transaction.transactionId)
+        if (cached !== undefined && isDeepStrictEqual(row, cached.input)) {
+          next.set(transaction.transactionId, cached)
+          prepared.push(cached.accounting)
+          continue
+        }
+        const expected = yield* Result.mapError(
+          prepareAccounting(
+            transaction.brokerEventId,
+            fill,
+            prior,
+            ledger,
+            transaction.schemaVersion === equityShortAccountingSchemaVersion
+              ? AccountingInventorySide.Short
+              : AccountingInventorySide.Long,
+          ),
+          (cause): ReconciliationAlgebraFailure => ({
+            _tag: 'AccountingPlanFailed',
+            transactionId: transaction.transactionId,
+            brokerEventId: transaction.brokerEventId,
+            cause,
+          }),
+        )
+        // Reconstruction verifies the expected hashes; compare every stored field, including its claimed hashes.
+        if (!isDeepStrictEqual(transaction, expected.transaction))
+          return yield* fail({
+            _tag: 'AccountingTransactionMismatch',
+            transactionId: transaction.transactionId,
+            brokerEventId: transaction.brokerEventId,
+          })
+        // The next cut can share plans with consumers only while every retained record is immutable.
+        expected.ledger.accounts.forEach(Object.freeze)
+        expected.ledger.transfers.forEach(Object.freeze)
+        Object.freeze(expected.ledger.accounts)
+        Object.freeze(expected.ledger.transfers)
+        Object.freeze(expected.ledger)
+        Object.freeze(expected.transaction)
+        const accounting = Object.freeze(expected)
+        next.set(transaction.transactionId, {
+          input: { transaction: { ...transaction }, fill: { ...fill }, prior: { ...prior } },
+          accounting,
         })
-      prepared.push(expected)
-    }
-    return prepared
-  })
+        prepared.push(accounting)
+      }
+      previous = next
+      return prepared
+    })
+}
+
+export type AccountingHistoryVerifier = ReturnType<typeof makeAccountingHistoryVerifier>
 
 export const verifyAccountingReceipts = (
   prepared: readonly PreparedAccounting[],

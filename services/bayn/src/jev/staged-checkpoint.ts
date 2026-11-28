@@ -49,7 +49,7 @@ export const StageTerminalOutcomeSchema = Schema.Union([
   Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: ChartStageInferenceSchema }),
   Schema.Struct({ status: Schema.Literal('FAILED'), failure: VisualStageFailureSchema }),
 ])
-const TerminalMaterial = Schema.Struct({
+const RetainedTerminalMaterial = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.staged-terminal-receipt.v1'),
   stage: VisualStageSchema,
   requestId: Sha256Schema,
@@ -57,7 +57,24 @@ const TerminalMaterial = Schema.Struct({
   recordedAt: UtcInstantSchema,
   outcome: StageTerminalOutcomeSchema,
 })
-export const StagedTerminalReceiptSchema = Schema.Struct({ ...TerminalMaterial.fields, terminalHash: Sha256Schema })
+const UndispatchedTerminalMaterial = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.staged-terminal-receipt.v2'),
+  stage: VisualStageSchema,
+  requestId: Sha256Schema,
+  claimHash: Sha256Schema,
+  recordedAt: UtcInstantSchema,
+  outcome: Schema.Struct({
+    status: Schema.Literal('NOT_DISPATCHED'),
+    reason: Schema.Literals(['ORIGINAL_EXPIRY', 'ADMISSION_EXPIRY']),
+    deadlineAt: UtcInstantSchema,
+    checkedAt: UtcInstantSchema,
+  }),
+})
+const TerminalMaterial = Schema.Union([RetainedTerminalMaterial, UndispatchedTerminalMaterial])
+export const StagedTerminalReceiptSchema = Schema.Union([
+  Schema.Struct({ ...RetainedTerminalMaterial.fields, terminalHash: Sha256Schema }),
+  Schema.Struct({ ...UndispatchedTerminalMaterial.fields, terminalHash: Sha256Schema }),
+])
 export type StagedTerminalReceipt = typeof StagedTerminalReceiptSchema.Type
 export const BaseStartSkipReasonSchema = Schema.Literals([
   'INSUFFICIENT_BARS',
@@ -96,11 +113,27 @@ export const makeStagedDispatchClaim = (input: typeof ClaimMaterial.Type) =>
     const value = yield* Schema.decodeUnknownResult(ClaimMaterial, strictParseOptions)(input)
     return { ...value, claimHash: yield* canonicalHashV1Result(value) }
   })
-export const makeStagedTerminalReceipt = (input: typeof TerminalMaterial.Type) =>
+const decodeTerminalReceipt = (input: typeof TerminalMaterial.Type) =>
   Result.gen(function* () {
     const value = yield* Schema.decodeUnknownResult(TerminalMaterial, strictParseOptions)(input)
     return { ...value, terminalHash: yield* canonicalHashV1Result(value) }
   })
+type TerminalReceiptFailure = Result.Result.Failure<ReturnType<typeof decodeTerminalReceipt>>
+export function makeStagedTerminalReceipt(
+  input: typeof RetainedTerminalMaterial.Type,
+): Result.Result<
+  Extract<StagedTerminalReceipt, { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }>,
+  TerminalReceiptFailure
+>
+export function makeStagedTerminalReceipt(
+  input: typeof UndispatchedTerminalMaterial.Type,
+): Result.Result<
+  Extract<StagedTerminalReceipt, { readonly schemaVersion: 'bayn.staged-terminal-receipt.v2' }>,
+  TerminalReceiptFailure
+>
+export function makeStagedTerminalReceipt(input: typeof TerminalMaterial.Type) {
+  return decodeTerminalReceipt(input)
+}
 export const makeStagedSkipReceipt = (input: typeof SkipMaterial.Type) =>
   Result.gen(function* () {
     const value = yield* Schema.decodeUnknownResult(SkipMaterial, strictParseOptions)(input)
@@ -130,7 +163,10 @@ export const decodeStagedCheckpointForRequest = (
       if (new Set(rows.map((row) => row.stage)).size !== rows.length)
         return yield* invalid('Duplicate staged journal row')
     if (
-      (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40') &&
       (checkpoint.claims.some((claim) => claim.stage !== 'CHART') ||
         checkpoint.terminals.some((terminal) => terminal.stage !== 'CHART') ||
@@ -198,7 +234,25 @@ export const decodeStagedCheckpointForRequest = (
         terminal.recordedAt < claim.claimedAt
       )
         return yield* invalid('Stage terminal has no exact immutable dispatch claim')
-      if (terminal.outcome.status === 'RECEIVED') {
+      if (terminal.outcome.status === 'NOT_DISPATCHED') {
+        const proof = terminal.outcome
+        if (
+          (request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v41' &&
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v42' &&
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v43' &&
+            request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v44') ||
+          terminal.stage !== 'CHART' ||
+          proof.checkedAt < claim.claimedAt ||
+          proof.checkedAt > terminal.recordedAt ||
+          proof.checkedAt < proof.deadlineAt ||
+          proof.deadlineAt < request.observedAt ||
+          proof.deadlineAt > request.expiresAt ||
+          (proof.reason === 'ORIGINAL_EXPIRY'
+            ? proof.deadlineAt !== request.expiresAt
+            : proof.deadlineAt >= request.expiresAt)
+        )
+          return yield* invalid('Stage non-dispatch does not prove a source-bound expired deadline')
+      } else if (terminal.outcome.status === 'RECEIVED') {
         const inference = terminal.outcome.inference
         const prepared =
           terminal.stage === 'CHART'
@@ -244,7 +298,7 @@ export const decodeStagedCheckpointForRequest = (
           skip.recordedAt < chartTerminal.recordedAt
         )
           return yield* invalid('Base start skip lacks exact predecessor evidence')
-        if (chartTerminal.outcome.status === 'FAILED') {
+        if (chartTerminal.outcome.status !== 'RECEIVED') {
           if (skip.reason !== 'CHART_FAILED') return yield* invalid('Failed chart has a contradictory base start skip')
         } else {
           const next = yield* selectedBaseRequest()

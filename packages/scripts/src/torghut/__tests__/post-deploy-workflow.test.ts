@@ -22,6 +22,18 @@ const arcKubeModeServiceAccount = readFileSync(
 )
 
 describe('torghut post-deploy verifier workflow', () => {
+  it('checks current telemetry after pipeline and market freshness without changing their budgets', () => {
+    expect(workflow).toContain('echo "TORGHUT_VERIFIED_REVISION=${REVISION}" >> "${GITHUB_ENV}"')
+    expect(workflow).toContain('run: bun run packages/scripts/src/torghut/verify-streaming-telemetry.ts')
+    expect(workflow).toContain('timeout-minutes: 6')
+    expect(workflow.indexOf('      - name: Verify current streaming telemetry')).toBeGreaterThan(
+      workflow.indexOf('      - name: Verify market-data freshness'),
+    )
+    expect(workflow).toContain('ARGO_SYNC_TIMEOUT_SECONDS=1800')
+    expect(workflow).toContain('for pipeline_attempt in $(seq 1 60)')
+    expect(workflow).toContain('TA_FRESHNESS_ATTEMPTS=4')
+  })
+
   it('observes the Kargo promotion and keeps Argo revision verification read-only', () => {
     const pushTrigger = workflow.slice(workflow.indexOf('  push:'), workflow.indexOf('  workflow_dispatch:'))
     expect(pushTrigger).toContain('- kargo/torghut')

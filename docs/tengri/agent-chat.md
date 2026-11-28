@@ -43,7 +43,7 @@ The chat, Finder, Code, Terminal, and preview tabs all operate on the same guest
 
 ## Model and reasoning selection
 
-The chat defaults to `gpt-6.1-sol`. Its **Model** selector reads the signed-in guest's paginated `model/list` catalog;
+The chat defaults to `gpt-6.2-sol`. Its **Model** selector reads the signed-in guest's paginated `model/list` catalog;
 the **Reasoning effort** selector offers that model's supported efforts and displays its default effort. Both settings
 are saved per agent in the browser and sent explicitly on thread creation, thread resume, and every subsequent turn.
 Changing models resets an incompatible effort to the selected model's default. New conversations keep the settings.

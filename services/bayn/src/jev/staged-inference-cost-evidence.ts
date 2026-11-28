@@ -187,6 +187,7 @@ export interface VisualCostStage {
   readonly handoffHash: string | null
   readonly receiptHash: string | null
   readonly resolutionHash: string | null
+  readonly notDispatchedByTerminalHash?: string
 }
 
 // This is the new-version evidence boundary, not a second financial report reader.
@@ -319,7 +320,15 @@ export const readStagedInferenceCostEvidence = (row: {
       receipt?.outcome.status === JevOutcome.Failed && receipt.outcome.failure === JevFailure.NotDispatched
     if (expiredUndispatched && checkpoint.claims.length !== 0)
       return yield* invalid('Undispatched receipt omits a committed staged provider claim')
+    const undispatchedChart = checkpoint.terminals.find(
+      (terminal) => terminal.stage === 'CHART' && terminal.outcome.status === 'NOT_DISPATCHED',
+    )
+    if (undispatchedChart !== undefined && (handoff !== null || receipt !== null))
+      return yield* invalid('Undispatched visual evidence conflicts with a provider handoff or evaluation receipt')
     const stageNames: readonly ('CHART' | 'BASE_START')[] =
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v44' ||
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
       request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
       request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
         ? ['CHART']
@@ -329,8 +338,17 @@ export const readStagedInferenceCostEvidence = (row: {
       const terminal = checkpoint.terminals.find((value) => value.stage === stage)
       const skip = stage === 'BASE_START' ? checkpoint.skips[0] : undefined
       const outcome = terminal?.outcome
-      const usage = outcome?.status === 'RECEIVED' ? outcome.inference.response.usage : (outcome?.failure.usage ?? null)
-      const zero = skip !== undefined || expiredUndispatched || handoff?.disposition.status === 'SOURCE_INFEASIBLE'
+      const usage =
+        outcome?.status === 'RECEIVED'
+          ? outcome.inference.response.usage
+          : outcome?.status === 'FAILED'
+            ? outcome.failure.usage
+            : null
+      const zero =
+        outcome?.status === 'NOT_DISPATCHED' ||
+        skip !== undefined ||
+        expiredUndispatched ||
+        handoff?.disposition.status === 'SOURCE_INFEASIBLE'
       return {
         stage,
         claimHash: claim?.claimHash ?? null,
@@ -349,7 +367,20 @@ export const readStagedInferenceCostEvidence = (row: {
         handoffHash: claim !== undefined || skip !== undefined ? null : (handoff?.handoffHash ?? null),
         receiptHash: expiredUndispatched ? receipt.receiptHash : null,
         resolutionHash: expiredUndispatched ? (resolution?.resolutionHash ?? null) : null,
+        ...(outcome?.status === 'NOT_DISPATCHED' && terminal !== undefined
+          ? { notDispatchedByTerminalHash: terminal.terminalHash }
+          : {}),
       }
     })
-    return { request, receipt, resolution, handoff, checkpoint, visualStages }
+    return {
+      request,
+      receipt,
+      resolution,
+      handoff,
+      checkpoint,
+      visualStages,
+      // Dependent Jev dispatch requires a committed READY handoff whose chart
+      // outcome is RECEIVED. This immutable terminal makes that transition impossible.
+      jevNotDispatchedByTerminalHash: undispatchedChart?.terminalHash,
+    }
   })

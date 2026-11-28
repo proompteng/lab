@@ -27,7 +27,7 @@ spec:
       serviceAccountName: torghut-runtime
       containers:
         - name: migrate
-          image: altinity/clickhouse-server:26.3.16.10001.altinitystable@sha256:8526a7742e6ef707dee68107876b18d45570b0448f284d3c785eb2d2e4417a5e
+          image: altinity/clickhouse-server:26.3.60.10002.altinitystable@sha256:53e81c410a22ab052a4d967adc2886b547c91e67370e2d02f5c2ea1177d4d3aa
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "/schema/reconcile.sh", "torghut-clickhouse.torghut.svc.cluster.local"]
           env:

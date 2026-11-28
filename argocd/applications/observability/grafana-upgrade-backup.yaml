@@ -32,10 +32,42 @@ spec:
     kind: VolumeSnapshot
     name: observability-grafana-before-13-2-1
 ---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: observability-grafana-before-13-3-1
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: observability-grafana
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: observability-grafana-restore-13-3-1
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 10Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: observability-grafana-before-13-3-1
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: observability-grafana-restore-13-2-1
+  name: observability-grafana-restore-13-3-1
   namespace: observability
   annotations:
     argocd.argoproj.io/sync-wave: "-4"
@@ -50,7 +82,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: observability-grafana-restore-13-2-1
+  name: observability-grafana-restore-13-3-1
   namespace: observability
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
@@ -97,7 +129,7 @@ spec:
               readOnly: true
         - name: restored-grafana
           restartPolicy: Always
-          image: docker.io/grafana/grafana:12.3.1@sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f
+          image: docker.io/grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
           env:
             - name: GF_PATHS_DATA
               value: /restore
@@ -153,6 +185,7 @@ spec:
         - name: verify-restore
           image: docker.io/library/python:3.14.7-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc
           command: [python3, /scripts/grafana-sqlite-backup.py, verify-runtime]
+          args: [--expected-version, "13.3.1"]
           resources:
             requests:
               cpu: 50m
@@ -176,7 +209,7 @@ spec:
       volumes:
         - name: snapshot
           persistentVolumeClaim:
-            claimName: observability-grafana-restore-13-2-1
+            claimName: observability-grafana-restore-13-3-1
         - name: restore
           emptyDir:
             sizeLimit: 1Gi

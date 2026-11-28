@@ -56,6 +56,7 @@ import type { IntradayQuote } from '../market-data/intraday/model'
 import type { ObservedMarketValue, ObservedQuoteSource } from '../market-data/streaming/projection'
 import type { ExecutionModelV6Schema } from '../execution-model-contract'
 import type { ReplayQuoteProtocol } from './broker-execution-evidence'
+import { equityStopTradeQuote, sipExecutionFeed, type EquityExecutionTape } from './equity-execution-tape'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { simulateIntradayReplayExecution, type ReplayExecutionOutcome } from './execution-core'
 import {
@@ -88,6 +89,7 @@ export interface ReplayBrokerConfig {
   readonly retainSettlement?: (checkpoint: ReplayBrokerCheckpoint) => Effect.Effect<void, ReplayBrokerFailure>
   readonly openingCashMicros: string
   readonly protocol: ReplayQuoteProtocol & { readonly executionModel: typeof ExecutionModelV6Schema.Type }
+  readonly equityExecutionTape?: EquityExecutionTape
   readonly assumptions: ReplayExecutionAssumptions & { readonly latencyMs: number; readonly feeMultiplierPpm: number }
   readonly fractionalTrading: boolean
   readonly shortingEnabled?: boolean
@@ -253,6 +255,17 @@ const newYorkDate = new Intl.DateTimeFormat('en-CA', {
 export const makeReplayBroker = (config: ReplayBrokerConfig) =>
   Effect.gen(function* () {
     const acquiredAtMs = yield* Clock.currentTimeMillis
+    const equityTape = config.equityExecutionTape
+    const usesEquityTape = (symbol: string) =>
+      equityTape !== undefined && instrumentMarket(symbol) === MarketKind.Equity
+    const quoteProtocol = (symbol: string) => ({
+      maximumQuoteAgeMs: config.protocol.maximumQuoteAgeMs,
+      ...(usesEquityTape(symbol) ? sipExecutionFeed : jevMarketForSymbol(symbol)),
+    })
+    const quoteAt: ReplayBrokerConfig['quoteAt'] = (symbol, atMs, source) =>
+      usesEquityTape(symbol)
+        ? Effect.sync(() => equityTape?.quoteAt(symbol, atMs, source))
+        : config.quoteAt(symbol, atMs, source)
     yield* Effect.fromResult(Schema.decodeUnknownResult(Sha256Schema, strictParseOptions)(config.runId))
     if (!Number.isSafeInteger(config.assumptions.latencyMs) || config.assumptions.latencyMs < 0)
       return yield* new ReplayBrokerFailure({ message: 'Replay broker latency must be a nonnegative integer' })
@@ -347,7 +360,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> =>
-      replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...jevMarketForSymbol(symbol) }) === null
+      replayQuoteRejection(quote, symbol, nowMs, quoteProtocol(symbol)) === null
     const normalizedCalendars = yield* Effect.fromResult(
       Result.all(
         config.calendar.map((entry) => normalizeMarketCalendarResult([entry], { start: entry.date, end: entry.date })),
@@ -406,10 +419,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> => {
-      const rejection = replayQuoteRejection(quote, symbol, nowMs, {
-        ...config.protocol,
-        ...jevMarketForSymbol(symbol),
-      })
+      const rejection = replayQuoteRejection(quote, symbol, nowMs, quoteProtocol(symbol))
       return rejection === null || rejection === ReplayQuoteRejection.Stale
     }
     const executeQuote = (
@@ -462,6 +472,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       quote: ObservedMarketValue<IntradayQuote> | undefined,
       unavailableReason: ReplayQuoteRejection | 'outside-regular-session' | null,
       initialArrival = false,
+      stopTradeIndex?: number,
     ) =>
       SynchronizedRef.updateEffect(state, (current) =>
         Effect.fromResult(
@@ -499,15 +510,29 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                   }
             if (previous.orderType === OrderType.StopLimit && previous.stopTriggeredAt === undefined) {
               if (unavailableReason !== null || quote === undefined) return acceptedWithoutTrigger()
-              const buy = previous.side === OrderSide.Buy
-              const price = yield* numberToMicros(
-                buy ? quote.value.askPrice : quote.value.bidPrice,
-                'stop trigger quote',
-              )
-              if (
-                buy ? price < BigInt(previous.stopPriceMicros ?? '0') : price > BigInt(previous.stopPriceMicros ?? '0')
-              )
-                return acceptedWithoutTrigger()
+              const stop = previous.stopPriceMicros ?? '0'
+              if (equityTape !== undefined && usesEquityTape(previous.symbol)) {
+                if (
+                  stopTradeIndex === undefined ||
+                  equityStopTradeQuote({
+                    tape: equityTape,
+                    index: stopTradeIndex,
+                    symbol: previous.symbol,
+                    side: previous.side,
+                    stopMicros: stop,
+                    atMs: Date.parse(arrivedAt),
+                    maximumQuoteAgeMs: config.protocol.maximumQuoteAgeMs,
+                  }) !== quote
+                )
+                  return acceptedWithoutTrigger()
+              } else {
+                const buy = previous.side === OrderSide.Buy
+                const price = yield* numberToMicros(
+                  buy ? quote.value.askPrice : quote.value.bidPrice,
+                  'stop trigger quote',
+                )
+                if (buy ? price < BigInt(stop) : price > BigInt(stop)) return acceptedWithoutTrigger()
+              }
               previous = { ...previous, stopTriggeredAt: arrivedAt }
             }
             const remaining = BigInt(previous.quantityAtoms) - BigInt(previous.filledQuantityAtoms)
@@ -548,6 +573,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             let execution = makeReplayOrderExecution({
               ...arrival,
               outcome,
+              ...(stopTradeIndex === undefined ? {} : { stopTradeIndex }),
             })
             const day = previous.timeInForce !== TimeInForce.ImmediateOrCancel
             let order: ReplayOrder = day
@@ -696,7 +722,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             yield* settleOrder(order.brokerOrderId, arrivedAt, quote, unavailableReason)
         }
       })
-    const observeMarket = (atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) =>
+    const observeQuote = (atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) =>
       Effect.gen(function* () {
         if (!Number.isSafeInteger(atMs) || (quote !== null && quote.availableAtMs !== atMs))
           return yield* new ReplayBrokerFailure({ message: 'Replay broker market availability is invalid' })
@@ -723,11 +749,37 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             order.brokerOrderId,
             utcInstantFromEpochMillis(atMs),
             quote,
-            replayQuoteRejection(quote, order.symbol, atMs, {
-              ...config.protocol,
-              ...jevMarketForSymbol(order.symbol),
-            }),
+            replayQuoteRejection(quote, order.symbol, atMs, quoteProtocol(order.symbol)),
           )
+        }
+      })
+    const observeMarket = (atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) =>
+      observeQuote(atMs, quote !== null && usesEquityTape(quote.value.symbol) ? null : quote)
+    const observeEquityExecution = (index: number) =>
+      Effect.gen(function* () {
+        const event = equityTape?.entry(index)
+        if (event === undefined)
+          return yield* new ReplayBrokerFailure({ message: 'Equity execution event is outside the bound tape' })
+        if (event.kind === 'quote') return yield* observeQuote(event.atMs, event.quote)
+        yield* expireOrders(event.atMs)
+        if (event.quote === undefined) return
+        for (const { order } of (yield* SynchronizedRef.get(state)).orders) {
+          if (
+            order.symbol === event.symbol &&
+            order.orderType === OrderType.StopLimit &&
+            order.stopTriggeredAt === undefined &&
+            order.firstArrivedAt !== undefined &&
+            Date.parse(order.firstArrivedAt) <= event.atMs &&
+            isOpen(order)
+          )
+            yield* settleOrder(
+              order.brokerOrderId,
+              utcInstantFromEpochMillis(event.atMs),
+              event.quote,
+              null,
+              false,
+              index,
+            )
         }
       })
     const closingEquity = (current: ReplayBrokerState, closeAt: string) =>
@@ -752,7 +804,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         let valuationQualified = true
         for (const position of closingLedger.positions) {
           const atMs = Date.parse(closeAt)
-          const quote = yield* config.quoteAt(position.symbol, atMs, null)
+          const quote = yield* quoteAt(position.symbol, atMs, null)
           if (!valuationQuoteUsable(quote, position.symbol, atMs))
             return yield* new ReplayBrokerFailure({ message: 'Session close has no retained valuation quote' })
           const short = BigInt(position.quantityAtoms) < 0n
@@ -777,7 +829,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       for (const fill of restored.state.ledger.fills) {
         const order = restored.state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
         const arrivedAtMs = Date.parse(fill.observedAt)
-        const quote = yield* config.quoteAt(fill.symbol, arrivedAtMs, fill.quoteSource)
+        const quote = yield* quoteAt(fill.symbol, arrivedAtMs, fill.quoteSource)
         if (
           order === undefined ||
           !quoteUsable(quote, fill.symbol, arrivedAtMs) ||
@@ -837,7 +889,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       const marked = yield* Effect.forEach(current.ledger.positions, (position) =>
         Effect.gen(function* () {
           const metadata = asset(position.symbol)
-          const quote = yield* config.quoteAt(position.symbol, Date.parse(observedAt), null)
+          const quote = yield* quoteAt(position.symbol, Date.parse(observedAt), null)
           if (metadata === undefined || !valuationQuoteUsable(quote, position.symbol, Date.parse(observedAt)))
             return yield* new ReplayBrokerFailure({
               message: `Replay position mark unavailable for ${position.symbol}`,
@@ -1281,12 +1333,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     submittedAtMs >=
                       Date.parse(request.extended_hours ? session.sessionOpenAt : session.regularOpenAt) &&
                     arrivedAtMs < closeMs)
-                const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs, null) : undefined
+                const quote = sessionOpen ? yield* quoteAt(intent.symbol, arrivedAtMs, null) : undefined
                 const unavailableReason = sessionOpen
-                  ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, {
-                      ...config.protocol,
-                      ...jevMarketForSymbol(intent.symbol),
-                    })
+                  ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, quoteProtocol(intent.symbol))
                   : 'outside-regular-session'
                 yield* settleOrderAndChildren(brokerOrderId, arrivedAt, quote, unavailableReason, true)
               }).pipe(
@@ -1455,7 +1504,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           fresh: read,
           invalidate: Effect.void,
           withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-          snapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
+          reconciliationSnapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
+            Effect.map((snapshot) => ({ snapshot, complete: Effect.void })),
             Effect.mapError((cause) => readFailure('preflight', 'Replay broker snapshot failed', cause)),
           ),
           submissionSnapshot: () =>
@@ -1468,6 +1518,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       },
       mutation,
       observeMarket,
+      observeEquityExecution,
       valuationAt,
       valuation: markedPositions.pipe(Effect.map(({ valuation }) => valuation)),
       snapshot: readState,

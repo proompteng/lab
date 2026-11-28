@@ -25,9 +25,10 @@ import {
   ExternalLink,
   LoaderCircle,
   PanelLeft,
+  PanelLeftClose,
   Plus,
   Square,
-  Wrench,
+  TerminalSquare,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type ReactNode } from 'react'
@@ -138,8 +139,8 @@ function runRecoveryError(cause: unknown, fallback: string): Error {
   return cause instanceof Error ? cause : new Error(fallback)
 }
 
-function codexRunActivity(state: TengriCodexRun['state']): string | null {
-  switch (state.phase) {
+function codexRunStatus(phase: TengriCodexRun['state']['phase']): string | null {
+  switch (phase) {
     case 'waiting_for_guest':
       return 'Connecting'
     case 'recovering':
@@ -147,14 +148,15 @@ function codexRunActivity(state: TengriCodexRun['state']): string | null {
     case 'cancelling':
       return 'Stopping'
     case 'authorization_required':
-      return 'Recovery needs your current session.'
+      return 'Status unavailable'
     case 'needs_reconciliation':
-      return "The agent's last action could not be confirmed. Check the conversation before continuing."
+      return 'Response unconfirmed'
     case 'accepted':
     case 'running':
     case 'waiting_for_approval':
     case 'succeeded':
     case 'failed':
+    case 'unconfirmed':
     case 'cancelled':
     case 'rejected':
       return null
@@ -240,6 +242,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [archivedThread, setArchivedThread] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarWide, setSidebarWide] = useState(true)
+  const sidebarId = useId()
+  const sidebarToggleRef = useRef<HTMLButtonElement | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const lastScrollTop = useRef(0)
@@ -298,8 +302,10 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       !(runTurnId && completedTurns.current.has(runTurnId))),
   )
   const showStopAction = Boolean(activeTurnId || canStopRun) && !prompt.trim() && images.length === 0
-  const runActivity = runPending && run ? codexRunActivity(run.state) : null
+  const runPhase = runPending ? run?.state.phase : undefined
+  const runStatus = runPhase ? codexRunStatus(runPhase) : null
   const responsePending = Boolean(activeTurnId || (submittingHere && !submittedTurnCompleted) || runPending)
+  const responseStarted = Boolean(activeTurnId || runPhase === 'running')
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
   useEffect(() => {
@@ -427,6 +433,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         },
       }
       observers.set(key, observer)
+      let phase = candidate.state.phase
       const current = () =>
         !controller.signal.aborted && observers.get(key) === observer && threadIdRef.current !== candidate.threadId
       async function refresh() {
@@ -440,19 +447,23 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             next?.agentId === candidate.agentId &&
             next.threadId === candidate.threadId &&
             next.runId === candidate.runId &&
-            codexRunIsTerminal(next)
+            next.state.phase !== phase
           ) {
+            phase = next.state.phase
             setWorkspaceRuns((runs) =>
               current()
-                ? runs.filter(
-                    (run) =>
-                      run.agentId !== candidate.agentId ||
-                      run.threadId !== candidate.threadId ||
-                      run.runId !== candidate.runId,
+                ? runs.flatMap((run) =>
+                    run.agentId === candidate.agentId &&
+                    run.threadId === candidate.threadId &&
+                    run.runId === candidate.runId
+                      ? codexRunIsTerminal(next)
+                        ? []
+                        : [next]
+                      : [run],
                   )
                 : runs,
             )
-            return
+            if (codexRunIsTerminal(next)) return
           }
         } catch {
           // Keep the last confirmed busy state. A background outage must never
@@ -485,7 +496,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         : current,
     )
     setCurrentActiveTurnId('')
-    const reason = 'reason' in run.state ? run.state.reason : undefined
+    const reason = 'reason' in run.state && run.state.phase !== 'unconfirmed' ? run.state.reason : undefined
     setError((current) => reason ?? (current === recoveredFailure ? '' : current))
   }, [run, runMatchesThread, setCurrentActiveTurnId])
 
@@ -1789,6 +1800,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     } else focusComposerAfterConversationChange()
   }
 
+  function dismissDrawer() {
+    setSidebarOpen(false)
+    requestAnimationFrame(() => sidebarToggleRef.current?.focus({ preventScroll: true }))
+  }
+
   function selectOptions(next: TengriCodexSelection) {
     setSelection(next)
     const persisted = writeStoredSelection(agentId, next)
@@ -1847,6 +1863,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
   )
   const runObservationUnavailable = Boolean(activeRunsRecoveryFailure.current || runRecoveryFailure.current)
+  const showRecoveryStop = canStopRun && !showStopAction && Boolean(runStatus || runObservationUnavailable)
+  const threadPhases = new Map(
+    workspaceRuns
+      .filter((candidate) => !codexRunIsTerminal(candidate))
+      .map((candidate) => [candidate.threadId, candidate.state.phase]),
+  )
+  if (runPending && runPhase) threadPhases.set(threadId, runPhase)
+  else if (activeTurnId || submittingHere) threadPhases.set(threadId, 'running')
   const agentStatus = runObservationUnavailable
     ? 'Status unavailable'
     : connectionNotice
@@ -1857,22 +1881,26 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           ? 'Input requested'
           : approvalPending
             ? 'Approval needed'
-            : responsePending
-              ? 'Working'
-              : eventStreamState !== 'connected'
-                ? 'Connecting'
-                : 'Ready'
+            : (runStatus ??
+              (responsePending
+                ? responseStarted
+                  ? 'Working'
+                  : 'Sending'
+                : eventStreamState !== 'connected'
+                  ? 'Connecting'
+                  : 'Ready'))
   return (
     <div ref={rootRef} className="@container/agent relative isolate flex h-full min-h-0 bg-zinc-950 text-zinc-100">
       {compactDrawerOpen ? (
         <div
           aria-hidden="true"
-          className="absolute inset-0 z-20 bg-black/50"
-          onClick={() => setSidebarOpen(false)}
+          className="absolute inset-0 z-20 bg-black/40"
+          onClick={dismissDrawer}
           role="presentation"
         />
       ) : null}
       <aside
+        id={sidebarId}
         ref={drawerFocus.ref}
         data-testid="agent-conversation-sidebar"
         role={compactDrawerOpen ? 'dialog' : undefined}
@@ -1885,23 +1913,33 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                 drawerFocus.onKeyDown(event)
                 if (event.key === 'Escape') {
                   event.preventDefault()
-                  setSidebarOpen(false)
+                  dismissDrawer()
                 }
               }
             : undefined
         }
         className={cn(
-          'z-30 min-h-0 w-[240px] flex-col border-r border-white/[0.08] bg-zinc-950 @[720px]/agent:w-[260px]',
+          'z-30 min-h-0 w-[240px] max-w-full flex-col border-r border-white/[0.08] bg-zinc-900 @[720px]/agent:w-[260px]',
           sidebarOpen ? 'flex' : 'hidden',
-          sidebarWide ? 'relative shrink-0' : 'absolute inset-y-0 left-0',
+          sidebarWide ? 'relative shrink-0' : 'absolute inset-y-0 left-0 shadow-xl shadow-black/25',
         )}
       >
-        <div className="flex h-11 shrink-0 items-center gap-2 px-3">
+        <div className="flex min-h-11 shrink-0 items-center gap-1 px-2 py-1">
+          {compactDrawerOpen ? (
+            <button
+              type="button"
+              aria-label="Hide conversations"
+              onClick={dismissDrawer}
+              className="grid size-8 shrink-0 place-items-center rounded-lg text-zinc-400 outline-none hover:bg-white/5 hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 active:bg-white/10 [@media(pointer:coarse)]:size-11"
+            >
+              <PanelLeftClose className="size-4" aria-hidden="true" />
+            </button>
+          ) : null}
           <button
             type="button"
             disabled={!canChangeConversation}
             onClick={newConversation}
-            className="inline-flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-2 text-label-14 text-zinc-400 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
+            className="inline-flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 text-label-14 text-zinc-300 outline-none hover:bg-white/5 hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 active:bg-white/10 disabled:opacity-35 [@media(pointer:coarse)]:min-h-11"
             aria-label="New conversation"
           >
             <Plus className="size-3.5" aria-hidden="true" />
@@ -1918,12 +1956,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           agentId={agentId}
           enabled={account.authenticated}
           selected={threadId ? { id: threadId, unavailable: conversationMissing } : null}
-          busyThreadIds={
-            new Set([
-              ...workspaceRuns.filter((run) => !codexRunIsTerminal(run)).map((run) => run.threadId),
-              ...(activeTurnId || submittingHere ? [threadId] : []),
-            ])
-          }
+          threadPhases={threadPhases}
           canSelect={canChangeConversation}
           revision={sessionRevision}
           onSelect={switchConversation}
@@ -1934,18 +1967,45 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={compactDrawerOpen || undefined}>
         <div className="flex h-11 shrink-0 items-center gap-2 px-3">
           <button
+            ref={sidebarToggleRef}
             type="button"
-            aria-pressed={sidebarOpen}
+            aria-expanded={sidebarOpen}
+            aria-controls={sidebarId}
             aria-label={sidebarOpen ? 'Hide conversations' : 'Show conversations'}
             onClick={() => setSidebarOpen((open) => !open)}
-            className="inline-flex size-7 items-center justify-center rounded-md text-zinc-500 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+            className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 outline-none hover:bg-white/5 hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 active:bg-white/10 [@media(pointer:coarse)]:size-11"
           >
             <PanelLeft className="size-3.5" aria-hidden="true" />
           </button>
           <span className="text-heading-14 text-zinc-200">Codex</span>
-          <span className="min-w-0 truncate text-label-12 text-zinc-400" aria-label="Agent status">
+          <span className="min-w-0 truncate text-label-12 text-zinc-400" aria-label="Agent status" role="status">
             {agentStatus}
           </span>
+          {runPhase === 'authorization_required' ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 px-2"
+              disabled={interrupting}
+              onClick={() => void recoverRun()}
+            >
+              Reconnect
+            </Button>
+          ) : null}
+          {showRecoveryStop ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7 shrink-0"
+              aria-label="Stop response"
+              disabled={interrupting}
+              onClick={() => void interruptTurn()}
+            >
+              <Square className="size-3 fill-current" aria-hidden="true" />
+            </Button>
+          ) : null}
           {!sidebarOpen ? (
             <button
               type="button"
@@ -2022,34 +2082,19 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
               >
                 {groupCodexActivity(transcriptCards).map((group) =>
                   group.activity ? (
-                    <ToolActivityGroup key={`activity-${threadId}-${group.id}`} count={group.items.length}>
+                    <ToolActivityGroup key={`activity-${threadId}-${group.id}`}>
                       {group.items.map((item) => item.card)}
                     </ToolActivityGroup>
                   ) : (
                     group.items[0].card
                   ),
                 )}
-                {runActivity ? (
-                  <div
-                    role="status"
-                    aria-label="Agent activity"
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400"
-                  >
-                    <span>{runActivity}</span>
-                    {run?.state.phase === 'authorization_required' || run?.state.phase === 'needs_reconciliation' ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={interrupting}
-                        onClick={() => void recoverRun()}
-                      >
-                        {run.state.phase === 'authorization_required' ? 'Resume recovery' : 'Check again'}
-                      </Button>
-                    ) : null}
-                  </div>
+                {runMatchesThread && run?.state.phase === 'unconfirmed' ? (
+                  <p className="text-copy-14 text-zinc-400" role="status">
+                    <span className="font-medium text-zinc-300">Response interrupted.</span> {run.state.reason}
+                  </p>
                 ) : null}
-                {responsePending && !approvalPending && !runActivity ? (
+                {agentStatus === 'Sending' || agentStatus === 'Working' ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>
@@ -2247,17 +2292,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     onRetry={() => setModelReload((version) => version + 1)}
                     selection={selection}
                   />
-                  {canStopRun && !showStopAction ? (
-                    <button
-                      type="button"
-                      aria-label="Stop response"
-                      disabled={interrupting}
-                      onClick={() => void interruptTurn()}
-                      className="mb-0.5 grid size-7 shrink-0 place-items-center rounded-full text-zinc-400 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
-                    >
-                      <Square className="h-3 w-3 fill-current" aria-hidden="true" />
-                    </button>
-                  ) : null}
                   <button
                     type={showStopAction ? 'button' : 'submit'}
                     aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
@@ -2442,7 +2476,7 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
 }
 
 const composerSelectTriggerClass =
-  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 disabled:opacity-100 disabled:hover:bg-transparent disabled:hover:text-zinc-400 [&_svg]:text-current motion-reduce:transition-none'
 const composerSelectMenuClass =
   'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
 const composerSelectItemClass =
@@ -2730,28 +2764,29 @@ function safeVerificationUrl(value: string) {
   }
 }
 
-function ToolActivityGroup({ count, children }: { count: number; children: ReactNode }) {
-  const [expanded, setExpanded] = useState(true)
+function ToolActivityGroup({ children }: { children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
   const id = useId()
   return (
-    <div className="py-1">
-      {count > 1 ? (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={id}
-          onClick={() => setExpanded((value) => !value)}
-          className="flex min-h-6 items-center gap-2 rounded px-1 py-0.5 text-label-14 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
-        >
-          <Wrench className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
-          Tools and commands
-          <ChevronDown
-            className={cn('size-3.5 transition-transform motion-reduce:transition-none', !expanded && '-rotate-90')}
-            aria-hidden="true"
-          />
-        </button>
-      ) : null}
-      <div id={id} hidden={count > 1 && !expanded} className="space-y-0">
+    <div className="group/commands py-1">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={id}
+        onClick={() => setExpanded((value) => !value)}
+        className="flex min-h-6 items-center gap-2 rounded px-1 py-0.5 text-label-14 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
+      >
+        <TerminalSquare className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
+        Ran commands
+        <ChevronDown
+          className={cn(
+            'size-3.5 transition-[opacity,transform] group-hover/commands:opacity-100 group-focus-within/commands:opacity-100 motion-reduce:transition-none',
+            !expanded && '-rotate-90 opacity-0',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      <div id={id} hidden={!expanded} className="mt-2 ml-2 space-y-1 border-l border-zinc-800 pl-3">
         {children}
       </div>
     </div>

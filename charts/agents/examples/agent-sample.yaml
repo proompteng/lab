@@ -8,7 +8,7 @@ spec:
   memoryRef:
     name: default-memory
   config:
-    model: gpt-6-astra
+    model: gpt-6.2-sol
   env:
     - name: CODEX_MODE
       value: autonomous

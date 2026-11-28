@@ -7,7 +7,7 @@ import type { PositionCost } from './model'
 import { OrderSide, type Fill } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { AccountCode } from '../ledger-plan'
-import { verifyAccountingHistory } from '../reconciliation/algebra'
+import { makeAccountingHistoryVerifier } from '../reconciliation/algebra'
 
 const fill = (side: OrderSide, quantity: bigint, price: bigint, fee = 0n, symbol = 'AAPL'): Fill => ({
   schemaVersion: 'bayn.fill.v2',
@@ -63,7 +63,7 @@ test('partial covers and an adverse final cover settle exact liability, fees and
   expect(prior).toEqual(empty)
   expect(history.map(({ transaction: t }) => t.realizedPnlMicros)).toEqual(['0', '10000000', '-40000000'])
   expect(history.reduce((n, { transaction: t }) => n + BigInt(t.cashDeltaMicros), 0n)).toBe(-30_080_000n)
-  expect(Result.isSuccess(verifyAccountingHistory(history, 7001))).toBe(true)
+  expect(Result.isSuccess(makeAccountingHistoryVerifier(7001)(history))).toBe(true)
 })
 
 test('short gap losses can exceed original notional and are never clipped to collateral or stop', () => {

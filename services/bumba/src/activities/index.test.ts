@@ -818,7 +818,7 @@ describe('bumba completions', () => {
         throw new Error('expected completion request body')
       }
       const body = requestBody as Record<string, unknown>
-      expect(body.model).toBe('gpt-6-astra')
+      expect(body.model).toBe('gpt-6.2-sol')
       expect(body).not.toHaveProperty('temperature')
       expect(body).not.toHaveProperty('top_p')
       expect(body.reasoning_effort).toBe('high')
@@ -838,7 +838,7 @@ describe('bumba completions', () => {
           throw new Error(`expected completion request body for ${legacyEffort} reasoning effort`)
         }
         const legacyBody = requestBody as Record<string, unknown>
-        expect(legacyBody.model).toBe('gpt-6-astra')
+        expect(legacyBody.model).toBe('gpt-6.2-sol')
         expect(legacyBody).not.toHaveProperty('temperature')
         expect(legacyBody).not.toHaveProperty('top_p')
         expect(legacyBody.reasoning_effort).toBe('low')

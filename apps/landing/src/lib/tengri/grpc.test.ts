@@ -988,7 +988,7 @@ describe('Tengri gRPC BFF transport', () => {
   test('carries model and reasoning choices over protobuf for new and subsequent turns', async () => {
     const { createCodexThread, sendCodexTurn } = await import('./grpc')
     const options = {
-      model: 'gpt-6.1-sol',
+      model: 'gpt-6.2-sol',
       reasoningEffort: 'high',
     } satisfies import('./codex-models').TengriCodexOptions
     await createCodexThread(identity, 'agent-test', options)

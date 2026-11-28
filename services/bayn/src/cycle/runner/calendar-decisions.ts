@@ -1,5 +1,6 @@
 import {
   isContinuousMarket,
+  regularEquitySessions,
   tradingWindow,
   continuousExecutionPolicy,
   continuousMarketHours,
@@ -120,7 +121,7 @@ export const selectIntradayExecutionSession = (
   const observedAtMillis = Date.parse(observedAt)
   if (!Number.isFinite(observedAtMillis)) return undefined
 
-  return observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
+  return regularEquitySessions(observation).reduce<MarketCalendarSession | undefined>((selected, session) => {
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow = firstIntradayObservationAtMs(session, executionPolicy) < cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
@@ -170,32 +171,59 @@ export const makeIntradayCycleDraft = (
     return yield* makeCycleDraft(identity, window)
   })
 
+/** Match the same entry-consumption lineage used by the durable observation lookup. */
+export const matchesIntradayEntryWindowLineage = (
+  cycle: AutonomousCycle,
+  candidate: IntradayCycleCandidate,
+  observation: MarketHours,
+  executionSession: MarketCalendarSession,
+): boolean => {
+  if (cycle.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') return false
+  // Continuous entry consumption crosses rolling windows; exchange consumption belongs to its exact session.
+  const originalSession = isContinuousMarket(observation)
+    ? {
+        date: cycle.identity.executionSessionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      }
+    : executionSession
+  const originalDraft = makeIntradayCycleDraft(
+    candidate,
+    observation,
+    originalSession,
+    cycle.identity.entryAttemptOrdinal,
+  )
+  return Result.isSuccess(originalDraft) && cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
+}
+
 export const nextIntradayEntryAttemptOrdinal = (
   cycle: AutonomousCycle,
   observedAt: string,
   submissionCutoffAt: string,
   recoveredBlockedCycle = false,
+  allowConcurrentActive = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
-  if (
-    (cycle.state !== CycleState.Completed &&
-      cycle.state !== CycleState.NoTrade &&
-      !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
-    cycle.terminalAt === undefined ||
-    cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
-    observedAt >= submissionCutoffAt
-  )
+  if (cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' || observedAt >= submissionCutoffAt) {
     return undefined
+  }
   const currentAttempt =
     cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
       ? cycle.identity.entryAttemptOrdinal
       : undefined
+  if (currentAttempt === undefined || currentAttempt >= 2_147_483_647) return undefined
+  if (allowConcurrentActive && cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined) {
+    const updatedAt = Date.parse(cycle.updatedAt)
+    return Number.isFinite(updatedAt) && Date.parse(observedAt) >= updatedAt ? currentAttempt + 1 : undefined
+  }
+  if (
+    (cycle.state !== CycleState.Completed &&
+      cycle.state !== CycleState.NoTrade &&
+      !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
+    cycle.terminalAt === undefined
+  )
+    return undefined
   const rearmAt = Date.parse(cycle.terminalAt)
-  return currentAttempt !== undefined &&
-    currentAttempt < 2_147_483_647 &&
-    Number.isFinite(rearmAt) &&
-    Date.parse(observedAt) >= rearmAt
-    ? currentAttempt + 1
-    : undefined
+  return Number.isFinite(rearmAt) && Date.parse(observedAt) >= rearmAt ? currentAttempt + 1 : undefined
 }
 
 /**

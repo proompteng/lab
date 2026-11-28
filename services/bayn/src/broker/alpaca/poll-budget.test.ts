@@ -24,6 +24,66 @@ const transport = (
 }
 
 describe('broker observation HTTP budget', () => {
+  test.each([
+    { remaining: 55, allowed: true },
+    { remaining: 54, allowed: false },
+  ])(
+    'reserves four protective reads while charging unattested responses ($remaining)',
+    async ({ remaining, allowed }) =>
+      run(
+        Effect.gen(function* () {
+          const budget = yield* makeBrokerObservationBudget
+          const source = transport((attempt) =>
+            attempt === 1
+              ? {
+                  headers: {
+                    'x-ratelimit-limit': '200',
+                    'x-ratelimit-remaining': String(remaining),
+                    'x-ratelimit-reset': '60',
+                  },
+                }
+              : {},
+          )
+          const client = budget.decorate(source.client)
+          yield* budget.beginCapture
+          expect(yield* budget.protectionReadAllowance).toBeUndefined()
+          yield* client.get(url)
+          yield* client.get(url)
+          expect(yield* budget.protectionReadAllowance).toEqual(
+            allowed ? { expiresAtMs: 60_000, requestCostMs: 600 } : undefined,
+          )
+          expect(yield* budget.nextPollNotBeforeMs).toBe(1_200)
+          yield* TestClock.adjust(60_000)
+          expect(yield* budget.protectionReadAllowance).toBeUndefined()
+        }),
+      ),
+  )
+
+  test.each(['101', '100'])(
+    'retains measured request headroom when a successful PAPER response reports reset %s',
+    async (reset) => {
+      await run(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(100_754)
+          const budget = yield* makeBrokerObservationBudget
+          const source = transport(() => ({
+            headers: {
+              'x-ratelimit-limit': '200',
+              'x-ratelimit-remaining': '198',
+              'x-ratelimit-reset': reset,
+            },
+          }))
+          yield* budget.beginCapture
+          yield* budget.decorate(source.client).get(url)
+          yield* TestClock.adjust(25_000)
+          expect(yield* budget.protectionReadAllowance).toEqual({ expiresAtMs: 160_754, requestCostMs: 600 })
+          yield* TestClock.adjust(35_000)
+          expect(yield* budget.protectionReadAllowance).toBeUndefined()
+        }),
+      )
+    },
+  )
+
   test.each([14, 33, 34, 52, 60, 62])(
     'charges every attempt in a %s-call paginated capture to its next poll',
     async (count) => {
@@ -148,6 +208,7 @@ describe('broker observation HTTP budget', () => {
       resetMs: 60_000,
     },
     { name: '429 Retry-After seconds', status: 429, headers: { 'retry-after': '75' }, resetMs: 75_000 },
+    { name: '503 Retry-After seconds', status: 503, headers: { 'retry-after': '75' }, resetMs: 75_000 },
     {
       name: '429 Retry-After HTTP date',
       status: 429,

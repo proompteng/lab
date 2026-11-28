@@ -107,5 +107,6 @@ export const observedBrokerSnapshotFixture = (
     openOrders: observe([]),
     recentOrders: observe(orders),
     recentFills: observe({ items: fills }),
+    pendingCashFeeCount: 0,
   }
 }

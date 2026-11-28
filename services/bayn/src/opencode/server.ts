@@ -18,6 +18,7 @@ import {
 } from 'effect'
 import {
   HttpClient,
+  HttpClientError,
   HttpClientRequest,
   HttpIncomingMessage,
   HttpRouter,
@@ -136,11 +137,6 @@ export const serveOpenCode = (
       HTTP_PROXY: config.proxy,
       NO_PROXY: '127.0.0.1,localhost',
     }
-    const version = yield* spawner.string(
-      ChildProcess.make(config.binary, ['--version'], { env, stdin: 'ignore', stderr: 'ignore' }),
-    )
-    if (version.trim() !== `opencode v${openCodeVersion}`)
-      return yield* new ResearchError({ message: 'OpenCode binary differs from the pinned harness version' })
     const child = yield* spawner.spawn(
       ChildProcess.make(
         config.binary,
@@ -151,8 +147,13 @@ export const serveOpenCode = (
           stdin: 'ignore',
           stdout: 'ignore',
           stderr: 'ignore',
+          // Allow the native server's 20-second drain before escalating a stuck shutdown.
+          forceKillAfter: '25 seconds',
         },
       ),
+    )
+    const exited = child.exitCode.pipe(
+      Effect.flatMap((code) => new ResearchError({ message: `OpenCode native server exited with code ${code}` })),
     )
     const native = (method: 'GET' | 'POST', path: string, body?: unknown) => {
       let request = HttpClientRequest.make(method)(`${nativeOrigin}${path}`).pipe(
@@ -164,12 +165,35 @@ export const serveOpenCode = (
     }
     const info = Effect.gen(function* () {
       const response = yield* native('GET', '/api/info')
-      if (response.status !== 200) return yield* new ResearchError({ message: 'OpenCode native server is unavailable' })
-      yield* Schema.decodeUnknownEffect(InfoSchema)(yield* response.json)
+      if (response.status !== 200 && response.status !== 503)
+        return yield* new ResearchError({ message: `OpenCode native server returned HTTP ${response.status}` })
+      yield* Schema.decodeUnknownEffect(InfoSchema)(yield* response.json).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ResearchError({ message: 'OpenCode native server differs from the pinned harness version', cause }),
+        ),
+      )
+      // The pinned native process serves authenticated identity with 503 while its routes are booting.
+      if (response.status === 503)
+        return yield* new HttpClientError.HttpClientError({
+          reason: new HttpClientError.StatusCodeError({ request: response.request, response }),
+        })
     })
+    // Nix verifies the package; this authenticated response proves the version of the running server.
     yield* info.pipe(
-      Effect.retry({ schedule: Schedule.spaced('200 millis'), times: 100 }),
+      // Native listen precedes handler installation; an early accepted request can remain unanswered.
+      Effect.timeout('1 second'),
+      Effect.retry({
+        schedule: Schedule.spaced('200 millis'),
+        times: 100,
+        while: (error) =>
+          error._tag === 'TimeoutError' ||
+          (error._tag === 'HttpClientError' &&
+            (error.reason._tag === 'TransportError' ||
+              (error.reason._tag === 'StatusCodeError' && error.reason.response.status === 503))),
+      }),
       Effect.timeout('25 seconds'),
+      Effect.raceFirst(exited),
     )
     const mutex = yield* Semaphore.make(1)
     let active: ActiveAttempt | undefined
@@ -453,6 +477,5 @@ export const serveOpenCode = (
         configurationHash,
       }),
     )
-    yield* child.exitCode
-    return yield* new ResearchError({ message: 'OpenCode native server exited' })
+    return yield* exited
   }).pipe(Effect.scoped)

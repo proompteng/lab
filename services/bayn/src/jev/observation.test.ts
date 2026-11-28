@@ -2,9 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
+import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { nativeJevFixture } from './native.test-support'
-import { reproduceJevCandidateObservation } from './observation'
+import { makeOwnedJevObservation, reproduceJevCandidateObservation } from './observation'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
+import { decodeJevPortfolio } from './portfolio'
+import { JevBatchPlanVersion } from './batch'
+import { makeJevTradingSignalBatch, prepareJevTradingSignalBatch } from './trading-signals'
 
 const withBrokerTime = (field: JevObservationField, ageMs: number) => {
   const { observation } = nativeJevFixture()
@@ -90,6 +94,73 @@ describe('bounded Jev observation diagnostics', () => {
     ).toBe(JevObservationCheck.ObservationTime)
     const { candidateEvidencePolicy: _policy, ...protocol } = payload.protocol
     expect(failure({ ...payload, protocol }).observationCheck).toBe(JevObservationCheck.Schema)
+  })
+})
+
+describe('owned Jev preparation', () => {
+  test('reuses the exact immutable inputs and reproduces the independently verified plan', () => {
+    const { input, observation, protocol } = nativeJevFixture()
+    const owned = Result.getOrThrow(makeOwnedJevObservation(input))
+    expect(owned.verified.portfolio).toBe(input.portfolio)
+    expect(owned.verified.snapshot).toBe(input.snapshot)
+    expect(owned.payload).toEqual(observation.payload)
+    expect(owned.verified.contentHash).toBe(observation.contentHash)
+    const expiresAt = new Date(Date.parse(observation.payload.observedAt) + protocol.inferenceValidityMs).toISOString()
+    const planVersion = JevBatchPlanVersion.V8
+    const prepared = Result.getOrThrow(prepareJevTradingSignalBatch(owned, expiresAt, planVersion))
+    expect(prepared.plan).toEqual(
+      Result.getOrThrow(makeJevTradingSignalBatch({ observation: observation.payload, expiresAt, planVersion })),
+    )
+  })
+
+  test('detaches verified portfolio material and rejects a changed account or copied snapshot', () => {
+    const { input, snapshot } = nativeJevFixture()
+    const supplied = structuredClone(input.portfolio)
+    const verified = Result.getOrThrow(decodeJevPortfolio(supplied))
+    expect(Reflect.set(supplied.brokerState.account, 'cashMicros', '1')).toBe(true)
+    expect(Reflect.set(verified.brokerState.account, 'cashMicros', '1')).toBe(false)
+    expect(verified.brokerState.account.cashMicros).toBe(input.portfolio.brokerState.account.cashMicros)
+    expect(makeOwnedJevObservation({ ...input, portfolio: supplied })).toMatchObject({
+      failure: { observationCheck: JevObservationCheck.Schema },
+    })
+    expect(Reflect.set(snapshot.manifest.streaming, 'sequence', 0)).toBe(false)
+    expect(makeOwnedJevObservation({ ...input, snapshot: { ...snapshot } })).toMatchObject({
+      failure: { observationCheck: JevObservationCheck.Snapshot },
+    })
+    let reads = 0
+    const prepared = Result.getOrThrow(
+      makeOwnedJevObservation({
+        ...input,
+        get snapshot() {
+          return reads++ === 0 ? snapshot : { ...snapshot }
+        },
+      }),
+    )
+    expect(prepared.verified.snapshot).toBe(snapshot)
+    expect(reads).toBe(1)
+  })
+
+  test('malformed source bounds and deliveries cannot issue an owned market snapshot', () => {
+    const { cut, query } = nativeJevFixture()
+    const [position] = cut.positions
+    const [entry] = cut.projection.bars
+    if (position === undefined || entry === undefined) throw new Error('Expected native source positions and bars')
+    const [symbol, records] = entry
+    const [first, second] = records
+    if (first === undefined || second === undefined) throw new Error('Expected two recorded bars')
+    const bars = new Map(cut.projection.bars).set(symbol, [
+      { ...first, sequence: second.sequence },
+      ...records.slice(1),
+    ])
+    for (const invalid of [
+      { ...cut, positions: cut.positions.toReversed() },
+      { ...cut, positions: [...cut.positions, position] },
+      { ...cut, bootstrap: { ...cut.bootstrap, partitions: cut.bootstrap.partitions.toReversed() } },
+      { ...cut, bootstrap: { ...cut.bootstrap, epoch: '' }, projection: { ...cut.projection, epoch: '' } },
+      { ...cut, projection: { ...cut.projection, bars } },
+    ]) {
+      expect(constructStreamingSnapshot(invalid, query)).toMatchObject({ failure: { reason: 'watermark' } })
+    }
   })
 })
 

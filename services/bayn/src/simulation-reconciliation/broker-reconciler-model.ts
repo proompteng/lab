@@ -1,7 +1,8 @@
 import { Cause, Data, Result, pipe } from 'effect'
 
 import type { BrokerReadError } from '../broker/alpaca/failures'
-import type { Observed, OrderStatus } from '../broker/alpaca/model'
+import type { Observed, Order as BrokerOrder, OrderStatus } from '../broker/alpaca/model'
+import type { NativeProtection } from '../execution/contracts'
 import {
   renderBrokerObservationError,
   sourceTimestamp,
@@ -28,11 +29,21 @@ export type { BrokerHistory, Observed, OrderRead, StableBrokerSnapshot } from '.
 export type AccountEventInput = Extract<BrokerEventInput, { readonly _tag: 'Account' }>
 export type OrderEventInput = Extract<BrokerEventInput, { readonly _tag: 'Order' }>
 
+/** The original nested broker read and the immutable intent terms verified during normalization. */
+export interface ReconciledProtectionGroup {
+  readonly intentId: string
+  readonly symbol: string
+  readonly quantityAtoms: string
+  readonly protection: NativeProtection
+  readonly parent: Observed<BrokerOrder>
+}
+
 export interface NormalizedBrokerSnapshot {
   readonly account: AccountEventInput
   readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly positions: PositionSnapshotInput
   readonly orderEvents: readonly OrderEventInput[]
+  readonly protectionGroups: readonly ReconciledProtectionGroup[]
   readonly fillEvents: readonly FillEventInput[]
   readonly fees: readonly Observed<import('../broker/alpaca/model').FeeActivity>[]
 }
@@ -48,6 +59,8 @@ export interface ReconciliationPassResult {
   readonly report: ReconciliationReport
   readonly brokerState: ReconciledBrokerState
   readonly riskContext: ReconciliationRiskContext
+  /** Absent in retained/synthetic passes: active orders remain unavailable for another submission. */
+  readonly protectionGroups?: readonly ReconciledProtectionGroup[]
 }
 
 export type PaginationFailureReason =

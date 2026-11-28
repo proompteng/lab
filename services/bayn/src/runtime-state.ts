@@ -1,4 +1,5 @@
 import type { ExecutionControllerStatus } from './execution/controller-status'
+import type { BrokerReadError } from './broker/alpaca/failures'
 import {
   CycleOperationsCondition,
   type CycleOperationsStatus,
@@ -37,6 +38,7 @@ export interface BrokerStatus extends BrokerConfiguration {
   readonly readAvailable: boolean | null
   readonly checkedAt: string | null
   readonly error: string | null
+  readonly observationFailure?: BrokerReadError['observationFailure']
 }
 
 export type AutonomousCyclePassObservation = RetainedAutonomousCyclePassObservation

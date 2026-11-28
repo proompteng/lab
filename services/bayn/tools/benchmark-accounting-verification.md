@@ -1,16 +1,20 @@
 # Accounting verification measurements
 
-`benchmark-accounting-verification.ts` compares complete accounting reconstruction against separately bundled
-baseline modules. Follow the baseline-bundle instructions at the top of that file, then run its Node bundle with
-the baseline directory as its argument. Use the pinned production Node version for production-runtime comparisons.
+`benchmark-accounting-verification.ts` compares complete baseline reconstruction with reuse in a warm accounting
+verifier. Bundle a baseline revision that exports `verifyAccountingHistory` using the instructions at the top of
+the script. Run the candidate bundle with the baseline directory as its argument. Use the pinned production Node
+version for production-runtime comparisons.
 The fixture contains 1,104 synthetic buys, profitable and losing sells, fractional rounding cases, three accounts,
-and twenty symbols. Fixture construction and full result comparisons run outside the timed region.
+and twenty symbols. Both arms receive freshly copied rows. Row copying and full result comparisons run outside the
+timed region.
+
+## November 16 hashing measurement
 
 The hashing change uses the runtime's one-shot SHA-256 function instead of creating a streaming hash object.
 For ledger identifiers, parsing the first 32 hexadecimal characters replaces sixteen repeated bigint shifts and
 byte conversions. These are the same first sixteen digest bytes in big-endian order. The separator, 64-bit mask,
 non-zero remapping, canonical validation, accounting reconstruction, and complete stored-record comparisons remain
-unchanged. No identity or plan is cached across calls.
+unchanged. Both arms of this historical measurement reconstructed every row on each pass.
 
 On November 16, 2026, baseline `13f85e995fb53f62f198b8b51ca6e6ea4db2a283` and the candidate were measured
 using Node 24.11.1 on Linux x64 in three separate processes. Each process ran ten warmup pairs and thirty measured

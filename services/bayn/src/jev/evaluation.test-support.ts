@@ -82,9 +82,8 @@ export const evaluateFixtureEntry = (claim: EntryInferenceClaim) =>
           message: 'Fixture claim already admitted',
         })
     }
-    const completed = yield* evaluateClaimedEntryInferences([
-      makeJevDispatch({ request, claimedAt: claim.claimedAt, visualClaim: prepared.visualClaim }),
-    ]).pipe(
+    const dispatch = yield* Effect.fromResult(makeJevDispatch({ request, claimedAt: claim.claimedAt }))
+    const completed = yield* evaluateClaimedEntryInferences([dispatch]).pipe(
       Effect.provideService(JevEvaluationStore, {
         read: () => Effect.die('Unexpected fixture read'),
         abandon: () => Effect.die('Unexpected fixture abandon'),
@@ -120,18 +119,10 @@ export const evaluateAdmittedFixture = (dispatch: JevDispatch) =>
 export const admitAndEvaluateFixture = (input: Pick<JevDispatch, 'request' | 'claimedAt'>) =>
   Effect.gen(function* () {
     const { request, claimedAt } = input
-    const prepared = yield* Effect.fromResult(
-      prepareClaimedEntry({
-        requestId: request.requestId,
-        input: request.request,
-        observedAt: request.observedAt,
-        expiresAt: request.expiresAt,
-        claimedAt,
-      }),
-    )
-    if (prepared.visualClaim !== null) {
-      const admitted = yield* persistVisualClaimFixture(yield* EntryInferenceJournal, prepared.visualClaim)
+    const dispatch = yield* Effect.fromResult(makeJevDispatch({ request, claimedAt }))
+    if (dispatch.visualClaim !== null) {
+      const admitted = yield* persistVisualClaimFixture(yield* EntryInferenceJournal, dispatch.visualClaim)
       if (!admitted.dispatchAllowed) return yield* new JevEvidenceError({ message: 'Fixture claim cannot be repeated' })
     }
-    return yield* evaluateAdmittedFixture(makeJevDispatch({ request, claimedAt, visualClaim: prepared.visualClaim }))
+    return yield* evaluateAdmittedFixture(dispatch)
   })

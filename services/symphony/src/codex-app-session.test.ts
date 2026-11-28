@@ -74,7 +74,7 @@ setInterval(() => {}, 1000)
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
-            model: 'gpt-6-astra',
+            model: 'gpt-6.2-sol',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
@@ -166,7 +166,7 @@ rl.on('line', (line) => {
   }
 
   if (message.method === 'thread/start') {
-    if (message.params?.model !== 'gpt-6-astra') {
+    if (message.params?.model !== 'gpt-6.2-sol') {
       console.log(JSON.stringify({
         id: message.id,
         error: { code: -32602, message: 'thread/start must receive the configured model' },
@@ -215,7 +215,7 @@ rl.on('line', (line) => {
   }
 
   if (message.method === 'turn/start') {
-    if (message.params?.model !== 'gpt-6-astra') {
+    if (message.params?.model !== 'gpt-6.2-sol') {
       console.log(JSON.stringify({
         id: message.id,
         error: { code: -32602, message: 'turn/start must receive the configured model' },
@@ -251,7 +251,7 @@ rl.on('line', (line) => {
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
-            model: 'gpt-6-astra',
+            model: 'gpt-6.2-sol',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
@@ -356,7 +356,7 @@ rl.on('line', (line) => {
             const sessions = yield* CodexSessionService
             const session = yield* sessions.createSession({
               command: `SYMPHONY_SANDBOX_CASE=${threadSandbox} node ${JSON.stringify(scriptPath)}`,
-              model: 'gpt-6-astra',
+              model: 'gpt-6.2-sol',
               cwd: tempDir,
               approvalPolicy: null,
               threadSandbox,
@@ -445,7 +445,7 @@ rl.on('line', (line) => {
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
-            model: 'gpt-6-astra',
+            model: 'gpt-6.2-sol',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,

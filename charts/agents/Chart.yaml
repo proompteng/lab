@@ -6,7 +6,7 @@ sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
 kubeVersion: '>=1.25.0-0'
-version: 0.9.31
+version: 0.9.32
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
@@ -208,10 +208,12 @@ annotations:
           implement: {targetRef: {kind: OrchestrationRun, name: codex-orchestration-run}}
           verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
+    - kind: changed
+      description: "Raise AgentRun concurrency defaults, wire API admission env vars, and add controller observability and Auto Ontology MCP bridge support."
     - kind: fixed
       description: "Keep runner permissions read-only by publishing AgentRun progress to artifact storage."
     - kind: changed
-      description: "Use GPT-6 Astra in the Codex provider examples."
+      description: "Default the Codex provider examples to GPT-6.2 Sol."
     - kind: changed
       description: "Rewrite chart README around a first-time-user quickstart and production-ready install guidance."
     - kind: fixed

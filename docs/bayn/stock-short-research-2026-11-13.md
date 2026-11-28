@@ -125,7 +125,7 @@ pinned input bytes and a new output path. Original attempts on 2020/2022 dates c
 `UnsupportedEquityFeeDate`; the explicit current-fee scenario replaces no historical tariff evidence. Report v5
 retains direction in selection identity, preventing a selected short from being matched to the corresponding long.
 
-The broader investigation remains in [the system report](system-investigation-2026-11-13.md) and
+The broader investigation remains in [the system report](archive/system-investigation-2026-11-13.md) and
 [#15936](https://github.com/proompteng/lab/issues/15936). A new deployed-source report at 23:00 UTC still exceeded the
 30-second deadline, discarded incomplete stdout, and measured 686,356 KiB process-lifetime peak RSS in the API
 process. Controllers remained at zero restarts. Isolation is shipped in #15940; full-report latency remains #15928.

@@ -215,6 +215,7 @@ test.each(
       accountId: cycle.identity.accountId,
       executionPolicy: cycle.identity.executionPolicy,
       authorityGenerationHash: '7'.repeat(64),
+      nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
       buildDecision: () =>
         Effect.sync(() => {
           operations.push('build')

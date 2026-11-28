@@ -224,8 +224,16 @@ impl ControlPlane {
         target: &str,
     ) -> Result<(MicroVM, GuestClient, WorkspaceAccess), Status> {
         let (agent, access) = self.agent_access(principal, id, target).await?;
-        if agent.spec.desired_state != MicroVMDesiredState::Running
-            || !agent_ready_for_guest(&agent)
+        let guest = self.guest_from_access(&agent, &access).await?;
+        Ok((agent, guest, access))
+    }
+
+    pub(crate) async fn guest_from_access(
+        &self,
+        agent: &MicroVM,
+        access: &WorkspaceAccess,
+    ) -> Result<GuestClient, Status> {
+        if agent.spec.desired_state != MicroVMDesiredState::Running || !agent_ready_for_guest(agent)
         {
             return Err(Status::failed_precondition(
                 "workspace is sleeping or unavailable; resume it explicitly",
@@ -233,11 +241,11 @@ impl ControlPlane {
         }
         let guest = self
             .guests
-            .for_microvm(&agent, self.guest_authority.user(access.clone()))
+            .for_microvm(agent, self.guest_authority.user(access.clone()))
             .await
             .map_err(map_guest_error)?;
         access.require().await?;
-        Ok((agent, guest, access))
+        Ok(guest)
     }
 
     pub fn guest_pool(&self) -> GuestPool {

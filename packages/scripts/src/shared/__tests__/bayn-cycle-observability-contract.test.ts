@@ -15,23 +15,43 @@ interface MimirRule {
   readonly annotations: { readonly summary: string; readonly description: string }
 }
 
-const baynRules = (): readonly MimirRule[] => {
-  const configMap = YAML.parse(readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml')) as Record<
-    string,
-    any
-  >
-  const rules = YAML.parse(configMap.data['graf-rules.yaml']) as {
-    groups: readonly { readonly name: string; readonly rules: readonly MimirRule[] }[]
+interface MimirRuleGroup {
+  readonly name: string
+  readonly interval: string
+  readonly rules: readonly MimirRule[]
+}
+
+const baynGroupNames = ['bayn-broker-feed.rules', 'bayn-cycle-operations.rules']
+
+const baynRuleGroups = (): readonly MimirRuleGroup[] => {
+  const configMap = YAML.parse(readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml')) as {
+    readonly data: { readonly 'graf-rules.yaml': string }
   }
-  const group = rules.groups.find(({ name }) => name === 'bayn-cycle-operations.rules')
-  if (group === undefined) throw new Error('Bayn cycle operations rule group is missing')
-  return group.rules.filter((rule) => typeof rule.alert === 'string')
+  const { groups } = YAML.parse(configMap.data['graf-rules.yaml']) as { readonly groups: readonly MimirRuleGroup[] }
+  return groups.filter(({ name }) => baynGroupNames.includes(name))
+}
+
+const baynRules = (): readonly MimirRule[] => {
+  return baynRuleGroups().flatMap(({ rules }) => rules.filter((rule) => typeof rule.alert === 'string'))
 }
 
 describe('Bayn cycle operations alert contract', () => {
+  test('fits the deployed Mimir rule-group limit at the existing evaluation interval', () => {
+    const groups = baynRuleGroups()
+    expect(groups.map(({ name }) => name)).toEqual(baynGroupNames)
+    for (const { interval, rules } of groups) {
+      expect(interval).toBe('15s')
+      expect(rules.length).toBeLessThanOrEqual(20)
+    }
+  })
+
   test('alerts only on scrape health, bounded runtime readiness, and canonical cycle conditions', () => {
     const rules = baynRules()
     expect(rules.map(({ alert }) => alert)).toEqual([
+      'BaynBrokerFeedUnavailable',
+      'BaynBrokerSourceProjectionFallbackHigh',
+      'BaynBrokerSourceProjectionLatencyHigh',
+      'BaynBrokerSourceProjectionStalled',
       'BaynMetricsUnavailable',
       'BaynStatusReplicaTargetMissed',
       'BaynEgressProxyReplicaTargetMissed',
@@ -49,9 +69,18 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynCycleFailed',
     ])
     expect(rules.find((rule) => rule.alert === 'BaynInputWindowUnavailable')?.for).toBe('0s')
+    expect(rules.find((rule) => rule.alert === 'BaynBrokerSourceProjectionFallbackHigh')?.for).toBe('5m')
+    expect(rules.find((rule) => rule.alert === 'BaynBrokerSourceProjectionLatencyHigh')?.for).toBe('5m')
     expect(
       rules
-        .filter((rule) => rule.alert !== 'BaynInputWindowUnavailable')
+        .filter(
+          (rule) =>
+            ![
+              'BaynInputWindowUnavailable',
+              'BaynBrokerSourceProjectionFallbackHigh',
+              'BaynBrokerSourceProjectionLatencyHigh',
+            ].includes(rule.alert),
+        )
         .every((rule) => rule.for === '1m' || rule.for === '2m'),
     ).toBe(true)
 
@@ -62,6 +91,20 @@ describe('Bayn cycle operations alert contract', () => {
     )
     expect(expressions.BaynStatusReplicaTargetMissed).toContain('kube_deployment_spec_replicas{')
     expect(expressions.BaynEgressProxyReplicaTargetMissed).toContain('deployment="bayn-egress-proxy"')
+    expect(expressions.BaynBrokerFeedUnavailable).toContain('dorvud_broker_feed_ready{')
+    expect(expressions.BaynBrokerSourceProjectionFallbackHigh).toContain('bayn_broker_source_projection_total{')
+    expect(expressions.BaynBrokerSourceProjectionLatencyHigh).toContain(
+      'bayn_broker_source_projection_lag_seconds_bucket{',
+    )
+    expect(expressions.BaynBrokerSourceProjectionStalled).toContain(
+      'bayn_broker_source_projection_oldest_pending_seconds{',
+    )
+    expect(expressions.BaynBrokerSourceProjectionStalled).toContain(
+      'bayn_broker_source_projection_observation_success{',
+    )
+    expect(expressions.BaynBrokerSourceProjectionStalled).toContain(
+      'absent(bayn_broker_source_projection_observation_success{',
+    )
     expect(expressions.BaynExecutionWorkerObservationUnavailable).toContain(
       'absent(bayn:execution_worker_observed_ready_replicas{',
     )
@@ -109,7 +152,12 @@ describe('Bayn cycle operations alert contract', () => {
     expect(expressions.BaynRuntimeDegraded.match(/and on\(job, namespace, service, instance\)/g)).toHaveLength(3)
     expect(expressions.BaynCycleStalled).toContain('condition="stalled"')
     expect(expressions.BaynCycleFailed).toContain('condition="failed"')
-    expect(rules.map(({ expr }) => expr).join('\n')).not.toMatch(
+    expect(
+      rules
+        .filter(({ alert }) => !alert.startsWith('BaynBroker'))
+        .map(({ expr }) => expr)
+        .join('\n'),
+    ).not.toMatch(
       /cycle_id|account_id|decision_hash|mutation_id|bayn_authority_|bayn_broker_|bayn_reconciliation_|bayn_unresolved_/,
     )
   })

@@ -7,6 +7,8 @@ resources:
   - serviceaccount.yaml
   - clickhouse-secret.yaml
   - alpaca-sealedsecret.yaml
+  - alpaca-macro-core-sealedsecret.yaml
+  - alpaca-macro-canary-sealedsecret.yaml
   - objectbucketclaim.yaml
   - research-storage.yaml
   - research-objectbucket.yaml
@@ -21,7 +23,6 @@ resources:
   - execution-bootstrap-sealedsecret.yaml
   - execution-controller.yaml
   - broker-feed.yaml
-  - broker-kafka-ingress.yaml
   - broker-stream-networkpolicy.yaml
   - execution-controller-pdb.yaml
   - execution-controller-networkpolicy.yaml
@@ -32,17 +33,17 @@ resources:
   - networkpolicy.yaml
   - jev-sealedsecret.yaml
   - bayn-research-db-sealedsecret.yaml
+  - bayn-audit-ro-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
+  - macro-daily-sleeves-receipts.yaml
+  - macro-daily-sleeves-cronjob.yaml
+  - daily-scorecard-cronjob.yaml
+  - daily-jobs-networkpolicy.yaml
   - opencode-retained-state.yaml
   - research-networkpolicy.yaml
+  - auto-ontology-networkpolicy.yaml
 configMapGenerator:
-  - name: bayn-broker-kafka-health
-    files:
-      - probe.sh=broker-kafka-health.sh
-    options:
-      annotations:
-        argocd.argoproj.io/sync-wave: "-2"
   - name: bayn-telemetry
     files:
       - config.alloy=telemetry.alloy

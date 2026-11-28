@@ -353,7 +353,7 @@ const SourceFields = {
 const BrokerEventBase = Schema.TaggedUnion({
   Account: { ...SourceFields, account: AccountSnapshotSchema },
   Position: { ...SourceFields, position: PositionSchema },
-  Order: { ...SourceFields, order: OrderSchema },
+  Order: { ...SourceFields, sourceTimestamp: UtcOrderTimestamp, order: OrderSchema },
   Fill: { ...SourceFields, sourceTimestamp: UtcOrderTimestamp, fill: FillSchema },
 })
 

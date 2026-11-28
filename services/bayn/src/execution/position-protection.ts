@@ -66,12 +66,19 @@ export const decidePositionProtection = (input: {
   if (quantityAtoms > BigInt(plan.maximumQuantityAtoms)) return { _tag: 'Block', reason: 'UNBOUND_POSITION' }
   const available = alpacaEntryProtectionMethod(plan.levels.symbol, quantityAtoms, input.observedAt)
   if (protection._tag === 'Armed') {
+    // A whole-share native parent can retain fractional inventory after a partial fill.
+    // New-order sizing restrictions do not invalidate its already verified children.
+    const methodMatches =
+      protection.method === 'STOP_LIMIT'
+        ? available === 'STOP_LIMIT'
+        : instrumentMarket(plan.levels.symbol) === MarketKind.Equity &&
+          equityClockSession(input.observedAt) === 'regular'
     const targetMatches =
       protection.method === 'STOP_LIMIT'
         ? protection.profitLimitPriceMicros === null
         : protection.profitLimitPriceMicros === BigInt(plan.levels.profitLimitPriceMicros)
     const exact =
-      (available === 'BRACKET' ? protection.method !== 'STOP_LIMIT' : protection.method === 'STOP_LIMIT') &&
+      methodMatches &&
       protection.quantityAtoms === quantityAtoms &&
       protection.stopPriceMicros === BigInt(plan.levels.stopPriceMicros) &&
       protection.stopLimitPriceMicros === BigInt(plan.levels.stopLimitPriceMicros) &&

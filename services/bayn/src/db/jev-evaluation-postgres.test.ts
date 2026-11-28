@@ -67,7 +67,8 @@ const recordWithStatementLatency = (remainingMs: number) =>
                     if (query.includes('INSERT INTO jev_evaluation_receipts')) return []
                     if (query.includes('jev_evaluation_receipts') && query.includes('AS matches'))
                       return [{ matches: true }]
-                    if (query.includes('INSERT INTO jev_evaluation_resolutions')) return []
+                    if (query.includes('INSERT INTO jev_evaluation_resolutions'))
+                      return entries.map(({ request }) => ({ request_id: request.requestId }))
                     throw new Error(`Unexpected receipt timing query: ${query}`)
                   }),
                 ),

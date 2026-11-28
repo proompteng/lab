@@ -1,0 +1,14 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: glitchtip-server-7-0-0
+  namespace: glitchtip
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: glitchtip-pg
+  method: volumeSnapshot
+  online: true
+  target: prefer-standby

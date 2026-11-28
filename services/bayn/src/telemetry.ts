@@ -6,6 +6,7 @@ import { operationCurrentTimeMillis } from './operation-timeout'
 import { embeddedBuildMetadata } from './build'
 import { currentUtcInstant, nativeWallClock } from './time'
 import { observeSchedulerDelay } from './telemetry-scheduler'
+import { recordProcessMemory } from './telemetry-memory'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -214,6 +215,12 @@ const metricsLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
               now / 1000,
             ),
           ),
+          Effect.andThen(recordProcessMemory),
+          Effect.provideService(Metric.CurrentMetricAttributes, {
+            namespace: options.namespace ?? 'bayn',
+            service: options.serviceName,
+            source_revision: options.serviceVersion ?? 'development',
+          }),
         )
         yield* record
         yield* Effect.sleep('15 seconds').pipe(Effect.andThen(record), Effect.forever, Effect.forkScoped)

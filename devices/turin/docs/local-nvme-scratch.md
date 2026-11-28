@@ -1,130 +1,90 @@
-# Turin Local NVMe Scratch
+# Turin local NVMe storage
 
-Use this only for rebuildable workloads pinned to `turin`: CI work directories,
-model caches, temporary download staging, and other data that can be deleted.
+The Intel and Transcend mounts contain persistent workloads. Current policy reserves these
+devices for explicit retained workloads; preserve their files and existing bound volumes.
+Bayn's `data-ledger-0` already uses the Intel mount. Never clear, wipe, format, or recycle
+either mount based on this document's historical scratch filename.
 
-Do not use this storage for databases, registry canonical data, Kafka, Torghut
-durable state, or replicated Ceph data. The two 256GB NVMes are single-host
-failure domains.
+The [local-path application](../../../argocd/applications/local-path/README.md) owns allocation
+policy, its [configuration](../../../argocd/applications/local-path/patches/local-path-config.patch.yaml)
+owns the provisioner's paths, and the [Omni cluster template](../../galactic/omni/cluster-template.yaml)
+owns Talos volume configuration. Kafka's static volumes are owned by the
+[Kafka application](../../../argocd/applications/kafka/README.md). Preserve existing claim paths when
+changing the allocation policy for future claims.
 
-## Live Disk Evidence
+## Verified mount identities
 
-Live Talos disk readback on 2026-06-29 showed:
+Read-only Talos disk, volume, and mount inspection on 2026-11-18 confirmed:
 
-```text
-/dev/disk/by-id/nvme-TS256GMTE652T2_I203860329 -> /dev/nvme0n1
-/dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH851313AU256B -> /dev/nvme1n1
-```
+| Volume                   | Stable disk selector                                         | Observed partition | Filesystem and mount                   |
+| ------------------------ | ------------------------------------------------------------ | ------------------ | -------------------------------------- |
+| `u-turin-nvme-intel`     | `/dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH851313AU256B` | `/dev/nvme0n1p1`   | XFS at `/var/mnt/turin-nvme-intel`     |
+| `u-turin-nvme-transcend` | `/dev/disk/by-id/nvme-TS256GMTE652T2_I203860329`             | `/dev/nvme1n1p1`   | XFS at `/var/mnt/turin-nvme-transcend` |
 
-The Transcend device previously had old COS partitions; they were cleared with
-`talosctl wipe disk ... --drop-partition` on 2026-06-29. The Intel device was
-initially visible as a whole disk, then Talos created `u-turin-nvme-intel` as
-GPT partition 1. The kernel briefly exposed that partition as stale
-`/dev/nvme1n1p2`; this was corrected without reboot by running `partx -d --nr 2`
-and `partx -a --nr 1` from the privileged Turin OSD container. Treat both
-devices as local-only and destructive-to-local-state before provisioning scratch
-volumes.
+Both devices report 256 GB and both user volumes are Ready. NVMe enumeration can change
+across boots; verify model, serial, stable selector, partition, and actual mount together.
+The selectors must continue to use stable by-id symlinks. A historical `nvmeXn1` name or
+an old partition-cleanup receipt does not authorize a disk operation.
 
-Current disk shape from the same live readback:
+The original manifest filenames,
+[`local-path-scratch-intel.patch.yaml`](../manifests/local-path-scratch-intel.patch.yaml) and
+[`local-path-scratch-transcend.patch.yaml`](../manifests/local-path-scratch-transcend.patch.yaml),
+also retain historical names. Check the current Omni-owned configuration and the live mounts
+before preparing any change.
 
-```text
-nvme0n1 256GB TS256GMTE652T2 I203860329
-nvme1n1 256GB INTEL SSDPEKKF256G8L BTHH851313AU256B
-nvme2n1 1.0TB KINGSTON SNV3S1000G 50026B76878F0B27
-nvme3n1 4.1TB ORICO 13CBMEK6HEW8CN2X9AKW
-```
+## Allocation and ownership
 
-The Kingston device is reserved for Ceph BlueStore DB/WAL. The ORICO device is
-the Talos OS/EPHEMERAL disk. Do not use either for local-path scratch.
+| Purpose                               | Current Turin path              | Storage ownership                                                                                                    |
+| ------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| New general `local-path` allocations  | `/var/local-path-provisioner`   | Local-path provisioner, on the large system NVMe                                                                     |
+| New `local-path-ci-amd64` allocations | `/var/lib/kubelet/ci-amd64`     | CI scratch directory, on the same system filesystem                                                                  |
+| Explicit retained Intel workloads     | `/var/mnt/turin-nvme-intel`     | Existing bound paths, including `bayn/data-ledger-0`; dedicated Bayn WAL allocation uses its `bayn-wal` subdirectory |
+| Explicit retained Transcend workloads | `/var/mnt/turin-nvme-transcend` | Existing workload-owned paths and static volumes                                                                     |
+| Retained `bayn/data-ledger-1`         | `/var/mnt/tigerbeetle`          | Static PV and Omni `UserVolumeConfig/tigerbeetle`, with `volumeType: directory`                                      |
 
-Previously cleared local-only Transcend partitions:
+The large system NVMe's persistent XFS `EPHEMERAL` volume is mounted at `/var`; its observed
+partition was `/dev/nvme3n1p4`. General local-path, CI, and the TigerBeetle directory volume
+share that physical device. Separate directories do not isolate I/O or host failure.
 
-```text
-nvme0n1p1 COS_GRUB
-nvme0n1p2 COS_OEM
-nvme0n1p3 COS_RECOVERY
-nvme0n1p4 COS_STATE
-nvme0n1p5 COS_PERSISTENT
-```
+Local-path configuration reloads affect future allocation. They do not move existing files,
+remount disks, or rewrite bound PV paths. A requested PVC size does not enforce a filesystem
+quota, so check actual free space and existing workload use before allocating another claim.
 
-## Talos User-Volume Manifests
+## Read-only preflight
 
-- `devices/turin/manifests/local-path-scratch-intel.patch.yaml`
-- `devices/turin/manifests/local-path-scratch-transcend.patch.yaml`
-
-These create Talos user volumes mounted by Talos under `/var/mnt/`:
-
-- `/var/mnt/turin-nvme-intel`
-- `/var/mnt/turin-nvme-transcend`
-
-The selectors must use stable by-id symlinks, not `/dev/nvmeXn1`, because NVMe
-enumeration can change across boot:
-
-```yaml
-match: "'/dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH851313AU256B' in disk.symlinks && !system_disk"
-match: "'/dev/disk/by-id/nvme-TS256GMTE652T2_I203860329' in disk.symlinks && !system_disk"
-```
-
-## Preflight
-
-Run these before applying either patch:
+Use the current Omni node identity and inspect storage without changing it:
 
 ```bash
-talosctl -n <turin-ip> get disks -o yaml
-talosctl -n <turin-ip> get volumestatus -o yaml
-talosctl -n <turin-ip> read /proc/diskstats | rg 'nvme0n1|nvme1n1'
-kubectl get pv -A | rg 'local-path|turin'
+talosctl get disks --nodes 8bf7ec00-171c-11f1-8000-7cc255f16774
+talosctl get volumestatus --nodes 8bf7ec00-171c-11f1-8000-7cc255f16774
+talosctl get mountstatus --nodes 8bf7ec00-171c-11f1-8000-7cc255f16774
+kubectl -n bayn get pvc data-ledger-0 data-ledger-1 data-ledger-2 -o wide
+kubectl get pv <bound-pv-name> -o yaml
 ```
 
-Confirm:
+Before any separately reviewed storage change:
 
-1. `nvme0n1` currently reports Transcend `I203860329`.
-1. `nvme1n1` currently reports Intel `BTHH851313AU256B`.
-1. The Talos user-volume selectors still match by stable `/dev/disk/by-id/*`
-   symlink, not by `/dev/nvmeXn1`.
-1. Neither disk backs Ceph, Talos install, Kafka, registry, Torghut, or another
-   durable workload.
-1. You are in a maintenance window; applying or fixing user-volume layout may
-   require partition cleanup or a reboot.
+1. Match the disk model and serial to the stable selector and live mounted filesystem.
+1. Inventory every affected bound PVC/PV, its UID, claimRef UID, source path, node affinity,
+   reclaim policy, and owning workload.
+1. Verify the actual helper or workload mount is on the intended filesystem. If a mount is
+   missing, stop; a directory on the parent filesystem can otherwise hide that mistake.
+1. Measure available space on the target filesystem and preserve all existing bound paths.
+1. Use the owning workload's migration and recovery procedure. Disk readiness alone does
+   not qualify a ledger copy, a database failover, or a cleanup.
 
-## Apply
+## Retention and recovery
 
-Do not apply while a Ceph OSD is draining or recovering.
+Persistent Talos mounts do not imply that every PV has a `Retain` reclaim policy.
+The TigerBeetle cluster's `deletionPolicy: Retain` also does not establish the reclaim policy
+of each bound PV. Inspect each PV separately before a lifecycle operation; a retained workload
+must not lose its files through claim deletion or provisioner cleanup.
 
-```bash
-talosctl -n <turin-ip> apply-config --mode no-reboot --file <machineconfig-with-scratch-patches.yaml>
-```
+These local filesystems remain single-host storage. A Talos reset, filesystem loss, or device
+replacement can destroy the local replica. Preserve healthy peers, backups, and the original
+data until the owning workload's native protocol and financial checks accept recovery.
 
-If Talos reports existing partitions, stop and explicitly decide whether to wipe
-the local-only partitions. Do not wipe the Kingston NVMe
-`nvme-KINGSTON_SNV3S1000G_50026B76878F0B27` or the ORICO Talos install disk.
-For the current live mapping, the Transcend `TS256GMTE652T2_I203860329` stale
-COS partitions were already cleared on 2026-06-29 before enabling the scratch
-user volume.
-
-## Kubernetes storage classes
-
-The existing `local-path` class includes both mounted Turin scratch devices in its node path map.
-`local-path-ci-amd64` selects the Transcend device on Turin or the local XFS volume on Ryzen for CI workspaces.
-Device-specific scratch classes are not provisioned. Deleting a StorageClass does not unmount its disk.
-
-Verify Talos mounted the intended user volume before allowing the provisioner to create a claim there.
-Without the mount, a helper can create a directory on `/var` and put scratch data on the wrong disk.
-The provisioner reloads its configuration without moving or remounting existing local volumes.
-
-## Acceptance
-
-```sh
-talosctl -n <turin-ip> get volumestatus -o yaml
-kubectl --context galactic-tailscale -n local-path-storage get storageclass local-path local-path-ci-amd64
-kubectl --context galactic-tailscale -n local-path-storage logs deploy/local-path-provisioner --tail=100
-```
-
-Verify each mounted filesystem and the live provisioner node path map before provisioning scratch storage.
-
-## References
-
-- Talos disk selectors:
-  <https://docs.siderolabs.com/talos/v1.13/configure-your-talos-cluster/storage-and-disk-management/disk-management/common>
-- Local Path Provisioner:
-  <https://github.com/rancher/local-path-provisioner>
+The [replica 1 handoff](../../galactic/scheduling/tigerbeetle-ledger1-handoff.md) has a fixed
+retained target under `/var/mnt/tigerbeetle`. It preserves the existing ledger file, ordinal,
+PVC UID, and PV name. Its procedure does not authorize reusing another replica's path or
+clearing the Intel or Transcend mounts.

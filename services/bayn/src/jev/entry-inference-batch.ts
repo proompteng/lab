@@ -1,5 +1,5 @@
 import { JevEvaluationStore, type JevDispatch } from './evaluation'
-import { JevOutcome, makeJevEvaluationReceipt, type JevEvaluationRequest } from './evidence'
+import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { Cause, Clock, Deferred, Effect, Exit, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -10,7 +10,6 @@ import {
   deriveEntryHandoffDisposition,
   EntryInferenceError,
   EntryInferenceJournal,
-  prepareClaimedEntry,
   type EntryHandoff,
   type EntryInferenceClaim,
   type EntryInferenceCompletion,
@@ -19,11 +18,10 @@ import {
 import { logCommittedEntryHandoff } from './entry-inference-diagnostics'
 import { makeStagedTerminalReceipt, type StagedDispatchClaim, type StagedTerminalReceipt } from './staged-checkpoint'
 
-type PreparedEntry = Result.Result.Success<ReturnType<typeof prepareClaimedEntry>>
+type PreparedEntry = Effect.Success<JevDispatch['consume']>
 type Work = PreparedEntry & {
   terminal: StagedTerminalReceipt | null
   terminalCommitted: boolean
-  readonly request: JevEvaluationRequest
   completion: EntryInferenceCompletion | null
 }
 
@@ -67,25 +65,36 @@ const visual = (
         category: 'DEADLINE',
         message: 'Entry inference clock regressed after admission',
       })
-    let outcome: StagedTerminalReceipt['outcome']
-    if (checkedAt >= deadlineAt)
-      return yield* new EntryInferenceError({
-        category: 'DEADLINE',
-        message:
-          deadlineAt < expires
-            ? 'Entry admission expired before visual dispatch'
-            : 'Original evidence window expired while committing visual admission',
+    const notDispatched = (at: number) =>
+      Effect.gen(function* () {
+        const terminal = yield* Effect.fromResult(
+          makeStagedTerminalReceipt({
+            schemaVersion: 'bayn.staged-terminal-receipt.v2',
+            stage: claim.stage,
+            requestId: claim.requestId,
+            claimHash: claim.claimHash,
+            recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+            outcome: {
+              status: 'NOT_DISPATCHED',
+              reason: deadlineAt < expires ? 'ADMISSION_EXPIRY' : 'ORIGINAL_EXPIRY',
+              deadlineAt: utcInstantFromEpochMillis(deadlineAt),
+              checkedAt: utcInstantFromEpochMillis(at),
+            },
+          }),
+        )
+        work.terminal = terminal
+        return terminal
       })
+    let outcome: Extract<
+      StagedTerminalReceipt,
+      { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }
+    >['outcome']
+    if (checkedAt >= deadlineAt) return yield* notDispatched(checkedAt)
     const client = yield* JevClient
     // Re-read the clock immediately before every provider dispatch. The store
     // admission may have yielded long enough to cross the enclosing lease.
     const dispatchAt = yield* Clock.currentTimeMillis
-    if (dispatchAt >= deadlineAt)
-      return yield* new EntryInferenceError({
-        category: 'DEADLINE',
-        message:
-          deadlineAt < expires ? 'Entry admission expired before visual dispatch' : 'Original evidence window expired',
-      })
+    if (dispatchAt >= deadlineAt) return yield* notDispatched(dispatchAt)
     const response = yield* client.evaluate(request.request, deadlineAt - dispatchAt).pipe(
       Effect.timeoutOrElse({
         duration: deadlineAt - dispatchAt,
@@ -176,14 +185,20 @@ const visual = (
     return terminal
   })
 
-const handoff = (work: Work, terminal: StagedTerminalReceipt | null) =>
+const handoff = (
+  work: Work,
+  terminal: Extract<StagedTerminalReceipt, { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }> | null,
+) =>
   Effect.gen(function* () {
     let disposition: EntryHandoff['disposition']
     if (terminal === null) disposition = { status: 'SOURCE_INFEASIBLE' }
     else if (terminal.outcome.status === 'FAILED')
       disposition = { status: 'VISUAL_FAILED', failure: terminal.outcome.failure }
     else {
-      const derived = deriveEntryHandoffDisposition(work.prepared.input, terminal.outcome.inference)
+      const derived = deriveEntryHandoffDisposition(
+        { input: work.prepared.input, chart: work.chart, visualRequest: work.visualRequest },
+        terminal.outcome.inference,
+      )
       disposition = Result.isSuccess(derived)
         ? derived.success
         : {
@@ -210,35 +225,12 @@ export const evaluateClaimedEntryInferences = (
   Effect.gen(function* () {
     const journal = yield* EntryInferenceJournal
     const work: Work[] = yield* Effect.forEach(dispatches, (dispatch) =>
-      Effect.gen(function* () {
-        yield* dispatch.consume
-        const request = yield* Effect.try({
-          try: () => structuredClone(dispatch.request),
-          catch: (cause) =>
-            new EntryInferenceError({
-              category: 'INPUT',
-              message: 'Admitted entry cannot be privately retained',
-              cause,
-            }),
-        })
-        const claim = {
-          requestId: request.requestId,
-          input: request.request,
-          observedAt: request.observedAt,
-          expiresAt: request.expiresAt,
-          claimedAt: dispatch.claimedAt,
-        }
-        const prepared = yield* Effect.fromResult(prepareClaimedEntry(claim))
-        if (
-          (yield* Effect.fromResult(canonicalHashV1Result(prepared.visualClaim))) !==
-          (yield* Effect.fromResult(canonicalHashV1Result(dispatch.visualClaim)))
-        )
-          return yield* new EntryInferenceError({
-            category: 'INPUT',
-            message: 'Initial visual dispatch differs from its admitted claim',
-          })
-        return { ...prepared, request, completion: null, terminal: null, terminalCommitted: false }
-      }),
+      Effect.map(dispatch.consume, (prepared) => ({
+        ...prepared,
+        completion: null,
+        terminal: null,
+        terminalCommitted: false,
+      })),
     )
     const commit = (transitions: readonly EntryStageTransition[]) =>
       Effect.gen(function* () {
@@ -291,6 +283,22 @@ export const evaluateClaimedEntryInferences = (
         Effect.gen(function* () {
           const terminal =
             entry.visualClaim === null ? null : yield* visual(entry, entry.visualClaim, entry.visualRequest, options)
+          if (terminal?.schemaVersion === 'bayn.staged-terminal-receipt.v2') {
+            const committed = yield* journal.recordTransitions([{ terminal, successor: { kind: 'NONE' } }])
+            if (committed.length !== 1 || committed[0]?.requestId !== terminal.requestId)
+              return yield* new EntryInferenceError({
+                category: 'INPUT',
+                message: 'Visual non-dispatch terminal was not durably acknowledged',
+              })
+            entry.terminalCommitted = true
+            return yield* new EntryInferenceError({
+              category: 'DEADLINE',
+              message:
+                terminal.outcome.reason === 'ADMISSION_EXPIRY'
+                  ? 'Entry admission expired before visual dispatch'
+                  : 'Original evidence window expired before visual dispatch',
+            })
+          }
           const ready = yield* handoff(entry, terminal)
           yield* commitReady({ terminal, successor: { kind: 'HANDOFF', handoff: ready } })
           entry.completion = yield* evaluateHandedOffEntry(entry.claim, ready, options)

@@ -12,14 +12,14 @@ import { evaluateClaimedEntryInferences } from './entry-inference-batch'
 import { makeJevDispatch, JevEvaluationStore, type JevEvaluationRecord } from './evaluation'
 import { defaultJevProtocolDocument } from './protocol'
 import { JevOutcome, makeJevEvaluationRequest } from './evidence'
-import type { StagedDispatchClaim } from './staged-checkpoint'
+import type { StagedDispatchClaim, StagedTerminalReceipt } from './staged-checkpoint'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
 const fixture = () => {
   const bars = [
     { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
     { minuteBeforeWindowEnd: 3, open: 101, high: 102, low: 99, close: 100, volume: 100 },
-    { minuteBeforeWindowEnd: 2, open: 103, high: 108, low: 102, close: 104, volume: 100 },
+    { minuteBeforeWindowEnd: 2, open: 103, high: 113, low: 102, close: 104, volume: 100 },
     { minuteBeforeWindowEnd: 1, open: 104, high: 105, low: 103, close: 104, volume: 100 },
   ]
   return {
@@ -32,7 +32,7 @@ const fixture = () => {
       numericalState: {
         schemaVersion: defaultJevProtocolDocument.inputDefinition,
         webullContext: null,
-        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
+        entryEconomics: { maximumEntryQuoteDriftBps: 5, maximumEntryLimitSlippageBps: 5 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
@@ -73,6 +73,7 @@ const providers = (
   let receiptAttempts = 0
   const events: string[] = []
   const checkpointEvents: string[] = []
+  const terminals: StagedTerminalReceipt[] = []
   const handoffs: EntryHandoff[] = []
   const commits: string[] = []
   const jevBudgets: (number | undefined)[] = []
@@ -130,6 +131,7 @@ const providers = (
                 const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
                 if (terminal !== null) {
                   checkpointEvents.push('terminal')
+                  terminals.push(terminal)
                   if (successor.kind === 'NONE' && options.cleanupTerminalFails)
                     return yield* operationalError({
                       component: 'journal',
@@ -276,6 +278,7 @@ const providers = (
   return {
     events,
     checkpointEvents,
+    terminals,
     handoffs,
     commits,
     jevBudgets,
@@ -292,7 +295,7 @@ const mixedDispatches = () => {
   const bars = Array.from({ length: 6 }, (_, index) => ({
     minuteBeforeWindowEnd: 6 - index,
     open: 100,
-    high: 108,
+    high: 113,
     low: 97,
     close: 104,
     volume: 100,
@@ -308,22 +311,23 @@ const mixedDispatches = () => {
   }
   return [direct, base].map((claim) => {
     const prepared = Result.getOrThrow(prepareClaimedEntry(claim))
-    return makeJevDispatch({
-      claimedAt: claim.claimedAt,
-      visualClaim: prepared.visualClaim,
-      request: {
-        schemaVersion: 'bayn.jev-evaluation-request.v3',
-        requestId: claim.requestId,
-        cycleId: 'a'.repeat(64),
-        authorityGenerationHash: 'b'.repeat(64),
-        snapshotId: 'c'.repeat(64),
-        symbol: 'AAPL',
-        observedAt: claim.observedAt,
-        expiresAt: claim.expiresAt,
-        request: prepared.prepared.input,
-        requestHash: prepared.prepared.requestHash,
-      },
-    })
+    return Result.getOrThrow(
+      makeJevDispatch({
+        claimedAt: claim.claimedAt,
+        request: {
+          schemaVersion: 'bayn.jev-evaluation-request.v3',
+          requestId: claim.requestId,
+          cycleId: 'a'.repeat(64),
+          authorityGenerationHash: 'b'.repeat(64),
+          snapshotId: 'c'.repeat(64),
+          symbol: 'AAPL',
+          observedAt: claim.observedAt,
+          expiresAt: claim.expiresAt,
+          request: prepared.prepared.input,
+          requestHash: prepared.prepared.requestHash,
+        },
+      }),
+    )
   })
 }
 
@@ -345,17 +349,98 @@ const lateDispatches = () =>
         request: dispatch.request.request,
       }),
     )
-    const prepared = Result.getOrThrow(
-      prepareClaimedEntry({
-        requestId: request.requestId,
-        input: request.request,
-        observedAt,
-        expiresAt,
-        claimedAt,
-      }),
-    )
-    return makeJevDispatch({ claimedAt, visualClaim: prepared.visualClaim, request })
+    return Result.getOrThrow(makeJevDispatch({ claimedAt, request }))
   })
+
+test('an expired chart does not erase a paid sibling in the same parallel batch', async () => {
+  const setup = providers()
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const fresh = lateDispatches()[0]
+      const expired = mixedDispatches()[1]
+      if (fresh === undefined || expired === undefined) return yield* Effect.die('Expected mixed expiry fixtures')
+      const result = yield* evaluateClaimedEntryInferences([fresh, expired]).pipe(Effect.result)
+      expect(Result.isFailure(result)).toBe(true)
+      expect(setup.terminals.map((terminal) => terminal.outcome.status).sort()).toEqual(['NOT_DISPATCHED', 'RECEIVED'])
+      expect(setup.terminals.find((terminal) => terminal.requestId === expired.request.requestId)?.outcome.status).toBe(
+        'NOT_DISPATCHED',
+      )
+      expect(setup.handoffs.map((handoff) => handoff.requestId)).toEqual([fresh.request.requestId])
+      expect(setup.providerStarts.map((start) => start.kind)).toEqual(['chart', 'jev'])
+      expect(setup.records).toHaveLength(1)
+      expect(setup.records[0]?.request.requestId).toBe(fresh.request.requestId)
+      expect(setup.records[0]?.receipt.outcome.status).toBe(JevOutcome.Completed)
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('failed non-dispatch terminal persistence retries its exact proof and still retains a paid sibling', async () => {
+  const setup = providers({ cleanupTerminalFails: true })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const fresh = lateDispatches()[0]
+      const expired = mixedDispatches()[1]
+      if (fresh === undefined || expired === undefined) return yield* Effect.die('Expected mixed expiry fixtures')
+      const result = yield* evaluateClaimedEntryInferences([fresh, expired]).pipe(Effect.exit)
+      expect(Exit.isFailure(result)).toBe(true)
+      const attempts = setup.terminals.filter((terminal) => terminal.requestId === expired.request.requestId)
+      expect(attempts).toHaveLength(2)
+      expect(attempts[0]).toEqual(attempts[1])
+      expect(setup.records).toHaveLength(1)
+      expect(setup.records[0]?.request.requestId).toBe(fresh.request.requestId)
+      expect(setup.providerStarts.map((start) => start.kind)).toEqual(['chart', 'jev'])
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('an enclosing admission expiry commits positive no-dispatch evidence and fails the observation', async () => {
+  const setup = providers()
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 60_000)
+      const dispatch = lateDispatches()[0]
+      if (dispatch === undefined) return yield* Effect.die('Expected admission expiry fixture')
+      const result = yield* evaluateClaimedEntryInferences([dispatch], { admissionDeadlineAt: at + 60_000 }).pipe(
+        Effect.result,
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      expect(setup.providerStarts).toEqual([])
+      expect(setup.handoffs).toEqual([])
+      expect(setup.records).toEqual([])
+      expect(setup.terminals).toHaveLength(1)
+      expect(setup.terminals[0]?.outcome).toEqual({
+        status: 'NOT_DISPATCHED',
+        reason: 'ADMISSION_EXPIRY',
+        deadlineAt: utcInstantFromEpochMillis(at + 60_000),
+        checkedAt: utcInstantFromEpochMillis(at + 60_000),
+      })
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('interruption during non-dispatch persistence retains the same positive proof without starting a provider', async () => {
+  const setup = providers({ journalCommitDelay: 1000 })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const expired = mixedDispatches()[1]
+      if (expired === undefined) return yield* Effect.die('Expected expired fixture')
+      const fiber = yield* evaluateClaimedEntryInferences([expired]).pipe(Effect.forkChild)
+      yield* TestClock.adjust(1)
+      const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild)
+      yield* TestClock.adjust(5000)
+      yield* Fiber.join(interrupted)
+      expect(setup.terminals).toHaveLength(2)
+      expect(setup.terminals[0]).toEqual(setup.terminals[1])
+      expect(setup.terminals[0]?.outcome.status).toBe('NOT_DISPATCHED')
+      expect(setup.providerStarts).toEqual([])
+      expect(setup.handoffs).toEqual([])
+      expect(setup.records).toEqual([])
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
 
 test('durable ready handoff overlaps unrelated chart work without changing deadlines or input order', async () => {
   const setup = providers({ slowChartDelay: 5000, jevDelay: [5000, 0] })

@@ -3,6 +3,7 @@ import { NodeRuntime } from '@effect/platform-node'
 import { Cause, Effect, Layer, Logger, Match, Queue, Result } from 'effect'
 
 import { constructExecutionDecision, constructObserveShadowDecision } from './shadow-decision'
+import { sampleRuntimeMemory } from './telemetry-memory'
 import type {
   DecisionConstructionJob,
   DecisionConstructionReply,
@@ -59,7 +60,11 @@ if (parentPort !== null) {
         Effect.flatMap(({ id, request }) =>
           constructDecision(request).pipe(
             Effect.flatMap((response) =>
-              Effect.sync(() => port.postMessage({ id, response } satisfies DecisionConstructionReply)),
+              sampleRuntimeMemory.pipe(
+                Effect.flatMap((memory) =>
+                  Effect.sync(() => port.postMessage({ id, response, memory } satisfies DecisionConstructionReply)),
+                ),
+              ),
             ),
           ),
         ),

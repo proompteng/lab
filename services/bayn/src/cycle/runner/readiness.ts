@@ -119,6 +119,7 @@ export const CycleWaitReasonSchema = Schema.Union([
     'AWAITING_CLOSE_WINDOW',
     'CLOSE_STORE_UNAVAILABLE',
     'CLOSE_MARKET_DATA_UNAVAILABLE',
+    'CLOSE_WINDOW_EXPIRED',
     'CLOSE_QUOTE_PENDING',
     'CLOSE_RECONCILIATION_PENDING',
     'CLOSE_ONLY_UNTIL_CLOSE',
@@ -133,6 +134,7 @@ export const CycleWaitReasonSchema = Schema.Union([
 export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
 
 export type CycleWaitingDetails = {
+  readonly protectionReleaseCycleId?: string
   readonly maximumHoldDueAt?: string
   readonly maximumHoldEvaluatedAt?: string
   readonly positionHold?: JevPositionHold

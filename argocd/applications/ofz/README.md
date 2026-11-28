@@ -9,7 +9,7 @@ The API begins fenced. Publishing this configuration does not establish a comple
 
 | Component | Configuration |
 | --- | --- |
-| SpiceDB | Three replicas of upstream `v1.56.2`, pinned to its multi-architecture image digest |
+| SpiceDB | Three replicas of upstream `v1.57.1`, pinned to its multi-architecture image digest |
 | PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 30 GiB per instance |
 | Backups | Barman Cloud plugin, WAL archived within 60 seconds, daily base backup at 10:30 UTC, 35-day recovery window on Ceph S3 |
 | Playground | Two replicas of upstream `v0.3.1`, pinned to its multi-architecture image digest |

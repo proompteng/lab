@@ -57,6 +57,24 @@ Not stored in Git:
 
 Those are runtime secrets/state, not desired configuration.
 
+## Collect evidence during a DNS or egress interruption
+
+From the [operator SSH session](../README.md#operator-ssh-access), set the UTC bounds to include the minute
+before and several minutes after the failure. Capture the full system journal to include Pi-hole, Tailscale,
+firewall, link, reboot and kernel events in the same timeline.
+
+```bash
+start='2026-11-17 22:17:00 UTC'
+end='2026-11-17 22:21:00 UTC'
+sudo journalctl --utc --since "$start" --until "$end" --no-pager
+```
+
+If query logging is enabled, check Pi-hole's query history for the affected public name and time. Correlate
+requests, upstream replies and timeouts with the Talos `dns-resolve-cache` and CoreDNS logs. Check the provider
+gateway and switch logs for the same interval. Established external TCP timeouts or literal-IP NTP timeouts
+give a way to test for egress loss independently of DNS. See the
+[November 17 incident](../../../docs/incidents/2026-11-17-galactic-dns-and-egress-interruption.md).
+
 ## Deploy to NUC
 
 ```bash

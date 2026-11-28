@@ -1,0 +1,8 @@
+{
+  "schema": "bayn.research.wave-11b.transport-erratum.v1",
+  "freezeSha256": "bca98b2008e975c40d2d067a7b0c0c6ee4acd44c5ba084bdf220b7492986dd71",
+  "frozenRunnerSha256": "5209984ab153ce109db1dedd35870bee630502b23ff12ec518844ee5fe3fef4a",
+  "correctedRunnerSha256": "ca746d8ec25bd3a3f68f7c4e531f5f26dffb9c6498caba4205f4af2cfd22c595",
+  "observation": "Bun 1.4.2 truncated large oxfmt stdout on a pipe; the initial run rejected invalid JSON, and wrote no score receipt.",
+  "correction": "Run the same pinned oxfmt CLI under Node. Preserve the original freeze, locked data, protocol and replay math."
+}

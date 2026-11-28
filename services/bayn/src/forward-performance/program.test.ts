@@ -114,7 +114,15 @@ interface SqlFixture {
   readonly brokerFeeTimes?: {
     readonly firstObservedAt: string
     readonly postedAt: string | null
+    readonly lastCorrectionPostedAt?: string
   }
+  readonly brokerFeeScope?: {
+    readonly includesGeneration: boolean
+    readonly includesOtherGeneration: boolean
+    readonly date?: string
+  }
+  readonly brokerFeeCorrections?: StoredBrokerFee['cash_match_corrections']
+  readonly cycleSessionDate?: string
 }
 
 const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}): PgClient.PgClient => {
@@ -122,6 +130,22 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
     if (typeof strings === 'string') return strings
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
+    if (fixture.cycleSessionDate !== undefined && statement.startsWith('SELECT cycle_id, qualification_run_id,')) {
+      return Effect.succeed([
+        {
+          cycle_id: hash('4'),
+          qualification_run_id: hash('5'),
+          strategy_name: 'fixture-strategy',
+          strategy_protocol_hash: hash('6'),
+          account_id: identityResult.success.accountId,
+          execution_policy_hash: hash('7'),
+          strategy_execution_model_hash: hash('8'),
+          state: 'NO_TRADE',
+          submission_open_at: new Date(`${fixture.cycleSessionDate}T13:00:00.000Z`),
+          terminal_at: new Date(`${fixture.cycleSessionDate}T21:00:00.000Z`),
+        },
+      ])
+    }
     if (statement.includes('FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
@@ -132,11 +156,11 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 data: {
                   accountId: identityResult.success.accountId,
                   activityId: 'synthetic-delayed-fee',
-                  date: '2026-07-20',
+                  date: fixture.brokerFeeScope?.date ?? '2026-07-20',
                   netAmountMicros: '-100',
                   ...(fixture.cryptoCashMatch === undefined ? {} : { cryptoCashFee: true }),
                 },
-                cash_match_corrections: [],
+                cash_match_corrections: fixture.brokerFeeCorrections ?? [],
                 matched_cash_micros: fixture.cryptoCashMatch ?? '0',
                 coin_cost_basis_micros: null,
                 read_evidence: {
@@ -151,10 +175,12 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 tigerbeetle_ledger: 7001,
                 posted: times.postedAt !== null,
                 first_observed_at: new Date(times.firstObservedAt),
-                last_correction_posted_at: null,
+                last_correction_posted_at:
+                  times.lastCorrectionPostedAt === undefined ? null : new Date(times.lastCorrectionPostedAt),
                 posted_at: times.postedAt === null ? null : new Date(times.postedAt),
-                includes_generation: true,
-                includes_other_generation: fixture.cryptoCashMatch !== undefined,
+                includes_generation: fixture.brokerFeeScope?.includesGeneration ?? true,
+                includes_other_generation:
+                  fixture.brokerFeeScope?.includesOtherGeneration ?? fixture.cryptoCashMatch !== undefined,
               },
             ],
       )
@@ -425,6 +451,106 @@ const marketReaderConfig = {
 }
 
 describe('forward performance read program', () => {
+  test.each([
+    ['owned', true, false, '2026-07-20', true, 1, 0],
+    ['overlapping', true, true, '2026-07-20', true, 1, 1],
+    ['other generation on selected date', false, true, '2026-07-20', true, 0, 0],
+    ['other generation on later date', false, true, '2026-07-21', true, 0, 0],
+    ['unattributed on selected date', false, false, '2026-07-20', true, 1, 1],
+    ['unattributed on unrelated date', false, false, '2026-07-21', true, 0, 0],
+    ['unscoped other generation', false, true, '2026-07-21', false, 1, 0],
+    ['unscoped unattributed', false, false, '2026-07-21', false, 1, 0],
+  ] as const)(
+    'retains all account fees while counting only relevant late %s fees',
+    async (_name, includesGeneration, includesOtherGeneration, date, scoped, late, ambiguous) => {
+      const sql = makeReadOnlySql(
+        { statements: [] },
+        {
+          brokerFeeScope: { includesGeneration, includesOtherGeneration, date },
+          brokerFeeTimes: {
+            firstObservedAt: '2026-07-21T07:55:00.000Z',
+            postedAt: '2026-07-21T07:55:01.000Z',
+          },
+          cycleSessionDate: '2026-07-20',
+        },
+      )
+      const evidence = await Effect.runPromise(
+        readForwardPerformancePostgres(sql, identityResult.success.accountId, scoped ? hash('9') : undefined),
+      )
+
+      expect(evidence.cycles).toHaveLength(1)
+      expect(evidence.postReconciliationActivityCount).toBe(late)
+      expect(evidence.ambiguousBrokerFeeCount).toBe(ambiguous)
+      expect(evidence.generationBrokerFeeIds).toEqual(
+        includesGeneration && !includesOtherGeneration ? ['synthetic-delayed-fee'] : [],
+      )
+      expect(evidence.brokerFeeRecords).toHaveLength(1)
+      expect(evidence.brokerFeeRecords?.[0]).toMatchObject({
+        data: { activityId: 'synthetic-delayed-fee', date, netAmountMicros: '-100' },
+        ledger_plan_hash: hash('3'),
+        posted: true,
+      })
+    },
+  )
+
+  test.each(['late posting', 'late observation', 'pending'] as const)(
+    'preserves %s correction evidence without reopening unrelated generations',
+    async (mode) => {
+      const correction = success(
+        prepareFeeMatchCorrection(
+          {
+            schemaVersion: 'bayn.fee-match-correction.v1',
+            accountId: identityResult.success.accountId,
+            activityId: 'synthetic-delayed-fee',
+            accrualId: hash('e'),
+            feeContentHash: hash('2'),
+            activityCashMicros: '100',
+            accrualCashMicros: '100',
+            readEvidence: {
+              requestId: 'synthetic-correction-read',
+              status: 200,
+              contentHash: hash('1'),
+              observedAt: mode === 'late observation' ? '2026-07-20T21:01:00.001Z' : '2026-07-20T21:00:00.000Z',
+            },
+          },
+          config.tigerBeetle.ledger,
+        ),
+      )
+      const corrections = [
+        {
+          correction_id: correction.correctionId,
+          data: correction.data,
+          content_hash: correction.contentHash,
+          ledger_plan_hash: success(hashLedgerPlanResult(correction.plan)),
+          tigerbeetle_cluster_id: config.tigerBeetle.clusterId.toString(),
+          tigerbeetle_ledger: config.tigerBeetle.ledger,
+          posted: mode !== 'pending',
+        },
+      ]
+      for (const includesGeneration of [true, false]) {
+        const sql = makeReadOnlySql(
+          { statements: [] },
+          {
+            brokerFeeScope: { includesGeneration, includesOtherGeneration: !includesGeneration },
+            brokerFeeTimes: {
+              firstObservedAt: '2026-07-20T21:00:00.000Z',
+              postedAt: '2026-07-20T21:00:00.000Z',
+              ...(mode === 'late posting' ? { lastCorrectionPostedAt: '2026-07-20T21:01:00.001Z' } : {}),
+            },
+            brokerFeeCorrections: corrections,
+            cycleSessionDate: '2026-07-20',
+          },
+        )
+        const evidence = await Effect.runPromise(
+          readForwardPerformancePostgres(sql, identityResult.success.accountId, hash('9')),
+        )
+        expect(evidence.postReconciliationActivityCount).toBe(includesGeneration ? 1 : 0)
+        expect(evidence.brokerFeeRecords).toHaveLength(1)
+        expect(evidence.brokerFeeRecords?.[0]?.cash_match_corrections).toEqual(corrections)
+      }
+    },
+  )
+
   test.each([
     ['100', 0],
     ['99', 1],
@@ -774,7 +900,7 @@ describe('forward performance read program', () => {
           ),
         ),
       )
-      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v8')
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v9')
       expect(postgresGeneration).toBe(authorityGenerationHash)
       expect(expenseGeneration).toBe(authorityGenerationHash)
       expect(report.scope).toEqual(

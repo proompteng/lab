@@ -22,10 +22,19 @@ on:
         required: false
         type: string
         default: ''
+      tmpfs:
+        description: Build both platform archives on the standard tmpfs runners
+        type: boolean
+        default: false
       latest:
         required: false
         type: boolean
         default: false
+      publish_index:
+        description: Publish the index here; disable only when the caller prepares a verified image cohort
+        required: false
+        type: boolean
+        default: true
       publish_kargo_tag:
         required: false
         type: boolean
@@ -74,7 +83,7 @@ jobs:
           - platform: linux/arm64
             arch: arm64
             runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ format('{0}{1}', matrix.runner, inputs.tmpfs && '-tmpfs' || '') }}
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
@@ -161,9 +170,15 @@ jobs:
         run: |
           set -euo pipefail
           out_link="result-${ARCH}"
+          build_prefix=()
+          # Explicit source revisions can predate the optional retry helper.
+          if [[ -f nix/ci-retry-attic-download.sh ]]; then
+            build_prefix=(bash nix/ci-retry-attic-download.sh)
+          fi
           bash nix/ci-run-timed.sh "build-image-${ARCH}" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}.log" \
             timeout --kill-after=30s "${NIX_IMAGE_BUILD_TIMEOUT}" \
-            nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+            "${build_prefix[@]}" \
+              nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
           image_tar="$(readlink -f "${out_link}")"
           if [ ! -f "${image_tar}" ]; then
             echo "Nix image output is not a tar file: ${image_tar}" >&2
@@ -289,10 +304,12 @@ jobs:
   publish-index:
     if: >-
       ${{
-        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-        (
-          github.event_name == 'workflow_dispatch' &&
-          (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+        inputs.publish_index && (
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (
+            github.event_name == 'workflow_dispatch' &&
+            (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+          )
         )
       }}
     needs: build-platform

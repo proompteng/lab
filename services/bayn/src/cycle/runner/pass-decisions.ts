@@ -1,8 +1,16 @@
 import { Result } from 'effect'
 
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
+import { OperationalError } from '../../errors'
 import { CycleState, type AutonomousCycle } from '../model'
 import type { CycleRecoverySelection } from './recovery-model'
-import { runnerError, type CyclePassObservation, type CycleRunnerError, type CycleRunResult } from './model'
+import {
+  CycleDecisionBuildError,
+  runnerError,
+  type CyclePassObservation,
+  type CycleRunnerError,
+  type CycleRunResult,
+} from './model'
 import type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 
 export type { RetainedAutonomousCyclePassObservation } from './pass-observation'
@@ -38,6 +46,29 @@ export interface CyclePassLogFacts {
   readonly annotations: Readonly<Partial<Record<string, string | boolean>>>
 }
 
+const isMissingBrokerObservation = (error: CycleRunnerError): boolean => {
+  const cause =
+    error.operation === 'build-decision' &&
+    error.cause instanceof CycleDecisionBuildError &&
+    error.cause.failure === 'market-data'
+      ? error.cause.cause
+      : error.operation === 'reconcile'
+        ? error.cause
+        : undefined
+  return (
+    error.failure === 'market-data' &&
+    cause instanceof OperationalError &&
+    cause.component === 'market-data' &&
+    cause.operation === 'reconciliation' &&
+    cause.retryable &&
+    cause.cause instanceof BrokerReadError &&
+    cause.cause.operation === 'preflight' &&
+    cause.cause.kind === BrokerReadErrorKind.Timeout &&
+    cause.cause.retryable &&
+    cause.cause.observationFailure === 'NO_ADMISSIBLE_CUT'
+  )
+}
+
 export const retainAutonomousCyclePassObservation = (
   observation: CyclePassObservation,
 ): RetainedAutonomousCyclePassObservation => {
@@ -55,14 +86,20 @@ export const retainAutonomousCyclePassObservation = (
       operation: observation.error.operation,
       failure: observation.error.failure,
       message: observation.error.message,
+      ...(isMissingBrokerObservation(observation.error)
+        ? { brokerObservationFailure: 'NO_ADMISSIBLE_CUT' as const }
+        : {}),
     }
   }
 
   return {
     result: 'SUCCESS',
-    // Admission evidence was recognized at the result clock; pass completion may cross its freshness cutoff.
+    // Admission evidence was recognized at the result clock; pass completion may cross its original boundary.
     observedAt:
-      observation.result.outcome === 'ADMISSION_WAITING' ? observation.result.observedAt : observation.observedAt,
+      observation.result.outcome === 'ADMISSION_WAITING' ||
+      (observation.result.outcome === 'ALREADY_TERMINAL' && observation.result.readiness !== undefined)
+        ? observation.result.observedAt
+        : observation.observedAt,
     outcome: observation.result.outcome,
     ...(observation.result.outcome === 'WINDOW_CLOSED' && observation.result.closedEntryWindow !== undefined
       ? { closedEntryWindow: observation.result.closedEntryWindow }
@@ -70,11 +107,18 @@ export const retainAutonomousCyclePassObservation = (
     ...(observation.result.outcome === 'ADMISSION_WAITING'
       ? { readiness: observation.result.readiness, admissionProtection: observation.result.admissionProtection }
       : {}),
+    ...(observation.result.outcome === 'ALREADY_TERMINAL' && observation.result.readiness !== undefined
+      ? { readiness: observation.result.readiness }
+      : {}),
     ...(observation.result.outcome === 'RECOVERED'
       ? {
           recoveryAction: observation.result.action,
           ...('positionHold' in observation.result && observation.result.positionHold !== undefined
             ? { positionHold: observation.result.positionHold }
+            : {}),
+          ...('protectionReleaseCycleId' in observation.result &&
+          observation.result.protectionReleaseCycleId !== undefined
+            ? { protectionReleaseCycleId: observation.result.protectionReleaseCycleId }
             : {}),
           ...('entryAbstention' in observation.result && observation.result.entryAbstention !== undefined
             ? { entryAbstention: observation.result.entryAbstention }
@@ -157,6 +201,9 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           observedAt: result.observedAt,
+          ...(result.outcome === 'ALREADY_TERMINAL' && result.readiness !== undefined
+            ? { readiness: JSON.stringify(result.readiness) }
+            : {}),
           ...cycleAnnotations(result.cycle),
         },
       }
@@ -175,14 +222,3 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
       }
   }
 }
-
-export const validateCycleLoopInterval = (pollIntervalMs: number): Result.Result<number, CycleRunnerError> =>
-  Number.isSafeInteger(pollIntervalMs) && pollIntervalMs > 0
-    ? Result.succeed(pollIntervalMs)
-    : Result.fail(
-        runnerError({
-          operation: 'configure',
-          failure: 'invalid-config',
-          message: 'cycle loop interval must be a positive safe integer',
-        }),
-      )

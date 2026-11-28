@@ -4,22 +4,15 @@ Seal the secret
 kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed.yaml
 ```
 
-## Argo CD v3.6.1 upgrade
+## Argo CD v3.6.3 upgrade
 
-The control plane is pinned to the complete upstream HA manifest for Argo CD v3.6.1. The upgrade from v3.5.2 is a
-single GitOps reconciliation; do not update only the container images. Argo CD 3.6 embeds Helm 4, but every enabled
-OCI Helm source in this cluster uses HTTPS-backed GHCR or Docker Hub. Do not add `insecureOCIForceHttp`, a Helm v3
-override, or a second rendering path. Lovely remains the renderer for Applications that already select that plugin.
+Reconcile the complete upstream Argo CD v3.6.3 HA manifest through GitOps. Argo CD uses Helm 4 for OCI charts over
+HTTPS and Lovely for Applications that select that plugin. Applications with server-side apply use server-side diff,
+so admission failures can surface during comparison.
 
-The companion releases are Kargo 1.12.5, Argo Workflows 4.1.6 (chart 2.0.18), and Argo Rollouts 1.10.2
-(chart 2.43.12). Reconcile Argo CD first, then Workflows and Rollouts, then Kargo. Kargo 1.12 uses only the
-existing `systemResources` and `sharedResources` namespace settings; the removed `clusterSecretsNamespace`
-settings must not be restored. Both configured namespaces are already `kargo`, so no Secret migration is needed.
-
-Argo CD 3.6 uses server-side diff for Applications with server-side apply. Admission failures can therefore appear
-during comparison before a sync. Workflows 4.1.6 retains the installed 4.1.2 SSO token format. Kargo 1.12 changes
-image creation-time discovery, so compare the selected Freight with the pre-upgrade record before accepting a new
-promotion. Existing publication annotations remain the artifact eligibility contract.
+Reconcile Argo CD first, then sync the `appset-helm` ApplicationSet through `root` so Kargo advances to chart 1.12.7.
+Kargo validates subscription fields against their specific Warehouse subscription type. Verify the installed Warehouse
+specs against the target schema and record current Freight before the upgrade.
 
 Before syncing the merged revision, require `argocd`, `root`, and `kargo` to be Synced and Healthy, ensure no Kargo
 Promotion is running, and record any existing non-Healthy Stage so it is not attributed to this upgrade:
@@ -32,8 +25,7 @@ kubectl -n <project>-release get stages.kargo.akuity.io
 ```
 
 Sync the whole self-managed Application at the exact merge commit. The Application uses server-side apply and
-`ApplyOutOfSyncOnly=true`, so unchanged resources remain untouched while the three CRDs and seven changed workloads
-reconcile:
+`ApplyOutOfSyncOnly=true`:
 
 ```bash
 argocd app sync argocd --revision <merge-commit> --prune
@@ -44,6 +36,14 @@ kubectl -n argocd rollout status deployment/argocd-server --timeout=5m
 kubectl -n argocd rollout status deployment/argocd-notifications-controller --timeout=5m
 kubectl -n argocd rollout status deployment/argocd-dex-server --timeout=5m
 kubectl -n argocd rollout status deployment/argocd-redis-ha-haproxy --timeout=5m
+```
+
+Sync the root-owned Helm ApplicationSet at the same commit, then verify the generated Kargo Application finishes
+its automatic sync at chart 1.12.7:
+
+```bash
+argocd app sync root --revision <merge-commit> --resource argoproj.io:ApplicationSet:appset-helm
+kubectl -n argocd get application kargo -o wide
 ```
 
 Hard-refresh the enabled OCI Helm Applications to prove Helm 4 rendering, then verify Argo and Kargo OIDC, Application
@@ -116,7 +116,7 @@ invocations are not deleted by either the rollout or rollback; only Argo's healt
 
 ## CloudNativePG major-upgrade health
 
-The Cluster health customization preserves the Argo CD v3.6.1 phase classifications except that
+The Cluster health customization preserves the upstream phase classifications except that
 `Upgrading Postgres major version` is `Progressing`. CNPG uses this phase during a normal native major upgrade;
 classifying it as `Degraded` causes Argo to fail the sync and Kargo to exhaust deployment retries while the database
 is still upgrading. Later waves remain held until CNPG reports `Cluster in healthy state`. Delayed upgrades,
@@ -154,7 +154,7 @@ from the repo-server Pod. Moving the regenerable files preserves their existing 
 | Argo CD repo-server | `/tmp` (8 GiB), `/helm-working-dir` (2 GiB) | 10 GiB | 12 GiB | 2 GiB |
 | Lovely plugin | Its separate `/tmp` | 8 GiB | 12 GiB | 4 GiB |
 
-The Kargo 1.12.5 chart hardcodes its existing disk-backed `/tmp` mount. The supported extra-volume and extra-mount
+The Kargo chart hardcodes its disk-backed `/tmp` mount. The supported extra-volume and extra-mount
 values add `/gitops-tmp`; `TMPDIR` moves both `os.TempDir()` promotion directories and default `os.MkdirTemp()` Git
 directories without duplicating the chart-owned mount. The existing `/tmp` remains available for other consumers.
 Kargo's four warehouse and four promotion workers remain unchanged. Requeued promotions retain their directories,
@@ -210,10 +210,10 @@ space, memory reported no OOM events and current CPU pressure was zero. The othe
 in under a second. The longer, finite budget addresses the observed cold-acquisition cancellation loop; a slow or
 failed fetch still requires investigation rather than an unlimited deadline or manual writes to Argo's cache.
 
-Argo CD v3.6.1 applies the RPC deadline around the entire
-[repo-server client call](https://github.com/argoproj/argo-cd/blob/v3.6.1/reposerver/apiclient/clientset.go).
-Its [Git commands](https://github.com/argoproj/argo-cd/blob/v3.6.1/util/git/client.go) also inherit that context and
-the independent [command timeout](https://github.com/argoproj/argo-cd/blob/v3.6.1/util/exec/exec.go), so both bounds
+Argo CD applies the RPC deadline around the entire
+[repo-server client call](https://github.com/argoproj/argo-cd/blob/v3.6.3/reposerver/apiclient/clientset.go).
+Its [Git commands](https://github.com/argoproj/argo-cd/blob/v3.6.3/util/git/client.go) also inherit that context and
+the independent [command timeout](https://github.com/argoproj/argo-cd/blob/v3.6.3/util/exec/exec.go), so both bounds
 must allow the cold fetch. The standard ConfigMap keys feed the controller and API-server environment at Pod start;
 the committed `repo-budget-revision` annotations roll those consumers when this budget changes. Keep both annotations
 in step with future budget updates. Repo-server's environment change uses its existing one-at-a-time rollout.

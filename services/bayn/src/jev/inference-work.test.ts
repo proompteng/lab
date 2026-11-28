@@ -44,7 +44,7 @@ const baseLayer = Layer.mergeAll(
     resume: (cycleId, generation) => {
       expect(cycleId).toBe(saved.plan.cycleId)
       expect(generation).toBe(saved.plan.authorityGenerationHash)
-      return Effect.succeed({ batchId: saved.plan.batchId, source: restored })
+      return Effect.succeed({ batchId: saved.plan.batchId, loadSource: Effect.succeed(restored) })
     },
   }),
 )

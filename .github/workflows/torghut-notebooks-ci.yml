@@ -19,6 +19,7 @@ on:
       - 'argocd/applications/torghut/notebooks/**'
       - 'nix/images/torghut-notebook.nix'
       - '.github/workflows/torghut-notebooks-ci.yml'
+  workflow_call:
   push:
     branches:
       - main

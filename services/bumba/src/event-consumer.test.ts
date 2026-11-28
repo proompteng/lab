@@ -389,9 +389,9 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   )
 })
 
-test('generateMainMergeMemoryNote omits unsupported Astra sampling parameters', async () => {
+test('generateMainMergeMemoryNote omits unsupported GPT-6.2 Sol sampling parameters', async () => {
   process.env.OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
-  process.env.OPENAI_COMPLETION_MODEL = 'gpt-6-astra'
+  process.env.OPENAI_COMPLETION_MODEL = 'gpt-6.2-sol'
   process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT = 'minimal'
   let requestBody: Record<string, unknown> | undefined
   globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
@@ -403,9 +403,9 @@ test('generateMainMergeMemoryNote omits unsupported Astra sampling parameters', 
             content: JSON.stringify({
               decision: 'save',
               reason: 'The merge establishes a durable completion invariant.',
-              summary: 'Astra merge notes omit unsupported sampling controls.',
-              content: 'The event consumer normalizes legacy reasoning settings for Astra.',
-              tags: ['bumba', 'gpt-6-astra'],
+              summary: 'GPT-6.2 Sol merge notes omit unsupported sampling controls.',
+              content: 'The event consumer normalizes legacy reasoning settings for GPT-6.2 Sol.',
+              tags: ['bumba', 'gpt-6.2-sol'],
             }),
           },
         },
@@ -429,7 +429,7 @@ test('generateMainMergeMemoryNote omits unsupported Astra sampling parameters', 
 
   expect(note.decision).toBe('save')
   expect(requestBody).toMatchObject({
-    model: 'gpt-6-astra',
+    model: 'gpt-6.2-sol',
     stream: false,
     reasoning_effort: 'low',
     response_format: { type: 'json_object' },

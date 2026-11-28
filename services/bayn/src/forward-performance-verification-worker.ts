@@ -9,7 +9,8 @@ import {
   makeIntradayPerformanceVolumeEvidenceBatch,
 } from './forward-performance/intraday-volume'
 import type { IntradaySnapshotFailure } from './market-data/intraday/model'
-import { executionEvidenceFromRows, verifyPerformanceDecisions } from './forward-performance/postgres/projection'
+import { executionEvidenceFromRows, verifyPerformanceDecisionJson } from './forward-performance/postgres/projection'
+import { verifyAlphaDecisionJson } from './forward-performance/postgres/alpha-decisions'
 import {
   ReportVerificationTask,
   type ReportDecisionIndex,
@@ -51,7 +52,7 @@ export const verifyReportJob = (
   if (input.task === ReportVerificationTask.Decision) {
     const index = input.index ?? retainedIndex
     if (index === undefined) throw new Error('Report decision index is unavailable')
-    const verified = verifyPerformanceDecisions([input.row])
+    const verified = verifyPerformanceDecisionJson(input.row)
     return {
       id,
       outcome: 'DECISION',
@@ -61,6 +62,8 @@ export const verifyReportJob = (
       },
     }
   }
+  if (input.task === ReportVerificationTask.AlphaDecision)
+    return { id, outcome: 'ALPHA_DECISION', value: verifyAlphaDecisionJson(input.row) }
   if (input.task === ReportVerificationTask.Coverage) {
     const source = input.input
     const result = verifyInferenceExpenseCoverage(

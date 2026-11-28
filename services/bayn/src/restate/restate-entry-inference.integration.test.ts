@@ -73,6 +73,70 @@ describeRestate('Real always-replay admitted inference retry', () => {
     await database?.dispose()
   })
 
+  test('retires a watch from another deployment revision before reading the inference queue', async () => {
+    if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
+    let queueReads = 0
+    const inference = alwaysReplay(
+      makeBaynEntryInference(config, {
+        executeInference: async () => {
+          throw new Error('An inactive watch must not execute inference')
+        },
+        awaitDispatch: async () => {
+          queueReads += 1
+          return { active: false }
+        },
+      }),
+    )
+    const bridge = alwaysReplay(
+      restate.service({
+        name: 'InferenceWatchTestBridge',
+        handlers: {
+          watch: async (ctx: restate.Context, candidate: unknown) => {
+            await ctx.genericCall({
+              service: 'BaynEntryInference',
+              method: 'watch',
+              parameter: candidate,
+              inputSerde: brokerObservationJsonSerde,
+              outputSerde: brokerObservationJsonSerde,
+            })
+            return { completed: true }
+          },
+        },
+      }),
+    )
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = createServer(restate.createEndpointHandler({ services: [inference, bridge] }))
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
+          yield* Effect.promise(() =>
+            json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true }),
+          )
+          const watch = (candidate: unknown) => json(`${ingress}/InferenceWatchTestBridge/watch`, candidate)
+          const request = {
+            schemaVersion: 'bayn.inference-watch.v1',
+            controllerKey: config.controllerKey,
+            sourceRevision: config.sourceRevision,
+            epoch: 2,
+            pending: [],
+          }
+          expect(yield* Effect.promise(() => watch({ ...request, epoch: 1, sourceRevision: 'd'.repeat(40) }))).toEqual({
+            completed: true,
+          })
+          expect(yield* Effect.promise(() => watch(request))).toEqual({ completed: true })
+          yield* Effect.promise(async () => {
+            await expect(watch({ ...request, controllerKey: 'e'.repeat(64) })).rejects.toThrow(
+              'inference watch differs from its immutable account deployment',
+            )
+          })
+          expect(queueReads).toBe(1)
+        }),
+      ),
+    )
+  })
+
   test.each([
     { name: 'transient failures before the claim', failures: 4, crash: false, lifetimeMs: 15_000, providerCalls: 1 },
     {
@@ -111,10 +175,10 @@ describeRestate('Real always-replay admitted inference retry', () => {
         VALUES (${jobId}, ${expiresAt}::timestamptz, ${failures}, ${crash})`
         }),
       )
-      const executeInference = (input: string, signal: AbortSignal) =>
+      const executeInference: Parameters<typeof makeBaynEntryInference>[1]['executeInference'] = (input, signal) =>
         database.runPromise(
           Effect.gen(function* () {
-            expect(input).toBe(jobId)
+            expect(input.jobId).toBe(jobId)
             const sql = yield* PgClient.PgClient
             const [attempt] = yield* sql<{ should_fail: boolean }>`WITH prior AS (
         SELECT job_id, failures_left > 0 AS should_fail FROM restate_inference_retry_fixture WHERE job_id=${jobId} FOR UPDATE
@@ -151,7 +215,9 @@ describeRestate('Real always-replay admitted inference retry', () => {
       let wakes = 0
       let receivedExpiry: string | undefined
       let attemptsAfterFirstCall = 0
-      const inference = alwaysReplay(makeBaynEntryInference(config, { executeInference }))
+      const inference = alwaysReplay(
+        makeBaynEntryInference(config, { executeInference, awaitDispatch: async () => ({ active: false }) }),
+      )
       const owner = alwaysReplay(
         restate.object({
           name: 'BaynExecutionController',

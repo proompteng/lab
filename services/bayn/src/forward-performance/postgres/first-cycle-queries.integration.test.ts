@@ -9,7 +9,7 @@ import { strictParseOptions } from '../../schemas'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { firstCycleQuery, readForwardPerformanceCycles } from './cycles'
-import { CycleDecisionRow, type TerminalCycleRow } from './model'
+import { CycleDecisionJsonRow, type CycleDecisionRow, type TerminalCycleRow } from './model'
 import { verifyPerformanceDecisions } from './projection'
 import { decisionQuery, ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceStrategyRows } from './read'
@@ -30,10 +30,15 @@ const readDecisions = (
     const consume = yield* openSnapshotRows(sql, decisionQuery(sql, account, generation, captured))
     yield* consume((input) =>
       Schema.decodeUnknownEffect(
-        CycleDecisionRow,
+        CycleDecisionJsonRow,
         strictParseOptions,
       )(input).pipe(
-        Effect.tap((row) => Effect.sync(() => rows.push(row))),
+        Effect.flatMap(({ document_json, ...metadata }) =>
+          (document_json === null
+            ? Effect.succeed(null)
+            : Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(document_json)
+          ).pipe(Effect.tap((document) => Effect.sync(() => rows.push({ ...metadata, document })))),
+        ),
         Effect.asVoid,
       ),
     )
@@ -202,6 +207,12 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
           // Durable intent binding retains a cycle even when its decision cannot prove membership.
           yield* sql`INSERT INTO intents VALUES (${hash(1076)}, ${hash(76)}, 'account', ${hash(100)},
             '2026-09-04T14:00:00Z')`
+          // Preserve both PostgreSQL JSON number parsing and rejection of a SQL-null document.
+          yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document = document ||
+            '{"transportNumber":9007199254740993,"transportString":"9007199254740993","transportDecimal":0.000000000000001}'::jsonb
+            WHERE cycle_id = ${hash(50)}`
+          yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document = NULL
+            WHERE cycle_id = ${hash(76)}`
           yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-04T14:15:00.000000Z'
             WHERE cycle_id = ${hash(50)}`
           yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-04T14:15:00.000001Z'
@@ -380,7 +391,11 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
               const accountCut = new Date('2026-09-04T15:00:00Z')
               const ledgerTransactions = yield* ledgerTransactionQuery(sql, 'account', accountCut)
               const ledgerReceipts = yield* ledgerReceiptQuery(sql, 'account', accountCut)
-              return { cases, explicitlyEmpty, ledgerTransactions, ledgerReceipts }
+              const transportParity = yield* sql<{ document: unknown; document_json: string }>`
+                SELECT document, document::text AS document_json FROM autonomous_cycle_shadow_decisions
+                WHERE cycle_id = ${hash(50)}
+              `
+              return { cases, explicitlyEmpty, ledgerTransactions, ledgerReceipts, transportParity }
             }),
           )
         }),
@@ -401,6 +416,16 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
         })
       }
       const retained = result.cases.find((scope) => scope.name === 'retained')
+      const transport = result.transportParity[0]
+      expect(transport).toBeDefined()
+      const parsedTransport: unknown = JSON.parse(transport?.document_json ?? '')
+      expect(parsedTransport).toEqual(transport?.document)
+      expect(parsedTransport).toMatchObject({
+        transportNumber: 9007199254740992,
+        transportString: '9007199254740993',
+        transportDecimal: 0.000000000000001,
+      })
+      expect(retained?.capturedDecisions.find((row) => row.decision_hash === hash(576))?.document).toBeNull()
       expect(retained?.captured.map((cycle) => cycle.cycle_id)).toEqual([hash(40), hash(50), hash(1), hash(76)])
       expect(retained?.captured.map((cycle) => cycle.submission_open_at.getTime())).toEqual(
         Array.from({ length: 4 }, () => Date.parse(preciseTime('000000'))),

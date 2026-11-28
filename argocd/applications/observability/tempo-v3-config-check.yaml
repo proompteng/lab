@@ -10,6 +10,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       automountServiceAccountToken: false
@@ -22,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: verify
-          image: docker.io/grafana/tempo:3.0.3
+          image: docker.io/grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044
           # Native verification parses the full rendered config and rejects
           # configuration warnings. It does not connect to Kafka or S3; leave
           # credential placeholders unexpanded and do not expose Secrets.

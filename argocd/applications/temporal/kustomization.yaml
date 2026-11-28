@@ -107,15 +107,15 @@ patches:
       kind: Job
       name: temporal-schema
     patch: |-
+      - op: replace
+        path: /metadata/name
+        value: temporal-schema-1-32-2
       - op: remove
         path: /metadata/annotations/helm.sh~1hook
       - op: remove
         path: /metadata/annotations/helm.sh~1hook-delete-policy
       - op: remove
         path: /metadata/annotations/helm.sh~1hook-weight
-      - op: add
-        path: /metadata/annotations/argocd.argoproj.io~1sync-options
-        value: Force=true,Replace=true
       - op: add
         path: /metadata/annotations/argocd.argoproj.io~1sync-wave
         value: "-1"
@@ -193,7 +193,7 @@ helmCharts:
         storageClassName: rook-ceph-block
   - name: temporal
     repo: https://go.temporal.io/helm-charts
-    version: 1.6.0
+    version: 1.8.0
     releaseName: temporal
     namespace: temporal
     includeCRDs: true
@@ -250,23 +250,23 @@ helmCharts:
 images:
   - name: temporal-worker-runtime
     newName: mirror.gcr.io/temporalio/server
-    newTag: 1.31.2
-    digest: sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da
+    newTag: 1.32.2
+    digest: sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670
   - name: docker.elastic.co/elasticsearch/elasticsearch
     newTag: 8.19.21
     digest: sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419
   - name: mirror.gcr.io/temporalio/server
     newName: mirror.gcr.io/temporalio/server
-    newTag: 1.31.2
-    digest: sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da
+    newTag: 1.32.2
+    digest: sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670
   - name: mirror.gcr.io/temporalio/admin-tools
     newName: mirror.gcr.io/temporalio/admin-tools
-    newTag: 1.31.2
-    digest: sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
+    newTag: 1.32.2
+    digest: sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
   - name: mirror.gcr.io/temporalio/ui
     newName: mirror.gcr.io/temporalio/ui
-    newTag: 2.54.0
-    digest: sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932
+    newTag: 2.58.1
+    digest: sha256:ac3c13eddb4547d830991bb5eee93a5d97140134522b7297fdb2be1fe25ef925
 
 configMapGenerator:
   - name: temporal-cassandra-upgrade-scripts

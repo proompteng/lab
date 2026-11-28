@@ -1,6 +1,17 @@
 'use client'
 
-import { createContext, memo, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ArrowUp, FileText, Folder, Pin, PinOff, RotateCw, X } from 'lucide-react'
@@ -155,8 +166,16 @@ export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
   const [focusedPath, setFocusedPath] = useState<string | null>(null)
   const id = useId()
+  const chatPanel = useRef<HTMLDivElement>(null)
+  const focusChatPanel = useRef(false)
+  const hasFileTabs = files.length > 0
   const activeFile = files.find((file) => file.path === activePath)
   const chatSelected = !activeFile
+  useLayoutEffect(() => {
+    if (hasFileTabs || !focusChatPanel.current) return
+    focusChatPanel.current = false
+    chatPanel.current?.focus({ preventScroll: true })
+  }, [hasFileTabs])
   useEffect(() => {
     if (activePath)
       document.getElementById(`${id}-file-${files.findIndex((file) => file.path === activePath)}`)?.focus()
@@ -165,16 +184,18 @@ export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
     removeFile(path)
     setHoveredPath(null)
     setFocusedPath(null)
-    if (!activePath || activePath === path) {
+    if (files.length === 1) {
+      focusChatPanel.current = true
+    } else if (!activePath || activePath === path) {
       document.getElementById(`${id}-chat`)?.focus()
     }
   }
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
-        className="grid shrink-0 overflow-x-auto border-b border-zinc-800 bg-zinc-950"
+        className={hasFileTabs ? 'grid shrink-0 overflow-x-auto border-b border-zinc-800' : 'hidden'}
         style={{
-          gridTemplateColumns: files.length ? `repeat(${files.length + 1}, minmax(7rem, 14rem))` : 'max-content',
+          gridTemplateColumns: `repeat(${files.length + 1}, minmax(7rem, 14rem))`,
         }}
       >
         <div
@@ -211,7 +232,7 @@ export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
             tabIndex={chatSelected ? 0 : -1}
             type="button"
             onClick={showChat}
-            className={`min-w-0 border-b-2 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${files.length ? 'px-3 pr-8' : 'px-4'} ${chatSelected ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+            className={`min-w-0 border-b-2 px-3 py-2 pr-8 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${chatSelected ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
           >
             Chat
           </button>
@@ -266,9 +287,12 @@ export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
         Press Delete to close this tab.
       </span>
       <div
-        role="tabpanel"
+        ref={chatPanel}
+        role={hasFileTabs ? 'tabpanel' : 'region'}
         id={`${id}-chat-panel`}
-        aria-labelledby={`${id}-chat`}
+        aria-labelledby={hasFileTabs ? `${id}-chat` : undefined}
+        aria-label={hasFileTabs ? undefined : 'Chat'}
+        tabIndex={-1}
         hidden={!chatSelected}
         className={chatSelected ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
       >

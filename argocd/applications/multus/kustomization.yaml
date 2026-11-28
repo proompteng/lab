@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: kube-system
 
 resources:
-  - https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/v4.3.1/deployments/multus-daemonset-thick.yml
+  - https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/v4.3.2/deployments/multus-daemonset-thick.yml
   - https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.9.4/doc/crds/whereabouts.cni.cncf.io_ippools.yaml
   - https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.9.4/doc/crds/whereabouts.cni.cncf.io_overlappingrangeipreservations.yaml
   - https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.9.4/doc/crds/whereabouts.cni.cncf.io_nodeslicepools.yaml
@@ -12,8 +12,8 @@ resources:
 
 images:
   - name: ghcr.io/k8snetworkplumbingwg/multus-cni
-    newTag: v4.3.1-thick
-    digest: sha256:a357a79359b80ddd5f4699117946cacf3b54f5baecf7944535594863e875fc25
+    newTag: v4.3.2-thick
+    digest: sha256:109b885d8752fe7a7bc3b2371750bfad6789b8b8e2d0b0820b337386ba9b93c9
   - name: ghcr.io/k8snetworkplumbingwg/whereabouts
     newTag: v0.9.4
     digest: sha256:f279fd7dc1124d7819330fb2e07357990b2b4c5d8733aef1b028573c29f05e14

@@ -7,10 +7,16 @@ import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-infe
 import { entryCompletionFixture, entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { EntrySetup } from './entry-proposals'
 import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './evidence'
+import { retainedJevProtocolV41Document } from './protocol'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const fixture = () => {
-  const base = entryEvaluationRequestFixture(undefined, undefined, EntryAblationSelection.LowestModeledLoss)
+  const base = entryEvaluationRequestFixture(
+    undefined,
+    undefined,
+    EntryAblationSelection.LowestModeledLoss,
+    retainedJevProtocolV41Document,
+  )
   const bars = [
     { minuteBeforeWindowEnd: 6, open: 100, high: 103, low: 97, close: 101, volume: 100 },
     { minuteBeforeWindowEnd: 5, open: 101, high: 102, low: 99, close: 100, volume: 100 },

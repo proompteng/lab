@@ -9,7 +9,7 @@ existing Mimir gateway. Host networking is required for host NIC counters, but i
 to `127.0.0.1:12346`. It has no Kubernetes token, privileged container, host PID access, or writable host mount.
 No Service, ingress, namespace-policy change, or new RBAC grant is required.
 
-Both collectors use the already deployed `grafana/alloy:v1.19.2` image. The host ConfigMap has a Kustomize content
+Both collectors use the already deployed `grafana/alloy:v1.22.0` image. The host ConfigMap has a Kustomize content
 hash; the central collector's existing SHA annotation must change when its River configuration changes.
 All scraping is passive. This rollout does not change networking, replicas, PGs, client affinity, OSD memory,
 per-OSD mClock calibration, the scrub window, or Ceph images. Do not restart OSDs to remove runtime config overrides.

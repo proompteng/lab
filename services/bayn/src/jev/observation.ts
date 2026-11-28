@@ -4,6 +4,7 @@ import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { freezeEvidence } from '../immutable-evidence'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { strictParseOptions } from '../schemas'
@@ -11,11 +12,15 @@ import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 
 import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
-import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import {
+  isOwnedMarketSnapshot,
+  type StrategyMarketSnapshot,
+  type VerifiedStrategyMarketSnapshot,
+} from '../market-data/streaming/snapshot'
 import { JevContractError } from './contract'
 import { JevObservationSchema, RetainedJevObservationSchema } from './observation-contract'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
-import { jevPortfolioCandidates, type JevPortfolio } from './portfolio'
+import { decodeJevPortfolio, isOwnedJevPortfolio, jevPortfolioCandidates, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import type { EquityShortEligibility } from '../execution/equity-short'
 import { jevHistoryStartMs, jevSignalWindowEndMs } from './observation-query'
@@ -32,19 +37,17 @@ const invalidObservation = (
     ...(cause === undefined ? {} : { cause }),
   })
 
-const reproduceObservation = <
+const verifyObservation = <
   Observation extends typeof JevObservationSchema.Type | typeof RetainedJevObservationSchema.Type,
 >(
   observation: Observation,
+  snapshot: StrategyMarketSnapshot,
 ) =>
   Result.gen(function* () {
     const candidates =
       observation.portfolio.purpose === 'ENTRY'
         ? []
         : jevPortfolioCandidates(observation.portfolio, observation.protocol.candidateSymbols)
-    const snapshot = yield* reproduceStrategySnapshot(observation.manifest, observation.rows).pipe(
-      Result.mapError((cause) => invalidObservation(JevObservationCheck.Snapshot, cause)),
-    )
     const market = jevMarketForFeed(
       snapshot.manifest.feed,
       observation.protocol.marketProfiles.find((profile) => profile.feed === snapshot.manifest.feed)?.universeId,
@@ -172,6 +175,16 @@ const reproduceObservation = <
     ),
   )
 
+const reproduceObservation = <
+  Observation extends typeof JevObservationSchema.Type | typeof RetainedJevObservationSchema.Type,
+>(
+  observation: Observation,
+) =>
+  reproduceStrategySnapshot(observation.manifest, observation.rows).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Snapshot, cause)),
+    Result.flatMap((snapshot) => verifyObservation(observation, snapshot)),
+  )
+
 export const reproduceJevCandidateObservation = (input: unknown) =>
   Schema.decodeUnknownResult(
     JevObservationSchema,
@@ -191,7 +204,45 @@ export const reproduceRetainedJevCandidateObservation = (input: unknown) =>
     Result.flatMap(reproduceObservation),
   )
 
-export const makeJevObservation = (input: {
+const OwnedObservationTypeId: unique symbol = Symbol('OwnedJevObservation')
+
+export interface OwnedJevObservation {
+  readonly [OwnedObservationTypeId]: true
+  readonly payload: JevObservation
+  readonly verified: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>
+}
+
+const ownedObservations = new WeakSet<OwnedJevObservation>()
+
+const sealObservation = (payload: JevObservation, verified: OwnedJevObservation['verified']) =>
+  Result.gen(function* () {
+    if ((yield* canonicalHashV1Result(payload)) !== verified.contentHash)
+      return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
+    const source: OwnedJevObservation = freezeEvidence({
+      [OwnedObservationTypeId]: true,
+      payload,
+      verified,
+    })
+    ownedObservations.add(source)
+    return source
+  })
+
+const detachObservation = <A>(input: A) =>
+  Result.try({
+    try: () => structuredClone(input),
+    catch: (cause) => invalidObservation(JevObservationCheck.Identity, cause),
+  })
+
+export const ownJevObservation = (input: JevObservation) =>
+  Result.gen(function* () {
+    const payload = yield* detachObservation(input)
+    const verified = yield* reproduceJevCandidateObservation(payload)
+    return yield* sealObservation(payload, verified)
+  })
+
+export const isOwnedJevObservation = (observation: OwnedJevObservation) => ownedObservations.has(observation)
+
+const jevObservationPayload = (input: {
   readonly cycleId: string
   readonly authorityGenerationHash: string
   readonly protocol: JevProtocol
@@ -201,7 +252,7 @@ export const makeJevObservation = (input: {
 }) =>
   Result.gen(function* () {
     const rows = yield* persistIntradayRecordRows(input.snapshot)
-    const payload = {
+    return {
       schemaVersion: 'bayn.jev-observation.v1' as const,
       cycleId: input.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
@@ -212,16 +263,56 @@ export const makeJevObservation = (input: {
       manifest: input.snapshot.manifest,
       rows,
     }
-    const reproduced = yield* reproduceJevCandidateObservation(payload)
-    return { contentHash: reproduced.contentHash, payload }
   })
 
-export type JevObservation = Result.Result.Success<ReturnType<typeof makeJevObservation>>['payload']
+export type JevObservation = Result.Result.Success<ReturnType<typeof jevObservationPayload>>
+
+export const makeJevObservation = (input: Parameters<typeof jevObservationPayload>[0]) =>
+  jevObservationPayload(input).pipe(
+    Result.flatMap((payload) =>
+      Result.map(reproduceJevCandidateObservation(payload), ({ contentHash }) => ({ contentHash, payload })),
+    ),
+  )
+
+const decodeObservationEnvelope = Schema.decodeUnknownResult(
+  Schema.Struct({ ...JevObservationSchema.fields, portfolio: Schema.Unknown }),
+  strictParseOptions,
+)
+
+export const makeOwnedJevObservation = (input: Parameters<typeof jevObservationPayload>[0]) =>
+  Result.gen(function* () {
+    const { snapshot, portfolio: suppliedPortfolio, ...context } = input
+    if (!isOwnedMarketSnapshot(snapshot)) return yield* Result.fail(invalidObservation(JevObservationCheck.Snapshot))
+    const portfolio = isOwnedJevPortfolio(suppliedPortfolio)
+      ? suppliedPortfolio
+      : yield* decodeJevPortfolio(suppliedPortfolio).pipe(
+          Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+        )
+    const {
+      portfolio: _portfolio,
+      manifest,
+      ...observation
+    } = yield* jevObservationPayload({
+      ...context,
+      snapshot,
+      portfolio,
+    })
+    const detached = yield* detachObservation(observation)
+    const payload = { ...detached, manifest, portfolio }
+    const decoded = yield* decodeObservationEnvelope(payload).pipe(
+      Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    )
+    const verified = yield* verifyObservation({ ...decoded, portfolio }, snapshot)
+    return yield* sealObservation(payload, verified)
+  })
 
 /** Restore the current typed graph while retaining the exact admitted source identity. */
-export const restoreJevObservation = (input: unknown) =>
+export const restoreVerifiedJevObservation = ({
+  snapshot,
+  contentHash,
+  ...source
+}: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>) =>
   Result.gen(function* () {
-    const { snapshot, contentHash, ...source } = yield* reproduceJevCandidateObservation(input)
     const observation: JevObservation = {
       ...source,
       manifest: snapshot.manifest,
@@ -231,5 +322,8 @@ export const restoreJevObservation = (input: unknown) =>
       return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
     return { observation, snapshot, contentHash }
   })
+
+export const restoreJevObservation = (input: unknown) =>
+  reproduceJevCandidateObservation(input).pipe(Result.flatMap(restoreVerifiedJevObservation))
 
 export type RestoredJevObservation = Result.Result.Success<ReturnType<typeof restoreJevObservation>>

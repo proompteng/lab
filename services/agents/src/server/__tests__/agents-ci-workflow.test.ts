@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 
 const readWorkflow = (name: string) =>
   readFileSync(new URL(`../../../../../.github/workflows/${name}`, import.meta.url), 'utf8')
@@ -17,7 +19,58 @@ describe('agents-ci workflow', () => {
     expect(pullRequestWorkflow).toContain('changed_files_json: ${{ needs.plan.outputs.changed_files }}')
   })
 
-  it('runs validation on hosted runners and gates integration on cheap checks', () => {
+  it('uses all tracked files on merge groups even when the caller passes a changed-file array', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+
+    expect(workflow).toContain('if [ "${EVENT_NAME}" = merge_group ]; then\n            git ls-files')
+    expect(workflow).toContain('elif [ -n "${CHANGED_FILES_JSON}" ]; then')
+  })
+
+  it('requires all local smoke images and leaves tailnet credentials on the pull-request path', () => {
+    const router = parse(readWorkflow('pull-request.yml'))
+    const queue = router.jobs['agents-full']
+    expect(router.jobs.agents.if).toContain("github.event_name == 'pull_request'")
+    expect(queue).toMatchObject({
+      if: "github.event_name == 'merge_group' && needs.plan.result == 'success'",
+      uses: './.github/workflows/agents-ci.yml',
+    })
+    expect(queue).not.toHaveProperty('secrets')
+    expect(router.jobs['ci-pr'].needs).toContain('agents-full')
+
+    const workflow = parse(readWorkflow('agents-ci.yml'))
+    const integrationSteps: { name: string; if?: string }[] = workflow.jobs.integration.steps
+    for (const name of [
+      'Connect to the tailnet',
+      'Verify internal image and cache access',
+      'Resolve published Agents images from GitOps values',
+      'Select published defaults for the smoke test',
+      'Configure and verify Kind tailnet access',
+      'Preload published Agents runner',
+    ]) {
+      expect(integrationSteps.find((step) => step.name === name)?.if).toContain("github.event_name != 'merge_group'")
+    }
+
+    const planSteps: { name: string; run?: string }[] = workflow.jobs.plan.steps
+    const guard = planSteps.find((step) => step.name === 'Require the complete queued Agents plan')?.run
+    if (!guard) throw new Error('Missing complete Agents plan verification')
+    const plan = {
+      RUN_UNIT: 'true',
+      RUN_STATIC: 'true',
+      RUN_INTEGRATION: 'true',
+      BUILD_LOCAL: 'true',
+      VERIFY_CLOSURE: 'true',
+      IMAGE_TARGETS: '["control-plane","controller","runner","agents-shell"]',
+    }
+    const verify = (outputs: typeof plan) =>
+      spawnSync('bash', ['-c', guard], {
+        env: { PATH: process.env.PATH, ...outputs },
+      }).status
+    expect(verify(plan)).toBe(0)
+    expect(verify({ ...plan, RUN_STATIC: 'false' })).toBe(1)
+    expect(verify({ ...plan, IMAGE_TARGETS: '["control-plane","controller","runner"]' })).toBe(1)
+  })
+
+  it('runs validation on hosted runners and schedules independent suites directly from the plan', () => {
     const workflow = readWorkflow('agents-ci.yml')
 
     expect(workflow).toContain('unit:\n    name: Agents typecheck and unit tests\n    needs: plan')
@@ -26,9 +79,10 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('integration:\n    name: Agents Kind smoke (${{ needs.plan.outputs.tier }})')
     expect(workflow).toContain('runs-on: ubuntu-24.04')
     expect(workflow).not.toContain('runs-on: arc-amd64')
-    expect(workflow).toContain("needs.plan.outputs.run_integration == 'true'")
-    expect(workflow).toContain("needs.unit.result == 'success' || needs.unit.result == 'skipped'")
-    expect(workflow).toContain("needs.static.result == 'success' || needs.static.result == 'skipped'")
+    expect(parse(workflow).jobs.integration).toMatchObject({
+      needs: 'plan',
+      if: "${{ needs.plan.outputs.run_integration == 'true' }}",
+    })
   })
 
   it('connects the hosted smoke runner before accessing internal images and the Nix cache', () => {
@@ -47,7 +101,9 @@ describe('agents-ci workflow', () => {
     )
     expect(integration).toContain('https://registry.ide-newton.ts.net/v2/')
     expect(integration).toContain('https://attic.ide-newton.ts.net/lab/nix-cache-info')
-    expect(integration).toContain('substituters = https://attic.ide-newton.ts.net/lab https://cache.nixos.org/')
+    expect(integration).toContain(
+      "substituters = ${{ github.event_name != 'merge_group' && 'https://attic.ide-newton.ts.net/lab ' || '' }}https://cache.nixos.org/",
+    )
     expect(integration).not.toContain('require-preinstalled:')
     expect(integration).not.toContain('.svc.cluster.local')
   })

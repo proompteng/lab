@@ -13,12 +13,12 @@ let
   pythonPackages = pkgs.python312Packages;
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
   runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
-  pstackVersion = "0.9.30";
-  pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
+  pstackVersion = "0.9.159";
+  pstackCommit = "6d25df69f0baf6600807d82975d75139f3b1ab92";
 
   pstackArchive = pkgs.fetchurl {
     url = "https://github.com/michael-denyer/pstack-claude/archive/${pstackCommit}.tar.gz";
-    hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0=";
+    hash = "sha256-dtC7o5ombOIT+Zbow5730fShruncV/YJMZzXVTEXotY=";
   };
 
   pstackBundle = pkgs.stdenvNoCC.mkDerivation {
@@ -34,8 +34,7 @@ let
       cp -R plugins/pstack "$out/opt/agents-shell/pstack"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/SKILL.md"
       test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/references/codex-tools.md"
-      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54
-      test "$(find "$out/opt/agents-shell/pstack/.codex-plugin/prompts" -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
+      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 68
       runHook postInstall
     '';
   };
@@ -309,6 +308,8 @@ let
     "services/agents/scripts/codex"
     "services/agents/scripts/codex-config-container.toml"
     "services/agents/scripts/apply_patch.py"
+    "services/agents/src/auto-ontology-mcp/config.ts"
+    "services/agents/src/auto-ontology-mcp/contract.ts"
     "services/agents/src/linear-mcp/bridge-auth.ts"
     "services/agents/src/linear-mcp/config.ts"
     "services/agents/src/linear-mcp/contract.ts"
@@ -316,6 +317,7 @@ let
     "services/agents/src/runner-result.ts"
     "services/agents/src/runner-status.ts"
     "services/agents/src/runner-telemetry.ts"
+    "services/agents/src/workspace-cache.ts"
     "services/agents/src/artifact-storage.ts"
     "services/agents/tsconfig.json"
   ];
@@ -356,6 +358,7 @@ let
     "bun --cwd=packages/codex run build"
     ''mkdir -p "$TMPDIR/agents-runner"''
     ''bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile "$TMPDIR/agents-runner/agent-runner.js"''
+    ''bun build services/agents/scripts/codex/auto-ontology-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/auto-ontology-mcp-bridge.js"''
     ''bun build services/agents/scripts/codex/linear-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/linear-mcp-bridge.js"''
     ''bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile "$TMPDIR/agents-runner/fake-app-server.js"''
   ];
@@ -583,6 +586,7 @@ let
     cp "$TMPDIR/work/packages/codex/package.json" "$out/app/node_modules/@proompteng/codex/package.json"
     cp -R "$TMPDIR/work/packages/codex/dist" "$out/app/node_modules/@proompteng/codex/dist"
     cp "$TMPDIR/agents-runner/agent-runner.js" "$out/app/services/agents/scripts/codex/agent-runner.js"
+    cp "$TMPDIR/agents-runner/auto-ontology-mcp-bridge.js" "$out/app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/linear-mcp-bridge.js" "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
     cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
@@ -602,14 +606,20 @@ let
     #!${pkgs.bash}/bin/bash
     exec ${bun}/bin/bun /app/services/agents/scripts/codex/linear-mcp-bridge.js "$@"
     EOF
+    cat > "$out/usr/local/bin/auto-ontology-mcp-bridge" <<'EOF'
+    #!${pkgs.bash}/bin/bash
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js "$@"
+    EOF
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"
     ln -s ${runnerPython}/bin/alpaca-mcp-server "$out/usr/local/bin/alpaca-mcp-server"
     chmod +x \
       "$out/usr/local/bin/agent-runner" \
+      "$out/usr/local/bin/auto-ontology-mcp-bridge" \
       "$out/usr/local/bin/linear-mcp-bridge" \
       "$out/usr/local/bin/agents-fake-codex-app-server" \
       "$out/app/services/agents/scripts/codex/agent-runner.js" \
+      "$out/app/services/agents/scripts/codex/auto-ontology-mcp-bridge.js" \
       "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js" \
       "$out/app/services/agents/scripts/codex/fake-app-server.js"
 
@@ -741,8 +751,5 @@ in
   };
 
   "agents-codex-runner-image" = mkRunnerImage;
-  "ofz-fixture-tools" = pkgs.buildEnv {
-    name = "ofz-fixture-tools";
-    paths = [ runnerTools.postgres runnerTools.spicedb pkgs.openssl ];
-  };
+  "ofz-fixture-tools" = import ./ofz-fixture-tools.nix { inherit pkgs lib runnerTools; };
 }

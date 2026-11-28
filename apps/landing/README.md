@@ -37,6 +37,9 @@ evidence commands.
 
 The homepage shows a “convex backend” badge once it can reach the Convex health check query.
 
+The Landing PR build uses the committed generated Convex client in `packages/backend/convex/_generated`. The browser
+and admin tests use isolated fixtures. Convex deployment credentials belong to the backend deployment workflow.
+
 ## Tengri BFF development
 
 Browser identity lives in `src/lib/platform/auth.ts` and uses the platform authorization API. Each web deployment sets
@@ -183,9 +186,19 @@ native metadata owns sidebar names and ordering. A matching completed native tur
 ends response activity even if a durable status poll is late. Cancellation keeps its Stopping state until cleanup is confirmed.
 The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
-no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
-send/stop button. Approval, model, and reasoning selectors share the same trigger and menu styles.
-New selections use GPT-6.1 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
+no horizontal divider. Sidebar rows share one trailing position for response progress and the archive button;
+hover or keyboard focus reveals the archive action, which remains disabled during a response. Consecutive tool and
+command activity appears under a collapsed **Ran commands** disclosure, including a single command. Expanding it
+shows an indented list whose individual rows can disclose their full output. Messages, approvals, images, and AgentRun
+cards stay visible in the transcript.
+The composer uses a soft rounded surface with model/reasoning controls beside a circular
+send/stop button. The composer has one action button: a draft uses Send/Steer, and an empty input uses Stop during a
+response. During run recovery or cancellation, a draft keeps the composer action in place and Stop appears beside the
+run status.
+Approval, model, and reasoning selectors share the same trigger and menu styles, label contrast and
+inherited chevron color. Model and reasoning controls retain that contrast while disabled during a response; native
+disabled semantics, their cursor and explanatory tooltips still communicate availability.
+New selections use GPT-6.2 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
 supported reasoning choices remain selectable. Composer height updates before paint, preserves scrolling within long drafts, and
 observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
 starters. Commands, output, diffs, and reasoning summaries expand from compact rows without outlined cards. Approvals
@@ -267,6 +280,8 @@ Browser approvals use a compact "Allow browser control?" card with request detai
 session, and deny choices retain the scopes advertised by the request.
 Questions and approvals compose the shared design controls in bounded cards. The desktop and portaled conversation
 menus use the same neutral theme and Geist typography; chat rows remain 32 px tall and menu items use 12 px text.
+The chat sidebar has its own surface and becomes a dismissible drawer in narrow windows. The view switcher appears
+when a file opens and closing the last file returns focus to chat without focusing the composer.
 See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,

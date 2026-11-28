@@ -84,7 +84,9 @@ let
 
   installFilterArgs = lib.concatMapStringsSep " " (filter: "--filter ${lib.escapeShellArg filter}") installFilters;
   buildScript = lib.concatStringsSep "\n" buildCommands;
-  useBunCacheClosure = dependencyClosure == "bunCache";
+  useBunCacheArchive = dependencyClosure == "bunCacheArchive";
+  useBunCacheClosure = useBunCacheArchive || dependencyClosure == "bunCache";
+  archiveTools = lib.optionals useBunCacheArchive [ pkgs.nixVersions.nix_2_28 ];
   resolvedDepsHash =
     if builtins.isAttrs depsHash then
       depsHash.${pkgs.stdenv.hostPlatform.system}
@@ -97,7 +99,8 @@ let
     src = depsSource;
 
     outputHashAlgo = "sha256";
-    outputHashMode = "recursive";
+    # A flat NAR has the same hash as the recursively hashed directory.
+    outputHashMode = if useBunCacheArchive then "flat" else "recursive";
     outputHash = resolvedDepsHash;
 
     nativeBuildInputs = [
@@ -106,7 +109,7 @@ let
       pkgs.coreutils
       pkgs.findutils
       pkgs.gnugrep
-    ];
+    ] ++ archiveTools;
 
     dontConfigure = true;
     dontBuild = true;
@@ -118,9 +121,12 @@ let
       export HOME="$TMPDIR/home"
       export BUN_INSTALL_CACHE_DIR="$TMPDIR/bun-cache"
       export BUN_CONFIG_CACHE_DIR="$BUN_INSTALL_CACHE_DIR"
-      mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$out"
-      cp -R . "$out/"
-      cd "$out"
+      mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR"
+      if [ "${dependencyClosure}" != "bunCacheArchive" ]; then
+        mkdir -p "$out"
+        cp -R . "$out/"
+        cd "$out"
+      fi
 
       run_bun_install() {
         local attempt
@@ -164,7 +170,10 @@ let
 
       run_bun_install
 
-      if [ "${dependencyClosure}" = "bunCache" ]; then
+      if [ "${dependencyClosure}" = "bunCacheArchive" ]; then
+        bash ${./relativize-bun-cache.sh} "$BUN_INSTALL_CACHE_DIR" "$BUN_INSTALL_CACHE_DIR"
+        nix-store --dump "$BUN_INSTALL_CACHE_DIR" > "$out"
+      elif [ "${dependencyClosure}" = "bunCache" ]; then
         cd "$TMPDIR"
         rm -rf "$out"
         mkdir -p "$out"
@@ -189,7 +198,7 @@ let
       pkgs.bash
       pkgs.coreutils
       pkgs.findutils
-    ];
+    ] ++ archiveTools;
 
     dontConfigure = true;
 
@@ -199,11 +208,18 @@ let
       export HOME="$TMPDIR/home"
       export BUN_INSTALL_CACHE_DIR="$TMPDIR/bun-cache"
       export BUN_CONFIG_CACHE_DIR="$BUN_INSTALL_CACHE_DIR"
-      mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$TMPDIR/work"
+      mkdir -p "$HOME" "$TMPDIR/work"
+      ${if useBunCacheArchive then ''
+        nix-store --restore "$BUN_INSTALL_CACHE_DIR" < ${deps}
+      '' else ''
+        mkdir -p "$BUN_INSTALL_CACHE_DIR"
+      ''}
       ${
         if useBunCacheClosure then
           ''
-            cp -R ${deps}/. "$BUN_INSTALL_CACHE_DIR/"
+            ${lib.optionalString (!useBunCacheArchive) ''
+              cp -R ${deps}/. "$BUN_INSTALL_CACHE_DIR/"
+            ''}
             cp -R ${depsSource}/. "$TMPDIR/work/"
             chmod -R u+w "$TMPDIR/work"
             cp -R . "$TMPDIR/work/"

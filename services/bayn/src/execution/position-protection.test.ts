@@ -8,6 +8,7 @@ import { alpacaEntryProtectionMethod, decidePositionProtection, type ProtectionO
 const fixture = nativeJevFixture(JevPurpose.Manage)
 if (fixture.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected a held position')
 const plan = Result.getOrThrow(jevManagedExitPlan(fixture.portfolio))
+if (plan.schemaVersion !== 'bayn.jev-funded-exit-plan.v4') throw new Error('Expected a current JEV exit plan')
 const observedAt = '2026-10-19T15:00:00.000Z'
 const armed: ProtectionOrderState = {
   _tag: 'Armed',
@@ -32,6 +33,45 @@ test('broker capabilities distinguish crypto, regular whole shares, fractions an
   expect(alpacaEntryProtectionMethod('AAPL', 5_000_000_000n, observedAt)).toBe('BRACKET')
   expect(alpacaEntryProtectionMethod('AAPL', 500_000_000n, observedAt)).toBe('STOP_LIMIT')
   expect(alpacaEntryProtectionMethod('AAPL', 5_000_000_000n, '2026-10-19T22:00:00.000Z')).toBe('APPLICATION')
+})
+
+test('a verified native group keeps exact fractional inventory after a partial profit fill', () => {
+  const quantityAtoms = 4_500_000_000n
+  for (const method of ['BRACKET', 'OCO'] as const) {
+    expect(
+      decidePositionProtection({
+        ...input,
+        quantityAtoms,
+        protection: { ...armed, method, quantityAtoms },
+      }),
+    ).toEqual({ _tag: 'Wait', reason: 'PROTECTED' })
+  }
+  expect(decidePositionProtection({ ...input, quantityAtoms, protection: { _tag: 'Absent' } })).toEqual({
+    _tag: 'Arm',
+    method: 'STOP_LIMIT',
+    quantityAtoms,
+  })
+})
+
+test('fractional native coverage still requires exact healthy terms, equity regular hours and no exit latch', () => {
+  const quantityAtoms = 4_500_000_000n
+  for (const method of ['BRACKET', 'OCO'] as const) {
+    const fractional = { ...input, quantityAtoms, protection: { ...armed, method, quantityAtoms } }
+    for (const changed of [
+      { ...fractional, protection: { ...fractional.protection, quantityAtoms: quantityAtoms - 1n } },
+      { ...fractional, protection: { ...fractional.protection, stopPriceMicros: 1n } },
+      { ...fractional, protection: { ...fractional.protection, stopLimitPriceMicros: 1n } },
+      { ...fractional, protection: { ...fractional.protection, profitLimitPriceMicros: null } },
+      { ...fractional, observedAt: '2026-10-19T22:00:00.000Z' },
+      { ...fractional, plan: { ...plan, levels: { ...plan.levels, symbol: 'BTC/USD' } } },
+      { ...fractional, exitDue: true },
+    ]) {
+      expect(decidePositionProtection(changed)).toEqual({ _tag: 'CancelProtection', intentId: 'protection' })
+    }
+    expect(
+      decidePositionProtection({ ...fractional, protection: { _tag: 'Unknown', intentId: 'protection' } }),
+    ).toEqual({ _tag: 'Recover', intentId: 'protection' })
+  }
 })
 
 test('an unknown submission or cancellation prevents every new sell', () => {

@@ -2,8 +2,8 @@ import { Data, Result, Schema } from 'effect'
 
 import type { AdvanceExecutionCommand } from './advance'
 import { ExecutionControllerOutcome } from './controller-status'
-import { JevInferenceJobSchema } from '../jev/inference-work'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
+import { ProtectionReleaseReferenceSchema } from './events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
@@ -99,13 +99,15 @@ export const ExecutionControllerStateSchema = Schema.Struct({
     }),
   ),
   lastBrokerSnapshotHash: Schema.optionalKey(Sha256Schema),
+  lastProtectionRelease: Schema.optionalKey(
+    Schema.Struct({ ...ProtectionReleaseReferenceSchema.fields, sequence: CounterSchema }),
+  ),
 })
 export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Type
 
 export const ExecutionAdvanceStepResultSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
   observation: Schema.optionalKey(RetainedAutonomousCyclePassObservationSchema),
-  inferenceJobs: Schema.optionalKey(Schema.Array(JevInferenceJobSchema)),
   outcome: Schema.Struct({
     _tag: Schema.Enum(ExecutionControllerOutcome),
     receiptHash: Sha256Schema,
@@ -275,11 +277,46 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const schedule = executionControllerSuccessorSchedule(state, result)
+  if (Result.isFailure(schedule)) return Result.fail(schedule.failure)
+  const {
+    nextDueAt: _previousDeadline,
+    marketEligibleAt: _previousEligibility,
+    marketDataWakeSuppressed: _previousMarketSuppression,
+    wakeScheduledSequence: _previousWake,
+    wakeAcceptedAt: _previousWakeAcceptedAt,
+    ...completedState
+  } = state
+  return Result.succeed({
+    ...completedState,
+    nextSequence: state.nextSequence + 1,
+    lastCompletion: {
+      sequence: tick.sequence,
+      outcome: result.outcome._tag,
+      receiptHash: result.outcome.receiptHash,
+      completedAt: result.completedAt,
+    },
+    ...schedule.success,
+  })
+}
+
+/** Shared by the durable controller and versioned replay; a legacy delay never invents a timer. */
+export const executionControllerSuccessorSchedule = (
+  state: Pick<ExecutionControllerState, 'nextDueAt'>,
+  result: Pick<ExecutionAdvanceStepResult, 'completedAt' | 'observation'> & {
+    readonly outcome: Pick<ExecutionAdvanceStepResult['outcome'], '_tag' | 'nextWakeAt'>
+  },
+): Result.Result<
+  Pick<ExecutionControllerState, 'nextDueAt' | 'marketEligibleAt' | 'marketDataWakeSuppressed'>,
+  ExecutionControllerDecisionError
+> => {
   const brokerReconciliationRetry =
     result.outcome._tag === ExecutionControllerOutcome.Blocked &&
     result.observation?.result === 'FAILURE' &&
-    result.observation.operation === 'reconcile' &&
-    result.observation.failure === 'market-data'
+    result.observation.failure === 'market-data' &&
+    (result.observation.operation === 'reconcile' ||
+      (result.observation.operation === 'build-decision' &&
+        result.observation.brokerObservationFailure === 'NO_ADMISSIBLE_CUT'))
   const nextDueAt = Result.try({
     try: () => {
       if (result.outcome.nextWakeAt === undefined) return undefined
@@ -304,39 +341,36 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
-  const {
-    nextDueAt: _previousDeadline,
-    marketEligibleAt: _previousEligibility,
-    marketDataWakeSuppressed: _previousMarketSuppression,
-    wakeScheduledSequence: _previousWake,
-    wakeAcceptedAt: _previousWakeAcceptedAt,
-    ...completedState
-  } = state
+  const brokerObservationPending =
+    result.observation?.result === 'SUCCESS' && result.observation.waitReason === 'BROKER_OBSERVATION_PENDING'
+  // An early broker wake can revalidate and still wait. Keep its existing future obligation instead
+  // of restarting the backoff; a pass completing at or after that deadline establishes a new one.
+  const dueAt =
+    (brokerReconciliationRetry || brokerObservationPending) &&
+    state.nextDueAt !== undefined &&
+    state.nextDueAt > result.completedAt &&
+    decodedNextDueAt.success !== undefined &&
+    state.nextDueAt < decodedNextDueAt.success
+      ? state.nextDueAt
+      : decodedNextDueAt.success
   // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
   // without inventing polling from a legacy delay; broker observations can still wake promptly.
   const availableAt = brokerReconciliationRetry
-    ? decodedNextDueAt.success
+    ? dueAt
     : result.observation?.result !== 'SUCCESS'
       ? undefined
       : result.observation.outcome === 'WINDOW_CLOSED' ||
           result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'CLOSE_MARKET_DATA_UNAVAILABLE' ||
           result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
-        ? result.outcome.nextWakeAt
+        ? dueAt
         : result.observation.readiness?.availableAt
   return Result.succeed({
-    ...completedState,
-    nextSequence: state.nextSequence + 1,
-    lastCompletion: {
-      sequence: tick.sequence,
-      outcome: result.outcome._tag,
-      receiptHash: result.outcome.receiptHash,
-      completedAt: result.completedAt,
-    },
-    ...(decodedNextDueAt.success === undefined ? {} : { nextDueAt: decodedNextDueAt.success }),
+    ...(dueAt === undefined ? {} : { nextDueAt: dueAt }),
     ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
     ...(result.observation?.result === 'SUCCESS' &&
-    result.observation.outcome === 'WINDOW_CLOSED' &&
-    decodedNextDueAt.success === undefined
+    (result.observation.waitReason === 'CLOSE_WINDOW_EXPIRED' ||
+      (result.observation.outcome === 'WINDOW_CLOSED' && decodedNextDueAt.success === undefined))
       ? { marketDataWakeSuppressed: true as const }
       : {}),
   })

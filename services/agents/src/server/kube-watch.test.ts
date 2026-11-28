@@ -382,6 +382,62 @@ describe('kube-watch', () => {
     })
   })
 
+  it('recycles a closed watch without warnings or losing its resource version', async () => {
+    const onError = vi.fn()
+    const onRestart = vi.fn()
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+      onError,
+      onRestart,
+    })
+
+    await flush()
+    getWatchCall().done(null)
+
+    expect(onError).not.toHaveBeenCalled()
+    expect(recordWatchErrorMock).not.toHaveBeenCalled()
+    expect(onRestart).toHaveBeenCalledWith('closed')
+    expect(recordWatchRestartMock).toHaveBeenCalledWith({
+      resource: 'agentruns',
+      namespace: 'agents',
+      reason: 'closed',
+    })
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(getWatchCall(1).query.resourceVersion).toBe('12345')
+  })
+
+  it('warns and drops an expired resource version reported as a watch error event', async () => {
+    const onError = vi.fn()
+    const onEvent = vi.fn()
+    const onRestart = vi.fn()
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onError,
+      onEvent,
+      onRestart,
+    })
+
+    await flush()
+    const first = getWatchCall()
+    first.callback('ERROR', { kind: 'Status', reason: 'Expired', code: 410, message: 'too old resource version' })
+    first.done(null)
+
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('too old') }))
+    expect(onRestart).toHaveBeenCalledWith('watch_error')
+
+    vi.advanceTimersByTime(2000)
+    await flush()
+    expect(getWatchCall(1).query.resourceVersion).toBeUndefined()
+  })
+
   it('exposes watch startup as an Effect service operation', async () => {
     const service = makeResourceWatchService({
       buildWatchPath: buildWatchPathMock,

@@ -7,7 +7,12 @@ import { Config, Effect, Fiber, Option, Redacted, Result, Schedule, Schema } fro
 import { decodeExecutionControllerState } from '../execution/controller'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { sha256 } from '../hash'
-import { MarketChangeReason, marketChangedEventId, type MarketChangedWakeup } from '../execution/events'
+import {
+  MarketChangeReason,
+  marketChangedEventId,
+  type MarketChangedWakeup,
+  type ProtectionReleaseReference,
+} from '../execution/events'
 import { ExecutionControllerHealthSchema } from '../execution/controller-health'
 import { strictParseOptions } from '../schemas'
 import { makeMarketHints } from '../market-data/streaming/readiness'
@@ -87,9 +92,15 @@ const queueFixture = () => {
   })
   let version = 0
   const snapshots: Array<{ sequence: number; version: number }> = []
+  const protectionAdvances: Array<{ sequence: number; proof: ProtectionReleaseReference }> = []
   const brokerSnapshotHash = sha256(`${controllerKey}:broker-sentinel`)
   const brokerSentinelKey = `market-queue-broker-${controllerKey}`
   const protectionSentinelKey = `market-queue-protection-${controllerKey}`
+  const protectionProof = {
+    proofId: sha256(`${controllerKey}:protection-proof`),
+    cycleId: sha256(`${controllerKey}:protection-cycle`),
+    checkedAt: '2026-11-11T18:00:00.000Z',
+  }
   const controller = alwaysReplay(
     makeBaynExecutionController(config, {
       prepareActivation: async () => undefined,
@@ -98,6 +109,8 @@ const queueFixture = () => {
       advance: async (command) => {
         // This is the owner's source read. Hint metadata never supplies the observed version.
         snapshots.push({ sequence: command.sequence, version })
+        if (command.protectionRelease !== undefined)
+          protectionAdvances.push({ sequence: command.sequence, proof: command.protectionRelease })
         if (command.sequence === 0) await initialGate
         if (command.sequence === 1) await protectionGate
         return {
@@ -152,11 +165,13 @@ const queueFixture = () => {
         protection: (ctx: restate.Context) =>
           call(
             ctx,
-            'tick',
+            'wake',
             {
-              schemaVersion: 'bayn.execution-controller-tick.v1',
-              epoch: 1,
-              sequence: 1,
+              schemaVersion: 'bayn.execution-wakeup.v1',
+              _tag: 'ProtectionRelease',
+              sourceRevision: config.sourceRevision,
+              eventId: protectionProof.proofId,
+              ...protectionProof,
             },
             protectionSentinelKey,
           ),
@@ -191,6 +206,8 @@ const queueFixture = () => {
     brokerSnapshotHash,
     brokerSentinelKey,
     protectionSentinelKey,
+    protectionProof,
+    protectionAdvances,
     changed: () => {
       version += 1
     },
@@ -633,6 +650,7 @@ describeRestate('Real always-replay streaming execution', () => {
             yield* waitFor(() => fixture.pendingMarket.pipe(Effect.map((count) => count === 0)))
             expect(yield* fixture.count("idempotency_key LIKE 'bayn-market-change-%'")).toBe(producerCount * 2 + 1)
             expect(new Set(fixture.snapshots.map((snapshot) => snapshot.sequence)).size).toBe(fixture.snapshots.length)
+            expect(fixture.protectionAdvances).toEqual([{ sequence: 1, proof: fixture.protectionProof }])
             expect((yield* fixture.status).nextDueAt).toBeUndefined()
           }),
         ).pipe(Effect.ensuring(Effect.sync(fixture.release))),
@@ -715,6 +733,7 @@ describeRestate('Real always-replay streaming execution', () => {
     const providerGate = new Promise<void>((resolve) => {
       releaseProvider = resolve
     })
+    const admission = Promise.withResolvers<void>()
     let prepared = false
     const controller = alwaysReplay(
       makeBaynExecutionController(config, {
@@ -727,6 +746,7 @@ describeRestate('Real always-replay streaming execution', () => {
           passes.push(command)
           const first = !prepared
           prepared = true
+          if (first) admission.resolve()
           const completedAt = new Date().toISOString()
           return {
             completedAt,
@@ -740,27 +760,17 @@ describeRestate('Real always-replay streaming execution', () => {
                   ? { nextWakeAt: new Date(Date.now() + 100).toISOString() }
                   : {}),
             },
-            ...(first
-              ? {
-                  inferenceJobs: [
-                    {
-                      schemaVersion: 'bayn.jev-inference-job.v1' as const,
-                      jobId,
-                      batchId: jobId,
-                      cycleId: sha256(`${controllerKey}:cycle`),
-                      authorityGenerationHash: 'f'.repeat(64),
-                      expiresAt,
-                      status: 'Prepared' as const,
-                    },
-                  ],
-                }
-              : {}),
           }
         },
       }),
     )
     const inference = alwaysReplay(
       makeBaynEntryInference(config, {
+        awaitDispatch: async ({ epoch }, pending) => {
+          if (epoch !== 1 || pending.includes(jobId)) return { active: false }
+          await admission.promise
+          return { active: true, dispatch: [jobId], pending: [jobId] }
+        },
         executeInference: async () => {
           providerCalls += 1
           providerEntered = true

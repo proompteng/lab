@@ -14,11 +14,12 @@ import { makeInitialCycle } from '../store/decisions'
 import { unusedEntryExpiresAt } from '../entry-admission'
 import { continuousMarketHours } from '../../market-hours'
 import { makeIntradayCycleDraft, selectIntradayExecutionSession } from './calendar-decisions'
-import type { CycleRunContext } from './model'
+import { CycleDecisionBuildError, type CycleRunContext } from './model'
 import { discoverAutonomousCyclePass } from './program'
 import { currentUtcInstant } from '../../time'
 import { retainAutonomousCyclePassObservation } from './pass-decisions'
 import { RetainedAutonomousCyclePassObservationSchema } from './pass-observation'
+import { DecisionReadinessReason } from './readiness'
 
 const forbidden = () => Effect.die(new Error('unexpected discovery side effect'))
 const policy = Result.getOrThrow(
@@ -47,6 +48,7 @@ const context: CycleRunContext = {
   accountId: 'sandbox-recovery-account',
   authorityGenerationHash: '4'.repeat(64),
   executionPolicy: policy,
+  nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
   buildDecision: forbidden,
   buildDecisionEvidence: forbidden,
 }
@@ -142,6 +144,130 @@ const fixture = (
 }
 
 describe('unbound pre-submission cycle recovery', () => {
+  test('defers an expired successor until its next unconsumed source window without spending the new lease', async () => {
+    const prior = blockedCycle(7, {
+      createdAt: '2026-09-18T14:43:11.612Z',
+      updatedAt: '2026-09-18T14:44:13.040Z',
+      terminalAt: '2026-09-18T14:44:13.040Z',
+      terminalReason: CycleTerminalReason.UnusedEntryExpired,
+    })
+    const dueAt = '2026-09-18T14:45:02.000Z'
+    const reads: string[] = []
+    const candidate = {
+      ...context,
+      nextEntryWindowDueAt: (cycleId: string) =>
+        Effect.sync(() => {
+          reads.push(cycleId)
+          return Option.some(dueAt)
+        }),
+    }
+    const f = fixture(prior)
+    const deferred = await f.run(candidate, '2026-09-18T14:44:13.236Z')
+    expect(deferred).toMatchObject({
+      outcome: 'ALREADY_TERMINAL',
+      cycle: prior,
+      readiness: { reason: DecisionReadinessReason.SignalWindowObserved, availableAt: dueAt },
+    })
+    expect(f.acquisitions()).toBe(0)
+    expect(reads).toEqual([prior.identity.cycleId])
+    expect(unusedEntryExpiresAt(prior)).toBe(Date.parse('2026-09-18T14:44:11.612Z'))
+    const acquired = await f.run(candidate, dueAt)
+    expect(acquired.outcome).toBe('ACQUIRED')
+    if (acquired.outcome !== 'ACQUIRED') throw new Error('next source window did not admit its successor')
+    expect(acquired.receipt.cycle.identity.entryAttemptOrdinal).toBe(8)
+    expect(acquired.receipt.cycle.createdAt).toBe(dueAt)
+    expect(unusedEntryExpiresAt(acquired.receipt.cycle)).toBe(Date.parse('2026-09-18T14:46:02.000Z'))
+    expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
+    expect(f.acquisitions()).toBe(1)
+  })
+
+  test.each([undefined, rearmAt, '2026-09-18T14:05:02.000Z'])(
+    'admits a successor when its source window is unconsumed: %s',
+    async (dueAt) => {
+      let reads = 0
+      const f = fixture()
+      const result = await f.run({
+        ...context,
+        nextEntryWindowDueAt: () =>
+          Effect.sync(() => {
+            reads += 1
+            return Option.fromUndefinedOr(dueAt)
+          }),
+      })
+      expect(result.outcome).toBe('ACQUIRED')
+      expect(reads).toBe(1)
+      expect(f.acquisitions()).toBe(1)
+    },
+  )
+
+  test('does not defer or reset an already acquired lease', async () => {
+    const prior = makeInitialCycle(Result.getOrThrow(makeIntradayCycleDraft(context, calendar, session)), rearmAt)
+    const f = fixture(prior)
+    expect(await f.run({ ...context, nextEntryWindowDueAt: forbidden })).toMatchObject({
+      outcome: 'ALREADY_ACQUIRED',
+      cycle: prior,
+    })
+    expect(f.acquisitions()).toBe(0)
+    expect(unusedEntryExpiresAt(prior)).toBe(Date.parse(rearmAt) + 60_000)
+  })
+
+  test.each([
+    ['protocol', { ...context, strategyProtocolHash: '9'.repeat(64) }],
+    ['mandate', { ...context, cycleBindingId: '9'.repeat(64) }],
+    ['account', { ...context, accountId: 'another-sandbox-account' }],
+    ['policy', { ...context, executionPolicy: changedPolicy }],
+  ] as const)('does not inherit consumed windows from a completed cycle with changed %s', async (_name, candidate) => {
+    const { terminalReason: _, ...prior } = blockedCycle()
+    const f = fixture({ ...prior, state: CycleState.Completed })
+    expect((await f.run({ ...candidate, nextEntryWindowDueAt: forbidden })).outcome).toBe('ACQUIRED')
+    expect(f.acquisitions()).toBe(1)
+  })
+
+  test('does not inherit a completed entry window across changed exchange-calendar evidence', async () => {
+    const { terminalReason: _, ...prior } = blockedCycle()
+    const f = fixture(
+      { ...prior, state: CycleState.Completed },
+      withProviderSessions({ ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] }),
+    )
+    expect((await f.run({ ...context, nextEntryWindowDueAt: forbidden })).outcome).toBe('ACQUIRED')
+    expect(f.acquisitions()).toBe(1)
+  })
+
+  test.each(['2026-09-18T19:55:00.000Z', '2026-09-18T19:55:02.000Z'])(
+    'rechecks the unchanged exchange cutoff before admitting a source window due at %s',
+    async (dueAt) => {
+      const prior = blockedCycle(7, {
+        createdAt: '2026-09-18T19:53:11.612Z',
+        updatedAt: '2026-09-18T19:54:13.040Z',
+        terminalAt: '2026-09-18T19:54:13.040Z',
+        terminalReason: CycleTerminalReason.UnusedEntryExpired,
+      })
+      const f = fixture(prior)
+      const candidate = { ...context, nextEntryWindowDueAt: () => Effect.succeed(Option.some(dueAt)) }
+      expect(await f.run(candidate, '2026-09-18T19:54:13.236Z')).toMatchObject({
+        outcome: 'ALREADY_TERMINAL',
+        readiness: { availableAt: dueAt },
+      })
+      expect((await f.run(candidate, dueAt)).outcome).toBe('WINDOW_CLOSED')
+      expect(f.acquisitions()).toBe(0)
+      expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
+    },
+  )
+
+  test('fails closed before acquisition when durable entry consumption is unavailable', async () => {
+    const f = fixture()
+    const failure = await f
+      .run({
+        ...context,
+        nextEntryWindowDueAt: () =>
+          Effect.fail(new CycleDecisionBuildError({ failure: 'store', message: 'entry consumption read failed' })),
+      })
+      .catch((cause: unknown) => cause)
+    expect(failure).toMatchObject({ operation: 'build-decision', failure: 'store' })
+    expect(f.acquisitions()).toBe(0)
+    expect(f.cycles.size).toBe(1)
+  })
+
   test('retains the original admission clock and actual calendar arrival through a closed-window read', async () => {
     const f = fixture(null)
     const start = '2026-09-18T13:30:00.000Z'
@@ -446,7 +572,10 @@ describe('unbound pre-submission cycle recovery', () => {
   }
 
   test('rejects changed exchange-calendar evidence', async () => {
-    const f = fixture(blockedCycle(2), { ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] })
+    const f = fixture(
+      blockedCycle(2),
+      withProviderSessions({ ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] }),
+    )
     expect((await f.run()).outcome).toBe('ALREADY_TERMINAL')
     expect(f.acquisitions()).toBe(0)
   })

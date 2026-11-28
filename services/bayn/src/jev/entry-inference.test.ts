@@ -16,14 +16,14 @@ import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { JevOutcome, makeJevEvaluationRequest, makeJevEvaluationReceipt, entryInferenceAvailableAt } from './evidence'
 import { defaultJevProtocolDocument } from './protocol'
 import { EntrySetup } from './entry-proposals'
-import type { StagedDispatchClaim } from './staged-checkpoint'
+import type { StagedDispatchClaim, StagedTerminalReceipt } from './staged-checkpoint'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
 const fixture = () => {
   const bars = [
     { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
     { minuteBeforeWindowEnd: 3, open: 101, high: 102, low: 99, close: 100, volume: 100 },
-    { minuteBeforeWindowEnd: 2, open: 103, high: 108, low: 102, close: 104, volume: 100 },
+    { minuteBeforeWindowEnd: 2, open: 103, high: 113, low: 102, close: 104, volume: 100 },
     { minuteBeforeWindowEnd: 1, open: 104, high: 105, low: 103, close: 104, volume: 100 },
   ]
   return {
@@ -36,7 +36,7 @@ const fixture = () => {
       numericalState: {
         schemaVersion: defaultJevProtocolDocument.inputDefinition,
         webullContext: null,
-        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
+        entryEconomics: { maximumEntryQuoteDriftBps: 5, maximumEntryLimitSlippageBps: 5 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
@@ -69,6 +69,7 @@ const providers = (
 ) => {
   const events: string[] = []
   const checkpointEvents: string[] = []
+  const terminals: StagedTerminalReceipt[] = []
   const handoffs: EntryHandoff[] = []
   const commits: string[] = []
   const jevBudgets: (number | undefined)[] = []
@@ -118,6 +119,7 @@ const providers = (
                 const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
                 if (terminal !== null) {
                   checkpointEvents.push('terminal')
+                  terminals.push(terminal)
                   if (successor.kind !== 'NONE' && options.chartTerminalFails)
                     return yield* operationalError({
                       component: 'journal',
@@ -222,7 +224,7 @@ const providers = (
       ),
     ),
   )
-  return { events, checkpointEvents, handoffs, commits, jevBudgets, layer }
+  return { events, checkpointEvents, handoffs, commits, jevBudgets, terminals, layer }
 }
 
 const run = (claim: Parameters<typeof evaluateFixtureEntry>[0], setup: ReturnType<typeof providers>, advance = 0) =>
@@ -267,7 +269,7 @@ describe('claimed sequential entry inference', () => {
       if (disposition.status !== 'READY') throw new Error('Expected dependent judgments')
       const expected = setups.flatMap((value) => {
         const prefix = `equity_${value.toLowerCase()}`
-        return [`${prefix}_confirmed`, `${prefix}_stop_invalidates`]
+        return [`${prefix}_confirmed`, `${prefix}_stop_invalidates`, `${prefix}_target_obstructed`]
       })
       expect(Object.keys(disposition.jevRequest.questions)).toEqual(expected)
       expect(result.jev.status).toBe('RECEIVED')
@@ -305,7 +307,7 @@ describe('claimed sequential entry inference', () => {
       const bars = Array.from({ length: count }, (_, index) => ({
         minuteBeforeWindowEnd: count - index,
         open: 100,
-        high: index === count - 1 ? 108 : 102,
+        high: index === count - 1 ? 113 : 102,
         low: 97,
         close: index === count - 1 ? 104 : 101,
         volume: 100,
@@ -329,7 +331,7 @@ describe('claimed sequential entry inference', () => {
     const bars = Array.from({ length: 6 }, (_, index) => ({
       minuteBeforeWindowEnd: 6 - index,
       open: 100,
-      high: 108,
+      high: 113,
       low: 97,
       close: 104,
       volume: 100,
@@ -370,9 +372,26 @@ describe('claimed sequential entry inference', () => {
   })
 
   test('chart admission persistence consumes the original deadline without dispatch or renewal', async () => {
-    const setup = providers({ chartClaimDelay: 10_000 })
-    expect(Result.isFailure(await run(fixture(), setup, 10_000))).toBe(true)
-    expect(setup.checkpointEvents).toEqual(['claim'])
+    const setup = providers({ chartClaimDelay: 10_223 })
+    const result = await run(fixture(), setup, 10_223)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isSuccess(result)) throw new Error('An expired admission must fail')
+    expect(result.failure).toMatchObject({ _tag: 'EntryInferenceError', category: 'DEADLINE' })
+    expect(setup.events).toEqual([])
+    expect(setup.checkpointEvents).toEqual(['claim', 'terminal'])
+    expect(setup.terminals).toHaveLength(1)
+    expect(setup.terminals[0]).toMatchObject({
+      schemaVersion: 'bayn.staged-terminal-receipt.v2',
+      stage: 'CHART',
+      requestId: fixture().requestId,
+      outcome: {
+        status: 'NOT_DISPATCHED',
+        reason: 'ORIGINAL_EXPIRY',
+        deadlineAt: fixture().expiresAt,
+        checkedAt: utcInstantFromEpochMillis(at + 10_223),
+      },
+    })
+    expect(setup.handoffs).toEqual([])
   })
 
   test('late terminal persistence retains chart evidence but never grants a fresh Jev window', async () => {

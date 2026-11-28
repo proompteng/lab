@@ -25,6 +25,7 @@ import * as torghutQuantPipelineHealthLatestMigration from '~/server/migrations/
 import * as torghutQuantSeriesActiveMigration from '~/server/migrations/20260715_torghut_quant_series_active'
 import * as torghutQuantSeriesRemoveMigration from '~/server/migrations/20260715_torghut_quant_series_remove'
 import * as torghutQuantStateCacheUnloggedMigration from '~/server/migrations/20260715_torghut_quant_state_cache_unlogged'
+import * as torghutMarketContextProviderRequiredMigration from '~/server/migrations/20261127_torghut_market_context_provider_required'
 
 type MigrationMap = Record<string, Migration>
 
@@ -64,6 +65,7 @@ const migrations: MigrationMap = {
   '20260715_torghut_quant_series_active': torghutQuantSeriesActiveMigration,
   '20260715_torghut_quant_series_remove': torghutQuantSeriesRemoveMigration,
   '20260715_torghut_quant_state_cache_unlogged': torghutQuantStateCacheUnloggedMigration,
+  '20261127_torghut_market_context_provider_required': torghutMarketContextProviderRequiredMigration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()

@@ -33,14 +33,14 @@ resources:
 helmCharts:
   - name: open-webui
     repo: https://helm.openwebui.com
-    version: 18.0.0
+    version: 18.4.0
     releaseName: jangar-openwebui
     namespace: jangar
     valuesFile: openwebui-values.yaml
 images:
   - name: ghcr.io/open-webui/open-webui
-    newTag: v0.13.3
-    digest: sha256:46b59158e6558eeb980bc828e0f1b30238ad24d82ed84d5e5eda1dab2a082f14
+    newTag: v0.13.4
+    digest: sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901
   - name: registry.ide-newton.ts.net/lab/jangar
     newTag: sha-c9e7e812e662f56fe32d69eefe03db1230d04155
     digest: sha256:37a1de689f56a3614b4051063c1d14c797dc1c4552c73d7711dd25ebda517bfa

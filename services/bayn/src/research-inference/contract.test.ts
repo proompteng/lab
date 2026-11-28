@@ -13,13 +13,7 @@ import {
   sealResearchReceipt,
 } from './contract'
 import { researchExpensePlan, verifyResearchReceipt } from './store'
-import {
-  fullTokenBudgetStreamFixture,
-  editorFixture,
-  retainedEditorFixture,
-  retainedReceiptFixture,
-  streamFixture,
-} from './test-support'
+import { fullTokenBudgetStreamFixture, editorFixture, retainedReceiptFixture, streamFixture } from './test-support'
 
 const run = editorFixture()
 const id = Result.getOrThrow(hashResearch(run))
@@ -44,46 +38,84 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
-  test.each([
-    ['qwen36-flamingo', '739af1e7aac320af1682ed1e0cce369af4c5265d'],
-    ['qwen38-flamingo', '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a'],
-  ] as const)('verifies %s retired receipts while rejecting retired registrations', (model, checkpoint) => {
+  test('admits the reviewed serving image and rejects unknown images for new research', () => {
     const current = editorFixture()
-    const old = {
+    const prospective = {
       ...current,
       policy: {
         ...current.policy,
-        model,
-        checkpoint,
-        tokenizerRevision: checkpoint,
-        chatTemplateRevision: checkpoint,
+        servingImage: 'sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1' as const,
       },
     }
-    const retained = Result.getOrThrow(decodeRetainedResearchRun(old))
-    const receipt = retainedReceiptFixture(retained)
-    expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
-    expect(JSON.stringify(retained)).toBe(JSON.stringify(old))
-    expect(Result.getOrThrow(verifyResearchReceipt(retained, receipt))).toEqual(receipt)
-    expect(Result.getOrThrow(researchExpensePlan(retained, receipt)).transfers[0]?.amount).toBe(1001000002n)
-    expect(Result.isFailure(verifyResearchReceipt(current, receipt))).toBe(true)
-    expect(
-      Result.isFailure(decodeRetainedResearchRun({ ...old, policy: { ...old.policy, checkpoint: '0'.repeat(40) } })),
-    ).toBe(true)
+    expect(Result.getOrThrow(decodeResearchRun(prospective))).toEqual(prospective)
+    expect(Result.getOrThrow(decodeRetainedResearchRun(prospective))).toEqual(prospective)
+    const unknown = { ...prospective, policy: { ...prospective.policy, servingImage: `sha256:${'0'.repeat(64)}` } }
+    expect(Result.isFailure(decodeResearchRun(unknown))).toBe(true)
+    expect(Result.isFailure(decodeRetainedResearchRun(unknown))).toBe(true)
   })
-  test('recovers priced retained editor receipts without admitting new inference for that policy', () => {
-    const old = retainedEditorFixture()
-    const before = JSON.stringify(old)
-    const receipt = retainedReceiptFixture(old)
-    expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
-    expect(Result.getOrThrow(decodeRetainedResearchRun(old))).toEqual(old)
-    expect(Result.getOrThrow(verifyResearchReceipt(old, receipt))).toEqual(receipt)
-    expect(Result.getOrThrow(researchExpensePlan(old, receipt)).transfers[0]?.amount).toBe(1001000002n)
-    expect(Result.isFailure(verifyResearchReceipt(editorFixture(), receipt))).toBe(true)
-    expect(JSON.stringify(old)).toBe(before)
-    expect(
-      Result.isFailure(decodeRetainedResearchRun({ ...old, policy: { ...old.policy, checkpoint: '0'.repeat(40) } })),
-    ).toBe(true)
-  })
+  // Hashes were captured from these synthetic fixtures before the serving-image admission change.
+  test.each([
+    [
+      'qwen38-flamingo',
+      '482ca0f3832238542f8f5295dde86b5f22711d80',
+      '73cd2d0ea60dff528ef2594b4459160e52316e1ad5b9b8e528c9cb1683d3490b',
+      '6945f4f59f9954322b307338fe766358b6b1c70ef49f2ffd67ffbdfb23f7aff2',
+      'ff41f37d1469582e406b2989988a7dc15c2bd3de90c7ca2ead168011fe777ab4',
+    ],
+    [
+      'qwen38-flamingo',
+      '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a',
+      '1137bb56d4a4ca2525771d715bd0cc462dc69e409f335026caec8c6e447e42de',
+      '6945f4f59f9954322b307338fe766358b6b1c70ef49f2ffd67ffbdfb23f7aff2',
+      '7d6fbd5ab0b4fb920ed039a34feb0adc445d02b207e04f736c08f36ed15f24e2',
+    ],
+    [
+      'qwen36-flamingo',
+      '739af1e7aac320af1682ed1e0cce369af4c5265d',
+      '3740105712c02905c1439233c13546c9d2a388875646fd2b4026bb5d8be4bb4d',
+      '8bcfb9fb9d771c5c79f5fee300ce28b150d93a592f68fe828bf01d205f67f197',
+      '06d42e79d20a403b7f7000806414582da748777f047951d82d8cc3c08dbebac0',
+    ],
+    [
+      'qwen3-jev-editor-b968826d9c46',
+      'b968826d9c46dd6066d109eabc6255188de91218',
+      '7241fedec6e5485dd378c4d8754996b114fb744c1339439a3e7fc893bc3844ac',
+      'f2e913ec38ddfbd30778c3ab464cd6fc5606a503a4cbb021e42dbb5b60125305',
+      '941a241af741defe6b85ca75662e61d8b04dfd2c5ab704299c4230c57b62bc13',
+    ],
+  ] as const)(
+    'preserves %s / %s retained evidence and denies new registrations',
+    (model, checkpoint, runHash, requestHash, receiptHash) => {
+      const current = editorFixture()
+      const old = {
+        ...current,
+        policy: {
+          ...current.policy,
+          model,
+          checkpoint,
+          servingImage: 'sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
+          tokenizerRevision: checkpoint,
+          chatTemplateRevision: checkpoint,
+        },
+      }
+      const retained = Result.getOrThrow(decodeRetainedResearchRun(old))
+      const receipt = retainedReceiptFixture(retained)
+      expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
+      expect(JSON.stringify(retained)).toBe(JSON.stringify(old))
+      expect(Result.getOrThrow(hashResearch(old))).toBe(runHash)
+      expect(Result.getOrThrow(hashResearch(retained))).toBe(runHash)
+      expect(Result.getOrThrow(hashResearch(researchRequest(retained)))).toBe(requestHash)
+      expect(receipt.runId).toBe(runHash)
+      expect(receipt.receiptHash).toBe(receiptHash)
+      expect(receipt.costPicoUsd).toBe('1001000002')
+      expect(Result.getOrThrow(verifyResearchReceipt(retained, receipt))).toEqual(receipt)
+      expect(Result.getOrThrow(researchExpensePlan(retained, receipt)).transfers[0]?.amount).toBe(1001000002n)
+      expect(Result.isFailure(verifyResearchReceipt(current, receipt))).toBe(true)
+      expect(
+        Result.isFailure(decodeRetainedResearchRun({ ...old, policy: { ...old.policy, checkpoint: '0'.repeat(40) } })),
+      ).toBe(true)
+    },
+  )
   test('constrains prompt edits to the native instruction JSON schema', () => {
     const current = editorFixture()
     expect(researchRequest(current)).toMatchObject({

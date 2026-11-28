@@ -10,7 +10,8 @@ import { strictParseOptions } from '../../schemas'
 import type { WebullSnapshotEvidence } from './webull-projection'
 import type { HistoricalMarketCursor } from './historical'
 
-import { canonicalHashV1Result } from '../../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../../hash'
+import { freezeEvidence } from '../../immutable-evidence'
 import type {
   IntradayMarketSnapshot,
   IntradayRecordIdentity,
@@ -22,13 +23,14 @@ import { compareRecords, lineageOf, replayedBarRow, verifyIntradaySnapshotQuery 
 import type { NativeMarketFeature } from '../features/native-feature'
 import type { KafkaProjectionCut } from './kafka'
 import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap'
-import { kafkaBootstrapComplete } from './bootstrap'
+import { kafkaBootstrapComplete, verifyKafkaSourceBounds } from './bootstrap'
 import { topicPartitionKey, type StreamingProjection, type ObservedMarketValue } from './projection'
 import { selectStreamingInputs } from './inputs'
 import { InputReadinessReason } from '../intraday/input-readiness'
 import { MarketFeatureDefinition } from '../features/contract'
 import { intradayInstantNanos } from '../intraday/time'
 import { isContinuousMarket } from '../../market-hours'
+import { StrategySnapshotManifestSchema } from './manifest-schema'
 
 export interface StreamingRecordReceipt {
   readonly sourceTopic: string
@@ -87,6 +89,25 @@ export type SimulatedVerifiedMarketSnapshot = SimulatedMarketSnapshot & {
 export type StrategyMarketSnapshot = StreamingMarketSnapshot | SimulatedMarketSnapshot
 export type VerifiedStrategyMarketSnapshot = StreamingVerifiedMarketSnapshot | SimulatedVerifiedMarketSnapshot
 
+const ownedSnapshots = new WeakSet<StrategyMarketSnapshot>()
+
+export const isOwnedMarketSnapshot = (snapshot: StrategyMarketSnapshot): snapshot is VerifiedStrategyMarketSnapshot =>
+  ownedSnapshots.has(snapshot)
+
+const decodeManifest = Schema.decodeUnknownResult(StrategySnapshotManifestSchema, strictParseOptions)
+
+const ownSnapshot = <A extends VerifiedStrategyMarketSnapshot>(snapshot: A) =>
+  Result.gen(function* () {
+    const decoded = yield* decodeManifest(snapshot.manifest).pipe(
+      Result.mapError(() => failure('watermark', 'Market snapshot manifest violates its retained schema')),
+    )
+    if (!canonicalJsonEqualV1(decoded, snapshot.manifest))
+      return yield* Result.fail(failure('watermark', 'Market snapshot manifest differs from its retained encoding'))
+    const owned = freezeEvidence(snapshot)
+    ownedSnapshots.add(owned)
+    return owned
+  })
+
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })
 const hash = (value: unknown) =>
@@ -119,6 +140,9 @@ export const prepareStreamingSnapshotCut = (cut: KafkaProjectionCut, query: Intr
       partitions: cut.bootstrap.partitions.filter((partition) => sourceTopics.has(partition.topic)),
     }
     const sourcePositions = cut.positions.filter((position) => sourceTopics.has(position.topic))
+    yield* verifyKafkaSourceBounds(sourceBootstrap, sourcePositions).pipe(
+      Result.mapError((cause) => failure('watermark', cause.message)),
+    )
     const requiredPartitions =
       request.purpose === IntradaySnapshotPurpose.Liquidation
         ? sourceBootstrap.partitions.filter((partition) => partition.topic === request.sourceTopics.quotes)
@@ -151,7 +175,7 @@ export const constructStreamingSnapshot = (
       schemaVersion: 'bayn.streaming-market-snapshot.v1',
       streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: sourceBootstrap },
     })
-    return Object.freeze({ ...snapshot, [StreamingVerifiedSnapshotTypeId]: true as const })
+    return yield* ownSnapshot({ ...structuredClone(snapshot), [StreamingVerifiedSnapshotTypeId]: true as const })
   })
 
 type SnapshotProvenance =
@@ -224,20 +248,40 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
     const sourcePositions = new Map(
       positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
     )
-    for (const entry of [...entries, ...barPublications]) {
-      const maximum = sourcePositions.get(topicPartitionKey(entry.value.sourceTopic, entry.value.sourcePartition))
-      if (entry.sequence > state.sequence || maximum === undefined || BigInt(entry.value.sourceOffset) >= maximum)
-        return yield* Result.fail(failure('watermark', 'Streaming row is outside the incorporated source cut'))
-    }
-    for (const feature of [...featureReceipts, ...(technical?.features ?? [])]) {
-      const maximum = sourcePositions.get(topicPartitionKey(feature.topic, feature.partition))
-      if (feature.sequence > state.sequence || maximum === undefined || BigInt(feature.offset) >= maximum)
-        return yield* Result.fail(failure('watermark', 'Streaming feature is outside the incorporated source cut'))
-    }
-    for (const capture of webull?.captures ?? []) {
-      const maximum = sourcePositions.get(topicPartitionKey(capture.record.topic, capture.record.partition))
-      if (capture.sequence > state.sequence || maximum === undefined || BigInt(capture.record.offset) >= maximum)
-        return yield* Result.fail(failure('watermark', 'Webull capture is outside the incorporated source cut'))
+    const deliveries = [
+      ...[...entries, ...barPublications].map(({ value, sequence, availableAtMs }) => ({
+        topic: value.sourceTopic,
+        partition: value.sourcePartition,
+        offset: value.sourceOffset,
+        sequence,
+        availableAtMs,
+      })),
+      ...featureReceipts,
+      ...(technical?.features ?? []),
+      ...(webull?.captures ?? []).map(({ record, sequence, availableAtMs }) => ({
+        ...record,
+        sequence,
+        availableAtMs,
+      })),
+    ].sort((a, b) => a.sequence - b.sequence)
+    const priorOffsets = new Map<string, bigint>()
+    const observedAtMs = Date.parse(request.observedAt)
+    let priorSequence = 0
+    for (const delivery of deliveries) {
+      const partition = topicPartitionKey(delivery.topic, delivery.partition)
+      const maximum = sourcePositions.get(partition)
+      const offset = BigInt(delivery.offset)
+      if (
+        delivery.sequence <= priorSequence ||
+        delivery.sequence > state.sequence ||
+        delivery.availableAtMs > observedAtMs ||
+        maximum === undefined ||
+        offset >= maximum ||
+        offset <= (priorOffsets.get(partition) ?? -1n)
+      )
+        return yield* Result.fail(failure('watermark', 'Streaming delivery is outside the incorporated source cut'))
+      priorSequence = delivery.sequence
+      priorOffsets.set(partition, offset)
     }
     const schemaVersion: P['schemaVersion'] = provenance.schemaVersion
     const streaming: P['streaming'] = provenance.streaming
@@ -359,5 +403,5 @@ export const constructSimulatedSnapshot = (
       schemaVersion: 'bayn.simulated-market-snapshot.v2',
       streaming: { schemaVersion: 'bayn.simulated-input-cut.v2', ...provenance },
     })
-    return Object.freeze({ ...snapshot, [SimulatedVerifiedSnapshotTypeId]: true as const })
+    return yield* ownSnapshot({ ...structuredClone(snapshot), [SimulatedVerifiedSnapshotTypeId]: true as const })
   })

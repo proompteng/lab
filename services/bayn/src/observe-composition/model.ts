@@ -1,6 +1,8 @@
 import type { Effect } from 'effect'
 import type { DecisionConstruction } from '../decision-construction'
 import type { BrokerEnvironment } from '../broker/identity'
+import type { readCurrentProtectionClose } from '../db/protection-release'
+import type { ProtectionReleaseReference } from '../execution/events'
 import { BrokerRead } from '../broker/alpaca/model'
 import type { CycleExecutionPolicy } from '../cycle/model'
 import type { CycleRunnerError, CycleRunResult } from '../cycle/runner/model'
@@ -30,7 +32,6 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevPositionStore } from '../jev/portfolio'
-import type { JevInferenceJob } from '../jev/inference-work'
 
 export type ReconciliationRuntime =
   | CandidateObservationStore
@@ -68,7 +69,6 @@ export type ObserveStartupPreparation = {
 export type RecoveryFirstCycleAdvance = {
   readonly observation: AutonomousCyclePassObservation
   readonly result?: CycleRunResult
-  readonly inferenceJobs?: readonly JevInferenceJob[]
   /** Optional one-shot durable scheduling override for the next Restate command. */
   readonly nextDelayMs?: number
   /** Absolute cap retained until completion, so post-pass work cannot extend a selected wake. */
@@ -97,6 +97,13 @@ export type ObserveAutonomousCycleInput = {
   readonly intradayMarketData?: IntradayMarketDataService
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
+  readonly readProtectionClose?: (
+    reference: ProtectionReleaseReference,
+    maximumObservationAgeMs: number,
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<typeof readCurrentProtectionClose>>,
+    Effect.Error<ReturnType<typeof readCurrentProtectionClose>>
+  >
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
   readonly executionCycleCloseSubmitCutoffAt?: string
   readonly executionCycleCloseExpiresAt?: string
@@ -131,6 +138,7 @@ export type PostMutationReconciliation = {
   readonly observedAt: string
   /** Only ordinary durable cancel intents support lookup-only confirmation before reconciliation. */
   readonly cancellationConfirmationIntentId?: string | undefined
+  readonly protectionReleaseCycleId?: string
 }
 
 export type BoundExecutionCycleOutcome = BoundMutationCycleOutcome | PostMutationReconciliation

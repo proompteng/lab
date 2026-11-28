@@ -3,6 +3,7 @@ import { createServer, type Socket } from 'node:net'
 
 import { NodeRedis } from '@effect/platform-node'
 import { ConfigProvider, Effect, Exit, Fiber, FileSystem, Layer, Logger, Option, Result } from 'effect'
+import { ConnectionTimeoutError } from 'redis'
 
 import {
   makeValkeyCache,
@@ -15,6 +16,9 @@ import { withValkeyStartupRetry } from '../valkey-startup'
 
 const mode = process.argv[2]
 assert(mode !== undefined)
+const startupAttempts = 6
+const stallsTls = mode === 'startup-native-timeout'
+const exhaustsStartup = stallsTls || mode === 'startup-deadline'
 const peers = new Set<Socket>()
 const handshake = Promise.withResolvers<void>()
 const command = Promise.withResolvers<void>()
@@ -24,13 +28,18 @@ let connections = 0
 let closes = 0
 let aborts = 0
 let phase = 'acquire'
-let stalled = mode !== 'idle'
+let stalled = mode !== 'idle' && mode !== 'startup-recover' && mode !== 'startup-refused'
+let reopen: ReturnType<typeof setTimeout> | undefined
 const errors: unknown[] = []
 const server = createServer((socket) => {
   const closure = Promise.withResolvers<void>()
   closed.push(closure.promise)
   peers.add(socket)
   connections++
+  const holdHandshake =
+    mode === 'startup-deadline' ||
+    mode === 'startup-interrupt' ||
+    (mode === 'startup-recover' && connections < startupAttempts)
   let buffer = ''
   socket.on('error', () => {})
   socket.once('close', () => {
@@ -39,6 +48,10 @@ const server = createServer((socket) => {
     disconnected.resolve()
     closure.resolve()
   })
+  if (stallsTls) {
+    socket.resume()
+    return
+  }
   socket.on('data', (data) => {
     buffer += data.toString()
     while (buffer.length > 0) {
@@ -58,7 +71,7 @@ const server = createServer((socket) => {
       buffer = buffer.slice(offset)
       if (args[0] === 'CLIENT' || args[0] === 'AUTH') {
         handshake.resolve()
-        if (mode !== 'startup-deadline' && mode !== 'startup-interrupt') socket.write('+OK\r\n')
+        if (!holdHandshake) socket.write('+OK\r\n')
       } else if (args[0] === 'GET') {
         command.resolve()
         if (mode === 'command-disconnect' && stalled) socket.destroy()
@@ -76,9 +89,13 @@ const guard = setTimeout(() => {
   throw new Error(
     `Valkey lifecycle fixture exceeded its bounded completion grace: ${JSON.stringify({ mode, phase, connections, closes, aborts })}`,
   )
-}, 7_000)
+}, 25_000)
 
 try {
+  if (mode === 'startup-refused') {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    reopen = setTimeout(() => server.listen(address.port, '127.0.0.1'), 6_500)
+  }
   const options = await valkeyClientOptions.pipe(
     Effect.provideService(
       ConfigProvider.ConfigProvider,
@@ -92,8 +109,7 @@ try {
     Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed('fixture-only') })),
     Effect.runPromise,
   )
-  // Exercise production lifecycle options against a local RESP fixture; TLS identity is tested separately.
-  const { tls: _tls, servername: _name, ca: _ca, cert: _cert, key: _key, ...socket } = options.socket
+  const { servername, ca: _ca, cert: _cert, key: _key, ...socket } = options.socket
   const native = withValkeyStartupRetry((signal) => {
     signal.addEventListener(
       'abort',
@@ -102,13 +118,32 @@ try {
       },
       { once: true },
     )
-    return NodeRedis.layer({ ...options, RESP: 2, socket: { ...socket, tls: false, signal } })
+    const connection = { ...socket, signal }
+    return NodeRedis.layer({
+      ...options,
+      RESP: 2,
+      socket: stallsTls ? { ...connection, tls: true, servername } : { ...connection, tls: false },
+    })
   })
   const layer = Layer.effect(ValkeyCache, makeValkeyCache).pipe(Layer.provideMerge(native))
   const program = Effect.gen(function* () {
     const cache = yield* ValkeyCache
     const { client } = yield* NodeRedis.NodeRedis
     client.on('error', (cause) => errors.push(cause))
+    if (mode === 'startup-recover') {
+      assert.equal(connections, startupAttempts)
+      assert.equal(closes, startupAttempts - 1)
+      assert.equal(client.isReady, true)
+      assert(Option.isNone(yield* cache.get('bayn:recovered')))
+      return
+    }
+    if (mode === 'startup-refused') {
+      assert(aborts >= startupAttempts)
+      assert.equal(connections, 1)
+      assert.equal(client.isReady, true)
+      assert(Option.isNone(yield* cache.get('bayn:reappeared')))
+      return
+    }
     if (mode === 'idle') {
       assert(Option.isNone(yield* cache.get('bayn:before')))
       // A delayed event-loop turn must not turn an idle healthy connection into a failed command.
@@ -140,7 +175,7 @@ try {
     assert(Option.isNone(yield* cache.get('bayn:reconnected')))
     assert.equal(connections, 2)
   })
-  if (mode === 'startup-deadline') {
+  if (exhaustsStartup) {
     const result = await Effect.void.pipe(
       Effect.provide(layer),
       Effect.result,
@@ -148,7 +183,8 @@ try {
       Effect.runPromise,
     )
     assert(Result.isFailure(result))
-    assert.equal(connections, 1)
+    assert(result.failure.cause instanceof ConnectionTimeoutError)
+    assert.equal(connections, startupAttempts)
   } else if (mode === 'startup-interrupt') {
     await Effect.gen(function* () {
       const fiber = yield* Effect.void.pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }))
@@ -164,10 +200,14 @@ try {
   phase = 'finalize'
   await Promise.all(closed)
   assert.equal(closes, connections)
-  assert.equal(aborts, mode.startsWith('startup-') ? 1 : 0)
+  if (exhaustsStartup) assert.equal(aborts, startupAttempts)
+  else if (mode === 'startup-recover') assert.equal(aborts, startupAttempts - 1)
+  else if (mode === 'startup-refused') assert(aborts >= startupAttempts)
+  else assert.equal(aborts, mode === 'startup-interrupt' ? 1 : 0)
   console.log(JSON.stringify({ mode, connections, closes, errors: errors.length }))
 } finally {
   clearTimeout(guard)
+  if (reopen !== undefined) clearTimeout(reopen)
   for (const peer of peers) peer.destroy()
   await new Promise<void>((resolve) => server.close(() => resolve()))
 }

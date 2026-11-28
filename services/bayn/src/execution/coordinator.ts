@@ -3,6 +3,7 @@ import { Cause, Clock, Data, Effect, Match, Result } from 'effect'
 import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations/model'
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { IntentState, type Intent } from './contracts'
+import type { ProtectionCloseCommit } from './mutations/model'
 import {
   cancellationIdentity,
   decideCancelFailure,
@@ -221,11 +222,11 @@ const persistSubmitDecision = (
 
 const submitToBroker = (
   services: MutationServices,
-  stored: StoredIntent,
+  intent: Intent,
   started: MutationEvent,
   request: DryRunSubmitDecision['request'],
 ) => {
-  const submittedIntent: Intent = { ...stored.intent, state: IntentState.IoStarted }
+  const submittedIntent: Intent = { ...intent, state: IntentState.IoStarted }
   return services.broker.submit(submittedIntent).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
@@ -271,7 +272,7 @@ const continueStartedSubmit = (
         // terms and bound decision immutable; only time needs rechecking here. The final broker guard still rereads
         // live state under its own writer fence before transmission.
         const validation = validateActiveSubmitRiskDecision(approved, currentTimeMillis, 'final submission')
-        if (Result.isSuccess(validation)) return submitToBroker(services, validation.success, started, request)
+        if (Result.isSuccess(validation)) return submitToBroker(services, validation.success.intent, started, request)
         return validation.failure._tag === 'ExpiredRiskDecision'
           ? denyStartedSubmit(services.mutations, started, SubmissionDenialReason.ExpiredRiskDecision)
           : Effect.fail(executionError(validation.failure))
@@ -334,6 +335,33 @@ export const submit = (intentId: string, consistencyDelayMs: number, closeOnly =
     Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)),
     withObservedStage('bayn.execution.submit', { operation: closeOnly ? 'close' : 'entry' }),
     Effect.annotateLogs({ intentId, closeOnly }),
+  )
+
+export type PreparedProtectionClose = ProtectionCloseCommit & {
+  readonly intent: Intent
+  readonly riskDecisionId: string
+  readonly approvedAt: string
+}
+
+export const submitProtectionClose = (prepared: PreparedProtectionClose, consistencyDelayMs: number) =>
+  Effect.gen(function* () {
+    const services: MutationServices = { mutations: yield* MutationStore, broker: yield* BrokerMutation }
+    const intent = { ...structuredClone(prepared.intent), riskDecisionId: prepared.riskDecisionId }
+    const { request, requestHash } = yield* liftDecision(encodeOrder(MutationOperation.Submit, intent))
+    const requestedAt = yield* currentInstant
+    const occurredAt = yield* liftDecision(nextInstant(MutationOperation.Submit, prepared.approvedAt, requestedAt))
+    const started = yield* services.mutations.beginSubmit(
+      intent.intentId,
+      requestHash,
+      consistencyDelayMs,
+      occurredAt,
+      true,
+      prepared,
+    )
+    return started.started ? yield* submitToBroker(services, intent, started.event, request) : started.event
+  }).pipe(
+    withObservedStage('bayn.execution.submit', { operation: 'protection-close' }),
+    Effect.annotateLogs({ intentId: prepared.intent.intentId, closeOnly: true }),
   )
 
 const persistCancelDecision = (

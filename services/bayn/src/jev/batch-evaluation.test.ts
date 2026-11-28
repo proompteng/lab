@@ -1,10 +1,11 @@
+import { evaluateRecordedJevBatch } from './batch-admission.test-support'
 import { expect, test } from 'bun:test'
 import { Effect, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
 import { operationalError, type OperationalError } from '../errors'
-import { evaluateJevBatch, JevBatchExpired, JevBatchStore, type JevBatchAdmission } from './batch-evaluation'
+import { JevBatchExpired, JevBatchStore, type JevBatchAdmission } from './batch-evaluation'
 import { JevClient } from './client'
 import { entryInferenceFixtureLayer } from './entry-inference.test-support'
 import { JevEvaluationStore } from './evaluation'
@@ -47,7 +48,7 @@ const fixture = (admission: Effect.Effect<JevBatchAdmission, OperationalError | 
     calls,
     evaluate: (at = Date.parse(plan.observedAt)) =>
       provideTestLayer(
-        TestClock.setTime(at).pipe(Effect.andThen(evaluateJevBatch(plan, source.observation.payload))),
+        TestClock.setTime(at).pipe(Effect.andThen(evaluateRecordedJevBatch(plan, source.observation.payload))),
         layer,
       ),
   }

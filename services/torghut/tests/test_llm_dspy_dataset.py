@@ -448,7 +448,7 @@ class TestLLMDSPyDatasetBuilder(TestCase):
 
         review = LLMDecisionReview(
             trade_decision_id=decision.id,
-            model="gpt-6-astra",
+            model="gpt-6.2-sol",
             prompt_version="v1",
             input_json=request_json,
             response_json={"verdict": verdict, "rationale": "ok"},

@@ -65,6 +65,65 @@ prometheus.scrape "mimir_ingesters" {
 	forward_to      = [prometheus.relabel.mimir_ingester_metrics.receiver]
 }
 
+discovery.kubernetes "agents" {
+	role = "pod"
+
+	namespaces {
+		names = ["agents"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name in (agents,agents-controllers,agents-alloy)"
+	}
+}
+
+discovery.relabel "agents_metrics" {
+	targets = discovery.kubernetes.agents.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "(agents|agents-controllers);http|alloy;http-metrics"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+}
+
+prometheus.relabel "agents_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|agents_.*"
+	}
+}
+
+prometheus.scrape "agents" {
+	job_name        = "agents"
+	targets         = discovery.relabel.agents_metrics.output
+	metrics_path    = "/metrics"
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	// Controller gauges describe the watched namespace, not necessarily the target namespace.
+	honor_labels = true
+	forward_to   = [prometheus.relabel.agents_metrics.receiver]
+}
+
 prometheus.scrape "ci_observability" {
 	job_name = "ci-observability"
 	targets  = [{
@@ -211,7 +270,7 @@ prometheus.relabel "cnpg_metrics" {
 	rule {
 		action        = "keep"
 		source_labels = ["__name__", "name"]
-		regex         = "(up|scrape_duration_seconds);.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_generation_index_(valid|ready|scans_total|tuples_read_total|tuples_fetched_total);.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
+		regex         = "(up|scrape_duration_seconds);.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_native_arrivals_total_bytes;.*|cnpg_bayn_generation_index_(valid|ready|scans_total|tuples_read_total|tuples_fetched_total);.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
 	}
 }
 
@@ -381,7 +440,7 @@ discovery.kubernetes "bayn_broker_stream_pods" {
 
 	selectors {
 		role  = "pod"
-		label = "app.kubernetes.io/name in (bayn-broker-feed,bayn-broker-kafka-ingress)"
+		label = "app.kubernetes.io/name=bayn-broker-feed"
 	}
 }
 
@@ -416,7 +475,7 @@ prometheus.relabel "bayn_broker_stream_metrics" {
 	rule {
 		action        = "keep"
 		source_labels = ["__name__"]
-		regex         = "up|dorvud_broker_feed_.*|restate_kafka_.*|kafka_consumer_.*"
+		regex         = "up|dorvud_broker_feed_.*"
 	}
 }
 
@@ -1010,11 +1069,24 @@ prometheus.scrape "kubelet" {
 	scrape_interval   = "30s"
 	scrape_timeout    = "10s"
 	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-	forward_to        = [prometheus.relabel.arc_resource_metrics.receiver]
+	forward_to        = [
+		prometheus.relabel.arc_resource_metrics.receiver,
+		prometheus.relabel.flannel_cbr0_ipam.receiver,
+	]
 
 	tls_config {
 		ca_file     = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 		server_name = "kubernetes.default.svc"
+	}
+}
+
+prometheus.relabel "flannel_cbr0_ipam" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__", "node"]
+		regex         = "(kubelet_running_pods|kubelet_started_pods_errors_total);(turin|talos-192-168-1-85)"
 	}
 }
 
@@ -1027,7 +1099,18 @@ prometheus.scrape "kube_state_metrics" {
 	]
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
-	forward_to      = [prometheus.relabel.arc_resource_metrics.receiver]
+	forward_to      = [prometheus.relabel.arc_resource_metrics.receiver, prometheus.relabel.bayn_daily_job_metrics.receiver]
+}
+
+prometheus.relabel "bayn_daily_job_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	// Bound Job history to these CronJob name prefixes. The rules verify controller ownership.
+	rule {
+		action        = "keep"
+		source_labels = ["__name__", "namespace", "cronjob", "job_name"]
+		regex         = "kube_job_(created|failed|owner|status_failed);bayn;;bayn-(macro-daily-sleeves|daily-scorecard)-.+|kube_cronjob_(next_schedule_time|spec_suspend);bayn;bayn-(macro-daily-sleeves|daily-scorecard);"
+	}
 }
 
 prometheus.scrape "flink" {

@@ -76,6 +76,7 @@ export const ReplayOrderExecutionSchema = Schema.Struct({
   arrivedAt: UtcInstantSchema,
   maximumQuoteAgeMs: NonNegativeIntegerSchema,
   quote: Schema.NullOr(ArrivalQuoteSchema),
+  stopTradeIndex: Schema.optionalKey(NonNegativeIntegerSchema),
   outcome: Schema.Union([
     Schema.Struct({
       status: Schema.Literal('filled'),
@@ -105,11 +106,34 @@ export const ReplayOrderExecutionSchema = Schema.Struct({
 })
 export type ReplayOrderExecution = typeof ReplayOrderExecutionSchema.Type
 
+export const replayArrivalQuote = (
+  quote: ObservedMarketValue<IntradayQuote>,
+  arrivedAt: string,
+): typeof ArrivalQuoteSchema.Type => ({
+  symbol: quote.value.symbol,
+  feed: quote.value.feed,
+  delayClass: quote.value.delayClass,
+  marketSession: quote.value.marketSession,
+  eventAt: quote.value.eventAt,
+  ingestedAt: quote.value.ingestedAt,
+  sourceTopic: quote.value.sourceTopic,
+  sourcePartition: quote.value.sourcePartition,
+  sourceOffset: quote.value.sourceOffset,
+  recordHash: quote.recordHash,
+  availableAtMs: quote.availableAtMs,
+  ageNanos: (BigInt(Date.parse(arrivedAt)) * 1_000_000n - intradayInstantNanos(quote.value.eventAt)).toString(),
+  bidPrice: quote.value.bidPrice,
+  askPrice: quote.value.askPrice,
+  bidSize: quote.value.bidSize,
+  askSize: quote.value.askSize,
+})
+
 export const makeReplayOrderExecution = (input: {
   readonly submittedAt: string
   readonly arrivedAt: string
   readonly maximumQuoteAgeMs: number
   readonly quote: ObservedMarketValue<IntradayQuote> | undefined
+  readonly stopTradeIndex?: number
   readonly outcome:
     | ReplayExecutionOutcome
     | {
@@ -123,30 +147,8 @@ export const makeReplayOrderExecution = (input: {
     submittedAt: input.submittedAt,
     arrivedAt: input.arrivedAt,
     maximumQuoteAgeMs: input.maximumQuoteAgeMs,
-    quote:
-      quote === undefined
-        ? null
-        : {
-            symbol: quote.value.symbol,
-            feed: quote.value.feed,
-            delayClass: quote.value.delayClass,
-            marketSession: quote.value.marketSession,
-            eventAt: quote.value.eventAt,
-            ingestedAt: quote.value.ingestedAt,
-            sourceTopic: quote.value.sourceTopic,
-            sourcePartition: quote.value.sourcePartition,
-            sourceOffset: quote.value.sourceOffset,
-            recordHash: quote.recordHash,
-            availableAtMs: quote.availableAtMs,
-            ageNanos: (
-              BigInt(Date.parse(input.arrivedAt)) * 1_000_000n -
-              intradayInstantNanos(quote.value.eventAt)
-            ).toString(),
-            bidPrice: quote.value.bidPrice,
-            askPrice: quote.value.askPrice,
-            bidSize: quote.value.bidSize,
-            askSize: quote.value.askSize,
-          },
+    ...(input.stopTradeIndex === undefined ? {} : { stopTradeIndex: input.stopTradeIndex }),
+    quote: quote === undefined ? null : replayArrivalQuote(quote, input.arrivedAt),
     outcome:
       outcome.status === 'unavailable'
         ? {

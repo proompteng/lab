@@ -12,6 +12,7 @@ import {
   frozenControlContinuation,
 } from './frozen-control-identity'
 import { prepareInferenceRateCard } from '../inference-costs'
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import { Result, Schema } from 'effect'
 import {
   makeRepeatedMomentumPolicy,
@@ -28,6 +29,7 @@ import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   jevAcceptanceProtocolHash,
   JevResearchPolicy,
+  retainedJevResearchPolicies,
   JevAcceptanceVersion,
   usesLegacyAcceptance,
 } from '../jev/acceptance'
@@ -79,6 +81,12 @@ export const activeEvaluationSessions = (now: number, sessionCount = 20) => {
 }
 
 export const calendarFixture = (registration: SystemRegistration) => {
+  if (
+    registration.schemaVersion === 'bayn.system-registration.v5' ||
+    registration.schemaVersion === 'bayn.system-registration.v6' ||
+    registration.schemaVersion === 'bayn.system-registration.v7'
+  )
+    return registration.calendar.marketCalendar
   const material = withProviderSessions({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
@@ -96,10 +104,15 @@ export const calendarFixture = (registration: SystemRegistration) => {
   return { ...material, normalizedResponseHash: testHash(material) }
 }
 
+type RetainedRegistration = Exclude<
+  SystemRegistration,
+  { schemaVersion: 'bayn.system-registration.v5' | 'bayn.system-registration.v6' | 'bayn.system-registration.v7' }
+>
+
 const baseRegistrationFixture = (
   sessionCount: number,
   protocol: typeof HistoricalJevProtocolSchema.Type,
-): SystemRegistration => {
+): RetainedRegistration => {
   const ablationIdentity = Result.getOrThrow(
     entryAblationStrategyIdentity(
       makeEntryAblationPolicy(protocol, Result.getOrThrow(historicalAblationQuestionPolicyHash(protocol))),
@@ -133,7 +146,7 @@ const baseRegistrationFixture = (
         return { sessionDate: day, openAt: `${day}T14:30:00.000Z`, closeAt: `${day}T14:32:00.000Z` }
       }),
     },
-    policies: Object.values(JevResearchPolicy).map((policy) => ({
+    policies: retainedJevResearchPolicies.map((policy) => ({
       policy,
       ...registeredRiskFixture(`${policy}:account`, protocol.universe),
       authorityGenerationHash: sha256(`${policy}:generation`),
@@ -223,10 +236,10 @@ const baseRegistrationFixture = (
   }
 }
 
-export const withRegistrationCommitments = (registration: SystemRegistration): SystemRegistration => {
+export const withRegistrationCommitments = <R extends SystemRegistration>(registration: R): R => {
   const derived = {
     ...registration,
-    ...(registration.schemaVersion === 'bayn.system-registration.v4'
+    ...('statisticalPlan' in registration
       ? {
           statisticalPlan: {
             ...registration.statisticalPlan,
@@ -288,7 +301,7 @@ export const registrationFixture = (
   sessionCount = 20,
   version = JevAcceptanceVersion.Current,
   protocolDocument: unknown = defaultJevProtocolDocument,
-): SystemRegistration => {
+): RetainedRegistration => {
   const protocol =
     version === JevAcceptanceVersion.Current
       ? Result.getOrThrow(decodeJevProtocol(protocolDocument))
@@ -370,7 +383,46 @@ export const registrationFixture = (
   })
 }
 
-export const assessmentFixture = (registration: SystemRegistration = registrationFixture()) => {
+export const nativeRegistrationFixture = (
+  registration: RetainedRegistration,
+  calendarObservation: unknown = calendarFixture(registration),
+) => {
+  if (registration.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected conditional fixture')
+  const marketCalendar = Schema.decodeUnknownSync(MarketCalendarObservationSchema)(calendarObservation)
+  const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  if (candidate === undefined) throw new Error('Expected native candidate')
+  const accountId = 'INCUMBENT_JEV:account'
+  const riskPolicy = { ...candidate.riskPolicy, accountId }
+  const incumbent = {
+    ...candidate,
+    policy: JevResearchPolicy.Incumbent,
+    riskPolicy,
+    riskPolicyHash: testHash(riskPolicy),
+    accountBindingHash: testHash({ schemaVersion: 'bayn.inference-cost-account.v1', accountId }),
+    authorityGenerationHash: sha256('INCUMBENT_JEV:generation'),
+    sourceRevision: 'c'.repeat(40),
+    imageDigest: sha256('incumbent image'),
+  }
+  return withRegistrationCommitments({
+    ...registration,
+    schemaVersion: 'bayn.system-registration.v5',
+    policies: [...registration.policies.filter((policy) => policy.policy !== JevResearchPolicy.Momentum), incumbent],
+    policyHash: Result.getOrThrow(systemQualificationPolicyHash(JevAcceptanceVersion.Current, 'NATIVE')),
+    calendar: {
+      ...registration.calendar,
+      operatingHours: 'NATIVE',
+      sourceHash: testHash(marketCalendar),
+      marketCalendar,
+      sessions: marketCalendar.sessions.map(({ date, openAt, closeAt }) => ({ sessionDate: date, openAt, closeAt })),
+    },
+    obligations: {
+      ...registration.obligations,
+      configuration: { ...registration.obligations.configuration, entryMarkets: [MarketKind.Equity] },
+    },
+  })
+}
+
+const buildAssessmentFixture = <Registration extends SystemRegistration>(registration: Registration) => {
   const asOf = new Date(
     Math.max(
       Date.parse('2026-12-01T00:00:00.000Z'),
@@ -387,7 +439,7 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
   source(registration.latencyStressProtocolHash)
   source(registration.latencyReplayExecutionModelHash)
   for (const plan of registration.costAllocationPlans) source(plan.basisSourceHash)
-  if (registration.schemaVersion === 'bayn.system-registration.v4')
+  if ('statisticalPlan' in registration)
     for (const support of registration.statisticalPlan.supports) source(support.sourceHash)
   for (const hash of [
     registration.obligations.decisionScheduleHash,
@@ -552,43 +604,51 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
       scheduleEvidenceHash: source(sha256(`${kind}:schedule`)),
     })),
   ]
-  const input: typeof SystemAssessmentInputSchema.Type = {
-    schemaVersion: 'bayn.system-assessment-input.v1',
-    registration,
-    asOf,
-    registrationReceiptHash: registrationHash,
-    sourceCutHash: source(sha256('synthetic captured source cut')),
-    calendarEvidence: calendarFixture(registration),
-    entryTimingSources: [],
-    latencyStressSources: [],
-    policies,
-    reliability: {
+  const input: Omit<typeof SystemAssessmentInputSchema.Type, 'registration'> & { readonly registration: Registration } =
+    {
+      schemaVersion: 'bayn.system-assessment-input.v1',
+      registration,
       asOf,
-      schedule,
-      completions: schedule.map((o) => ({
-        obligationId: o.obligationId,
-        outcome: ObligationOutcome.Correct,
-        completedAt: o.deadlineAt,
-        evidenceHash: source(sha256(`${o.class}:completion`)),
-      })),
-    },
-    obligationCoverageHash: source(sha256('complete obligation audit')),
-    realism: { expectedDecisionIds: [], expectedFillIds: [], decisions: [], fills: [], unsupportedAssumptions: [] },
-    safety: {
-      coverage: 'COMPLETE',
-      sourceHash: source(sha256('safety audit')),
-      registrationHash,
-      asOf,
-      violations: [],
-    },
-  }
+      registrationReceiptHash: registrationHash,
+      sourceCutHash: source(sha256('synthetic captured source cut')),
+      calendarEvidence: calendarFixture(registration),
+      entryTimingSources: [],
+      latencyStressSources: [],
+      policies,
+      reliability: {
+        asOf,
+        schedule,
+        completions: schedule.map((o) => ({
+          obligationId: o.obligationId,
+          outcome: ObligationOutcome.Correct,
+          completedAt: o.deadlineAt,
+          evidenceHash: source(sha256(`${o.class}:completion`)),
+        })),
+      },
+      obligationCoverageHash: source(sha256('complete obligation audit')),
+      realism: { expectedDecisionIds: [], expectedFillIds: [], decisions: [], fills: [], unsupportedAssumptions: [] },
+      safety: {
+        coverage: 'COMPLETE',
+        sourceHash: source(sha256('safety audit')),
+        registrationHash,
+        asOf,
+        violations: [],
+      },
+    }
   return { input, verifiedSources, source }
 }
 
-export const supportedAssessmentFixture = (
-  sessionCount = 20,
-  registration = registrationFixture(undefined, sessionCount),
-) => {
+export function assessmentFixture(
+  registration?: RetainedRegistration,
+): ReturnType<typeof buildAssessmentFixture<RetainedRegistration>>
+export function assessmentFixture<Registration extends SystemRegistration>(
+  registration: Registration,
+): ReturnType<typeof buildAssessmentFixture<Registration>>
+export function assessmentFixture(registration: SystemRegistration = registrationFixture()) {
+  return buildAssessmentFixture(registration)
+}
+
+const buildSupportedAssessmentFixture = <Registration extends SystemRegistration>(registration: Registration) => {
   const fixture = assessmentFixture(registration)
   const decisions: (typeof DecisionRealismSchema.Type)[] = []
   const fills: (typeof FillRealismSchema.Type)[] = []
@@ -662,15 +722,30 @@ export const supportedAssessmentFixture = (
     },
   }
 }
+export function supportedAssessmentFixture(
+  sessionCount?: number,
+  registration?: RetainedRegistration,
+): ReturnType<typeof buildSupportedAssessmentFixture<RetainedRegistration>>
+export function supportedAssessmentFixture<Registration extends SystemRegistration>(
+  sessionCount: number,
+  registration: Registration,
+): ReturnType<typeof buildSupportedAssessmentFixture<Registration>>
+export function supportedAssessmentFixture(
+  sessionCount = 20,
+  registration: SystemRegistration = registrationFixture(undefined, sessionCount),
+) {
+  return buildSupportedAssessmentFixture(registration)
+}
 /** A controlled deterministic process, declared before observations; not a model for market returns. */
-export const knownPayoffAssessmentFixture = () => {
+export const knownPayoffAssessmentFixture = (operatingHours: 'REGULAR_SESSION' | 'NATIVE' = 'REGULAR_SESSION') => {
   const base = registrationFixture(undefined, 1)
   if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
+  const selected = operatingHours === 'NATIVE' ? nativeRegistrationFixture(base) : base
   const registration = withRegistrationCommitments({
-    ...base,
+    ...selected,
     statisticalPlan: {
-      ...base.statisticalPlan,
-      supports: base.policies.map((policy) => ({
+      ...selected.statisticalPlan,
+      supports: selected.policies.map((policy) => ({
         policy: policy.policy,
         lowerMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',
         upperMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',

@@ -1,6 +1,6 @@
 # Bayn Valkey
 
-Dedicated Valkey 9.1 primary and replica, managed by chideat/valkey-operator v2.1.0.
+Dedicated Valkey 9.2.0 primary and replica, managed by chideat/valkey-operator v2.1.1.
 The `bayn-valkey` Application tracks reviewed `main` independently of Bayn's Kargo
 release. Valkey is a disposable cache; PostgreSQL, TigerBeetle and Kafka retain
 their existing authority.
@@ -30,6 +30,13 @@ the polling owner must publish a fresh cut before readers can proceed. A replica
 alone does not guarantee automatic HA across two hosts.
 Automatic failover requires independent voters; this deployment does not place
 workloads on the reserved compute host or change its taints.
+
+For a planned operator-managed role transfer, follow the verified preference and coordinated `FAILOVER` sequence in
+the [NVMe handoff runbook](../../../docs/bayn/unified-nvme-migration.md). The operator reads the preferred primary from
+ConfigMap `rf-ha-repl-bayn-valkey`, key `master`; changing the native role alone is reverted. Verify the current
+primary, caught-up replica, ConfigMap identity and read/write Service endpoint before a transfer. After recovery,
+require two healthy copies, the existing publication-sized acceptance checks and a fresh canonical broker poll.
+Promoting one surviving copy does not satisfy Bayn's unchanged `WAIT 1` publication requirement by itself.
 
 ## Connection and access
 
@@ -68,7 +75,8 @@ next full Application sync. If startup exceeds the five-minute Job deadline,
 let the operator recover, then run a full reviewed sync of `bayn-valkey` to
 rerun acceptance. Do not use a `--resource` selective sync for this check:
 [Argo hooks do not run during selective sync](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/#hook-lifecycle-and-cleanup).
-Successful Job history stays available until the next attempt.
+Finished Jobs are eligible for cleanup after one hour, or are replaced when the
+next attempt starts. Capture the Job logs before either happens.
 
 After Bayn's image rollout, run its installed `valkey-command.js --broker` from
 both API and execution replicas. The transport check writes and reads a 1 MiB
@@ -119,7 +127,7 @@ this rollout. Verify the old Cluster and old User are absent and Argo is
 Synced/Healthy at each reviewed revision. Do not persist force/replace options
 or change Application automation.
 
-Upstream v2.1.0 can leave a foreground-deletion cycle: generated operator Users
+The operator can leave a foreground-deletion cycle: generated operator Users
 wait for the Cluster/Failover to disappear while those parents wait for their
 Users. If this occurs, wait for all cache Pods and StatefulSets to disappear
 and for operator cleanup finalizers to clear. A separately authorized metadata

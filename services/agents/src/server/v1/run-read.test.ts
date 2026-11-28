@@ -113,7 +113,7 @@ describe('AgentRun cancellation and retained results', () => {
       spec: { runtime: { type: 'job' }, secrets: ['agents-artifacts'] },
     }
     f.setResource(resource)
-    const telemetry = createRunnerTelemetry({ model: 'gpt-6-astra', effort: 'high', write: () => {} }).snapshot()
+    const telemetry = createRunnerTelemetry({ model: 'gpt-6.2-sol', effort: 'high', write: () => {} }).snapshot()
     const originalGet = f.kube.get
     f.kube.get = vi.fn(async (...args: Parameters<KubernetesClient['get']>) =>
       args[0] === 'secret'

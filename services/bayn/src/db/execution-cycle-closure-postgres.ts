@@ -1,11 +1,12 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Effect, Layer, Option, Result, Schema } from 'effect'
 
-import { executionCloseRecoveryExpiry } from '../market-hours'
+import { executionCloseRecoveryExpiry, isContinuousMarket, regularEquitySessions } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { currentUtcInstant } from '../time'
 import { verifyJevPortfolioSources } from './jev-position-postgres'
+import { deriveProtectionCloseBasis, withCurrentProtectionReleaseProof } from './protection-release'
 import {
   ExecutionCycleClosureStore,
   ExecutionCycleClosureStoreError,
@@ -129,6 +130,29 @@ const makeStore = Effect.gen(function* () {
         return
       }
       const binding = closure.document.bindings
+      const planner = closure.document.plannerInput
+      const release = planner?.protectionClose
+      if (planner !== undefined && release !== undefined) {
+        const current = yield* withCurrentProtectionReleaseProof(
+          { proofId: release.proofId, accountId: binding.accountId, cycleId: closure.cycleId },
+          planner.maximumInputAgeMs,
+          (evidence, trigger) => {
+            const proven = deriveProtectionCloseBasis(release.proofId, evidence)
+            return Effect.succeed(
+              Result.isSuccess(proven) &&
+                evidence.entryDecisionHash === closure.entryDecisionHash &&
+                canonicalJsonEqualV1(proven.success, release) &&
+                canonicalJsonEqualV1(trigger, target),
+            )
+          },
+        ).pipe(Effect.provideService(PgClient.PgClient, sql), Effect.provideService(WriterFence, fence))
+        if (original !== undefined || current !== true)
+          return yield* storeError(
+            'bind',
+            'invariant',
+            'Jev closure requires the current proof of its own cancellation',
+          )
+      }
       yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
         yield* sql`
       SELECT EXISTS (
@@ -145,15 +169,27 @@ const makeStore = Effect.gen(function* () {
         const prior = closure.document.replanGenerationHash
         const latest = yield* readLatestReplanByCycleId(sql, closure.cycleId)
         const predecessor = Option.getOrElse(latest, () => original)
+        const originalSession = original.document.executionSession
+        const regularCloseAt =
+          originalSession === undefined || isContinuousMarket(originalSession.calendar)
+            ? null
+            : (regularEquitySessions(originalSession.calendar).find(
+                ({ date }) => date === originalSession.executionSession.date,
+              )?.closeAt ?? null)
         const [recovery] = yield* Schema.decodeUnknownEffect(
           Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
         )(
-          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
+          yield* sql`
+            SELECT EXISTS (
+              SELECT 1 FROM autonomous_cycles WHERE cycle_id = ${closure.cycleId}
+                AND LEAST(execution_close_at, ${regularCloseAt}::timestamptz) <= ${closure.createdAt}::timestamptz
+            ) AS allowed
+          `,
         )
         const recoveryDeadline =
-          closure.document.executionSession === undefined
+          originalSession === undefined
             ? null
-            : executionCloseRecoveryExpiry(closure.document.executionSession.calendar, closure.createdAt)
+            : executionCloseRecoveryExpiry(originalSession.calendar, closure.createdAt)
         const boundedRecoveryLease =
           recovery.allowed &&
           closure.expiresAt > closure.createdAt &&
@@ -183,6 +219,34 @@ const makeStore = Effect.gen(function* () {
       yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)
     })
   const store: ExecutionCycleClosureStoreShape = {
+    stageProtectionClose: (closure) =>
+      fence
+        .transaction(
+          Effect.gen(function* () {
+            const release = closure.document.plannerInput?.protectionClose
+            if (release === undefined || closure.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v5')
+              return false
+            if (Option.isSome(yield* readByCycleId(sql, closure.cycleId))) return false
+            yield* verifyExit(closure)
+            yield* sql`
+            INSERT INTO protection_release_close_plans(proof_id, cycle_id, document)
+            VALUES (${release.proofId}, ${closure.cycleId}, ${sql.json(closure)})
+            ON CONFLICT (proof_id) DO NOTHING
+          `
+            const [row] = yield* sql`SELECT document = ${sql.json(closure)} AS matches
+            FROM protection_release_close_plans WHERE proof_id = ${release.proofId}`.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ matches: Schema.Boolean })))),
+            )
+            return row?.matches === true
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause instanceof ExecutionCycleClosureStoreError
+              ? cause
+              : storeError('bind', 'query', 'protection close plan staging failed', cause),
+          ),
+        ),
     read: (cycleId) => readByCycleId(sql, cycleId),
     readLatestReplan: (cycleId) => readLatestReplanByCycleId(sql, cycleId),
     containsIntent: (intentId) =>
@@ -286,6 +350,18 @@ const makeStore = Effect.gen(function* () {
               return existing.value
             }
             yield* verifyExit(closure)
+            const protection = closure.document.plannerInput?.protectionClose
+            if (protection !== undefined) {
+              yield* sql`SELECT EXISTS(
+                SELECT 1 FROM protection_release_close_plans AS plan
+                WHERE plan.proof_id = ${protection.proofId} AND plan.document = ${sql.json(closure)}
+                  AND system_evidence_source_committed(plan.xmin)
+              ) AS matches`.pipe(
+                Effect.flatMap(
+                  Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })])),
+                ),
+              )
+            }
             yield* sql`
             INSERT INTO autonomous_cycle_paper_closures (
               cycle_id,

@@ -11,6 +11,11 @@ on:
         description: JSON array produced by the central PR impact router
         required: true
         type: string
+    secrets:
+      TS_OAUTH_CLIENT_ID:
+        required: false
+      TS_OAUTH_SECRET:
+        required: false
   push:
     branches:
       - main
@@ -72,7 +77,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          # PRs get the changed files from the central router; only a push diffs local history.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -91,7 +97,9 @@ jobs:
           set -euo pipefail
           changed_files="${RUNNER_TEMP}/agents-changed-files.txt"
 
-          if [ -n "${CHANGED_FILES_JSON}" ]; then
+          if [ "${EVENT_NAME}" = merge_group ]; then
+            git ls-files > "${changed_files}"
+          elif [ -n "${CHANGED_FILES_JSON}" ]; then
             jq -e 'type == "array" and all(.[]; type == "string")' <<< "${CHANGED_FILES_JSON}" >/dev/null
             jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${changed_files}"
           elif [ "${EVENT_NAME}" = workflow_dispatch ]; then
@@ -116,6 +124,25 @@ jobs:
             --github-output "${GITHUB_OUTPUT}" \
             < "${CHANGED_FILES}" \
             | tee "${RUNNER_TEMP}/agents-ci-plan.txt"
+
+      - name: Require the complete queued Agents plan
+        if: github.event_name == 'merge_group'
+        shell: bash
+        env:
+          RUN_UNIT: ${{ steps.classify.outputs.run_unit }}
+          RUN_STATIC: ${{ steps.classify.outputs.run_static }}
+          RUN_INTEGRATION: ${{ steps.classify.outputs.run_integration }}
+          BUILD_LOCAL: ${{ steps.classify.outputs.NEEDS_LOCAL_AGENTS_IMAGE }}
+          VERIFY_CLOSURE: ${{ steps.classify.outputs.verify_dependency_closure }}
+          IMAGE_TARGETS: ${{ steps.classify.outputs.image_targets }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_UNIT}" != true || "${RUN_STATIC}" != true || "${RUN_INTEGRATION}" != true ||
+                "${BUILD_LOCAL}" != true || "${VERIFY_CLOSURE}" != true ]]; then
+            echo 'Queued Agents validation requires units, charts, local smoke, and dependency verification.' >&2
+            exit 1
+          fi
+          jq -e 'sort == ["agents-shell", "control-plane", "controller", "runner"]' <<< "${IMAGE_TARGETS}" >/dev/null
 
       - name: Summarize Agents plan
         env:
@@ -196,7 +223,9 @@ jobs:
             packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
             packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
+            packages/scripts/src/agents/__tests__/curate-ontology-deltas.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
+            packages/scripts/src/agents/__tests__/workspace-cache.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
       - name: Run Agents service typecheck and unit tests
@@ -274,18 +303,9 @@ jobs:
 
   integration:
     name: Agents Kind smoke (${{ needs.plan.outputs.tier }})
-    needs:
-      - plan
-      - unit
-      - static
-    if: >-
-      ${{
-        always() &&
-        needs.plan.result == 'success' &&
-        needs.plan.outputs.run_integration == 'true' &&
-        (needs.unit.result == 'success' || needs.unit.result == 'skipped') &&
-        (needs.static.result == 'success' || needs.static.result == 'skipped')
-      }}
+    # The smoke job owns its fixtures. ci-pr still requires the entire called workflow to pass.
+    needs: plan
+    if: ${{ needs.plan.outputs.run_integration == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -298,6 +318,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Connect to the tailnet
+        if: github.event_name != 'merge_group'
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -306,6 +327,7 @@ jobs:
           ping: registry.ide-newton.ts.net
 
       - name: Verify internal image and cache access
+        if: github.event_name != 'merge_group'
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
@@ -348,8 +370,8 @@ jobs:
           install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
-            substituters = https://attic.ide-newton.ts.net/lab https://cache.nixos.org/
-            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            substituters = ${{ github.event_name != 'merge_group' && 'https://attic.ide-newton.ts.net/lab ' || '' }}https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ github.event_name != 'merge_group' && vars.ATTIC_PUBLIC_KEY || '' }}
             fallback = true
 
       - name: Verify selected Agents dependency closure without trusting a warm cache
@@ -357,6 +379,7 @@ jobs:
         run: bash nix/check-bun-dependency-closure.sh agents-controller x86_64-linux
 
       - name: Resolve published Agents images from GitOps values
+        if: github.event_name != 'merge_group'
         id: published_agents_images
         run: |
           set -euo pipefail
@@ -370,6 +393,7 @@ jobs:
             --output "${GITHUB_OUTPUT}"
 
       - name: Select published defaults for the smoke test
+        if: github.event_name != 'merge_group'
         env:
           CONTROL_PLANE_IMAGE_REPOSITORY: ${{ steps.published_agents_images.outputs.control_plane_image_repository }}
           CONTROL_PLANE_IMAGE_TAG: ${{ steps.published_agents_images.outputs.control_plane_image_tag }}
@@ -423,14 +447,16 @@ jobs:
         run: scripts/agents/ensure-kind-network.sh
 
       - name: Install pinned Kind binary
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           kind_bin="${RUNNER_TOOL_CACHE}/kind/v0.31.0/amd64/kind/bin"
           mkdir -p "${kind_bin}"
-          curl --fail --location --retry 3 \
-            --output "${RUNNER_TEMP}/kind-linux-amd64" \
-            https://github.com/kubernetes-sigs/kind/releases/download/v0.31.0/kind-linux-amd64
-          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum --check
+          # The anonymous release URL can return 403 on hosted runners.
+          gh release download v0.31.0 --repo kubernetes-sigs/kind \
+            --pattern kind-linux-amd64 --output "${RUNNER_TEMP}/kind-linux-amd64"
+          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum -c
           # kind-action reuses this checksum-verified executable.
           install -m 755 "${RUNNER_TEMP}/kind-linux-amd64" "${kind_bin}/kind"
 
@@ -448,6 +474,7 @@ jobs:
           ignore_failed_clean: 'true'
 
       - name: Configure and verify Kind tailnet access
+        if: github.event_name != 'merge_group'
         run: |
           set -euo pipefail
           # Containerd pulls images inside the node, which does not inherit the host's per-link MagicDNS.
@@ -602,7 +629,7 @@ jobs:
           echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}" >> "${GITHUB_ENV}"
 
       - name: Preload published Agents runner
-        if: ${{ !contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
+        if: ${{ github.event_name != 'merge_group' && !contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
         timeout-minutes: 15
         run: |
           set -euo pipefail

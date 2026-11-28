@@ -3,14 +3,15 @@ kind: Deployment
 metadata:
   name: bayn-broker-feed
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    # Activity ingestion requires the owner established by the activation hook in wave 0.
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app.kubernetes.io/name: bayn-broker-feed
     app.kubernetes.io/part-of: bayn
 spec:
   replicas: 1
   revisionHistoryLimit: 2
-  # One verified account socket; reconnect emits a session boundary for gap repair.
+  # One verified process owns trade_updates plus finite-prefix and long-lived Activity SSE connections.
   strategy:
     type: Recreate
   selector:
@@ -68,19 +69,8 @@ spec:
               value: https://paper-api.alpaca.markets
             - name: BAYN_ALPACA_PROXY_URL
               value: http://bayn-egress-proxy:3128
-            - name: BAYN_BROKER_NOTIFICATIONS_TOPIC
-              value: bayn.broker-notifications.v1
-            - name: KAFKA_BOOTSTRAP
-              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
-            - name: KAFKA_SECURITY_PROTOCOL
-              value: SASL_PLAINTEXT
-            - name: KAFKA_SASL_USER
-              value: bayn-market-data
-            - name: KAFKA_SASL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-market-data
-                  key: password
+            - name: RESTATE_INGRESS_URL
+              value: http://restate.restate.svc.cluster.local:8080
           resources:
             requests:
               cpu: 100m

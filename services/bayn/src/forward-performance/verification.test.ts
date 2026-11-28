@@ -1,11 +1,15 @@
 import { EventEmitter } from 'node:events'
 import type { Worker } from 'node:worker_threads'
 import { expect, test } from 'bun:test'
-import { Cause, Effect, Exit, Fiber, Result } from 'effect'
+import { Cause, Effect, Exit, Fiber, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { verifyReportJob } from '../forward-performance-verification-worker'
 import { executionEvidenceFromRows, indexExecutionEvidence, verifyPerformanceDecisions } from './postgres/projection'
+import type { CycleDecisionJsonRow } from './postgres/model'
+import { CycleState } from '../cycle/model'
+import type { AlphaDecisionJsonRow } from './postgres/alpha-decisions'
+import { IsoDateSchema } from '../schemas'
 import { retainedV38ExecutionFixture } from '../jev/retained-v38-execution.test-support'
 import {
   makeIntradayPerformanceFixture,
@@ -27,7 +31,7 @@ const row = (ordinal = 0) => ({
   cycle_id: 'a'.repeat(64),
   decision_hash: ordinal.toString(16).padStart(64, '0'),
   created_at: new Date('2026-11-15T00:00:00.000Z'),
-  document: null,
+  document_json: 'null',
 })
 
 class FixtureWorker extends EventEmitter {
@@ -140,6 +144,45 @@ test('replaces each worker index when a new report cut is supplied', async () =>
       }),
     ),
   )
+})
+
+test('native alpha worker jobs preserve rejected decision denominators without an execution index', async () => {
+  const fixture = fixtures()
+  const inputs: (typeof AlphaDecisionJsonRow.Type)[] = [0, 1, 2].map((ordinal) => ({
+    ...row(ordinal),
+    account_id: 'alpha-fixture',
+    authority_generation_hash: 'b'.repeat(64),
+    qualification_run_id: 'c'.repeat(64),
+    strategy_protocol_hash: 'd'.repeat(64),
+    risk_policy_hash: 'e'.repeat(64),
+    session_date: Schema.decodeUnknownSync(IsoDateSchema)('2026-11-15'),
+    cycle_state: CycleState.Active,
+    terminal_at: null,
+    generation_activated_at: new Date('2026-11-14T00:00:00.000Z'),
+    reconciled_at: new Date('2026-11-15T01:00:00.000Z'),
+    execution_evidence_in_scope: false,
+    qualification_build: null,
+    activation_build: null,
+  }))
+  const projections = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const verifier = yield* makeReportVerification(fixture.spawn)
+        return yield* Effect.forEach(inputs, (input) => verifier.alphaDecision(input), {
+          concurrency: reportVerificationConcurrency,
+        })
+      }),
+    ),
+  )
+  expect(projections).toEqual(
+    inputs.map((input) => ({ alphaDecisions: [], unverifiedAlphaDecisionHashes: [input.decision_hash] })),
+  )
+  expect(
+    fixture.workers
+      .flatMap((worker) => worker.received)
+      .every((job) => job.input.task === ReportVerificationTask.AlphaDecision && !('index' in job.input)),
+  ).toBe(true)
+  expect(fixture.workers.every((worker) => worker.terminations === 1)).toBe(true)
 })
 
 test.each(['job identity', 'task identity'] as const)(
@@ -275,7 +318,16 @@ test('native worker preserves genuine retained execution projections and rejects
     document: JSON.parse(bytes.toString('utf8')),
   }
   const corrupt = { ...valid, document: { ...valid.document, contentHash: 'f'.repeat(64) } }
-  const inputs = Array.from({ length: reportVerificationConcurrency + 2 }, (_, n) => (n % 2 === 0 ? valid : corrupt))
+  const objects = [valid, corrupt, { ...valid, document: null }]
+  const transported: (typeof CycleDecisionJsonRow.Type)[] = objects.map(({ document, ...metadata }) => ({
+    ...metadata,
+    document_json: JSON.stringify(document),
+  }))
+  transported.push({ ...transported[0]!, document_json: '{' }, { ...transported[0]!, document_json: null })
+  const inputs = Array.from(
+    { length: reportVerificationConcurrency + 2 },
+    (_, n) => transported[n % transported.length]!,
+  )
   const actual = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -284,13 +336,17 @@ test('native worker preserves genuine retained execution projections and rejects
       }),
     ),
   )
-  const expected = [valid, corrupt].map((input) => {
+  const expected = objects.map((input) => {
     const verified = verifyPerformanceDecisions([input])
     return {
       executionEvidence: executionEvidenceFromRows(verified.verifiedRows, index),
       unverifiedDecisionHashes: verified.unverifiedDecisionHashes,
     }
   })
+  expected.push(
+    { executionEvidence: [], unverifiedDecisionHashes: [valid.decision_hash] },
+    { executionEvidence: [], unverifiedDecisionHashes: [valid.decision_hash] },
+  )
   expect(actual).toEqual(inputs.map((_, n) => expected[n % expected.length]))
   expect(actual[0]?.executionEvidence.length).toBeGreaterThan(0)
   expect(actual[1]?.unverifiedDecisionHashes).toEqual([valid.decision_hash])

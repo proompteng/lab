@@ -1,4 +1,5 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import childProcess, { type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { once } from 'node:events'
 
 import type { ClientInfo, InitializeCapabilities, RequestId } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
@@ -13,7 +14,6 @@ import type {
   ChatgptAuthTokensRefreshResponse,
   CommandExecutionOutputDeltaNotification,
   ContextCompactedNotification,
-  CurrentTimeReadResponse,
   DynamicToolCallParams,
   DynamicToolCallResponse,
   DynamicToolSpec,
@@ -243,7 +243,14 @@ const defaultInitializeCapabilities: InitializeCapabilities = {
   requestAttestation: false,
 }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
-const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
+const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 60_000
+
+export class CodexAppServerBootstrapTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`codex app-server failed to initialize within ${timeoutMs}ms`)
+    this.name = 'CodexAppServerBootstrapTimeoutError'
+  }
+}
 
 const declineAdditionalPermissions = (): PermissionsRequestApprovalResponse => ({
   permissions: {},
@@ -487,7 +494,6 @@ export class CodexAppServerClient {
   private rejectReady: ((reason: unknown) => void) | null = null
   private readySettled = false
   private bootstrapTimeout: ReturnType<typeof setTimeout> | null = null
-  private bootstrapTimeoutMs: number
   private logger: CodexAppServerOptions['logger']
   private onNotification: CodexAppServerOptions['onNotification']
   private sandbox: SandboxMode
@@ -511,7 +517,7 @@ export class CodexAppServerClient {
     cwd,
     sandbox = 'danger-full-access',
     approval = 'never',
-    defaultModel = 'gpt-6-astra',
+    defaultModel = 'gpt-6.2-sol',
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     experimentalRawEvents = false,
@@ -544,7 +550,6 @@ export class CodexAppServerClient {
     this.onAttestationGenerate = onAttestationGenerate ?? null
     this.onPermissionsRequestApproval = onPermissionsRequestApproval ?? null
     this.onChatgptAuthTokensRefresh = onChatgptAuthTokensRefresh ?? null
-    this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = ['--sandbox', this.sandbox]
     for (const override of cliConfigOverrides) {
@@ -558,7 +563,7 @@ export class CodexAppServerClient {
       args.push('--ask-for-approval', cliApproval)
     }
     args.push('--model', defaultModel, 'app-server')
-    this.child = spawn(binaryPath, args, {
+    this.child = childProcess.spawn(binaryPath, args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -569,9 +574,11 @@ export class CodexAppServerClient {
     })
 
     this.bootstrapTimeout = setTimeout(() => {
-      this.handleFatalError(new Error(`codex app-server failed to initialize within ${this.bootstrapTimeoutMs}ms`))
-    }, this.bootstrapTimeoutMs)
+      this.handleFatalError(new CodexAppServerBootstrapTimeoutError(bootstrapTimeoutMs))
+    }, bootstrapTimeoutMs)
 
+    this.child.on('error', (error) => this.handleFatalError(error))
+    this.child.stdin.on('error', (error) => this.handleFatalError(error))
     this.bootstrap(clientInfo)
       .then(() => this.settleReady())
       .catch((error) => this.handleFatalError(error))
@@ -592,7 +599,25 @@ export class CodexAppServerClient {
       clearTimeout(this.bootstrapTimeout)
       this.bootstrapTimeout = null
     }
-    this.child.kill()
+    if (!this.child.killed) this.child.kill()
+  }
+
+  async stopAndWait(): Promise<void> {
+    const waitForExit = async () => {
+      if (this.child.pid && this.child.exitCode === null && this.child.signalCode === null) {
+        await once(this.child, 'exit', { signal: AbortSignal.timeout(1_000) })
+      }
+    }
+    this.stop()
+    try {
+      await waitForExit()
+    } catch (error) {
+      if (!(error instanceof Error) || error.name !== 'AbortError') throw error
+      this.child.kill('SIGKILL')
+      await waitForExit().catch((cause) => {
+        throw new Error('codex app-server did not exit after SIGKILL', { cause })
+      })
+    }
   }
 
   private settleReady(): void {
@@ -611,19 +636,13 @@ export class CodexAppServerClient {
 
     if (!this.readySettled) {
       this.readySettled = true
-      if (this.bootstrapTimeout) {
-        clearTimeout(this.bootstrapTimeout)
-        this.bootstrapTimeout = null
-      }
       this.rejectReady?.(error)
     }
 
     this.rejectAllPending(error)
     this.failAllStreams(error)
 
-    if (!this.child.killed) {
-      this.child.kill()
-    }
+    this.stop()
   }
 
   async runTurn(
@@ -1019,11 +1038,6 @@ export class CodexAppServerClient {
           break
         case 'mcpServer/elicitation/request':
           result = { action: 'decline', content: null }
-          break
-        case 'currentTime/read':
-          result = {
-            currentTimeAt: Math.floor(Date.now() / 1000),
-          } satisfies CurrentTimeReadResponse
           break
         case 'applyPatchApproval':
           result = { decision: 'denied' }

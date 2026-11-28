@@ -23,7 +23,17 @@ export const durableCycleGenerationBinding = (
   sql: PgClient.PgClient,
   authorityGenerationHash: string | undefined,
 ) => sql`
-  EXISTS (
+  CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM intents AS scoped_intent
+    WHERE scoped_intent.cycle_id = cycle.cycle_id
+      AND scoped_intent.account_id = scope_generation.account_id
+      AND scoped_intent.authority_generation_hash = scope_generation.generation_hash
+  ) THEN true
+  -- A NULL hash cannot match a decision. Avoid building its large JSON subplan.
+  WHEN cycle.decision_hash IS NULL THEN false
+  ELSE EXISTS (
     SELECT 1
     FROM autonomous_cycle_shadow_decisions AS scoped_decision
     WHERE scoped_decision.cycle_id = cycle.cycle_id
@@ -34,14 +44,7 @@ export const durableCycleGenerationBinding = (
       AND scoped_decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
       AND scoped_decision.document #>> '{bindings,authorityGenerationHash}' =
         ${authorityGenerationHash ?? sql`scope_generation.generation_hash`}
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM intents AS scoped_intent
-    WHERE scoped_intent.cycle_id = cycle.cycle_id
-      AND scoped_intent.account_id = scope_generation.account_id
-      AND scoped_intent.authority_generation_hash = scope_generation.generation_hash
-  )
+  ) END
 `
 
 export const generationScope = (

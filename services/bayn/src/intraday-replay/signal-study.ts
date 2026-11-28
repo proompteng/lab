@@ -1,5 +1,5 @@
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
-import { selectSupportedEntryProposal } from '../jev/entry-questions'
+import { evaluateSupportedEntryProposals } from '../jev/entry-questions'
 import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -117,12 +117,24 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       return yield* Result.fail(new SignalStudyFailure({ message: 'The study requires native Jev observations' }))
     const batchResult = batch.batchResult === null ? null : yield* decodeJevStudyBatchResult(source, batch.batchResult)
     const decidedAt = batch.batchResult?.completedAt ?? plan.expiresAt
-    const native =
-      batch.batchResult === null || observation.portfolio.purpose !== JevPurpose.Entry
+    const currentNative =
+      batch.batchResult === null || observation.portfolio.purpose !== JevPurpose.Entry || source._tag === 'RETAINED_V38'
         ? null
-        : source._tag === 'RETAINED_V38'
-          ? selectRetainedJevStudyEntry(source, batch.batchResult, decidedAt)
-          : decideJevEntry({ ...batch, decidedAt })
+        : decideJevEntry({ ...batch, decidedAt })
+    const native =
+      source._tag === 'RETAINED_V38' && batch.batchResult !== null && observation.portfolio.purpose === JevPurpose.Entry
+        ? selectRetainedJevStudyEntry(source, batch.batchResult, decidedAt)
+        : currentNative
+    if (currentNative !== null && Result.isSuccess(currentNative)) {
+      const target = currentNative.success
+      const short = target.selectedSymbols.find((symbol) => (target.targetWeights[symbol] ?? 0) < 0)
+      if (short !== undefined)
+        return yield* Result.fail(
+          new SignalStudyFailure({
+            message: `Frozen long-only study cannot evaluate SHORT selection ${short} (target weight ${target.targetWeights[short]}) in batch ${plan.batchId}`,
+          }),
+        )
+    }
     const usable =
       batch.batchResult === null ? null : jevStudyBatchInferencesAt(source, batch.batchResult, Date.parse(decidedAt))
     const inferences = usable !== null && Result.isSuccess(usable) ? usable.success : []
@@ -138,11 +150,12 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       const t = signalStudyDefinition.breakoutThresholds
       const liquid = quote.bidSize > 0 && quote.askSize > 0 && metrics.spreadBps <= t.spreadBps
       const inference = inferences.find((entry) => entry.symbol === candidate.symbol)?.inference
-      const selection =
+      const evaluation =
         inference?.handoff.disposition.status === 'READY' && inference.jev.status === 'RECEIVED'
-          ? yield* selectSupportedEntryProposal({
+          ? yield* evaluateSupportedEntryProposals({
               proposals: inference.handoff.disposition.evaluation.proposals,
               response: inference.jev.inference.response,
+              protocol: observation.protocol,
             })
           : null
       const retained = batchResult?.candidates.find((entry) => entry.symbol === candidate.symbol)
@@ -165,7 +178,10 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        judgmentSupport: selection?.selected?.judgmentSupport ?? null,
+        judgmentSupport:
+          evaluation === null || evaluation.supported.length === 0
+            ? null
+            : Math.max(...evaluation.supported.map((proposal) => proposal.structuralSupport)),
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&

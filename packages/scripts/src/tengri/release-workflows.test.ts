@@ -7,12 +7,13 @@ import YAML from 'yaml'
 
 const repositoryRoot = resolve(import.meta.dir, '../../../..')
 const imagesPath = resolve(repositoryRoot, '.github/workflows/tengri-images.yml')
+const validationPath = resolve(repositoryRoot, '.github/workflows/tengri-validation.yml')
 const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
 describe('Tengri image workflow', () => {
   it('validates Nanoagent once without losing protobuf or guest checks', () => {
-    const validation = readFileSync(imagesPath, 'utf8').match(/validate-nanoagent:\n[\s\S]*?\n  build:/)?.[0]
+    const validation = readFileSync(validationPath, 'utf8').split('\n  validate-nanoagent:\n')[1]
 
     expect(existsSync(resolve(repositoryRoot, '.github/workflows/nanoagent.yaml'))).toBe(false)
     expect(validation).toContain('buf lint ../tengri/proto')
@@ -25,15 +26,19 @@ describe('Tengri image workflow', () => {
     expect(validation).toContain('GOWORK=off go vet ./...')
   })
 
-  it('builds and qualifies each architecture on one builder without publishing PR images', () => {
+  it('builds the two native images independently and verifies the pushed guest artifacts', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      on: Record<string, unknown>
       jobs: Record<
         string,
         {
           if?: string
-          strategy?: { matrix: { include: Array<{ architecture: string; runner: string }> } }
+          uses?: string
+          'runs-on'?: string
+          strategy?: { matrix: { architecture: string[]; image: string[]; include: unknown[] } }
           steps: Array<{
             name?: string
+            if?: string
             uses?: string
             run?: string
             with?: Record<string, unknown>
@@ -42,46 +47,82 @@ describe('Tengri image workflow', () => {
         }
       >
     }
-    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
-    expect(workflow.jobs.build?.if).toBe(releaseOnly)
-    expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
-      { architecture: 'amd64', runner: 'arc-amd64' },
-      { architecture: 'arm64', runner: 'arc-arm64' },
-    ])
+    const mainPublication =
+      "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
+    expect(workflow.on).not.toHaveProperty('merge_group')
+    expect(workflow.jobs.build?.if).toBe(mainPublication)
+    expect(workflow.jobs.publish?.if).toBe(mainPublication)
+    expect(workflow.jobs.build?.['runs-on']).toBe('${{ matrix.runner }}')
+    expect(workflow.jobs.publish?.['runs-on']).toBe('arc-amd64')
+    expect(workflow.jobs.build?.strategy?.matrix).toEqual({
+      architecture: ['amd64', 'arm64'],
+      image: ['nanoagent', 'tengri'],
+      include: [
+        { architecture: 'amd64', runner: 'ubuntu-24.04' },
+        { architecture: 'arm64', runner: 'ubuntu-24.04-arm' },
+        {
+          image: 'tengri',
+          build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\nnanoagent-src=services/nanoagent\n',
+        },
+      ],
+    })
     expect(workflow.jobs['validate-kvm']).toBeUndefined()
-    expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
-    expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
+    expect(workflow.jobs.validate?.if).toBe("github.event.action != 'edited' || github.event.changes.base")
+    expect(workflow.jobs.validate?.uses).toBe('./.github/workflows/tengri-validation.yml')
     const steps = workflow.jobs.build.steps
+    const publisher = workflow.jobs.publish.steps
     expect(steps.filter((step) => step.uses === './.github/actions/setup-buildkit')).toHaveLength(1)
-    const guestIndex = steps.findIndex((step) => step.name === 'Build nanoagent image')
-    const controllerIndex = steps.findIndex((step) => step.name === 'Build tengri image')
-    expect(guestIndex).toBeGreaterThanOrEqual(0)
-    expect(controllerIndex).toBeGreaterThan(guestIndex)
-    for (const [name, image] of [
-      ['tengri', 'TENGRI_IMAGE'],
-      ['nanoagent', 'NANOAGENT_IMAGE'],
-    ]) {
-      const build = steps.find((step) => step.name === `Build ${name} image`)
-      expect(build?.with?.context).toBe(`services/${name}`)
-      expect(build?.with?.push).toBe(true)
-      expect(build?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
-      const cache = 'type=registry,ref=${{ env.' + image + ' }}:cache-${{ matrix.architecture }}'
-      expect(build?.with?.['cache-from']).toBe(cache)
-      expect(build?.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
-      expect(build?.['continue-on-error']).not.toBe(true)
+    const build = steps.find((step) => step.uses === 'docker/build-push-action@v6')
+    const upload = steps.find((step) => step.uses === 'actions/upload-artifact@v4')
+    const importImages = publisher.find((step) => step.name === 'Import native images into the private registry')
+    const pairedBoot = publisher.find((step) => step.name === 'Verify paired boot artifact checksums')
+    const sign = publisher.find((step) => step.name === 'Publish, verify, and sign multi-architecture images')
+    if (!build || !upload || !importImages || !pairedBoot || !sign) {
+      throw new Error('Native image handoff or publication step is missing')
     }
-    const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
-    expect(pairedBoot?.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest"')
-    expect(pairedBoot?.run).toContain('sha256sum --check SHA256SUMS')
+    expect(build.with?.context).toBe('services/${{ matrix.image }}')
+    expect(build.with?.outputs).toBe(
+      'type=oci,dest=${{ runner.temp }}/${{ matrix.image }}-${{ matrix.architecture }}.tar',
+    )
+    expect(build.with?.push).toBeUndefined()
+    expect(build.with?.['cache-to']).toBeUndefined()
+    expect(build.with?.sbom).toBe(true)
+    expect(build.with?.provenance).toBe('mode=max')
+    expect(build.with?.['build-contexts']).toBe('${{ matrix.build_contexts }}')
+    expect(build.with?.['build-args']).toContain(
+      "matrix.image == 'tengri' && format('SOURCE_REVISION={0}', github.sha)",
+    )
+    expect(build['continue-on-error']).not.toBe(true)
+    expect(upload.with?.['if-no-files-found']).toBe('error')
+    expect(upload.with?.['compression-level']).toBe(0)
+    expect(publisher.indexOf(pairedBoot)).toBeGreaterThan(publisher.indexOf(importImages))
+    expect(publisher.indexOf(sign)).toBeGreaterThan(publisher.indexOf(pairedBoot))
+    expect(pairedBoot.run).toContain('crane export --platform "linux/$architecture" "$guest" - | tar -xf -')
+    expect(pairedBoot.run).toContain('sha256sum --check SHA256SUMS')
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
-    expect(ofz.jobs['build-ofz'].if).toBe(releaseOnly)
+    expect(ofz.on).toHaveProperty('workflow_call')
+    expect(ofz.on).not.toHaveProperty('merge_group')
+    expect(ofz.jobs['build-ofz'].if).toBe(mainPublication)
     expect(ofz.jobs['build-ofz'].needs).toBe('validate')
     expect(ofz.jobs.validate.if).toBeUndefined()
+    const ofzChecks = ofz.jobs.validate.steps.map((step: { run?: string }) => step.run ?? '').join('\n')
+    expect(ofzChecks).not.toMatch(/bash services\/ofz\/test-control\.sh control\b/)
+    expect(ofzChecks.match(/bash services\/tengri\/test-database-failover\.sh\b/g)).toHaveLength(1)
+    const promotion = readFileSync(resolve(repositoryRoot, 'services/tengri/test-database-failover.sh'), 'utf8')
+    expect(promotion).toContain('ofz/test-control.sh" failover')
+    const control = readFileSync(resolve(repositoryRoot, 'services/ofz/test-control.sh'), 'utf8')
+    expect(control).toMatch(
+      /if \[\[ "\$fixture_mode" == failover \]\]; then\s+cargo test --locked --lib control_integration/,
+    )
+    expect(control).toContain(
+      'runtime_state_test::physical_database_promotion_preserves_authority_and_consumed_capabilities',
+    )
     const products = YAML.parse(
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )
+    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
       expect(products.jobs[`build-${service}`].if).toBe(
         service === 'app'
@@ -105,16 +146,12 @@ describe('Tengri image workflow', () => {
 
     expect(YAML.parse(source).name).toBe('Tengri images')
     expect(source).not.toContain('tengri-release.yml')
-    expect(source).toContain('Build tengri image')
-    expect(source).toContain('Build nanoagent image')
-    expect(source).toContain('architecture: amd64')
-    expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
     expect(source).toContain("--format '{{json .Manifest}}'")
     expect(source).toContain("jq -er '.digest'")
-    expect(source).toContain('org.opencontainers.image.created=${SOURCE_TIMESTAMP}')
-    expect(source).toContain('org.opencontainers.image.revision=${SOURCE_SHA}')
-    expect(source).toContain('crane mutate --platform "linux/${architecture}"')
+    expect(source).toContain('org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}')
+    expect(source).toContain('org.opencontainers.image.revision=${{ github.sha }}')
+    expect(source).not.toContain('crane mutate')
     expect(source).toContain('crane config --platform "linux/${architecture}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.source=${SOURCE_URL}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}"')
@@ -125,26 +162,29 @@ describe('Tengri image workflow', () => {
     expect(source).not.toMatch(
       /docker buildx imagetools inspect[\s\\]+--format '\{\{json \.Manifest\}\}'[\s\\]+"\$\{kargo_reference\}"/,
     )
-    expect(source).toContain("if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")
     expect(source).not.toContain(':latest')
     expect(source).not.toContain('latest_digest')
     expect(source).not.toContain('sha256sum "${index_path}"')
     expect(source).not.toContain('release-contract.json')
-    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent'])
+    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate'])
     expect(existsSync(resolve(repositoryRoot, 'argocd/applications/kargo'))).toBe(true)
   })
 
-  it('gates the publisher on full controller and guest validation', () => {
-    const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+  it('runs the full controller and guest validation with read-only permissions', () => {
+    const validation = YAML.parse(readFileSync(validationPath, 'utf8')) as {
+      on: Record<string, unknown>
+      permissions: Record<string, string>
       jobs?: {
         'validate-tengri'?: { steps?: Array<{ run?: string }> }
         'validate-nanoagent'?: { steps?: Array<{ run?: string }> }
-        publish?: { needs?: string[] }
       }
     }
-    const controllerValidation = images.jobs?.['validate-tengri']?.steps?.map((step) => step.run ?? '').join('\n')
-    const guestValidation = images.jobs?.['validate-nanoagent']?.steps?.map((step) => step.run ?? '').join('\n')
+    const controllerValidation = validation.jobs?.['validate-tengri']?.steps?.map((step) => step.run ?? '').join('\n')
+    const guestValidation = validation.jobs?.['validate-nanoagent']?.steps?.map((step) => step.run ?? '').join('\n')
 
+    expect(Object.keys(validation.on)).toEqual(['workflow_call'])
+    expect(validation.permissions).toEqual({ contents: 'read' })
+    expect(Object.keys(validation.jobs ?? {}).sort()).toEqual(['validate-nanoagent', 'validate-tengri'])
     expect(controllerValidation).toContain('cargo fmt --check')
     expect(controllerValidation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(controllerValidation).toContain('cargo test --locked --all-targets')
@@ -152,9 +192,6 @@ describe('Tengri image workflow', () => {
     expect(guestValidation).toContain('GOWORK=off go test -race ./...')
     expect(guestValidation).toContain('GOWORK=off go vet ./...')
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
-    expect(images.jobs?.publish?.needs).toContain('validate-tengri')
-    expect(images.jobs?.publish?.needs).toContain('validate-nanoagent')
-    expect(images.jobs?.publish?.needs).toContain('build')
   })
 
   it('withholds Kargo aliases until both images and their retained indexes succeed', () => {
@@ -330,7 +367,7 @@ describe('Tengri image workflow', () => {
   })
 
   it('validates the controller once without losing Rust, authorization, interoperability, or CRD checks', () => {
-    const validation = readFileSync(imagesPath, 'utf8').match(/validate-tengri:\n[\s\S]*?\n  validate-nanoagent:/)?.[0]
+    const validation = readFileSync(validationPath, 'utf8').split('\n  validate-nanoagent:\n')[0]
 
     expect(existsSync(resolve(repositoryRoot, '.github/workflows/tengri-controller.yaml'))).toBe(false)
     expect(validation).toContain('cargo fmt --check')

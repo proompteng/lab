@@ -3,7 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
-import { Cause, Effect, Exit, Fiber, Result, Schedule, Tracer } from 'effect'
+import { Cause, Effect, Exit, Fiber, Metric, Result, Schedule, Tracer } from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
+import { TestClock } from 'effect/testing'
 
 import { constructObserveShadowDecision as constructObservation, type ExecutionDecisionInput } from './shadow-decision'
 import { decisionConstructionFixture } from './shadow-decision-worker.test-support'
@@ -67,6 +69,29 @@ const constructionTrace = (rejectLifecycle = false) => {
 const lifecycle = (value: 'cold' | 'reused') => ({ 'bayn.decision.worker.lifecycle': value })
 const usingBuilder = <A, E>(use: (builder: DecisionConstructionShape) => Effect.Effect<A, E>, makeWorker = spawn) =>
   Effect.scoped(makeDecisionConstruction(makeWorker).pipe(Effect.flatMap(use)))
+
+test('real decision worker memory reaches parent metrics and clears on scoped termination', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const active = yield* usingBuilder((builder) =>
+        Effect.gen(function* () {
+          const document = yield* builder.execution(input)
+          yield* TestClock.adjust('15 seconds')
+          return { document, metrics: yield* PrometheusMetrics.format() }
+        }),
+      )
+      return { ...active, closed: yield* PrometheusMetrics.format() }
+    }).pipe(Effect.provide(TestClock.layer()), Effect.provideService(Metric.MetricRegistry, new Map())),
+  )
+  expect(result.document).toEqual(expected)
+  expect(result.metrics).toMatch(
+    /bayn_runtime_memory_bytes\{isolate="decision-construction",kind="heap_used"\} [1-9][0-9]*\n/,
+  )
+  expect(result.metrics).toMatch(
+    /bayn_runtime_memory_sample_timestamp_seconds\{isolate="decision-construction"\} [1-9]/,
+  )
+  expect(result.closed).toContain('bayn_runtime_memory_sample_timestamp_seconds{isolate="decision-construction"} 0\n')
+})
 const waitForStart = (signals: Int32Array) =>
   Effect.sync(() => Atomics.load(signals, 0)).pipe(
     Effect.repeat({ until: (value) => value === 1, schedule: Schedule.spaced('1 millis') }),
@@ -103,6 +128,9 @@ test('scoped worker reuse preserves independent documents, hashes and owned vali
             expect(Object.isFrozen(actual.strategyDecision)).toBe(true)
             expect(Result.getOrThrow(decodeCycleDecisionDocument(actual))).toBe(actual)
             expect(worker?.threadId).not.toBe(-1)
+            expect(worker?.listenerCount('message')).toBe(0)
+            expect(worker?.listenerCount('error')).toBe(1)
+            expect(worker?.listenerCount('exit')).toBe(1)
           }
           expect(spawns).toBe(1)
         }),
@@ -111,6 +139,8 @@ test('scoped worker reuse preserves independent documents, hashes and owned vali
   )
   expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('reused'), lifecycle('reused')])
   expect(worker?.threadId).toBe(-1)
+  expect(worker?.listenerCount('error')).toBe(0)
+  expect(worker?.listenerCount('exit')).toBe(0)
 }, 10_000)
 
 test('observation construction preserves its risk rejection across the thread boundary', async () => {

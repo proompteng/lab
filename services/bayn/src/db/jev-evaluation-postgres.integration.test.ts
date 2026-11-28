@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
 import {
@@ -10,7 +11,7 @@ import { EntryInferenceJournal } from '../jev/entry-inference'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, FileSystem, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
@@ -33,6 +34,11 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { inferenceFixture } from '../jev/test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
@@ -43,14 +49,14 @@ import { postgresMigrations } from './postgres-migrations'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevBatchStoreLive, EntryInferenceJournalLive).pipe(
       Layer.provideMerge(JevEvaluationStoreLive),
       Layer.provideMerge(
         PostgresClientLive({
           operationTimeoutMs: 5000,
-          postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
         }),
       ),
       Layer.provideMerge(NodeServices.layer),
@@ -104,26 +110,32 @@ const recorded = Result.getOrThrow(
 )
 
 const admit = TestClock.setTime(Date.parse(request.observedAt)).pipe(
-  Effect.andThen(Effect.flatMap(JevBatchStore, (store) => store.begin(batch, fixture.observation.payload))),
+  Effect.andThen(
+    Effect.flatMap(JevBatchStore, (store) => beginRecordedJevBatch(store, batch, fixture.observation.payload)),
+  ),
   Effect.provide(TestClock.layer()),
 )
 
 describePostgres('PostgreSQL Jev evaluation evidence', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('Jev integration tests require a local _test database')
-    }
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (templateUrl) => {
+      const migrated = makeRuntime(templateUrl)
+      try {
+        await migrated.runPromise(postgresMigrations)
+      } finally {
+        await migrated.dispose()
+      }
+    })
   })
   beforeEach(async () => {
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
         yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
           VALUES (${replayAccountId}, ${'d'.repeat(64)}, ${request.observedAt})`
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
@@ -137,8 +149,15 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
       }),
     )
   })
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
   afterAll(async () => {
-    await runtime?.dispose()
+    await template?.dispose()
   })
 
   test('an expired admission never dispatches or fabricates zero cost for its durable claim', async () => {
@@ -402,7 +421,14 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
                 checkpoint,
                 resultPath,
               ],
-              { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit', killSignal: 'SIGKILL' },
+              {
+                stdin: 'ignore',
+                stdout: 'inherit',
+                stderr: 'inherit',
+                killSignal: 'SIGKILL',
+                env: { BAYN_TEST_POSTGRES_URL: Redacted.make(database.url) },
+                extendEnv: true,
+              },
             )
           const first = yield* spawner.spawn(command(mode))
           while (!(yield* fs.exists(checkpoint))) {

@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bayn ontology knowledge delta",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["bayn.ontology.knowledge-delta.v1"]
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "referencedTables": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^public\\.[a-z][a-z0-9_]{0,62}$"
+      },
+      "maxItems": 24,
+      "uniqueItems": true
+    },
+    "verificationNote": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "\\S",
+      "allOf": [
+        {
+          "pattern": "^(?![\\s\\S]*(?:(?:auto_ontology_|gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]{8,}|-----BEGIN [^\\r\\n]*PRIVATE KEY|[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}))[\\s\\S]*$"
+        }
+      ]
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": ["acronym"],
+                    "title": "Acronym"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9]{0,31}$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "pattern": "\\S",
+                "allOf": [
+                  {
+                    "pattern": "^(?![\\s\\S]*(?:(?:auto_ontology_|gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]{8,}|-----BEGIN [^\\r\\n]*PRIVATE KEY|[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}))[\\s\\S]*$"
+                  }
+                ]
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^https:\\/\\/github\\.com\\/proompteng\\/lab\\/(?:pull\\/[1-9][0-9]*|blob\\/[a-f0-9]{40}\\/[\\w./-]+(?:#L[0-9]+(?:-L[0-9]+)?)?)$",
+                  "maxLength": 300
+                },
+                "minItems": 1,
+                "maxItems": 5
+              }
+            },
+            "required": ["kind", "name", "description", "sources"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": ["rule"],
+                    "title": "Rule"
+                  }
+                ]
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,63}$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "pattern": "\\S",
+                "allOf": [
+                  {
+                    "pattern": "^(?![\\s\\S]*(?:(?:auto_ontology_|gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]{8,}|-----BEGIN [^\\r\\n]*PRIVATE KEY|[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}))[\\s\\S]*$"
+                  }
+                ]
+              },
+              "searchTerm": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^https:\\/\\/github\\.com\\/proompteng\\/lab\\/(?:pull\\/[1-9][0-9]*|blob\\/[a-f0-9]{40}\\/[\\w./-]+(?:#L[0-9]+(?:-L[0-9]+)?)?)$",
+                  "maxLength": 300
+                },
+                "minItems": 1,
+                "maxItems": 5
+              }
+            },
+            "required": ["kind", "key", "description", "searchTerm", "sources"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": ["analysis"],
+                    "title": "Analysis"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "\\S",
+                "allOf": [
+                  {
+                    "pattern": "^(?![\\s\\S]*(?:(?:auto_ontology_|gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]{8,}|-----BEGIN [^\\r\\n]*PRIVATE KEY|[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}))[\\s\\S]*$"
+                  },
+                  {
+                    "pattern": "^Bayn: [A-Za-z0-9][A-Za-z0-9 /()-]*$"
+                  }
+                ]
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "pattern": "\\S",
+                "allOf": [
+                  {
+                    "pattern": "^(?![\\s\\S]*(?:(?:auto_ontology_|gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]{8,}|-----BEGIN [^\\r\\n]*PRIVATE KEY|[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}))[\\s\\S]*$"
+                  }
+                ]
+              },
+              "sql": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 12000,
+                "pattern": "\\S",
+                "allOf": [
+                  {
+                    "pattern": "^(?![\\s\\S]*(?:(?:auto_ontology_|gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]{8,}|-----BEGIN [^\\r\\n]*PRIVATE KEY|[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}))[\\s\\S]*$"
+                  }
+                ]
+              },
+              "referencedTables": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^public\\.[a-z][a-z0-9_]{0,62}$"
+                },
+                "maxItems": 24,
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^https:\\/\\/github\\.com\\/proompteng\\/lab\\/(?:pull\\/[1-9][0-9]*|blob\\/[a-f0-9]{40}\\/[\\w./-]+(?:#L[0-9]+(?:-L[0-9]+)?)?)$",
+                  "maxLength": 300
+                },
+                "minItems": 1,
+                "maxItems": 5
+              }
+            },
+            "required": ["kind", "name", "description", "sql", "referencedTables", "sources"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 25
+    }
+  },
+  "required": ["schemaVersion", "sourceCommit", "referencedTables", "verificationNote", "changes"],
+  "additionalProperties": false
+}

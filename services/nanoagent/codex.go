@@ -29,6 +29,7 @@ const (
 	codexSubscriberLimit      = 8
 	codexApprovalWriteTimeout = 15 * time.Second
 	codexResponseWriteTimeout = 15 * time.Second
+	codexLateReplyWindow      = time.Minute
 )
 
 type codexEvent struct {
@@ -105,6 +106,8 @@ type codexSupervisor struct {
 	binary          string
 	browserMCP      bool
 	cwd             string
+	bootID          string
+	retainedBoot    bool
 	closed          atomic.Bool
 	requestID       atomic.Uint64
 	writePermit     chan struct{}
@@ -112,6 +115,7 @@ type codexSupervisor struct {
 	relayMu         sync.Mutex
 	relayRoot       string
 	operationMu     sync.Mutex
+	operationGates  map[string]*codexOperationGate
 	responseTimeout time.Duration
 
 	mu              sync.Mutex
@@ -143,6 +147,7 @@ func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 		binary:          binary,
 		cwd:             cwd,
 		writePermit:     make(chan struct{}, 1),
+		operationGates:  make(map[string]*codexOperationGate),
 		responseTimeout: codexResponseWriteTimeout,
 		generation:      newCodexProcessGeneration(),
 		workRequests:    make(map[string]struct{}),
@@ -223,7 +228,7 @@ func (supervisor *codexSupervisor) run() {
 
 func (supervisor *codexSupervisor) runProcess() error {
 	arguments := []string{
-		"--model", "gpt-6.1-sol",
+		"--model", "gpt-6.2-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
 		"-c", "features.apps=false",
@@ -373,7 +378,9 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 		alive := op.Generation != "" && supervisor.generation.id == op.Generation && supervisor.generation.failure == nil
 		supervisor.mu.Unlock()
 		terminal := supervisor.terminalStatus(input.Thread, input.Turn, op.Generation)
-		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal})
+		raw, err := json.Marshal(map[string]any{
+			"generationAlive": alive, "state": op.State, "terminalStatus": terminal, "bootEnded": supervisor.operationBootEnded(op),
+		})
 		return codexCallResult{result: raw}, err
 	}
 	if method == "tengri/reconcileOperation" {
@@ -381,17 +388,20 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 			ID     string `json:"operationId"`
 			Thread string `json:"threadId"`
 		}
-		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) || input.Thread == "" {
 			return codexCallResult{}, errors.New("invalid operation identity")
 		}
-		supervisor.operationMu.Lock()
-		defer supervisor.operationMu.Unlock()
+		unlock, err := supervisor.lockOperation(ctx, input.Thread)
+		if err != nil {
+			return codexCallResult{}, err
+		}
+		defer unlock()
 		path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json")
 		op, err := readCodexOperation(path)
 		if err != nil || op.Thread != input.Thread {
 			return codexCallResult{}, errCodexOperationUnknown
 		}
-		if op.State != "completed" {
+		if op.State == "dispatching" {
 			op, err = supervisor.reconcileOperation(ctx, op)
 			if err != nil {
 				return codexCallResult{}, err
@@ -400,10 +410,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 				return codexCallResult{}, errCodexOperationUnknown
 			}
 		}
-		if len(op.Error) != 0 {
-			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(op.Error))
-		}
-		return codexCallResult{result: op.Result}, nil
+		return codexOperationResult(op)
 	}
 	if method == "turn/start" || method == "turn/steer" || method == "turn/interrupt" || method == "tengri/resolveApproval" {
 		return supervisor.operation(ctx, method, params)
@@ -499,9 +506,20 @@ func (supervisor *codexSupervisor) request(
 	waitReady bool,
 	generation *codexProcessGeneration,
 ) (codexCallResult, error) {
+	return supervisor.requestWithLateReply(ctx, method, params, waitReady, generation, nil)
+}
+
+func (supervisor *codexSupervisor) requestWithLateReply(
+	ctx context.Context,
+	method string,
+	params json.RawMessage,
+	waitReady bool,
+	generation *codexProcessGeneration,
+	lateReply func(codexCallResult, error),
+) (codexCallResult, error) {
 	params, err := codexGuestThreadParams(method, params)
 	if err != nil {
-		return codexCallResult{}, err
+		return codexCallResult{}, &codexUnsentRequestError{err}
 	}
 	if waitReady {
 		if generation == nil {
@@ -510,7 +528,7 @@ func (supervisor *codexSupervisor) request(
 			supervisor.mu.Unlock()
 		}
 		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
-			return codexCallResult{}, err
+			return codexCallResult{}, &codexUnsentRequestError{err}
 		}
 	}
 	id := supervisor.requestID.Add(1)
@@ -522,7 +540,7 @@ func (supervisor *codexSupervisor) request(
 	}
 	if waitReady && (supervisor.generation != generation || generation.failure != nil) {
 		supervisor.mu.Unlock()
-		return codexCallResult{}, errors.New("Codex app-server restarted before the request could be sent")
+		return codexCallResult{}, &codexUnsentRequestError{errors.New("Codex app-server restarted before the request could be sent")}
 	}
 	if method == "turn/start" || method == "turn/steer" {
 		supervisor.workRequests[key] = struct{}{}
@@ -533,12 +551,12 @@ func (supervisor *codexSupervisor) request(
 	supervisor.mu.Unlock()
 	if stdin == nil {
 		supervisor.removeUnsentRequest(key)
-		return codexCallResult{}, errors.New("Codex app-server is unavailable")
+		return codexCallResult{}, &codexUnsentRequestError{errors.New("Codex app-server is unavailable")}
 	}
 	message, err := json.Marshal(map[string]any{"id": id, "method": method, "params": json.RawMessage(params)})
 	if err != nil {
 		supervisor.removeUnsentRequest(key)
-		return codexCallResult{}, err
+		return codexCallResult{}, &codexUnsentRequestError{err}
 	}
 	err = supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
 	if err != nil {
@@ -552,21 +570,39 @@ func (supervisor *codexSupervisor) request(
 	}
 	select {
 	case <-ctx.Done():
-		supervisor.removePending(key)
+		if lateReply == nil {
+			supervisor.removePending(key)
+		} else {
+			go func() {
+				timer := time.NewTimer(codexLateReplyWindow)
+				defer timer.Stop()
+				defer supervisor.removePending(key)
+				select {
+				case result := <-response:
+					lateReply(unpackCodexReply(result, generation))
+				case <-timer.C:
+				case <-supervisor.shutdown:
+				}
+			}()
+		}
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
-		if result.localErr != nil {
-			return codexCallResult{}, result.localErr
-		}
-		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
-		}
-		return codexCallResult{
-			result:        result.result,
-			eventSequence: result.eventSequence,
-			generation:    generation,
-		}, nil
+		return unpackCodexReply(result, generation)
 	}
+}
+
+func unpackCodexReply(result codexPendingResult, generation *codexProcessGeneration) (codexCallResult, error) {
+	if result.localErr != nil {
+		return codexCallResult{}, result.localErr
+	}
+	if len(result.err) > 0 && string(result.err) != "null" {
+		return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
+	}
+	return codexCallResult{
+		result:        result.result,
+		eventSequence: result.eventSequence,
+		generation:    generation,
+	}, nil
 }
 
 func (supervisor *codexSupervisor) waitForGeneration(
@@ -1299,6 +1335,10 @@ func (supervisor *codexSupervisor) writeToProcess(
 		return &codexUnsentRequestError{errors.New("Codex app-server is shutting down")}
 	case <-supervisor.writePermit:
 	}
+	if err := ctx.Err(); err != nil {
+		supervisor.writePermit <- struct{}{}
+		return &codexUnsentRequestError{err}
+	}
 
 	written := make(chan error, 1)
 	go func() {
@@ -1620,8 +1660,11 @@ func (supervisor *codexSupervisor) archiveThread(ctx context.Context, params jso
 	if json.Unmarshal(params, &input) != nil || input.ThreadID == "" {
 		return codexCallResult{}, errors.New("threadId is required")
 	}
-	supervisor.operationMu.Lock()
-	defer supervisor.operationMu.Unlock()
+	unlock, err := supervisor.lockOperation(ctx, input.ThreadID)
+	if err != nil {
+		return codexCallResult{}, err
+	}
+	defer unlock()
 	supervisor.mu.Lock()
 	_, active := supervisor.activeTurns[input.ThreadID]
 	supervisor.mu.Unlock()

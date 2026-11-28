@@ -3,8 +3,13 @@ import { Clock, Context, Effect, Schema } from 'effect'
 import type { OperationalError } from '../errors'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
-import { evaluateAdmittedJevBatch, JevBatchStore, type JevBatchAdmission } from './batch-evaluation'
-import type { JevObservation, RestoredJevObservation } from './observation'
+import {
+  evaluateAdmittedJevBatch,
+  JevBatchStore,
+  type ClaimedJevSource,
+  type JevBatchAdmission,
+} from './batch-evaluation'
+import type { RestoredJevObservation } from './observation'
 
 const JobIdentity = {
   jobId: Sha256Schema,
@@ -46,6 +51,20 @@ export interface JevInferenceRecoverySummary {
   readonly nextAttemptAt?: string
 }
 
+export const jevInferenceWorkChannel = 'bayn_jev_inference_work'
+export const maximumWatchedInferenceJobs = 64
+
+export interface JevInferenceController {
+  readonly controllerKey: string
+  readonly epoch: number
+  readonly planHash: string
+  readonly accountId: string
+}
+
+export type JevInferenceWatchResult =
+  | { readonly active: false }
+  | { readonly active: true; readonly pending: readonly string[]; readonly dispatch: readonly string[] }
+
 export class JevInferenceWorkStore extends Context.Service<
   JevInferenceWorkStore,
   {
@@ -55,12 +74,20 @@ export class JevInferenceWorkStore extends Context.Service<
     readonly resume: (
       cycleId: string,
       authorityGenerationHash: string,
-    ) => Effect.Effect<{ readonly batchId: string; readonly source: RestoredJevObservation } | null, OperationalError>
-    readonly claim: (jobId: string) => Effect.Effect<
+    ) => Effect.Effect<
       {
-        readonly job: JevInferenceJob
+        readonly batchId: string
+        readonly loadSource: Effect.Effect<RestoredJevObservation, OperationalError>
+      } | null,
+      OperationalError
+    >
+    readonly claim: (
+      jobId: string,
+      controller?: JevInferenceController,
+    ) => Effect.Effect<
+      {
         readonly admission: JevBatchAdmission
-        readonly observation: JevObservation
+        readonly completionSource: ClaimedJevSource
       } | null,
       OperationalError
     >
@@ -71,22 +98,19 @@ export class JevInferenceWorkStore extends Context.Service<
  * Claiming is a one-way expense boundary. A replay may finish committed evidence,
  * but cannot repeat a provider call whose outcome was lost with the worker.
  */
-export const executeJevInferenceWork = <E = never, R = never>(
-  jobId: string,
-  allowDispatch: Effect.Effect<boolean, E, R> = Effect.succeed(true),
-) =>
+export const executeJevInferenceWork = (jobId: string, controller?: JevInferenceController) =>
   Effect.gen(function* () {
     const work = yield* JevInferenceWorkStore
     const job = yield* work.read(jobId)
     if (job === null) return null
-    const claimed = (yield* allowDispatch) ? yield* work.claim(jobId) : null
+    const claimed = yield* work.claim(jobId, controller)
     const batches = yield* JevBatchStore
     const evidence =
       claimed === null
         ? yield* batches.finish(job.batchId)
         : yield* evaluateAdmittedJevBatch(
             claimed.admission,
-            claimed.observation,
+            claimed.completionSource,
             job.admissionDeadlineAt === undefined ? {} : { admissionDeadlineAt: job.admissionDeadlineAt },
           )
     const identity = {

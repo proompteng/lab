@@ -42,7 +42,7 @@ if [[ "$fixture_mode" == failover ]]; then
   fixture_docker network rm "$fixture_network" >/dev/null
   fixture_docker network create --subnet "$fixture_subnet" "$fixture_network" >/dev/null
 fi
-postgres_image=ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+postgres_image=ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
 spicedb_image=ghcr.io/authzed/spicedb@sha256:aa96009a0477f8a759149823407d47ad16d1a74390bae3102b3b0b7143502764
 # shellcheck disable=SC2016
 fixture_docker run --detach --name "$fixture_database" --network "$fixture_network" --publish 127.0.0.1::5432 \
@@ -143,7 +143,7 @@ SQL
         grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$fixture_dir/promotion-test.log"
       fi
     else
-      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.4 distribution}"
+      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.8.2 distribution}"
       cargo build --locked
       cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri --no-run
       cd ../../apps/landing

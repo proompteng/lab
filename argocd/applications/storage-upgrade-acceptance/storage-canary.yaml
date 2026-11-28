@@ -63,6 +63,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -128,6 +129,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -204,6 +206,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -269,6 +272,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -345,6 +349,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -421,6 +426,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -496,6 +502,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:

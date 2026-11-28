@@ -75,6 +75,15 @@ targets:
       - argocd/applications/kargo/stages.yaml
       - argocd/applications/kube-router/**
       - argocd/applications/buzz/networkpolicy.yaml
+      - argocd/applications/devbox/network-policy.yaml
+      - argocd/applications/froussard/approval-networkpolicy.yaml
+      - argocd/applications/kargo/smoke-access.yaml
+      - argocd/applications/keycloak/network-policy.yaml
+      - argocd/applications/ofz/control-plane/network-policy.yaml
+      - argocd/applications/opencode/networkpolicy.yaml
+      - argocd/applications/opencode/research.yaml
+      - argocd/applications/paperless/network.yaml
+      - argocd/applications/pelican/networking.yaml
       - argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml
       - argocd/applications/observability/grafana-upgrade-backup.yaml
       - argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml
@@ -84,7 +93,6 @@ targets:
       - argocd/applications/proompteng/admin-network-policy.yaml
       - argocd/applications/relay/network-policy.yaml
       - argocd/applications/restate/networkpolicy.yaml
-      - argocd/applications/restate-example/networkpolicy.yaml
       - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
       - argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml
       - argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml
@@ -93,6 +101,7 @@ targets:
       - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
       - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
+      - argocd/applications/tengri/run-reader.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
       - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
       - argocd/applications/observability/graf-mimir-rules.yaml
@@ -164,9 +173,15 @@ targets:
     kind: validation
     paths:
       - .github/workflows/pull-request.yml
+      - .github/workflows/kubeconform.yml
+      - flake.nix
+      - flake.lock
+      - nix/**
       - services/ofz/test-ha-manifests.sh
       - services/ofz/tests/ha_manifests.py
       - scripts/cluster-upgrades/temporal_*.py
+      - argocd/applications/auto-ontology/*.cfg
+      - argocd/applications/auto-ontology/*.test.ts
       - argocd/**/*.yaml
       - argocd/**/*.yml
       - argocd/**/*.river
@@ -269,9 +284,8 @@ targets:
     paths:
       - services/bumba/**
 
-  jangar:
-    kind: delegated
-    workflow: jangar-ci
+  jangar-inventory:
+    kind: validation
     exclude:
       - services/agents/src/**/*.test.ts
       - services/agents/src/**/*.test.tsx
@@ -282,10 +296,6 @@ targets:
       - services/agents/src/**/*.generated.ts
       - services/agents/src/**/*.generated.tsx
     paths:
-      - packages/temporal-bun-sdk/src/**
-      - packages/temporal-bun-sdk/package.json
-      - packages/temporal-bun-sdk/tsconfig.json
-      - patches/effect@4.1.4.patch
       - services/jangar/**
       - services/agents/src/app-routes/**
       - services/agents/src/components/control-plane/**
@@ -302,8 +312,6 @@ targets:
       - services/agents/src/server/start-runtime.ts
       - services/agents/src/server/orchestration-controller.ts
       - services/agents/src/server/supporting-primitives-controller.ts
-      - packages/scripts/src/jangar/**
-      - argocd/applications/jangar/**
       - docs/jangar/architecture-inventory.md
 
   froussard:

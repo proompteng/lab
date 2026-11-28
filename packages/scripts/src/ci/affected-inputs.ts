@@ -120,6 +120,9 @@ export const matchesPaths = (file: string, patterns: string[]): boolean =>
     return matchesGlob(file, negative ? pattern.slice(1) : pattern) ? !negative : matched
   }, false)
 
+export const matchesOnlyPaths = (files: string[], patterns: string[]): boolean =>
+  files.length > 0 && files.every((file) => matchesPaths(file, patterns))
+
 export const selectAffectedInputs = (
   files: string[],
   targets: Record<string, InputTarget>,
@@ -182,14 +185,42 @@ export const parseTargets = (
   )
 }
 
-const git = (...args: string[]): string =>
-  execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim()
+const git = (...args: string[]): string => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
 
 export const changedRange = (event: string, base: string, head: string): { base: string; head: string } => {
   if (![base, head].every((sha) => /^[a-f0-9]{40}$/.test(sha) && !/^0+$/.test(sha))) {
     throw new Error('CI input comparison requires valid nonzero base and head SHAs')
   }
-  return { base: event === 'pull_request' ? git('merge-base', base, head) : base, head }
+  return { base: event === 'pull_request' ? git('merge-base', base, head).trim() : base, head }
+}
+
+export const selectAffectedRange = (
+  event: string,
+  base: string,
+  head: string,
+  targets: Record<string, InputTarget>,
+  dependencyAwarePush: boolean,
+) => {
+  const range = changedRange(event, base, head)
+  const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
+  // Most main publishers use path selection to co-build a Kargo image set at one revision.
+  if (event === 'push' && !dependencyAwarePush) {
+    return {
+      files,
+      affected: Object.fromEntries(
+        Object.entries(targets).map(([name, target]) => [name, files.some((file) => matchesPaths(file, target.paths))]),
+      ),
+    }
+  }
+  return {
+    files,
+    affected: selectAffectedInputs(
+      files,
+      targets,
+      Bun.JSONC.parse(git('show', `${range.base}:bun.lock`)),
+      Bun.JSONC.parse(git('show', `${range.head}:bun.lock`)),
+    ),
+  }
 }
 
 if (import.meta.main) {
@@ -197,35 +228,20 @@ if (import.meta.main) {
   const dependencyAwarePush = env.INPUT_DEPENDENCY_AWARE_PUSH ?? 'false'
   if (!['true', 'false'].includes(dependencyAwarePush)) throw new Error('dependency-aware-push must be true or false')
   const event = env.GITHUB_EVENT_NAME ?? ''
+  if (!['pull_request', 'push', 'workflow_dispatch'].includes(event)) throw new Error(`Unsupported CI event: ${event}`)
+  const onlyPaths = strings(Bun.YAML.parse(env.INPUT_ONLY_PATHS ?? '[]'))
   const targets = parseTargets(
     env.INPUT_WORKSPACES ?? '',
     env.INPUT_FILTERS ?? '',
     env.INPUT_WORKFLOW ?? '',
     event === 'workflow_dispatch' ? 'push' : event,
   )
-  let affected: Record<string, boolean>
-  if (event === 'workflow_dispatch') {
-    affected = Object.fromEntries(Object.keys(targets).map((name) => [name, true]))
-  } else {
-    if (!['pull_request', 'push'].includes(event)) throw new Error(`Unsupported CI event: ${event}`)
-    const range = changedRange(event, env.BASE_SHA ?? '', env.HEAD_SHA ?? '')
-    const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
-    // Main publishes co-built Kargo image sets at one revision. Keep its source path contract.
-    affected =
-      event === 'push' && dependencyAwarePush === 'false'
-        ? Object.fromEntries(
-            Object.entries(targets).map(([name, target]) => [
-              name,
-              files.some((file) => matchesPaths(file, target.paths)),
-            ]),
-          )
-        : selectAffectedInputs(
-            files,
-            targets,
-            Bun.JSONC.parse(git('show', `${range.base}:bun.lock`)),
-            Bun.JSONC.parse(git('show', `${range.head}:bun.lock`)),
-          )
-  }
+  const { affected, files } =
+    event === 'workflow_dispatch'
+      ? { affected: Object.fromEntries(Object.keys(targets).map((name) => [name, true])), files: [] }
+      : selectAffectedRange(event, env.BASE_SHA ?? '', env.HEAD_SHA ?? '', targets, dependencyAwarePush === 'true')
+  const onlyPathsMatch = event === 'pull_request' && matchesOnlyPaths(files, onlyPaths)
   console.log(JSON.stringify(affected, null, 2))
-  if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `affected=${JSON.stringify(affected)}\n`)
+  if (env.GITHUB_OUTPUT)
+    appendFileSync(env.GITHUB_OUTPUT, `affected=${JSON.stringify(affected)}\nonly_paths=${onlyPathsMatch}\n`)
 }

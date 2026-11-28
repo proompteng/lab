@@ -1,6 +1,6 @@
 # Penpot
 
-The official Penpot Helm chart (1.12.0 / Penpot 2.19.1) runs in the dedicated
+The official Penpot Helm chart (1.16.0 / Penpot 2.19.5) runs in the dedicated
 `penpot` namespace, reconciled by the platform ApplicationSet.
 
 - Private HTTPS: <https://penpot.ide-newton.ts.net> (Tailscale ingress).
@@ -14,10 +14,8 @@ The official Penpot Helm chart (1.12.0 / Penpot 2.19.1) runs in the dedicated
   the tailnet and use normal Penpot permissions.
 - Registration: enabled for initial account creation on the private tailnet;
   review access policy once accounts are created.
-- Frontend: upstream Nginx `worker_processes auto` counts all 384 logical CPUs
-  exposed by Turin, causing startup OOMs even with a 2Gi limit. A small init
-  container prepares a four-worker copy of the upstream template; keep its
-  image version aligned with the Helm chart on upgrades.
+- Frontend: `PENPOT_HTTP_SERVER_WORKER_PROCESSES=4` bounds Nginx workers and
+  their memory use on Turin.
 
 Deployment checks:
 

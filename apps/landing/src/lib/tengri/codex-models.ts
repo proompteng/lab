@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const DEFAULT_CODEX_MODEL = 'gpt-6.1-sol'
+export const DEFAULT_CODEX_MODEL = 'gpt-6.2-sol'
 
 export const codexModelIdSchema = z
   .string()

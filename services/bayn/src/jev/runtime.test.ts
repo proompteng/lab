@@ -408,12 +408,12 @@ describe('entry observation admission', () => {
     const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
     const active = new Map<symbol, ActiveExecutionStage>()
     let reads = 0
-    const snapshot = {
-      ...fixture.snapshot,
-      get bars() {
+    const portfolio = {
+      ...fixture.portfolio,
+      get brokerState() {
         reads++
         expect([...active.values()].some(({ stage }) => stage === 'bayn.jev.observation')).toBe(true)
-        return fixture.snapshot.bars
+        return fixture.portfolio.brokerState
       },
     }
     const result = await Effect.runPromise(
@@ -422,10 +422,10 @@ describe('entry observation admission', () => {
           cycleId: fixture.observation.payload.cycleId,
           authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
           protocol: fixture.protocol,
-          portfolio: fixture.portfolio,
+          portfolio,
         },
-        snapshot.manifest.rangeEndAt,
-        Effect.succeed(snapshot),
+        fixture.snapshot.manifest.rangeEndAt,
+        Effect.succeed(fixture.snapshot),
       ).pipe(
         Effect.provideService(ActiveExecutionStages, active),
         Effect.provideService(CandidateObservationStore, {
@@ -447,7 +447,9 @@ describe('entry observation admission', () => {
     ['expired-future-clock', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_UNAVAILABLE'],
     ['future-clock', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_UNAVAILABLE'],
     ['corrupt', 'INVALID_EVIDENCE', 'INFERENCE_UNAVAILABLE'],
-    ['pending', 'NOT_COMMITTED', 'INFERENCE_UNAVAILABLE'],
+    ['pending', 'NOT_COMMITTED', 'DECISION_PENDING'],
+    ['expired-pending', 'NOT_COMMITTED', 'INFERENCE_EXPIRED'],
+    ['future-pending', 'NOT_COMMITTED', 'INFERENCE_UNAVAILABLE'],
   ] as const)('committed batch %s refuses entry with the safe cause', async (mode, reason, readiness) => {
     const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
     let pending: JevBatchEvidence | null = null
@@ -472,10 +474,14 @@ describe('entry observation admission', () => {
           read: () => Effect.die('No recovery read'),
           complete: () => Effect.die('No new provider work'),
           finish: () => (pending === null ? Effect.die('No pending batch') : Effect.succeed(pending)),
-          begin: (plan) =>
+          begin: ({ plan }) =>
             Effect.gen(function* () {
               pending = { plan, result: null }
-              if (mode === 'pending') return { ...pending, dispatches: [] }
+              if (mode === 'pending' || mode === 'expired-pending' || mode === 'future-pending') {
+                if (mode === 'expired-pending') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs)
+                if (mode === 'future-pending') yield* TestClock.adjust(-1)
+                return { ...pending, dispatches: [] }
+              }
               const candidates = plan.candidates.map((candidate) => {
                 if (candidate.status === JevCandidatePlanStatus.Excluded)
                   return { symbol: candidate.symbol, status: JevCandidateResultStatus.Excluded } as const
@@ -544,7 +550,7 @@ describe('entry observation admission', () => {
       failure: {
         _tag: 'JevAwaitingEvidence',
         readiness,
-        message: `Jev batch unavailable: ${reason}`,
+        message: mode === 'pending' ? 'Jev batch is awaiting its durable result' : `Jev batch unavailable: ${reason}`,
         ...(mode === 'pending'
           ? {
               availableAt: utcInstantFromEpochMillis(
@@ -595,7 +601,7 @@ describe('entry observation admission', () => {
             read: () => Effect.die('No batch was recorded'),
             complete: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             finish: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
-            begin: (plan) =>
+            begin: ({ plan }) =>
               TestClock.adjust(fixture.protocol.inferenceValidityMs + 100).pipe(
                 Effect.andThen(Clock.currentTimeMillis),
                 Effect.flatMap((now) =>

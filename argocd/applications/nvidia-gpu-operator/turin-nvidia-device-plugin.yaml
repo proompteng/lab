@@ -80,7 +80,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: nvidia-device-plugin
-          image: nvcr.io/nvidia/k8s-device-plugin:v0.20.0@sha256:a61ba9fd8efb82f3a79f877f7580e02c1e8e7593f62473644bc9c79e315c3312
+          image: nvcr.io/nvidia/k8s-device-plugin:v0.20.2@sha256:7673383d44a84bece724d9ca8feeadf4eee69cd46475fdff614cbbca6732d463
           imagePullPolicy: IfNotPresent
           args:
             - --nvidia-driver-root=/

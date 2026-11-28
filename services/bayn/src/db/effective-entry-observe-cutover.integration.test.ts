@@ -6,6 +6,10 @@ import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 import v38ObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
 import v39ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
 import v40ObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
+import v41ObserveCutover from '../../migrations/0212_risk_symmetry_observe_cutover'
+import v42ObserveCutover from '../../migrations/0216_stop_floor_reward_risk_observe_cutover'
+import v43ObserveCutover from '../../migrations/0218_v43_paper_settlement'
+import v44ObserveCutover from '../../migrations/0221_v44_paper_settlement'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -51,14 +55,49 @@ for (const {
     rejectionMessage:
       'native equity short OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
+  {
+    schemaVersion: 'bayn.jev.protocol.v41',
+    migrationId: 212,
+    effectiveEntryObserveCutover: v41ObserveCutover,
+    parameterHash: '004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696',
+    protocolHash: 'b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9',
+    rejectionMessage:
+      'risk-symmetry OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
+  {
+    schemaVersion: 'bayn.jev.protocol.v42',
+    migrationId: 216,
+    effectiveEntryObserveCutover: v42ObserveCutover,
+    parameterHash: 'c78a10a127b6d4fbfd2fa3d2a433744f02295aa9a2b47b20bacfbd9804ba8ed5',
+    protocolHash: '825c8806ba7d16783fcb96fc0d12f49b1e35f03ee81d82f6990bc7b11174d339',
+    rejectionMessage:
+      'stop-floor reward-risk OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
+  {
+    schemaVersion: 'bayn.jev.protocol.v43',
+    migrationId: 218,
+    effectiveEntryObserveCutover: v43ObserveCutover,
+    parameterHash: '810fedc00003ee940f3af6982ce65357662e241ec8c43b7d89922f6766108774',
+    protocolHash: 'f9eaf3c7258e7f9bb5c4f070cfbde7d119cd6cd43f1272653f713bea680da17e',
+    rejectionMessage:
+      'v43 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
+  {
+    schemaVersion: 'bayn.jev.protocol.v44',
+    migrationId: 221,
+    effectiveEntryObserveCutover: v44ObserveCutover,
+    parameterHash: 'ba1bf25a3c184102bb0243ee2311cd76406a952f48533d7e4bfe1dd04c80e2b3',
+    protocolHash: 'a6b1d3f53ffefeb407e82c2821c7843f4ff0c952ff66ebf714d30aa24f6257f1',
+    rejectionMessage:
+      'v44 PAPER settlement requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
 ]) {
   const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
   const hash = (value: string) => Result.getOrThrow(canonicalHashV1Result({ value }))
 
-  const makeRuntime = () =>
-    ManagedRuntime.make(
-      PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(Layer.provideMerge(NodeServices.layer)),
-    )
+  const postgres = PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  )
 
   const guardFixture = Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -247,12 +286,11 @@ for (const {
   DELETE FROM reconciliations`
 
   integration(`${schemaVersion} native OBSERVE cutover`, () => {
-    let runtime: ReturnType<typeof makeRuntime>
+    const runtime = ManagedRuntime.make(postgres)
     beforeAll(() => {
       const parsed = new URL(url)
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
         throw new Error('Effective-entry cutover tests require an isolated local _test database')
-      runtime = makeRuntime()
     })
     afterAll(async () => runtime.dispose())
 
@@ -397,7 +435,8 @@ for (const {
     })
 
     test('migrated authority recovers through native OBSERVE only after fresh reconciliation', async () => {
-      await runtime.runPromise(
+      // Guard queries are prepared against temporary tables. Recovery uses a fresh connection to the real tables.
+      await Effect.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           yield* sql`DROP SCHEMA public CASCADE`
@@ -484,7 +523,7 @@ for (const {
               broker_identity_hash: broker.identityHash,
             },
           ])
-        }),
+        }).pipe(Effect.provide(postgres)),
       )
     }, 30_000)
   })

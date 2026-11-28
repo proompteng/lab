@@ -299,6 +299,115 @@ describe('canonical hashing', () => {
     expect(getterCalls).toBe(0)
   })
 
+  test('property: ordinary array encodings agree with transparent proxies using the original key-membership proof', () => {
+    const proxyArrays = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? new Proxy(value.map(proxyArrays), {})
+        : value !== null && typeof value === 'object'
+          ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, proxyArrays(child)]))
+          : value
+    checkProperty(
+      'canonical-array-key-membership',
+      fc.property(fc.array(fc.jsonValue(), { maxLength: 30 }), (value) => {
+        expect(canonicalJsonV1Result(value)).toEqual(canonicalJsonV1Result(proxyArrays(value)))
+        expect(canonicalHashV1Result(value)).toEqual(canonicalHashV1Result(proxyArrays(value)))
+      }),
+      1000,
+    )
+  })
+
+  test('keeps dense subclass and inherited array data while rejecting every extra own key before element values', () => {
+    class DenseArray extends Array<unknown> {}
+    const subclass = new DenseArray(1, 2)
+    const inherited = Object.assign(Object.create(Array.prototype), { inherited: true })
+    const unusual = Object.setPrototypeOf([1, 2], inherited)
+    for (const value of [subclass, unusual, Object.freeze([1, 2]), []])
+      expect(canonicalJsonV1Result(value)).toEqual(Result.succeed(value.length === 0 ? '[]' : '[1,2]'))
+    for (const key of ['extra', '01', '-0', '4294967295', Symbol('hidden')]) {
+      const value = [NaN]
+      Object.defineProperty(value, key, { value: 2, enumerable: false })
+      expect(failureOf(canonicalJsonV1Result(value))).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: '$',
+        reason: 'non-dense-array',
+        actualType: 'array',
+      })
+    }
+  })
+
+  test('retains changing proxy own-key lists rather than applying an ordinary-array cardinality proof', () => {
+    for (const secondKeys of [['length'], ['00', 'length'], [Symbol('hidden'), 'length']]) {
+      const trace: string[] = []
+      let reads = 0
+      const value = new Proxy([1], {
+        get(target, key, receiver) {
+          trace.push(`get:${String(key)}`)
+          return Reflect.get(target, key, receiver)
+        },
+        ownKeys() {
+          trace.push(`keys:${++reads}`)
+          return reads === 1 ? ['0', 'length'] : secondKeys
+        },
+        getOwnPropertyDescriptor(target, key) {
+          trace.push(`descriptor:${String(key)}`)
+          return Reflect.getOwnPropertyDescriptor(target, key)
+        },
+      })
+      const actual = canonicalJsonV1Result(value)
+      if (secondKeys.length === 1) {
+        expect(actual).toEqual(Result.succeed('[1]'))
+        expect(trace).toEqual(['get:length', 'keys:1', 'descriptor:0', 'descriptor:length', 'keys:2', 'descriptor:0'])
+      } else {
+        expect(failureOf(actual)).toEqual({
+          _tag: 'CanonicalJsonFailure',
+          path: '$',
+          reason: 'non-dense-array',
+          actualType: 'array',
+        })
+        expect(trace).toEqual(['get:length', 'keys:1', 'descriptor:0', 'descriptor:length', 'keys:2'])
+      }
+    }
+  })
+
+  test('preserves revocation after proxy key capture and later mutations by nested proxies', () => {
+    let reads = 0
+    const revoked = Proxy.revocable([1], {
+      ownKeys() {
+        if (++reads === 2) revoked.revoke()
+        return ['0', 'length']
+      },
+    })
+    expect(failureOf(canonicalJsonV1Result(revoked.proxy))).toMatchObject({
+      path: '$[0]',
+      reason: 'introspection-failed',
+      operation: 'property-descriptor',
+      cause: expect.any(TypeError),
+    })
+    for (const mutation of ['hidden', 'symbol', 'delete'] as const) {
+      const value: unknown[] = [undefined, 2]
+      const child = new Proxy(
+        { trigger: true },
+        {
+          getOwnPropertyDescriptor(target, key) {
+            if (mutation === 'delete') Reflect.deleteProperty(value, '1')
+            else Object.defineProperty(value, mutation === 'symbol' ? Symbol('late') : 'late', { value: true })
+            return Reflect.getOwnPropertyDescriptor(target, key)
+          },
+        },
+      )
+      value[0] = child
+      const actual = canonicalJsonV1Result(value)
+      if (mutation === 'delete')
+        expect(failureOf(actual)).toEqual({
+          _tag: 'CanonicalJsonFailure',
+          path: '$[1]',
+          reason: 'non-data-property',
+          actualType: 'array-property',
+        })
+      else expect(actual).toEqual(Result.succeed('[{"trigger":true},2]'))
+    }
+  })
+
   test('accepts plain data descriptors and rejects object accessors, hidden properties, symbols, and prototypes', () => {
     const data = Object.create(null) as Record<string, unknown>
     Object.defineProperty(data, 'value', {

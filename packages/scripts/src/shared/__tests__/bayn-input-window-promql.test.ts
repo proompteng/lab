@@ -28,6 +28,8 @@ const metrics = {
   activation: 'bayn_capital_activation_state{state="realized"}',
   open: 'bayn_cycle_submission_open_timestamp_seconds',
   lagging: 'bayn_execution_session_condition{condition="decision_lagging"}',
+  missingCycleAlertStart: 'bayn_execution_missing_cycle_alert_start_timestamp_seconds',
+  missingCycleCutoff: 'bayn_execution_missing_cycle_cutoff_timestamp_seconds',
 } as const
 type Metric = keyof typeof metrics
 type Values = Partial<Record<Metric, string | null>>
@@ -44,6 +46,8 @@ const defaults: Record<Metric, string> = {
   activation: '1+0x10',
   open: '0+0x10',
   lagging: '0+0x10',
+  missingCycleAlertStart: '0+0x10',
+  missingCycleCutoff: '0+0x10',
 }
 const series = (overrides: Values = {}, instance = 'a', identity = scope) =>
   (Object.keys(metrics) as Metric[]).flatMap((key) => {
@@ -131,6 +135,27 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
   )
   check('bound decisions need no new entry window', series({ bound: '1+0x10' }), false)
   check('inactive cycle', series({ phase: '0+0x10' }), false)
+  const noCycle: Values = {
+    phase: '0+0x10',
+    input: '0+0x10',
+    missingCycleAlertStart: '60+0x10',
+    missingCycleCutoff: '240+0x10',
+  }
+  check('a realized opening without a cycle alerts after the readiness deadline', series(noCycle), false, true)
+  check('no premature notification while the no-cycle opening is still ready', series(noCycle), false, false, {
+    at: '30s',
+  })
+  check('an unapproved opening with no cycle never alerts', series({ ...noCycle, activation: '0+0x10' }), false)
+  check(
+    'a different replica cannot supply no-cycle activation',
+    [...series({ ...noCycle, activation: '0+0x10' }), ...series({ phase: '0+0x10' }, 'b')],
+    false,
+  )
+  check(
+    'no-cycle condition ends at cutoff before the alert can fire',
+    series({ ...noCycle, missingCycleCutoff: '90+0x10' }),
+    false,
+  )
   check('stale runtime projection closes runtime readiness', series({ runtime: '0+0x10' }), false, true)
   check('unknown cycle projection', series({ observation: '0+0x10' }), false, true)
   check('failed scrape cannot establish the specific input failure', series({ up: '0+0x10' }), false, true)

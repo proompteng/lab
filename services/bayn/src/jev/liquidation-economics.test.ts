@@ -13,7 +13,7 @@ import {
   jevExitLimitValue,
   jevLiquidationValue,
 } from './liquidation-economics'
-import { defaultJevProtocolDocument } from './protocol'
+import { defaultJevProtocolDocument, retainedJevProtocolV41Document } from './protocol'
 
 test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
   '%s take-profit break-even uses its actual limit and preserves exit fees',
@@ -91,7 +91,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
           timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
           quantityAtoms,
           referencePriceMicros: bidMicros,
-          limitSlippageBps: 10n,
+          limitSlippageBps: BigInt(protocol.maximumEntryLimitSlippageBps),
         }),
       )
       const proceeds = (pricing.expectedExecutionPriceMicros * quantityAtoms) / 1_000_000_000n
@@ -147,7 +147,7 @@ test('invalid native sell terms retain the pricing failure', () => {
 })
 
 test('a cent-rounded fee jump above the break-even bid remains funded', () => {
-  const protocol = defaultJevProtocolDocument
+  const protocol = retainedJevProtocolV41Document
   const quantityAtoms = 59_468_593_953n
   const acquisitionCostMicros = 128_059_041_016n
   const input = { feeAt: '2026-09-04T14:15:00.000Z', protocol, symbol: 'BTC/USD', quantityAtoms }
@@ -166,7 +166,7 @@ test('a cent-rounded fee jump above the break-even bid remains funded', () => {
 test('the conservative cash floor remains monotone across an actual cent fee jump', () => {
   const input = {
     feeAt: '2026-09-04T14:15:00.000Z',
-    protocol: defaultJevProtocolDocument,
+    protocol: retainedJevProtocolV41Document,
     symbol: 'BTC/USD',
     quantityAtoms: 1_000_000_000n,
   }

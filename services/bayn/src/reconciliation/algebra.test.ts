@@ -36,7 +36,7 @@ import {
   riskContextFromRow,
   validateReconciliationReadback,
   verifyAccountingReceipts,
-  verifyAccountingHistory,
+  makeAccountingHistoryVerifier,
   type ReconciliationAlgebraFailure,
   type RiskContextRow,
 } from './algebra'
@@ -575,7 +575,8 @@ describe('PostgreSQL reconciliation algebra', () => {
 
   test('verifies fill economics and the stored transaction once before receipt verification', () => {
     const source = { transaction: prepared.transaction, fill, prior: { quantityAtoms: '0', costMicros: '0' } }
-    expect(successOf(verifyAccountingHistory([source], tigerBeetle.ledger))).toEqual([prepared])
+    const verify = makeAccountingHistoryVerifier(tigerBeetle.ledger)
+    expect(successOf(verify([source]))).toEqual([prepared])
     const { contentHash: _contentHash, ...changedMaterial } = { ...prepared.transaction, feeMicros: '1' }
     for (const changed of [
       { ...source, transaction: { ...prepared.transaction, contentHash: hash('invalid-transaction-content') } },
@@ -589,7 +590,7 @@ describe('PostgreSQL reconciliation algebra', () => {
         },
       },
     ]) {
-      const failure = failureOf(verifyAccountingHistory([changed], tigerBeetle.ledger))
+      const failure = failureOf(verify([changed]))
       expect(failure).toEqual({
         _tag: 'AccountingTransactionMismatch',
         transactionId: prepared.transaction.transactionId,
@@ -600,21 +601,37 @@ describe('PostgreSQL reconciliation algebra', () => {
   })
 
   test('rejects tampering with every stored transaction field', () => {
+    const verify = makeAccountingHistoryVerifier(tigerBeetle.ledger)
     for (const [field, value] of Object.entries(prepared.transaction)) {
       const transaction = { ...prepared.transaction }
       Object.defineProperty(transaction, field, {
         value: /^[0-9a-f]{64}$/.test(value) ? hash(`tampered-${field}`) : `${value}-tampered`,
         enumerable: true,
       })
-      expect(
-        failureOf(
-          verifyAccountingHistory(
-            [{ transaction, fill, prior: { quantityAtoms: '0', costMicros: '0' } }],
-            tigerBeetle.ledger,
-          ),
-        )._tag,
-      ).toBe('AccountingTransactionMismatch')
+      expect(failureOf(verify([{ transaction, fill, prior: { quantityAtoms: '0', costMicros: '0' } }]))._tag).toBe(
+        'AccountingTransactionMismatch',
+      )
     }
+  })
+
+  test('retains detached inputs and immutable plans only for the last verified cut', () => {
+    const input = {
+      transaction: { ...prepared.transaction },
+      fill: { ...fill },
+      prior: { quantityAtoms: '0', costMicros: '0' },
+    }
+    const verify = makeAccountingHistoryVerifier(tigerBeetle.ledger)
+    const [first] = successOf(verify([input]))
+    expect(first).toBeDefined()
+    if (first === undefined) throw new Error('expected a verified accounting row')
+    expect(Reflect.set(first.ledger.transfers[0] ?? {}, 'amount', 0n)).toBe(false)
+
+    input.transaction.contentHash = hash('tampered-input')
+    expect(failureOf(verify([input]))._tag).toBe('AccountingTransactionMismatch')
+    const original = { ...input, transaction: prepared.transaction }
+    expect(successOf(verify([original]))[0]).toBe(first)
+    expect(successOf(verify([]))).toEqual([])
+    expect(successOf(verify([original]))[0]).not.toBe(first)
   })
 
   test('compares opening cash and binds the current fee accrual accounting identity', () => {

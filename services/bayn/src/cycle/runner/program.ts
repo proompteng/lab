@@ -21,6 +21,7 @@ import { calendarQueryFailureError } from './errors'
 import { finishRecoveryResult } from './pass-decisions'
 import {
   makeIntradayCycleDraft,
+  matchesIntradayEntryWindowLineage,
   marketCalendarQueryFromSession,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
@@ -44,7 +45,8 @@ const hashCalendar = (hours: MarketHours) =>
 
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
+  options?: { readonly allowConcurrentAdmission?: boolean },
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> => {
   const candidate = {
     cycleBindingId: context.cycleBindingId,
     strategyName: context.strategyName,
@@ -180,12 +182,40 @@ export const discoverAutonomousCyclePass = <R>(
           observedAt,
           firstAttemptDraft.window.submissionCutoffAt,
           recoveredBlockedCycle,
+          options?.allowConcurrentAdmission === true,
         )
       : 1
     if (Option.isSome(existing) && entryAttemptOrdinal === undefined) {
       return isTerminalCycleState(existing.value.state)
         ? ({ outcome: 'ALREADY_TERMINAL', observedAt, cycle: existing.value } as const)
         : ({ outcome: 'ALREADY_ACQUIRED', observedAt, cycle: existing.value } as const)
+    }
+    if (
+      Option.isSome(existing) &&
+      matchesIntradayEntryWindowLineage(existing.value, candidate, hours, executionSession)
+    ) {
+      const nextWindow = yield* context.nextEntryWindowDueAt(existing.value.identity.cycleId).pipe(
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'build-decision',
+            failure: cause.failure === 'not-ready' ? 'contract' : cause.failure,
+            message: 'durable entry-window consumption could not be read before successor admission',
+            cause,
+          }),
+        ),
+      )
+      if (Option.isSome(nextWindow) && Date.parse(nextWindow.value) > Date.parse(observedAt))
+        return {
+          outcome: 'ALREADY_TERMINAL',
+          observedAt,
+          cycle: existing.value,
+          readiness: {
+            reason: DecisionReadinessReason.SignalWindowObserved,
+            message:
+              'The current entry signal window is already consumed; successor admission awaits the next due window',
+            availableAt: nextWindow.value,
+          },
+        } as const
     }
     const draft =
       entryAttemptOrdinal === 1
@@ -238,10 +268,11 @@ const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoveryS
 const recoverCycle = <R>(
   selection: CycleRecoverySelection,
   context: CycleRunContext<R>,
+  options?: { readonly allowConcurrentAdmission?: boolean },
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> => {
   switch (selection.action) {
     case 'DISCOVER':
-      return discoverAutonomousCyclePass(context)
+      return discoverAutonomousCyclePass(context, options)
     case 'BLOCK':
       return pipe(
         CycleStore,
@@ -503,6 +534,7 @@ const recoverCycle = <R>(
 export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
   cycle: AutonomousCycle | undefined,
+  options?: { readonly allowConcurrentAdmission?: boolean },
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
   currentUtcInstant.pipe(
     Effect.flatMap((observedAt) =>
@@ -514,5 +546,5 @@ export const runAutonomousCyclePass = <R>(
         cycle,
       }),
     ),
-    Effect.flatMap((selection) => recoverCycle(selection, context)),
+    Effect.flatMap((selection) => recoverCycle(selection, context, options)),
   )

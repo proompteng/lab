@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Option, Result } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 import { withObservedStage } from '../../telemetry'
 import { databaseUtcInstant } from '../clock'
 
@@ -10,6 +10,8 @@ import {
   type BrokerIdentity,
 } from '../../broker/identity'
 import { Authority, type AuthorityState } from '../../execution/contracts'
+import { acquireExecutionWriterFence } from '../../execution/writer-fence'
+import { sha256 } from '../../hash'
 import {
   strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
@@ -30,11 +32,12 @@ import {
 } from '../../execution/capital-grant-algebra'
 import {
   authorityStateFromRow,
+  makeAuthorityPostgres,
   researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
 import type { AuthorityGenerationStoreShape, EnsureAuthorityGenerationInput } from './contract'
-import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
+import { executionStoreError, failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
   decodeAuthorityStateRows,
@@ -45,6 +48,37 @@ import {
 
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
   'd290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063'
+
+export const readAuthorityState = (sql: PgClient.PgClient) => {
+  const statement = sql`
+    SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
+      version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
+    FROM authority_state
+    WHERE singleton
+  `
+  return runExecutionOperation(
+    'authority',
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transaction = yield* Effect.serviceOption(sql.transactionService)
+        const connection = Option.isSome(transaction)
+          ? transaction.value[0]
+          : yield* sql.reserve.pipe(withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }))
+        const [query, parameters] = statement.compile()
+        return yield* connection
+          .execute(query, parameters, undefined)
+          .pipe(withObservedStage('bayn.postgres.authority-query', { dependency: 'postgresql' }))
+      }),
+    ).pipe(
+      Effect.flatMap(decodeAuthorityStateRows),
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
+          : authorityStateFromRow(rows[0]),
+      ),
+    ),
+  )
+}
 
 export interface ObserveGenerationBrokerIdentityFailure {
   readonly failure: 'conflict' | 'invariant'
@@ -68,7 +102,7 @@ const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, conf
   configured.provider === BrokerProvider.Alpaca &&
   configured.environment === BrokerEnvironment.Sandbox
 
-export const validateObserveGenerationBrokerIdentityReplay = (
+const validateObserveGenerationBrokerIdentityReplay = (
   history: AuthorityGenerationRow,
   configured: BrokerIdentity | undefined,
 ): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
@@ -118,6 +152,120 @@ export const validateObserveGenerationBrokerIdentityReplay = (
         message: 'authority generation broker identity does not match configured broker identity',
       })
 }
+
+export const previousConfiguredController = (sql: PgClient.PgClient, identity: BrokerIdentity) =>
+  sql`
+    SELECT parent.broker_identity_hash AS controller_key
+    FROM authority_state s JOIN authority_generations g USING (generation_hash)
+    JOIN authority_generations parent ON parent.generation_hash = g.previous_generation_hash
+    WHERE s.singleton AND s.maximum = 'OBSERVE' AND g.broker_identity_hash = ${identity.identityHash}
+      AND parent.broker_identity_hash <> g.broker_identity_hash
+  `.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ controller_key: Schema.String })))),
+    Effect.map((rows) => rows[0]?.controller_key ?? null),
+  )
+
+export const selectConfiguredBrokerAccount = (
+  identity: BrokerIdentity,
+  staleThresholdMs: number,
+  allowAccountHandoff = true,
+) =>
+  Effect.flatMap(PgClient.PgClient, (sql) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* acquireExecutionWriterFence(sql)
+        const authority = makeAuthorityPostgres(sql)
+        yield* authority.lockAuthorityGenerations
+        const [current] = yield* sql`
+          SELECT generation_hash FROM authority_state WHERE singleton FOR UPDATE
+        `.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ generation_hash: Schema.String })))),
+        )
+        if (current === undefined) return null
+        const [source] = yield* authority.readGeneration(current.generation_hash)
+        if (source === undefined)
+          return yield* failExecutionStore('authority', 'invariant', 'authority history is missing')
+        const binding = validateObserveGenerationBrokerIdentityReplay(source, identity)
+        if (Result.isSuccess(binding)) {
+          return !allowAccountHandoff || source.broker_identity_hash === null
+            ? null
+            : yield* previousConfiguredController(sql, identity)
+        }
+        if (binding.failure.failure === 'invariant' || source.broker_identity_hash === null) {
+          return yield* executionStoreError({ operation: 'authority', ...binding.failure })
+        }
+        // A namespaced controller cannot retire a predecessor in another Restate namespace.
+        if (!allowAccountHandoff)
+          return yield* failExecutionStore(
+            'authority',
+            'conflict',
+            'a prefixed Restate sleeve requires its own Postgres database and broker account',
+          )
+        const predecessor = source.broker_identity_hash
+        const activatedAt = yield* authority.nextAuthorityInstant
+        const generationHash = sha256(
+          ['bayn.observe-account', current.generation_hash, identity.identityHash].join('\u0000'),
+        )
+        const inserted = yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, account_id, broker_identity_schema_version, broker_identity_hash,
+            broker_provider, broker_environment, activated_at
+          )
+          SELECT ${generationHash}, 'bayn.authority-generation-history.v1', s.generation_hash, 'OBSERVE',
+            s.version + 1, ${identity.accountId}, ${identity.schemaVersion}, ${identity.identityHash},
+            ${identity.provider}, ${identity.environment}, ${activatedAt}
+          FROM authority_state s JOIN authority_generations g USING (generation_hash)
+          JOIN LATERAL (
+            SELECT * FROM reconciliations WHERE account_id = g.account_id
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1
+          ) r ON true
+          JOIN LATERAL (
+            SELECT position_count, observed_at FROM position_snapshots
+            WHERE account_id = g.account_id AND ingestion_order_trusted
+            ORDER BY ingestion_sequence DESC LIMIT 1
+          ) position ON true
+          WHERE s.singleton AND s.generation_hash = ${current.generation_hash}
+            AND s.maximum = s.effective AND s.kill_state = 'CLEAR' AND s.reason IS NULL
+            AND g.broker_provider = ${identity.provider} AND g.broker_environment = ${identity.environment}
+            AND r.status = 'EXACT' AND r.expected_hash = r.observed_hash
+            AND r.reconciled_at >= s.updated_at AND r.reconciled_at <= clock_timestamp()
+            AND r.reconciled_at > clock_timestamp() - ${staleThresholdMs}::bigint * interval '1 millisecond'
+            AND position.position_count = 0 AND position.observed_at <= r.reconciled_at
+            AND observe_recovery_account_settled(s.generation_hash, g.account_id, r.reconciled_at)
+            AND NOT EXISTS (
+              WITH pending_inference AS MATERIALIZED (
+                SELECT request.payload FROM jev_evaluation_requests request
+                JOIN autonomous_cycles cycle USING (cycle_id)
+                LEFT JOIN jev_evaluation_resolutions resolution USING (request_id)
+                WHERE cycle.account_id = g.account_id AND resolution.request_id IS NULL
+                UNION ALL
+                SELECT plan.payload FROM jev_inference_work work JOIN jev_batch_plans plan USING (batch_id)
+                JOIN autonomous_cycles cycle ON cycle.cycle_id = plan.cycle_id
+                LEFT JOIN jev_batch_results result USING (batch_id)
+                WHERE cycle.account_id = g.account_id AND result.batch_id IS NULL
+              )
+              SELECT 1 FROM autonomous_cycles WHERE account_id = g.account_id AND state IN ('PENDING', 'ACTIVE')
+              UNION ALL
+              SELECT 1 FROM intents WHERE account_id = g.account_id AND state <> 'TERMINAL'
+              UNION ALL
+              SELECT 1 FROM pending_inference WHERE (payload ->> 'expiresAt')::timestamptz > clock_timestamp()
+            )
+          RETURNING generation_hash
+        `
+        if (inserted.length === 0) {
+          return yield* failExecutionStore('authority', 'conflict', 'the current broker account has not settled')
+        }
+        yield* sql`
+          UPDATE authority_state
+          SET generation_hash = ${generationHash}, maximum = 'OBSERVE', effective = 'OBSERVE',
+            version = version + 1, updated_at = ${activatedAt}
+          WHERE singleton AND generation_hash = ${current.generation_hash}
+        `
+        return predecessor
+      }),
+    ),
+  )
 
 export const makeObserveAuthorityInterpreter = (
   sql: PgClient.PgClient,
@@ -521,35 +669,6 @@ export const makeObserveAuthorityInterpreter = (
       ),
     )
 
-  const authorityStateQuery = sql`
-        SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
-        FROM authority_state
-        WHERE singleton
-      `
-  const readAuthorityState = runExecutionOperation(
-    'authority',
-    Effect.scoped(
-      Effect.gen(function* () {
-        const transaction = yield* Effect.serviceOption(sql.transactionService)
-        const connection = Option.isSome(transaction)
-          ? transaction.value[0]
-          : yield* sql.reserve.pipe(withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }))
-        const [statement, parameters] = authorityStateQuery.compile()
-        return yield* connection
-          .execute(statement, parameters, undefined)
-          .pipe(withObservedStage('bayn.postgres.authority-query', { dependency: 'postgresql' }))
-      }),
-    ).pipe(
-      Effect.flatMap(decodeAuthorityStateRows),
-      Effect.flatMap((rows) =>
-        rows[0] === undefined
-          ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
-          : authorityStateFromRow(rows[0]),
-      ),
-    ),
-  )
-
   const readResearchAuthorityGeneration = (generationHash: string) =>
     runExecutionOperation(
       'authority',
@@ -588,7 +707,7 @@ export const makeObserveAuthorityInterpreter = (
   return {
     ensureAuthorityGeneration,
     readOrInitializeObserveAuthority,
-    readAuthorityState,
+    readAuthorityState: readAuthorityState(sql),
     readResearchAuthorityGeneration,
     readAuthorityGenerationLineage,
   }

@@ -34,9 +34,7 @@ trap 'exit 143' TERM INT
 
 postgres_image=postgres:18-alpine
 restate_image='docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1'
-kafka_image=confluentinc/cp-kafka:8.1.0
-adapter_image='ghcr.io/restatedev/ingress-integration-kafka@sha256:20704c886ee4dcc4046bab1743dc424bb08b2317ce1bc6da55ce738345ce01b1'
-for image in "$postgres_image" "$restate_image" "$kafka_image" "$adapter_image"; do
+for image in "$postgres_image" "$restate_image"; do
   timeout 180s docker pull "$image" >/dev/null
 done
 
@@ -78,6 +76,7 @@ done
 export BAYN_TEST_POSTGRES_URL
 BAYN_TEST_POSTGRES_URL="postgresql://bayn:bayn@$(docker port "$postgres_name" 5432/tcp)/bayn_streaming_test"
 start_restate "$restate_name"
+run_required 120s services/bayn/src/restate/restate-broker-observations.integration.test.ts
 run_required 120s services/bayn/src/restate/restate-entry-inference.integration.test.ts
 remove_owned "$restate_name"
 remove_owned "$postgres_name"
@@ -91,5 +90,3 @@ run_required 60s services/bayn/tools/retire-broker-polls.integration.test.ts
 remove_owned "$retirement_name"
 unset BAYN_TEST_RESTATE_ADMIN_URL BAYN_TEST_RESTATE_INGRESS_URL
 unset BAYN_TEST_BROKER_POLL_RESTATE_ADMIN_URL BAYN_TEST_BROKER_POLL_RESTATE_INGRESS_URL
-
-BAYN_TEST_BROKER_KAFKA_INGRESS=true run_required 300s services/bayn/src/restate/restate-broker-kafka.integration.test.ts

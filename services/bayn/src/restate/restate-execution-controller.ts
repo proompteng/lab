@@ -1,3 +1,4 @@
+import { executionServiceName } from './execution-service-names'
 import { timingSafeEqual } from 'node:crypto'
 
 import * as restate from '@restatedev/restate-sdk'
@@ -39,6 +40,7 @@ import {
   marketChangedEventId,
 } from '../execution/events'
 import { projectExecutionControllerHealth } from '../execution/controller-health'
+import { startInferenceWatch } from './restate-entry-inference'
 
 const stateKey = 'controller'
 const deadlineTickStateKey = 'deadlineTick'
@@ -84,6 +86,7 @@ export const executionControllerRecoveryTickDelayMs = 30_000
 export const executionControllerDeploymentCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
+  readonly servicePrefix?: string
   readonly controllerKey: string
   readonly operationTimeoutMs: number
   readonly planHash: string
@@ -91,6 +94,10 @@ export interface ExecutionControllerConfig {
 }
 
 export interface NativeExecutionRuntime {
+  readonly brokerAccount?: {
+    readonly bind: (signal: AbortSignal) => Promise<string | null>
+    readonly previousController: (signal: AbortSignal) => Promise<string | null>
+  }
   readonly prepareActivation: (signal: AbortSignal) => Promise<void>
   readonly advance: (
     command: import('../execution/advance').AdvanceExecutionCommand,
@@ -264,7 +271,7 @@ const verifyDeactivationBinding = (
   key: string,
   request: ExecutionControllerDeactivation,
 ): void => {
-  if (key !== config.controllerKey || request.controllerKey !== config.controllerKey) {
+  if (key !== request.controllerKey || key !== config.controllerKey) {
     throw terminal('execution controller deactivation does not match this immutable deployment')
   }
 }
@@ -356,54 +363,56 @@ export const executionControllerSourceCatchUpTickIdempotencyKey = (
   sourceRevision: string,
 ): string => `bayn-execution-controller-${epoch}-${sequence}-source-${sourceRevision}-${attempt}`
 
-const scheduleTick = (
-  ctx: restate.ObjectContext<ControllerObjectState>,
-  state: ExecutionControllerState,
-  delay: number,
-  attempt = 0,
-  issuedAt?: string,
-  sourceCatchUpRevision?: string,
-  retryWindowHash?: string,
-  recoveryWindow?: number,
-): restate.InvocationHandle => {
-  let idempotencyKey: string
-  if (retryWindowHash !== undefined) {
-    idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
-      state.epoch,
-      state.nextSequence,
+const makeTickScheduler =
+  (servicePrefix: string | undefined) =>
+  (
+    ctx: restate.ObjectContext<ControllerObjectState>,
+    state: ExecutionControllerState,
+    delay: number,
+    attempt = 0,
+    issuedAt?: string,
+    sourceCatchUpRevision?: string,
+    retryWindowHash?: string,
+    recoveryWindow?: number,
+  ): restate.InvocationHandle => {
+    let idempotencyKey: string
+    if (retryWindowHash !== undefined) {
+      idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
+        state.epoch,
+        state.nextSequence,
+        attempt,
+        retryWindowHash,
+      )
+    } else if (sourceCatchUpRevision !== undefined) {
+      idempotencyKey = executionControllerSourceCatchUpTickIdempotencyKey(
+        state.epoch,
+        state.nextSequence,
+        attempt,
+        sourceCatchUpRevision,
+      )
+    } else {
+      idempotencyKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
+    }
+    const tick: ExecutionControllerTick = {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: state.epoch,
+      sequence: state.nextSequence,
       attempt,
-      retryWindowHash,
-    )
-  } else if (sourceCatchUpRevision !== undefined) {
-    idempotencyKey = executionControllerSourceCatchUpTickIdempotencyKey(
-      state.epoch,
-      state.nextSequence,
-      attempt,
-      sourceCatchUpRevision,
-    )
-  } else {
-    idempotencyKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
+      ...(issuedAt === undefined ? {} : { issuedAt }),
+      ...(recoveryWindow === undefined ? {} : { recoveryWindow }),
+      ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
+      ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
+    }
+    return ctx.genericSend({
+      service: executionServiceName('controller', servicePrefix),
+      method: 'tick',
+      key: ctx.key,
+      parameter: tick,
+      inputSerde: executionTickSerde,
+      delay,
+      idempotencyKey,
+    })
   }
-  const tick: ExecutionControllerTick = {
-    schemaVersion: 'bayn.execution-controller-tick.v1',
-    epoch: state.epoch,
-    sequence: state.nextSequence,
-    attempt,
-    ...(issuedAt === undefined ? {} : { issuedAt }),
-    ...(recoveryWindow === undefined ? {} : { recoveryWindow }),
-    ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
-    ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
-  }
-  return ctx.genericSend({
-    service: 'BaynExecutionController',
-    method: 'tick',
-    key: ctx.key,
-    parameter: tick,
-    inputSerde: executionTickSerde,
-    delay,
-    idempotencyKey,
-  })
-}
 
 export const executionControllerHandlerTimeouts = (
   operationTimeoutMs: number,
@@ -437,8 +446,31 @@ export const makeBaynExecutionController = (
   hooks: readonly restate.HooksProvider[] = [],
   clock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
+  const scheduleTick = makeTickScheduler(config.servicePrefix)
+  const bindConfiguredAccount = async (ctx: restate.ObjectContext<ControllerObjectState>): Promise<void> => {
+    const account = runtime.brokerAccount
+    if (account === undefined) return
+    const previousKey = await ctx.run(
+      'bind the configured broker account',
+      () => account.bind(ctx.request().attemptCompletedSignal),
+      { maxRetryAttempts: 0 },
+    )
+    if (previousKey === null) return
+    const client = ctx.objectClient(controller, previousKey)
+    const predecessor = await client.status(undefined)
+    if (predecessor === null || !predecessor.active) return
+    const retired = await client.deactivate({
+      schemaVersion: 'bayn.execution-controller-deactivation.v1',
+      controllerKey: previousKey,
+      epoch: predecessor.epoch,
+      planHash: predecessor.planHash,
+      sourceRevision: predecessor.sourceRevision,
+    })
+    if (retired.active) throw terminal('previous account controller is still active')
+  }
+
   const controller = restate.object({
-    name: 'BaynExecutionController',
+    name: executionServiceName('controller', config.servicePrefix),
     handlers: {
       activate: restate.handlers.object.exclusive(
         { ingressPrivate: true, retryPolicy: executionControllerCommandRetryPolicy },
@@ -449,12 +481,18 @@ export const makeBaynExecutionController = (
           )
           verifyActivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerActivation(await readState(ctx), request))
+          await bindConfiguredAccount(ctx)
           await ctx.run(
             'project Bayn execution controller activation',
             () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
             executionControllerAdvanceRunOptions,
           )
           if (decision._tag === 'Activated') {
+            startInferenceWatch(ctx, config.servicePrefix, {
+              controllerKey: ctx.key,
+              epoch: decision.state.epoch,
+              sourceRevision: config.sourceRevision,
+            })
             ctx.set(stateKey, decision.state)
             scheduleTick(
               ctx,
@@ -508,6 +546,7 @@ export const makeBaynExecutionController = (
           verifyDeploymentBinding(config, ctx.key, request.deployment)
           verifyDeactivationBinding(config, ctx.key, request.predecessor)
           const decision = decisionOrTerminal(decideExecutionControllerRotation(await readState(ctx), request))
+          await bindConfiguredAccount(ctx)
           await ctx.run(
             'project Bayn execution controller rotation',
             () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
@@ -515,6 +554,11 @@ export const makeBaynExecutionController = (
           )
           if (decision._tag === 'Activated') {
             await retireDeadlineTick(ctx)
+            startInferenceWatch(ctx, config.servicePrefix, {
+              controllerKey: ctx.key,
+              epoch: decision.state.epoch,
+              sourceRevision: config.sourceRevision,
+            })
             ctx.set(stateKey, decision.state)
           }
           scheduleTick(
@@ -588,7 +632,19 @@ export const makeBaynExecutionController = (
                 // with the already-durable advance instead of waiting for a separate journaled clock round trip.
                 const issuedAt = tick.issuedAt ?? new Date(clock.currentTimeMillisUnsafe()).toISOString()
                 try {
-                  return await runtime.advance({ ...decision.command, issuedAt }, ctx.request().attemptCompletedSignal)
+                  const release = state?.lastProtectionRelease
+                  const protectionRelease =
+                    release?.sequence === tick.sequence
+                      ? { proofId: release.proofId, cycleId: release.cycleId, checkedAt: release.checkedAt }
+                      : undefined
+                  return await runtime.advance(
+                    {
+                      ...decision.command,
+                      issuedAt,
+                      ...(protectionRelease === undefined ? {} : { protectionRelease }),
+                    },
+                    ctx.request().attemptCompletedSignal,
+                  )
                 } catch (cause) {
                   throw executionAdvanceRunFailure(cause, issuedAt)
                 }
@@ -679,30 +735,18 @@ export const makeBaynExecutionController = (
               result.observation.waitReason === 'PROTECTION_EXIT_COMMITTED')
           )
             ctx.genericSend({
-              service: 'BaynBrokerObservations',
+              service: executionServiceName('observations', config.servicePrefix),
               method: 'refresh',
               key: ctx.key,
-              parameter: { sourceRevision: config.sourceRevision },
+              parameter: {
+                sourceRevision: config.sourceRevision,
+                ...(result.observation.protectionReleaseCycleId === undefined
+                  ? {}
+                  : { cycleId: result.observation.protectionReleaseCycleId }),
+              },
               inputSerde: brokerObservationJsonSerde,
               idempotencyKey: `bayn-post-mutation-refresh-${completed.epoch}-${tick.sequence}`,
             })
-
-          for (const job of result.inferenceJobs ?? []) {
-            if (job.status !== 'Prepared') continue
-            ctx.genericSend({
-              service: 'BaynEntryInference',
-              method: 'evaluate',
-              parameter: {
-                schemaVersion: 'bayn.inference-dispatch.v1',
-                controllerKey: ctx.key,
-                epoch: completed.epoch,
-                sourceRevision: config.sourceRevision,
-                jobId: job.jobId,
-              },
-              inputSerde: brokerObservationJsonSerde,
-              idempotencyKey: `bayn-inference-${job.jobId}`,
-            })
-          }
 
           // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
           // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
@@ -779,8 +823,23 @@ export const makeBaynExecutionController = (
             if (event.snapshotHash === state.lastBrokerSnapshotHash) return
             nextState = { ...state, lastBrokerSnapshotHash: event.snapshotHash }
           }
+          if (event._tag === 'ProtectionRelease') {
+            if (event.eventId !== event.proofId) throw terminal('protection release identity differs')
+            const previous = state.lastProtectionRelease
+            if (previous !== undefined && (previous.proofId === event.proofId || previous.checkedAt >= event.checkedAt))
+              return
+            nextState = {
+              ...state,
+              lastProtectionRelease: {
+                proofId: event.proofId,
+                cycleId: event.cycleId,
+                checkedAt: event.checkedAt,
+                sequence: state.nextSequence,
+              },
+            }
+          }
           if (nextState !== state) ctx.set(stateKey, nextState)
-          // A closed owner has no quote-dependent work. Canonical broker publications still recheck
+          // A closed owner has no quote-dependent work. Canonical broker snapshots and source events still recheck
           // its authority and calendar; source recovery and inference completion remain immediate.
           if (
             event._tag === 'MarketChanged' &&
@@ -789,18 +848,14 @@ export const makeBaynExecutionController = (
           )
             return
           let eligibilityCheckedAt: number | undefined
-          if (event._tag === 'MarketChanged' && state.marketEligibleAt !== undefined) {
+          if (
+            event._tag === 'MarketChanged' &&
+            event.reason === MarketChangeReason.Data &&
+            state.marketEligibleAt !== undefined
+          ) {
             eligibilityCheckedAt = await ctx.date.now()
-            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) {
-              await writeRuntimeLog(runtime, 'info', 'Bayn retained a market change before eligibility', {
-                controllerKey: ctx.key,
-                eventId: event.eventId,
-                producerId: event.producerId,
-                hintSequence: event.sequence,
-                marketEligibleAt: state.marketEligibleAt,
-              })
-              return
-            }
+            // The durable frontier already retains these hints; quote bursts need no per-hint log delivery.
+            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) return
           }
           if (state.wakeScheduledSequence === state.nextSequence) return
           // The event only accelerates the serialized owner. Every account, quote, authority and deadline check
@@ -811,7 +866,7 @@ export const makeBaynExecutionController = (
             wakeAcceptedAt: new Date(eligibilityCheckedAt ?? (await ctx.date.now())).toISOString(),
           })
           ctx.genericSend({
-            service: 'BaynExecutionController',
+            service: executionServiceName('controller', config.servicePrefix),
             method: 'tick',
             key: ctx.key,
             parameter: {
@@ -866,7 +921,7 @@ export const makeBaynExecutionController = (
           }
           // Backpressure the publisher until this small wake completes; the separate financial tick is not awaited.
           await ctx.genericCall({
-            service: 'BaynExecutionController',
+            service: executionServiceName('controller', config.servicePrefix),
             method: 'wake',
             key: ctx.key,
             parameter: event,
@@ -891,7 +946,20 @@ export const makeBaynExecutionController = (
             decodeExecutionControllerDeactivation(candidate),
             'execution controller deactivation failed validation',
           )
-          verifyDeactivationBinding(config, ctx.key, request)
+          if (ctx.key === config.controllerKey) {
+            verifyDeactivationBinding(config, ctx.key, request)
+          } else {
+            const account = runtime.brokerAccount
+            if (request.controllerKey !== ctx.key || account === undefined) {
+              throw terminal('execution controller deactivation does not match this immutable deployment')
+            }
+            const previousKey = await ctx.run('read the previous configured controller', () =>
+              account.previousController(ctx.request().attemptCompletedSignal),
+            )
+            if (previousKey !== ctx.key) {
+              throw terminal('execution controller deactivation does not match the previous configured account')
+            }
+          }
           const decision = decisionOrTerminal(decideExecutionControllerDeactivation(await readState(ctx), request))
           await ctx.run(
             'project Bayn execution controller deactivation',
@@ -976,7 +1044,7 @@ export const makeBaynExecutionController = (
               strictParseOptions,
             )(
               await ctx.genericCall({
-                service: 'BaynBrokerObservations',
+                service: executionServiceName('observations', config.servicePrefix),
                 method,
                 key: config.controllerKey,
                 parameter: method === 'activate' ? { sourceRevision: config.sourceRevision } : {},

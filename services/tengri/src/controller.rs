@@ -147,14 +147,25 @@ fn failure_status(microvm: &MicroVM, error: &anyhow::Error) -> MicroVMStatus {
         cause.downcast_ref::<tonic::Status>().is_some_and(|error| {
             matches!(
                 error.code(),
-                tonic::Code::Cancelled
+                tonic::Code::Aborted
+                    | tonic::Code::Cancelled
                     | tonic::Code::DeadlineExceeded
                     | tonic::Code::Unavailable
                     | tonic::Code::ResourceExhausted
             )
         }) || cause
             .downcast_ref::<reqwest::Error>()
-            .is_some_and(|error| error.is_timeout() || error.is_connect())
+            .is_some_and(|error| {
+                error.is_timeout()
+                    || error.is_connect()
+                    || error.status().is_some_and(|status| {
+                        status.is_server_error()
+                            || matches!(
+                                status,
+                                reqwest::StatusCode::CONFLICT | reqwest::StatusCode::TOO_MANY_REQUESTS
+                            )
+                    })
+            })
             || matches!(cause.downcast_ref::<kube::Error>(), Some(kube::Error::Api(error)) if error.code == 409 || error.code == 429 || error.code >= 500)
     }) {
         status.guest_ready = false;
@@ -221,6 +232,7 @@ pub async fn converge(
         tickets,
         authorization,
         agent_work,
+        runtime_image,
         ..
     } = context;
     ensure!(
@@ -396,7 +408,56 @@ pub async fn converge(
         authorization.stop_runtime(&claimed).await?;
         return api.get(&microvm.name_any()).await.map_err(Into::into);
     }
+    let cold_recovery = microvm.spec.desired_state == MicroVMDesiredState::Running
+        && status.state.lifecycle_fenced();
     let state = match (&status.state, microvm.spec.desired_state) {
+        (_, MicroVMDesiredState::Running) if cold_recovery => {
+            let runner = pod
+                .spec
+                .as_ref()
+                .and_then(|spec| {
+                    spec.containers
+                        .iter()
+                        .find(|container| container.name == "runner")
+                })
+                .context("claimed slot has no runner")?;
+            // The fenced runner has reaped Firecracker. Upgrade only that runner,
+            // leaving its already attached home, private root, and slot identity in place.
+            let image_configured = runner.image.as_deref() == Some(runtime_image.as_ref());
+            if !image_configured {
+                update_slot_image(client, namespace, &pod, "runner", runtime_image, leadership)
+                    .await?;
+            }
+            let running_image = pod
+                .status
+                .as_ref()
+                .and_then(|status| status.container_statuses.as_ref())
+                .and_then(|containers| {
+                    containers
+                        .iter()
+                        .find(|container| container.name == "runner")
+                })
+                .filter(|container| {
+                    container
+                        .state
+                        .as_ref()
+                        .is_some_and(|state| state.running.is_some())
+                })
+                .map(|container| container.image_id.trim_start_matches("docker-pullable://"));
+            // An observed Pod spec can still have its previous runner serving the socket.
+            if image_configured && running_image == Some(runtime_image.as_ref()) {
+                supervisor
+                    .restore(&microvm, authorization, leadership)
+                    .await?
+            } else {
+                crate::slot::runner::SlotStatus {
+                    state: SlotState::ColdBooting {
+                        claim: claim_for(&microvm)?,
+                    },
+                    ..status
+                }
+            }
+        }
         (SlotState::Preparing | SlotState::Failed { .. } | SlotState::Stopped { .. }, _) => status,
         (_, MicroVMDesiredState::Running) => {
             let claim = claim_for(&microvm)?;
@@ -472,7 +533,8 @@ pub async fn converge(
         .await
         {
             Ok(updated) => {
-                if status.phase == MicroVMPhase::Ready
+                if !cold_recovery
+                    && status.phase == MicroVMPhase::Ready
                     && current.status.as_ref().is_none_or(|s| !s.guest_ready)
                     && let Some((resume, millis)) = lifecycle_latency(&current, Utc::now())
                 {
@@ -592,28 +654,41 @@ fn status_for(
     authorization_paused: bool,
 ) -> MicroVMStatus {
     let now = Utc::now();
+    let fenced = state.lifecycle_fenced();
     let phase = match state {
         SlotState::Awake { .. } => MicroVMPhase::Ready,
         SlotState::Sleeping { .. } => MicroVMPhase::Sleeping,
         SlotState::Vacant { .. } if microvm.spec.desired_state == MicroVMDesiredState::Sleeping => {
             MicroVMPhase::Sleeping
         }
+        SlotState::Failed { .. } if fenced => match microvm.spec.desired_state {
+            MicroVMDesiredState::Running => MicroVMPhase::Booting,
+            MicroVMDesiredState::Sleeping => MicroVMPhase::Sleeping,
+        },
         SlotState::Failed { .. } | SlotState::Stopped { .. } => MicroVMPhase::Failed,
         _ => MicroVMPhase::Booting,
     };
     let ready = phase == MicroVMPhase::Ready;
     let (reason, message) = match state {
-        SlotState::Sleeping { .. } | SlotState::Vacant { .. }
-            if authorization_paused && phase == MicroVMPhase::Sleeping =>
+        _ if authorization_paused && phase == MicroVMPhase::Sleeping => (
+            "AuthorizationPaused",
+            "Authorization is temporarily unavailable; the saved workspace will resume automatically.",
+        ),
+        SlotState::Awake { .. } => (
+            "GuestReady",
+            "Files, terminal, and initialized Codex passed the guest readiness checks",
+        ),
+        SlotState::ColdBooting { .. } | SlotState::Failed { .. }
+            if phase == MicroVMPhase::Booting =>
         {
             (
-                "AuthorizationPaused",
-                "Authorization is temporarily unavailable; the saved workspace will resume automatically.",
+                "RetainedDiskBootInProgress",
+                "Restarting the workspace from its retained disks",
             )
         }
-        SlotState::Awake { .. } => (
-            "SnapshotRestored",
-            "Files, terminal, and initialized Codex passed the guest resume hook",
+        SlotState::Failed { .. } if fenced => (
+            "RetainedDisksStopped",
+            "The workspace is stopped and can resume from its retained disks",
         ),
         SlotState::Sleeping { .. } => (
             "GuestStopped",
@@ -1430,11 +1505,15 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
                 })
                 .context("claimed slot has no supervisor")?;
             if supervisor.image.as_deref() != Some(context.runtime_image.as_ref()) {
-                context.leader()?;
-                pods.patch(&lease.name_any(), &PatchParams::default(), &Patch::Strategic(json!({
-                    "metadata": {"uid": uid, "resourceVersion": pod.resource_version().context("slot Pod has no version")?},
-                    "spec": {"containers": [{"name": "supervisor", "image": context.runtime_image.as_ref()}]}
-                }))).await?;
+                update_slot_image(
+                    &context.client,
+                    &context.namespace,
+                    &pod,
+                    "supervisor",
+                    &context.runtime_image,
+                    context.leader()?,
+                )
+                .await?;
             }
         }
         return prepare_slot(context, lease).await;
@@ -1509,6 +1588,23 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
         }
     }
     prepare_slot(context, lease).await
+}
+
+async fn update_slot_image(
+    client: &Client,
+    namespace: &str,
+    pod: &Pod,
+    container: &str,
+    image: &str,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<()> {
+    leadership.fence()?;
+    Api::<Pod>::namespaced(client.clone(), namespace)
+        .patch(&pod.name_any(), &PatchParams::default(), &Patch::Strategic(json!({
+            "metadata": {"uid": pod.uid().context("slot Pod has no UID")?, "resourceVersion": pod.resource_version().context("slot Pod has no version")?},
+            "spec": {"containers": [{"name": container, "image": image}]}
+        }))).await?;
+    Ok(())
 }
 
 fn spare_slot_is_starting(pod: &Pod) -> bool {
@@ -2452,6 +2548,8 @@ mod tests {
             PreviousAwake,
             Preparing,
             Failed,
+            TimedOut,
+            TimedOutWithOldRunner,
             Stopped,
         }
         use ObservedSlot::*;
@@ -2464,6 +2562,9 @@ mod tests {
             (6, PreviousAwake),
             (6, Preparing),
             (6, Failed),
+            (6, TimedOut),
+            (6, TimedOutWithOldRunner),
+            (7, TimedOut),
             (6, Stopped),
         ] {
             let old_awake = matches!(observed_slot, PreviousAwake);
@@ -2493,7 +2594,11 @@ mod tests {
                     Preparing => SlotState::Preparing,
                     Failed => SlotState::Failed {
                         claim: Some(claim.clone()),
-                        message: "guest lifecycle timed out".into(),
+                        message: "disk flush failed".into(),
+                    },
+                    TimedOut | TimedOutWithOldRunner => SlotState::Failed {
+                        claim: Some(claim.clone()),
+                        message: crate::slot::GUEST_LIFECYCLE_TIMEOUT.into(),
                     },
                     Stopped => SlotState::Stopped {
                         claim: claim.clone(),
@@ -2561,6 +2666,12 @@ mod tests {
                 }},
                 "spec":{"holderIdentity":serde_json::to_string(&claim.allocation()).unwrap()}
             });
+            let runtime_image = "registry.test/tengri@sha256:new";
+            let runner_image_id = if matches!(observed_slot, TimedOutWithOldRunner) {
+                "registry.test/tengri@sha256:old"
+            } else {
+                runtime_image
+            };
             let (client, pending) = mock(vec![
                 get(
                     "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
@@ -2574,7 +2685,11 @@ mod tests {
                     "/api/v1/namespaces/tengri/pods/slot-test",
                     json!({
                         "apiVersion":"v1", "kind":"Pod", "metadata":{"name":"slot-test", "uid":"original-pod"},
-                        "status":{"podIP":"127.0.0.1"}
+                        "spec":{"containers":[{"name":"runner","image":runtime_image}]},
+                        "status":{"podIP":"127.0.0.1","containerStatuses":[{
+                            "name":"runner","image":runtime_image,"imageID":runner_image_id,
+                            "ready":true,"restartCount":1,"state":{"running":{}}
+                        }]}
                     }),
                 ),
                 get(
@@ -2590,6 +2705,7 @@ mod tests {
                 },
             ]);
             let mut context = context(client);
+            context.runtime_image = Arc::from(runtime_image);
             context.identity = WorkloadIdentity::Fixture(port);
             context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(mode);
             let result = converge(&context, &microvm, context.leader().unwrap()).await;
@@ -2598,8 +2714,8 @@ mod tests {
                 result.expect("fresh unchanged authority must still restore after the initial decision expires");
                 assert_eq!(
                     restores.load(Ordering::SeqCst),
-                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake)),
-                    "only a prepared committed snapshot may restore"
+                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake | TimedOut)),
+                    "a fenced timeout must wait for the new runner even after its image is set in the Pod spec"
                 );
                 assert_eq!(sleeps.load(Ordering::SeqCst), usize::from(old_awake));
                 assert!(pending.lock().unwrap().is_empty());
@@ -3183,12 +3299,14 @@ mod tests {
         microvm.status = Some(unknown.clone());
         let repeated = failure_status(
             &microvm,
-            &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
+            &anyhow::Error::from(tonic::Status::aborted(
+                "runtime authority changed before disclosure",
+            )),
         );
         assert_eq!(repeated, unknown);
         let recovered = status_for(&microvm, &Pod::default(), &state, false);
         assert_eq!(recovered.conditions[0].status, "True");
-        assert_eq!(recovered.conditions[0].reason, "SnapshotRestored");
+        assert_eq!(recovered.conditions[0].reason, "GuestReady");
         assert_ne!(
             recovered.conditions[0].last_transition_at,
             unknown.conditions[0].last_transition_at
@@ -3198,6 +3316,41 @@ mod tests {
             status_for(&microvm, &Pod::default(), &state, false),
             recovered
         );
+    }
+
+    #[test]
+    fn a_fenced_workspace_preserves_its_reconnect_path() {
+        let mut microvm = agent();
+        let state = SlotState::Failed {
+            claim: Some(claim_for(&microvm).unwrap()),
+            message: crate::slot::LIFECYCLE_WITHDRAWN.into(),
+        };
+        let pod = Pod::default();
+        microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+        let paused = status_for(&microvm, &pod, &state, true);
+        assert_eq!(paused.phase, MicroVMPhase::Sleeping);
+        assert_eq!(paused.conditions[0].reason, "AuthorizationPaused");
+        assert!(!paused.guest_ready);
+        assert!(paused.failure_reason.is_none());
+
+        let sleeping = status_for(&microvm, &pod, &state, false);
+        assert_eq!(sleeping.phase, MicroVMPhase::Sleeping);
+        assert_eq!(sleeping.conditions[0].reason, "RetainedDisksStopped");
+
+        microvm.spec.desired_state = MicroVMDesiredState::Running;
+        for message in [
+            crate::slot::LIFECYCLE_WITHDRAWN,
+            crate::slot::GUEST_LIFECYCLE_TIMEOUT,
+        ] {
+            let stopped = SlotState::Failed {
+                claim: Some(claim_for(&microvm).unwrap()),
+                message: message.into(),
+            };
+            let booting = status_for(&microvm, &pod, &stopped, false);
+            assert_eq!(booting.phase, MicroVMPhase::Booting);
+            assert_eq!(booting.conditions[0].reason, "RetainedDiskBootInProgress");
+            assert!(!booting.guest_ready);
+        }
     }
 
     #[tokio::test]

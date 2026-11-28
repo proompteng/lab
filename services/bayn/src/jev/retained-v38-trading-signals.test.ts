@@ -1,4 +1,8 @@
-import { retainedJevProtocolV39Document, retainedJevProtocolV40Document } from './protocol'
+import {
+  retainedJevProtocolV39Document,
+  retainedJevProtocolV40Document,
+  retainedJevProtocolV41Document,
+} from './protocol'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -175,7 +179,9 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
       }),
     )
     expect(study.modelStatus).toBe('AVAILABLE')
-    const { decidedAt: _decidedAt, ...currentEvidence } = nativeJevDecisionEvidence()
+    const { decidedAt: _decidedAt, ...currentEvidence } = nativeJevDecisionEvidence(
+      nativeJevFixture(undefined, undefined, undefined, retainedJevProtocolV41Document),
+    )
     expect(study.selected).toEqual(Result.getOrThrow(prepareSignalStudyBatch(currentEvidence)).selected)
     let fundedComparisons = 0
     for (const prior of exported.result?.candidates ?? []) {
@@ -252,14 +258,14 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         planVersion: JevBatchPlanVersion.V8,
       }),
     )
-    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v41')
-    expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(10)
-    expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(10)
+    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v44')
+    expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(5)
+    expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(5)
     for (const candidate of plan.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.numericalState['entryEconomics']).toMatchObject({
-        maximumEntryQuoteDriftBps: 0,
-        maximumEntryLimitSlippageBps: 0,
+        maximumEntryQuoteDriftBps: 5,
+        maximumEntryLimitSlippageBps: 5,
       })
       const changed = structuredClone(candidate.request.request)
       Object.assign(changed.numericalState['entryEconomics'] ?? {}, { maximumEntryQuoteDriftBps: 10 })
@@ -329,17 +335,28 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         capitalMicros: '400000000000',
       }
       const prior = Result.getOrThrow(jevEntryEconomics({ ...input, protocol: retainedProtocol }))
-      const successor = Result.getOrThrow(jevEntryEconomics({ ...input, protocol: defaultJevProtocolDocument }))
+      const v41 = Result.getOrThrow(jevEntryEconomics({ ...input, protocol: retainedJevProtocolV41Document }))
       expect(prior).not.toBeNull()
       if (prior === null) throw new Error('Expected funded economics')
-      expect(successor).toEqual({ ...prior, maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 })
-      expect(jevMaximumEntryAskMicros(defaultJevProtocolDocument, market.symbol, market.askMicros)).toBe(
+      expect(v41).toEqual({ ...prior, maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 })
+      expect(jevMaximumEntryAskMicros(retainedJevProtocolV41Document, market.symbol, market.askMicros)).toBe(
         jevMaximumEntryAskMicros(retainedProtocol, market.symbol, market.askMicros),
       )
       const liquidation = { ...input, quantityAtoms: BigInt(prior.receivedQuantityAtoms) }
-      expect(Result.getOrThrow(jevLiquidationValue({ ...liquidation, protocol: defaultJevProtocolDocument }))).toEqual(
-        Result.getOrThrow(jevLiquidationValue({ ...liquidation, protocol: retainedProtocol })),
-      )
+      expect(
+        Result.getOrThrow(jevLiquidationValue({ ...liquidation, protocol: retainedJevProtocolV41Document })),
+      ).toEqual(Result.getOrThrow(jevLiquidationValue({ ...liquidation, protocol: retainedProtocol })))
+      const successor = Result.getOrThrow(jevEntryEconomics({ ...input, protocol: defaultJevProtocolDocument }))
+      if (market.symbol === 'BTC/USD') {
+        expect(successor?.maximumEntryQuoteDriftBps).toBe(0)
+        expect(successor?.maximumEntryLimitSlippageBps).toBe(0)
+        expect(jevMaximumEntryAskMicros(defaultJevProtocolDocument, market.symbol, market.askMicros)).toBe(
+          jevMaximumEntryAskMicros(retainedProtocol, market.symbol, market.askMicros),
+        )
+      } else {
+        expect(successor?.maximumEntryQuoteDriftBps).toBe(5)
+        expect(successor?.maximumEntryLimitSlippageBps).toBe(5)
+      }
     },
   )
 })

@@ -3,7 +3,8 @@ import {
   constructExecutionDecision as buildExecutionDecision,
   constructObserveShadowDecision as buildObserveShadowDecision,
 } from '../shadow-decision'
-import { buildResearchMutationCycleDecision } from './decision-builder'
+import { buildResearchMutationCycleDecision, type ResearchAlphaBaselineLoader } from './decision-builder'
+import type { AnyReplayAlphaBaselineUse } from './alpha-baseline-use'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -16,8 +17,7 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Context, Effect, Semaphore } from 'effect'
-import { TestClock } from 'effect/testing'
+import { Context, Effect } from 'effect'
 import { operationTimeoutOrElse } from '../operation-timeout'
 
 import { BrokerRead } from '../broker/alpaca/model'
@@ -37,6 +37,7 @@ import {
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
+import { readCurrentProtectionClose, readProtectionSubmit } from '../db/protection-release'
 import { CycleStore } from '../cycle/store/model'
 import { makeCycleStore, withWriterFenceCycleStore } from '../cycle/store/postgres'
 import { BrokerAccess, grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
@@ -56,7 +57,7 @@ import {
 import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
 import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
 import { IntentStore } from '../execution/intents/domain'
-import { MutationStore, MutationStoreError, type StartReceipt } from '../execution/mutations/model'
+import { MutationStore } from '../execution/mutations/model'
 import { makeTradingEngine } from '../composition/trading-engine'
 import { WriterFence } from '../execution/writer-fence'
 import type { ExecutionProgramDependencies } from '../execution/runtime-program'
@@ -72,7 +73,8 @@ import { runReconciliation } from '../simulation-reconciliation/broker-reconcile
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
 import { ReconciliationClock } from '../reconciler'
 import { CapitalActivationReconciliationNotExact, operationalError, OperationalError } from '../errors'
-import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
+import { currentUtcInstant } from '../time'
+import { makeReplayAdmissionClock } from './admission-clock'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
 import { makeReplayDecisionLatency } from './decision-latency'
 
@@ -102,6 +104,11 @@ export const reconcileReplayForActivation = <R>(
   )
 
 export interface ReplayExecutionRuntimeInput {
+  readonly loadAlphaBaseline?: (
+    ...args: [...Parameters<ResearchAlphaBaselineLoader>, commandIssuedAt: string]
+  ) => ReturnType<ResearchAlphaBaselineLoader>
+  readonly recordAlphaBaselineUse?: (use: AnyReplayAlphaBaselineUse) => Effect.Effect<void, OperationalError>
+  readonly decisionTrigger?: 'polling' | 'streaming'
   readonly decisionLatencyStress: Parameters<typeof makeReplayDecisionLatency>[1]
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
   readonly config: ExecutionStoreRuntimeConfig
@@ -132,35 +139,9 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       return yield* new ReplayBrokerFailure({ message: 'Replay runtime requires its synthetic sandbox account' })
     const sql = yield* PgClient.PgClient
     const fence = yield* WriterFence
-    const intentStore = yield* IntentStore
-    const originalMutations = yield* MutationStore
-    const admissionClock = yield* Semaphore.make(1)
-    const alignAdmission = (operation: 'begin-submit' | 'begin-cancel') => (receipt: StartReceipt) =>
-      admissionClock.withPermit(
-        Effect.gen(function* () {
-          const current = yield* Clock.currentTimeMillis
-          const admitted = Date.parse(receipt.event.occurredAt)
-          if (admitted <= current) return
-          // The coordinator's ordered admission may be ahead of the replay clock. Observe it before any broker effect.
-          yield* input.clock.advanceTo(utcInstantFromEpochMillis(admitted)).pipe(
-            Effect.mapError(
-              (cause) =>
-                new MutationStoreError({
-                  operation,
-                  failure: 'query',
-                  message: 'Replay clock could not observe committed mutation admission',
-                  cause,
-                }),
-            ),
-          )
-          yield* TestClock.setTime(Math.max(admitted, yield* Clock.currentTimeMillis))
-        }),
-      )
-    const mutationStore: MutationStore['Service'] = {
-      ...originalMutations,
-      beginSubmit: (...args) => originalMutations.beginSubmit(...args).pipe(Effect.tap(alignAdmission('begin-submit'))),
-      beginCancel: (...args) => originalMutations.beginCancel(...args).pipe(Effect.tap(alignAdmission('begin-cancel'))),
-    }
+    const admissionClock = yield* makeReplayAdmissionClock(input.clock)
+    const intentStore = admissionClock.intents(yield* IntentStore)
+    const mutationStore = admissionClock.mutations(yield* MutationStore)
     const blockedCycleIntentStore = yield* BlockedCycleIntentStore
     const closures = yield* ExecutionCycleClosureStore
     const persistedCapitalGrants = yield* PersistedCapitalGrantStore
@@ -183,7 +164,13 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const jevClient = yield* JevClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
-    const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
+    const latency = makeReplayDecisionLatency(
+      input.currentUtcInstant,
+      input.decisionLatencyStress,
+      input.recordAlphaBaselineUse !== undefined,
+    )
+    const recordAlphaBaselineUse = input.recordAlphaBaselineUse
+    const loadAlphaBaseline = input.loadAlphaBaseline
     const jevBatches = latency.wrapStore(
       yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
     )
@@ -305,7 +292,22 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
-          buildDecision: buildResearchMutationCycleDecision,
+          buildDecision: (decision) =>
+            buildResearchMutationCycleDecision(
+              decision,
+              loadAlphaBaseline === undefined
+                ? undefined
+                : (query, observedAt) =>
+                    latency.currentCommandIssuedAt.pipe(
+                      Effect.flatMap((commandIssuedAt) => loadAlphaBaseline(query, observedAt, commandIssuedAt)),
+                    ),
+              recordAlphaBaselineUse === undefined
+                ? undefined
+                : (use) =>
+                    latency.currentCommandIssuedAt.pipe(
+                      Effect.flatMap((commandIssuedAt) => recordAlphaBaselineUse({ ...use, commandIssuedAt })),
+                    ),
+            ),
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {
@@ -314,6 +316,11 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             strategy: input.strategy,
             intradayMarketData: marketData,
             executionCycleClosureStore: closures,
+            readProtectionClose: (reference, maxAgeMs) =>
+              readCurrentProtectionClose(reference, identity.accountId, maxAgeMs).pipe(
+                Effect.provideService(PgClient.PgClient, sql),
+                Effect.provideService(WriterFence, fence),
+              ),
             blockedCycleIntentStore,
             reconciliationIntervalMs: input.reconciliationIntervalMs,
             reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
@@ -331,6 +338,11 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             persistedCapitalGrants,
             readFinalExecutionRiskContext: (observedAt) =>
               readFinalExecutionRiskContext(sql, identity.accountId, observedAt),
+            readProtectionSubmit: (intentId, proofId) =>
+              readProtectionSubmit(intentId, proofId, 'transmission').pipe(
+                Effect.provideService(PgClient.PgClient, sql),
+                Effect.provideService(WriterFence, fence),
+              ),
           },
         })
         const startup = yield* engine.startCycle({
@@ -376,13 +388,17 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      // Offline studies retain their registered sampling cadence even when the live owner waits for a stream event.
+      // Retained v11 studies keep their polling cadence; native replay preserves the owner's next wake.
       advance: driver.advance.pipe(
         Effect.provideContext(resources),
-        Effect.map((pass) => ({
-          ...pass,
-          nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
-        })),
+        Effect.map((pass) =>
+          input.decisionTrigger === 'streaming'
+            ? pass
+            : {
+                ...pass,
+                nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
+              },
+        ),
       ),
       nextDelayMs: input.pollIntervalMs,
       reconcile,

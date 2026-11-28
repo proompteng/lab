@@ -69,7 +69,7 @@ asset_refs=()
 while IFS= read -r asset_ref; do
   asset_refs+=("$asset_ref")
 done < <(
-  grep -Eo '(src|href)="(\./|/)?assets/[^"]+"' "$index_path" \
+  grep -Eo '(src|href)="(\./|/)?static/(js|css)/[^"]+"' "$index_path" \
     | sed -E 's/^(src|href)="([^"]+)"$/\2/' \
     | sort -u
 )

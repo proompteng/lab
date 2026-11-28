@@ -107,6 +107,103 @@ type DashboardPanel = MetricPanel | { readonly type: 'row'; readonly panels: rea
 const metricPanels = (panels: readonly DashboardPanel[]): readonly MetricPanel[] =>
   panels.flatMap((panel) => (panel.type === 'row' ? metricPanels(panel.panels) : [panel]))
 
+test('Bayn memory and storage panels preserve source, instance, sample validity and replica cardinality', () => {
+  const manifest = YAML.parse(
+    readFileSync(
+      new URL(
+        '../../../../../argocd/applications/observability/bayn-cache-performance-dashboard-configmap.yaml',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  )
+  const dashboard: { readonly panels: readonly DashboardPanel[] } = JSON.parse(
+    manifest.data['bayn-cache-performance.json'],
+  )
+  const panels = metricPanels(dashboard.panels)
+  const expression = (title: string, index = 0) => {
+    const value = panels.find((panel) => panel.title === title)?.targets[index]?.expr
+    if (value === undefined) throw new Error(`Missing memory or storage panel: ${title}`)
+    return value.replaceAll('$source_revision', 'current')
+  }
+  const heap = expression('Heap used by isolate')
+  const external = expression('External and ArrayBuffer memory')
+  const age = expression('Memory sample age')
+  const resident = expression('Controller process RSS')
+  const database = expression('Database and retained arrival size')
+  const arrivals = expression('Database and retained arrival size', 1)
+  const sample = (metric: string, labels: string, value: number, source = 'current') => ({
+    series: `${metric}{namespace="bayn",service="bayn-execution-controller",source_revision="${source}",${labels}}`,
+    values: `${value}+0x10`,
+  })
+  const heapSample = (instance: string, isolate: string, bytes: number, at: number, source = 'current') => [
+    sample('bayn_runtime_memory_bytes', `instance="${instance}",isolate="${isolate}",kind="heap_used"`, bytes, source),
+    sample('bayn_runtime_memory_sample_timestamp_seconds', `instance="${instance}",isolate="${isolate}"`, at, source),
+  ]
+  runPromtool({
+    'rules.yaml': 'groups: []\n',
+    'tests.yaml': YAML.stringify({
+      rule_files: ['rules.yaml'],
+      evaluation_interval: '1m',
+      tests: [
+        {
+          name: 'memory samples keep their own instance, isolate and source; bytes do not combine replicas',
+          interval: '1m',
+          input_series: [
+            ...heapSample('turin', 'main', 100, 600),
+            ...heapSample('turin', 'market-projection', 200, 100),
+            ...heapSample('turin', 'decision-construction', 999, 0),
+            ...heapSample('altra', 'market-projection', 888, 0),
+            ...heapSample('retained', 'main', 777, 600, 'old'),
+            sample('bayn_runtime_memory_bytes', 'instance="turin",isolate="main",kind="external"', 400),
+            sample('bayn_runtime_memory_bytes', 'instance="turin",isolate="main",kind="array_buffers"', 100),
+            sample(
+              'bayn_runtime_memory_bytes',
+              'instance="turin",isolate="decision-construction",kind="external"',
+              999,
+            ),
+            sample('bayn_runtime_process_resident_memory_bytes', 'instance="turin"', 1600),
+            sample('bayn_runtime_process_resident_memory_bytes', 'instance="altra"', 1700),
+            sample('bayn_runtime_process_resident_memory_bytes', 'instance="retained"', 9999, 'old'),
+            {
+              series: 'cnpg_pg_database_size_bytes{namespace="bayn",cluster="bayn-db",datname="bayn",pod="primary"}',
+              values: '1020+0x10',
+            },
+            {
+              series: 'cnpg_pg_database_size_bytes{namespace="bayn",cluster="bayn-db",datname="bayn",pod="replica"}',
+              values: '1000+0x10',
+            },
+            {
+              series: 'cnpg_bayn_native_arrivals_total_bytes{namespace="bayn",cluster="bayn-db",pod="primary"}',
+              values: '700+0x10',
+            },
+          ],
+          promql_expr_test: [
+            { expr: `sum(${heap})`, eval_time: '10m', exp_samples: [{ labels: '{}', value: 300 }] },
+            { expr: `count(${heap})`, eval_time: '10m', exp_samples: [{ labels: '{}', value: 2 }] },
+            { expr: `count(${external})`, eval_time: '10m', exp_samples: [{ labels: '{}', value: 2 }] },
+            { expr: `max(${age})`, eval_time: '10m', exp_samples: [{ labels: '{}', value: 500 }] },
+            { expr: `count(${age})`, eval_time: '10m', exp_samples: [{ labels: '{}', value: 2 }] },
+            { expr: `sum(${resident})`, eval_time: '10m', exp_samples: [{ labels: '{}', value: 3300 }] },
+            { expr: database, eval_time: '10m', exp_samples: [{ labels: '{cluster="bayn-db"}', value: 1020 }] },
+            { expr: arrivals, eval_time: '10m', exp_samples: [{ labels: '{cluster="bayn-db"}', value: 700 }] },
+          ],
+        },
+        {
+          name: 'missing memory or storage telemetry remains unavailable',
+          interval: '1m',
+          input_series: [],
+          promql_expr_test: [heap, external, age, resident, database, arrivals].map((expr) => ({
+            expr,
+            eval_time: '10m',
+            exp_samples: [],
+          })),
+        },
+      ],
+    }),
+  })
+}, 30_000)
+
 test('Bayn dashboard evaluates replica health, telemetry freshness, waits and operation outcomes with native PromQL', () => {
   const manifest = YAML.parse(
     readFileSync(

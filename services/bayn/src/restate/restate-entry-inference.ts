@@ -1,24 +1,64 @@
+import { executionServiceName } from './execution-service-names'
 import * as restate from '@restatedev/restate-sdk'
 import { Result, Schema } from 'effect'
 
 import { sha256 } from '../hash'
-import { JevInferenceCompletionSchema } from '../jev/inference-work'
-import type { JevInferenceCompletion } from '../jev/inference-work'
+import {
+  JevInferenceCompletionSchema,
+  maximumWatchedInferenceJobs,
+  type JevInferenceCompletion,
+  type JevInferenceWatchResult,
+} from '../jev/inference-work'
 import { Sha256Schema, SourceRevisionSchema, strictParseOptions } from '../schemas'
 import { brokerObservationJsonSerde } from './restate-broker-observations'
 import type { ExecutionControllerConfig } from './restate-execution-controller'
 
 export interface EntryInferenceRuntime {
-  readonly executeInference: (jobId: string, signal: AbortSignal) => Promise<JevInferenceCompletion | null>
+  readonly executeInference: (command: InferenceDispatch, signal: AbortSignal) => Promise<JevInferenceCompletion | null>
+  readonly awaitDispatch: (
+    scope: InferenceControllerEpoch,
+    pending: readonly string[],
+    signal: AbortSignal,
+  ) => Promise<JevInferenceWatchResult>
 }
 
-export const InferenceDispatchSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.inference-dispatch.v1'),
+const InferenceControllerEpochSchema = Schema.Struct({
   controllerKey: Sha256Schema,
   epoch: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   sourceRevision: SourceRevisionSchema,
+})
+type InferenceControllerEpoch = typeof InferenceControllerEpochSchema.Type
+
+export const InferenceDispatchSchema = Schema.Struct({
+  ...InferenceControllerEpochSchema.fields,
+  schemaVersion: Schema.Literal('bayn.inference-dispatch.v1'),
   jobId: Sha256Schema,
 })
+export type InferenceDispatch = typeof InferenceDispatchSchema.Type
+
+const PendingJobs = Schema.Array(Sha256Schema).check(Schema.isMaxLength(maximumWatchedInferenceJobs))
+const InferenceWatchSchema = Schema.Struct({
+  ...InferenceControllerEpochSchema.fields,
+  schemaVersion: Schema.Literal('bayn.inference-watch.v1'),
+  pending: PendingJobs,
+})
+const InferenceWatchResultSchema = Schema.Union([
+  Schema.Struct({ active: Schema.Literal(false) }),
+  Schema.Struct({ active: Schema.Literal(true), pending: PendingJobs, dispatch: PendingJobs }),
+])
+
+export const startInferenceWatch = (
+  ctx: restate.Context,
+  servicePrefix: string | undefined,
+  scope: InferenceControllerEpoch,
+) =>
+  ctx.genericSend({
+    service: executionServiceName('inference', servicePrefix),
+    method: 'watch',
+    parameter: { ...scope, schemaVersion: 'bayn.inference-watch.v1', pending: [] },
+    inputSerde: brokerObservationJsonSerde,
+    idempotencyKey: `bayn-inference-watch-${scope.controllerKey}-${scope.epoch}`,
+  })
 
 /** This service owns paid inference only. All financial work stays on the account object. */
 export const makeBaynEntryInference = (
@@ -27,8 +67,46 @@ export const makeBaynEntryInference = (
   hooks: readonly restate.HooksProvider[] = [],
 ) =>
   restate.service({
-    name: 'BaynEntryInference',
+    name: executionServiceName('inference', config.servicePrefix),
     handlers: {
+      watch: restate.handlers.handler(
+        { ingressPrivate: true },
+        async (ctx: restate.Context, candidate: unknown): Promise<void> => {
+          const request = Schema.decodeUnknownResult(InferenceWatchSchema, strictParseOptions)(candidate)
+          if (Result.isFailure(request)) throw new restate.TerminalError('inference watch failed validation')
+          const { schemaVersion, pending, ...scope } = request.success
+          // Restate can route a departing watch's continuation to the newly registered revision.
+          if (scope.sourceRevision !== config.sourceRevision) return
+          if (scope.controllerKey !== config.controllerKey)
+            throw new restate.TerminalError('inference watch differs from its immutable account deployment')
+          const observed = await ctx.run(
+            'await committed Bayn inference work',
+            () => runtime.awaitDispatch(scope, pending, ctx.request().attemptCompletedSignal),
+            { initialRetryInterval: 50, maxRetryInterval: 1_000 },
+          )
+          const result = Schema.decodeUnknownResult(InferenceWatchResultSchema, strictParseOptions)(observed)
+          if (Result.isFailure(result)) throw new restate.TerminalError('inference watch returned invalid work')
+          if (!result.success.active) return
+
+          for (const jobId of result.success.dispatch) {
+            ctx.genericSend({
+              service: executionServiceName('inference', config.servicePrefix),
+              method: 'evaluate',
+              parameter: { ...scope, schemaVersion: 'bayn.inference-dispatch.v1', jobId },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `bayn-inference-${scope.epoch}-${jobId}`,
+            })
+          }
+          // Each scoped wait closes its listener and keeps the invocation journal bounded.
+          ctx.genericSend({
+            service: executionServiceName('inference', config.servicePrefix),
+            method: 'watch',
+            parameter: { ...scope, schemaVersion, pending: result.success.pending },
+            inputSerde: brokerObservationJsonSerde,
+            idempotencyKey: `bayn-inference-watch-next-${ctx.request().id}`,
+          })
+        },
+      ),
       evaluate: restate.handlers.handler(
         { ingressPrivate: true },
         async (ctx: restate.Context, candidate: unknown): Promise<void> => {
@@ -43,7 +121,7 @@ export const makeBaynEntryInference = (
             // The one-way SQL claim prevents another paid call after an uncertain provider outcome.
             const result = await ctx.run(
               'execute admitted Bayn inference',
-              () => runtime.executeInference(command.jobId, ctx.request().attemptCompletedSignal),
+              () => runtime.executeInference(command, ctx.request().attemptCompletedSignal),
               { initialRetryInterval: 50, maxRetryInterval: 1_000 },
             )
             const decoded = Schema.decodeUnknownResult(JevInferenceCompletionSchema, strictParseOptions)(result)
@@ -61,7 +139,7 @@ export const makeBaynEntryInference = (
             completion = await execute()
           }
           ctx.genericSend({
-            service: 'BaynExecutionController',
+            service: executionServiceName('controller', config.servicePrefix),
             method: 'wake',
             key: command.controllerKey,
             parameter: {
@@ -78,7 +156,7 @@ export const makeBaynEntryInference = (
               completedAt: completion.completedAt,
             },
             inputSerde: brokerObservationJsonSerde,
-            idempotencyKey: `bayn-inference-completion-${command.jobId}`,
+            idempotencyKey: `bayn-inference-completion-${command.epoch}-${command.jobId}`,
           })
         },
       ),

@@ -1,0 +1,3001 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
+import { buildResearchMutationCycleDecision } from './decision-builder'
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
+import { reproduceJevCandidateObservation } from '../jev/observation'
+import { makeRepeatedMomentumPolicy, repeatedMomentumStrategyIdentity } from '../strategy/repeated-momentum/policy'
+import { RepeatedMomentumTargetSchema } from '../strategy/repeated-momentum/decision'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
+import { JevBatchPlanVersion } from '../jev/batch'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { EntryInferenceJournal } from '../jev/entry-inference'
+import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
+import { makeReplayInferenceBudget } from './inference-timing'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
+import { decodeJevEvaluationRequest } from '../jev/evidence'
+import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
+
+import { assessBacktestSession, BacktestIssue } from './backtest'
+import { driveReplaySession } from './session'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
+import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
+import type { Order as BrokerOrder } from '../broker/alpaca/model'
+import { decodeFeeActivityWitness, pendingCashFees } from '../broker/alpaca/activity-fees'
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
+import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
+import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
+import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
+import { valkeyFixture } from '../testing/valkey-fixture'
+import {
+  readCurrentProtectionClose,
+  readProtectionReleaseBasis,
+  readProtectionReleaseReference,
+  recordProtectionReleaseProof,
+  withCurrentProtectionReleaseProof,
+} from '../db/protection-release'
+import { readProtectionRelease } from '../execution/protection-release'
+import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
+import { makeSimulatedExecutionClock } from './clock'
+import type { RuntimeConfig } from '../config/model'
+import { randomUUID } from 'node:crypto'
+import { expect, test } from 'bun:test'
+import { NodeServices } from '@effect/platform-node'
+import { PgClient } from '@effect/sql-pg'
+import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
+import { HttpClient, HttpClientResponse } from 'effect/http'
+import { TestClock } from 'effect/testing'
+import { OperationDeadlineClock } from '../operation-timeout'
+
+import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema, OrderSide } from '../broker/alpaca/model'
+import { normalizeAssetResult } from '../broker/alpaca/normalizers'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
+import { IntentStore } from '../execution/intents/domain'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { BlockedCycleIntentStore, BlockedCycleIntentStoreError } from '../execution/intents/blocked-cycle'
+import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
+import { MutationEventType, MutationStore, MutationStoreError } from '../execution/mutations/model'
+import { MutationStoreLive } from '../execution/mutations/program'
+import { SubmissionDenialReason } from '../execution/submission-denial'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { classifyCancelResponse, prepareCancel } from '../broker/alpaca-mutations/decisions'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
+import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
+import { PostgresClientLive } from '../db/postgres-client'
+import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
+import {
+  ExecutionControllerStatusStore,
+  executionControllerStatusHasCompletion,
+  type ExecutionControllerStatus,
+} from '../execution/controller-status'
+import { advanceExecutionOnce, type AdvanceExecutionCommand } from '../execution/advance'
+import { executionControllerPlanHash } from '../execution/controller-plan'
+import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
+import { postgresMigrations } from '../db/postgres-migrations'
+import { Journal, JournalLive } from '../ledger'
+import { canonicalHashV1Result } from '../hash'
+import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
+import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
+import { makeJevStrategyRuntime } from '../strategy'
+import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
+import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
+import { JevClient, JevError } from '../jev/client'
+import { nativeJevInference } from '../jev/native.test-support'
+import { JevFailure, prepareJevRequest } from '../jev/contract'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevPositionStore, JevPurpose } from '../jev/portfolio'
+import { JevExitReason, JevExitTargetSchema } from '../jev/exit'
+import { strictParseOptions } from '../schemas'
+import { JevBatchStoreLive } from '../db/jev-batch-postgres'
+import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
+import { JevPositionStoreLive } from '../db/jev-position-postgres'
+import { nativeSimulationFixture as simulationFixture } from '../testing/simulated-streaming-fixture'
+import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
+import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
+import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import { observedQuoteAt } from '../market-data/streaming/projection'
+import {
+  advanceHistoricalMarketCursor,
+  compareArrivalPositions,
+  arrivalPosition,
+  type HistoricalMarketCursor,
+} from '../market-data/streaming/historical'
+import { currentUtcInstant, utcDateFromEpochMillis, utcInstantFromEpochMillis } from '../time'
+import { makeReplayBroker, ReplayBrokerFailure } from './broker'
+import { makeReplayExecutionRuntime } from './runtime'
+import { makeReplayInferenceTiming, type ReplayInferenceCall } from './inference-timing'
+import { makeRecoveryClockFixture } from './recovery-clock.test-support'
+import { BrokerRead } from '../broker/alpaca/model'
+import {
+  AuthorityGenerationStore,
+  AuthorityRestrictionStore,
+  BrokerEventStore,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+} from '../db/execution-store/contract'
+import { CycleStore } from '../cycle/store/model'
+import { CycleTerminalReason } from '../cycle/model'
+import { terminalizeBlockedExecutionCycle } from '../observe-composition/execution-cycle'
+import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
+import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
+import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
+import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
+import { Authority, KillState, OrderStatus as ExecutionOrderStatus, ReconciliationStatus } from '../execution/contracts'
+import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
+import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
+import { makeTradingEngine } from '../composition/trading-engine'
+import { makeGenerationCycleDriver } from '../composition/generation-cycle'
+import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
+import { operationalError } from '../errors'
+import { makeStrategyProtocolHashResult } from '../contracts'
+
+const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
+
+const runtimeScenarios = {
+  'approved-expiry-recovery': 2,
+  'approved-expiry-manual-hold': 1,
+  'approved-expiry-rollback': 1,
+  'entry-lease-expires-during-bind': 2,
+  'entry-lease-expires-at-commit': 2,
+  fill: 2,
+  'ablation-fill': 2,
+  'momentum-fill': 1,
+  'momentum-latency-valid': 1,
+  'momentum-latency-expired': 2,
+  'momentum-partial-exit-reentry': 1,
+  fallback: 1,
+  'missing-benchmark': 2,
+  'missing-candidate': 1,
+  'no-trade': 1,
+  'no-trade-with-excluded-source': 1,
+  'no-trade-finalization': 2,
+  'closed-calendar': 2,
+  'failed-model-response': 1,
+  recovery: 1,
+  'recovery-filled': 1,
+  'accepted-cancel-terminal': 2,
+  'accepted-cancel-open': 2,
+  'accepted-cancel-lookup-failed': 1,
+  'early-exit': 2,
+  'partial-exit-reentry': 2,
+  'partial-exit-reentry-protection-proof': 1,
+  'partial-exit-reentry-protection-capture-race': 1,
+  'partial-exit-reentry-protection-capture-expiry': 2,
+  'partial-exit-reentry-protection-admission-race': 2,
+  'partial-exit-reentry-protection-transmission-race': 2,
+  'measured-exit': 2,
+  'measured-bootstrap-delay': 2,
+  'measured-partial-entry-reentry': 2,
+  'measured-clock-delay-reentry': 1,
+  'measured-slipped-exit-reentry': 1,
+  'measured-entry-expired': 1,
+  'measured-zero-fill-reentry': 1,
+  'measured-submit-expired-reentry': 1,
+  'latency-stress-valid': 1,
+  'latency-stress-expired': 2,
+  'operator-held-replay': 1,
+  'operator-after-system-replay': 2,
+  'reconciliation-idle-recovery': 2,
+} as const satisfies Record<string, 1 | 2>
+
+type RuntimeScenario = keyof typeof runtimeScenarios
+
+const registerRuntimeScenarios =
+  (
+    cases: typeof runtimeScenarios,
+    run: (scenario: { scenario: RuntimeScenario }) => Promise<void>,
+    timeoutMs: number,
+  ) =>
+  (worker: 1 | 2) =>
+    durableTest.each(
+      (Object.keys(cases) as RuntimeScenario[])
+        .filter((scenario) => cases[scenario] === worker)
+        .map((scenario) => ({
+          scenario,
+          label: scenario.startsWith('approved-expiry-')
+            ? 'PostgreSQL untouched intent recovery'
+            : 'native Jev production cycle and durable accounting',
+        })),
+    )('$label: $scenario', run, timeoutMs)
+
+export const testReplayRuntime = registerRuntimeScenarios(
+  runtimeScenarios,
+  async ({ scenario: mode }) => {
+    const protectionCaptureExpiry = mode === 'partial-exit-reentry-protection-capture-expiry'
+    const protectionCaptureRace = mode === 'partial-exit-reentry-protection-capture-race' || protectionCaptureExpiry
+    const useProtectionProof = mode === 'partial-exit-reentry-protection-proof' || protectionCaptureRace
+    const protectionAdmissionRace = mode === 'partial-exit-reentry-protection-admission-race'
+    const protectionTransmissionRace = mode === 'partial-exit-reentry-protection-transmission-race'
+    const protectionDenied = protectionTransmissionRace || protectionCaptureExpiry
+    const protectionProofScenario = useProtectionProof || protectionAdmissionRace || protectionTransmissionRace
+    const ablation = mode === 'ablation-fill'
+    const momentum = mode.startsWith('momentum-')
+    const chartProvider: JevClient['Service'] =
+      momentum || mode === 'missing-candidate'
+        ? { evaluate: () => Effect.die('This scenario must not dispatch chart provider requests') }
+        : chartProviderFixture
+    const scenario =
+      mode === 'momentum-latency-valid'
+        ? 'latency-stress-valid'
+        : mode === 'momentum-latency-expired'
+          ? 'latency-stress-expired'
+          : mode === 'momentum-partial-exit-reentry' || protectionProofScenario
+            ? 'partial-exit-reentry'
+            : ablation || momentum
+              ? 'fill'
+              : mode
+    const untouchedExpiry = scenario.startsWith('approved-expiry-')
+    const acceptedCancel = scenario.startsWith('accepted-cancel-')
+    const admissionRace = scenario.startsWith('entry-lease-')
+    const latencyStress = scenario.startsWith('latency-stress-')
+    if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
+      throw new Error('Missing replay test databases')
+    const url = new URL(baynTestPostgresUrl)
+    if (
+      !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ||
+      !url.pathname.endsWith('_test') ||
+      !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
+    )
+      throw new Error('Replay acceptance requires isolated local test databases')
+    const protocol = fixtureProtocol
+    const clockDelay = scenario === 'measured-clock-delay-reentry'
+    const slippedExit = scenario === 'measured-slipped-exit-reentry'
+    const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || clockDelay || slippedExit
+    const noTrade =
+      scenario === 'no-trade' || scenario === 'no-trade-finalization' || scenario === 'no-trade-with-excluded-source'
+    // Every quote-eligible symbol reaches Jev; the fixture model ranks AAPL above AMZN.
+    const eligibleEntrySymbols = [...equityMarketProfile.candidateSymbols]
+    const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
+    let managementCalls = 0
+    const measuredCalls: ReplayInferenceCall[] = []
+    let measuredProviderClock: TestClock.TestClock | undefined
+    let expiredStartedSubmit = false
+    let expiredApprovedIntent = false
+    const measured =
+      latencyStress ||
+      scenario === 'measured-exit' ||
+      scenario === 'measured-bootstrap-delay' ||
+      partialEntryReentry ||
+      scenario === 'measured-entry-expired' ||
+      scenario === 'measured-zero-fill-reentry' ||
+      scenario === 'measured-submit-expired-reentry'
+    const sessionCloseLifecycle = ['fill', 'fallback', 'missing-benchmark'].includes(scenario)
+    const restingDayLifecycle =
+      measured || sessionCloseLifecycle || ['early-exit', 'partial-exit-reentry'].includes(scenario)
+    const fixture = {
+      ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined, true),
+      protocol,
+    }
+    const initialAtMs = Date.parse(fixture.query.observedAt)
+    const reentryAtMs = initialAtMs + 240_100
+    // Improving arrival quotes fill under the fixed buy ceiling before the later protected-exit jump.
+    const measuredPremium = (tick: number) =>
+      0.02 + (tick >= (partialEntryReentry ? 100 : 50) ? 0.052 + tick * 0.00002 : -tick * 0.00002)
+    const lifecycleObservations = admissionRace
+      ? [{ at: initialAtMs + 60_000, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+      : scenario === 'partial-exit-reentry'
+        ? [
+            { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 10, premium: 0.02 },
+            ...Array.from({ length: 25 }, (_, index) => ({
+              at: initialAtMs + (index + 1) * 1000,
+              fullWindow: (index + 1) % 5 === 0,
+              offset: BigInt((index + 2) * 1000),
+              bidSize: 10,
+              premium: index >= 9 ? 0.072 : 0.02,
+            })),
+            { at: reentryAtMs, fullWindow: true, offset: 30_000n, bidSize: 100, premium: 0.02 },
+            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.072 },
+          ]
+        : measured
+          ? [
+              { at: initialAtMs + 1, fullWindow: true, offset: 1000n, bidSize: 100, premium: 0.02 },
+              ...Array.from({ length: 200 }, (_, index) => ({
+                at: initialAtMs + (index + 1) * 200,
+                fullWindow: (index + 1) % 25 === 0,
+                offset: BigInt((index + 2) * 1000),
+                bidSize: 100,
+                premium: measuredPremium(index + 1),
+              })),
+              ...(scenario === 'measured-zero-fill-reentry' ||
+              scenario === 'measured-submit-expired-reentry' ||
+              partialEntryReentry
+                ? [
+                    { at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 },
+                    ...(slippedExit
+                      ? [{ at: reentryAtMs + 1000, fullWindow: false, offset: 310_000n, bidSize: 100, premium: 0.0198 }]
+                      : []),
+                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.072 },
+                  ]
+                : []),
+            ]
+          : scenario === 'no-trade'
+            ? [{ at: initialAtMs + 1, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0 }]
+            : scenario === 'no-trade-finalization'
+              ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+              : restingDayLifecycle
+                ? Array.from({ length: 26 }, (_, index) => ({
+                    at: initialAtMs + (index === 0 ? 1 : index * 1000),
+                    fullWindow: index % 5 === 0,
+                    offset: BigInt((index + 1) * 1000),
+                    bidSize: 100,
+                    premium: scenario === 'early-exit' && index >= 10 ? 0.072 : 0.02,
+                  }))
+                : []
+    const lifecycleArrivals = lifecycleObservations
+      .flatMap(({ at, fullWindow, offset, bidSize, premium }) => {
+        const windowEnd = Math.floor(at / 60_000) * 60_000
+        const query = {
+          ...fixture.query,
+          symbols: [...equityMarketProfile.candidateSymbols, 'SPY'].sort(),
+          candidateSymbols: equityMarketProfile.candidateSymbols,
+          rangeStartAt: utcInstantFromEpochMillis(windowEnd - (fullWindow ? 30 : 1) * 60_000),
+          rangeEndAt: utcInstantFromEpochMillis(windowEnd),
+          observedAt: utcInstantFromEpochMillis(at),
+          ...(fullWindow ? {} : { purpose: IntradaySnapshotPurpose.EntryPricing }),
+        }
+        const original = makeIntradayMomentumTestSnapshot(
+          protocol,
+          { ...query, archiveWatermarks: [] },
+          noTrade ? {} : { AAPL: premium, AMZN: 0.01 },
+          100,
+          { AAPL: bidSize },
+        )
+        const shiftOffset = <A extends { readonly sourceOffset: string }>(row: A): A => ({
+          ...row,
+          sourceOffset: String(BigInt(row.sourceOffset) + offset),
+        })
+        const raw = {
+          ...original,
+          bars: original.bars.map((bar) =>
+            shiftOffset(
+              bar.eventAt === original.bars[0]?.eventAt && bar.symbol !== 'SPY'
+                ? {
+                    ...bar,
+                    high: Math.max(bar.high, bar.open * (bar.symbol === 'AAPL' ? 1.067 : 1.045)),
+                    low: Math.min(bar.low, bar.open * 0.99),
+                  }
+                : bar,
+            ),
+          ),
+          quotes: original.quotes.map((row) => ({
+            ...shiftOffset(row),
+            askSize:
+              latencyStress ||
+              !restingDayLifecycle ||
+              at <= initialAtMs + (measured ? 2000 : 200) ||
+              at === reentryAtMs ||
+              (slippedExit && at === reentryAtMs + 1000)
+                ? 100
+                : 0,
+          })),
+          trades: original.trades.map(shiftOffset),
+        }
+        const arrivals = historicalRawArrivals(raw, at)
+        if (fullWindow) {
+          const { cut } = streamingFixtureFromRaw(raw, query)
+          arrivals.push(
+            ...[...cut.projection.features.values()].flat().map((feature) => ({
+              availableAtMs: at,
+              record: {
+                topic: feature.topic,
+                partition: feature.partition,
+                offset: String(BigInt(feature.offset) + offset),
+                value: JSON.stringify(feature.value),
+              },
+            })),
+          )
+        }
+        return arrivals
+      })
+      .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
+    const candidateRuntime = makeJevStrategyRuntime(protocol, {
+      ...fixtureRuntime.provenance,
+      strategy: {
+        ...fixtureRuntime.provenance.strategy,
+        parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
+      },
+    })
+    const ablationParameters = makeEntryAblationPolicy(protocol)
+    const ablationIdentity = Result.getOrThrow(entryAblationStrategyIdentity(ablationParameters))
+    const momentumParameters = makeRepeatedMomentumPolicy(protocol)
+    const momentumIdentity = Result.getOrThrow(repeatedMomentumStrategyIdentity(momentumParameters))
+    const strategyRuntime = momentum
+      ? makeRepeatedMomentumRuntime(momentumParameters, {
+          ...fixtureRuntime.provenance,
+          strategy: momentumIdentity.strategy,
+        })
+      : ablation
+        ? makeEntryAblationRuntime(ablationParameters, {
+            ...fixtureRuntime.provenance,
+            strategy: ablationIdentity.strategy,
+          })
+        : candidateRuntime
+    const closeAtMs = sessionCloseLifecycle
+      ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
+      : Date.parse('2026-09-04T19:59:02Z')
+    const closeQuery = {
+      ...fixture.query,
+      ...(ablation || momentum ? { symbols: [...equityMarketProfile.universe] } : {}),
+      purpose: IntradaySnapshotPurpose.Liquidation,
+      rangeStartAt: utcInstantFromEpochMillis(closeAtMs - 62_000),
+      rangeEndAt: utcInstantFromEpochMillis(closeAtMs - 2_000),
+      observedAt: utcInstantFromEpochMillis(closeAtMs),
+    }
+    const closeArrivals = historicalRawArrivals(
+      makeIntradayMomentumTestSnapshot(
+        fixture.protocol,
+        { ...closeQuery, archiveWatermarks: [] },
+        { AAPL: 0.02, AMZN: 0.01 },
+      ),
+      closeAtMs,
+    )
+      .map((arrival) => ({
+        ...arrival,
+        record: { ...arrival.record, offset: String(BigInt(arrival.record.offset) + 1_000_000n) },
+      }))
+      .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
+    const runId = Result.getOrThrow(canonicalHashV1Result({ attempt: randomUUID() }))
+    const source = {
+      ...fixture.source,
+      runId,
+      sourceManifestHash: Result.getOrThrow(
+        canonicalHashV1Result({
+          ...fixture.input,
+          arrivals: {
+            ...fixture.input.arrivals,
+            events: [...fixture.input.arrivals.events, ...lifecycleArrivals, ...closeArrivals],
+          },
+        }),
+      ),
+    }
+    const accountId = `replay-${runId}`
+    const config: RuntimeConfig = {
+      ...baseConfig,
+      build: {
+        ...baseConfig.build,
+        strategyParameterHash: strategyRuntime.provenance.strategy.parameterHash,
+        strategyBehaviorHash: strategyRuntime.provenance.strategy.behaviorHash,
+      },
+      operationTimeoutMs:
+        latencyStress || scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry'
+          ? 20_000
+          : 10_000,
+      execution: {
+        brokerIdentity: Result.getOrThrow(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId,
+          }),
+        ),
+        brokerAccess: BrokerAccess.ReadOnly,
+        capitalAuthority: noCapitalAuthority,
+      },
+      postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
+      tigerBeetle: {
+        clusterId: 20912n,
+        ledger: 70912,
+        replicaAddresses: [baynTestTigerBeetleAddress],
+      },
+    }
+    const expiryJournal = Layer.succeed(Journal, {
+      post: () => Effect.die('untouched intent recovery must never write accounting'),
+      verifyAccount: () => Effect.succeed(true),
+      journalAndReconcile: () => Effect.die('untouched intent recovery must never write accounting'),
+      check: Effect.void,
+      checkRun: () => Effect.void,
+    })
+    const base = Layer.mergeAll(WriterFenceLive, untouchedExpiry ? expiryJournal : JournalLive(config)).pipe(
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    )
+    const stores = Layer.mergeAll(
+      EntryInferenceJournalLive,
+
+      CandidateObservationStoreLive,
+      JevBatchStoreLive,
+      JevPositionStoreLive,
+      IntentStoreLive,
+      BlockedCycleIntentStoreLive,
+      MutationStoreLive,
+      ExecutionCycleClosureStoreLive,
+      PersistedCapitalGrantStoreLive,
+    ).pipe(Layer.provideMerge(JevEvaluationStoreLive), Layer.provideMerge(base))
+    const outcome = await Effect.runPromise(
+      Effect.gen(function* () {
+        const initialMs = Date.parse(fixture.query.observedAt)
+        yield* TestClock.setTime(initialMs)
+        const sql = yield* PgClient.PgClient
+        const verifyMeasuredEntryStages = Effect.gen(function* () {
+          const rows = yield* Schema.decodeUnknownEffect(
+            Schema.Array(
+              Schema.Struct({
+                request: Schema.Unknown,
+                claims: Schema.Unknown,
+                terminals: Schema.Unknown,
+                skips: Schema.Unknown,
+              }),
+            ),
+          )(
+            yield* sql`SELECT request.payload AS request,
+            coalesce((SELECT jsonb_agg(payload) FROM jev_staged_dispatch_claims WHERE request_id=request.request_id),'[]'::jsonb) AS claims,
+            coalesce((SELECT jsonb_agg(payload) FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb) AS terminals,
+            coalesce((SELECT jsonb_agg(payload) FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb) AS skips
+            FROM jev_evaluation_requests request`,
+          )
+          const symbols: string[] = []
+          for (const row of rows) {
+            const request = Result.getOrThrow(decodeJevEvaluationRequest(row.request))
+            symbols.push(request.symbol)
+            const checkpoint = Result.getOrThrow(
+              decodeStagedCheckpoint(request, { claims: row.claims, terminals: row.terminals, skips: row.skips }),
+            )
+            const chart = checkpoint.terminals.find((terminal) => terminal.stage === 'CHART')
+            if (chart?.outcome.status !== 'RECEIVED') throw new Error('Missing measured CHART receipt')
+            const chartInference = chart.outcome.inference
+            expect(
+              measuredCalls.filter((call) => call.stage === 'CHART' && call.requestHash === chartInference.requestHash),
+            ).toHaveLength(1)
+            expect(checkpoint.claims.map((claim) => claim.stage)).toEqual(['CHART'])
+            expect(checkpoint.terminals.map((terminal) => terminal.stage)).toEqual(['CHART'])
+            expect(checkpoint.skips).toEqual([])
+          }
+          expect(symbols.toSorted()).toEqual(eligibleEntrySymbols.toSorted())
+          expect(measuredCalls.filter((call) => call.stage === 'BASE_START')).toEqual([])
+          expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length)
+          expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(eligibleEntrySymbols.length)
+          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length)
+        })
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* postgresMigrations
+        const providerClock = yield* TestClock.make()
+        const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash, providerClock)
+        let cursor: HistoricalMarketCursor = {
+          ...fixture.cursor,
+          source,
+          runId,
+          projection: { ...fixture.cursor.projection, epoch: `historical-${runId}` },
+        }
+        let nextLifecycleArrival = 0
+        let marketBroker: Effect.Success<ReturnType<typeof makeReplayBroker>> | undefined
+        const advanceMarketTo = (atMs: number) =>
+          Effect.gen(function* () {
+            while (nextLifecycleArrival < lifecycleArrivals.length) {
+              const arrival = lifecycleArrivals[nextLifecycleArrival]
+              if (arrival === undefined || arrival.availableAtMs > atMs) break
+              const previousQuotes = cursor.projection.quotes
+              cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+              const changedQuote = [...cursor.projection.quotes].find(
+                ([symbol, quote]) => previousQuotes.get(symbol) !== quote,
+              )?.[1]
+              if (marketBroker !== undefined)
+                yield* marketBroker.observeMarket(arrival.availableAtMs, changedQuote ?? null)
+              nextLifecycleArrival += 1
+            }
+            yield* clock.advanceTo(utcInstantFromEpochMillis(atMs))
+            yield* TestClock.setTime(atMs)
+          })
+        const provider = yield* JevClient
+        measuredProviderClock = providerClock
+        yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
+        const timing = measured
+          ? yield* makeReplayInferenceTiming({
+              budget: makeReplayInferenceBudget(1000),
+              measureDatabaseTime: (operation) => operation,
+              providers: { jev: provider },
+              providerClock,
+              advanceTo: (atMs) =>
+                advanceMarketTo(atMs).pipe(
+                  Effect.tap(() =>
+                    scenario === 'measured-bootstrap-delay' || clockDelay ? providerClock.adjust(5) : Effect.void,
+                  ),
+                  Effect.mapError(
+                    (cause) => new ReplayBrokerFailure({ message: 'Measured clock advance failed', cause }),
+                  ),
+                ),
+              advanceDeadlineTo: (atMs) =>
+                clock.advanceTo(utcInstantFromEpochMillis(atMs)).pipe(
+                  Effect.andThen(TestClock.setTime(atMs)),
+                  Effect.andThen(
+                    scenario === 'measured-bootstrap-delay' || clockDelay ? providerClock.adjust(5) : Effect.void,
+                  ),
+                  Effect.mapError(
+                    (cause) => new ReplayBrokerFailure({ message: 'Measured clock advance failed', cause }),
+                  ),
+                ),
+              excludedSourceMillis: Effect.succeed(0),
+              retain: (call) =>
+                Effect.gen(function* () {
+                  measuredCalls.push(call)
+                  if (
+                    scenario === 'measured-entry-expired' &&
+                    measuredCalls.filter((call) => call.stage === 'JEV').length === eligibleEntrySymbols.length
+                  )
+                    yield* providerClock.adjust(11_000)
+                }),
+            })
+          : undefined
+        const broker = yield* makeReplayBroker({
+          runId,
+          sourceManifestHash: source.sourceManifestHash,
+          openingCashMicros: '100000000000',
+          protocol: { ...fixture.protocol, ...equityMarketProfile },
+          assumptions: {
+            latencyMs: 10,
+            slippageBps: slippedExit ? 1 : 0,
+            availableLiquidityPpm:
+              scenario === 'recovery' || acceptedCancel || scenario === 'measured-zero-fill-reentry'
+                ? 1
+                : partialEntryReentry
+                  ? 100000
+                  : 1000000,
+            feeMultiplierPpm: 1000000,
+          },
+          fractionalTrading: false,
+          calendar: Result.getOrThrow(
+            Schema.decodeUnknownResult(MarketCalendarResponseSchema)(
+              scenario === 'closed-calendar'
+                ? []
+                : scenario === 'no-trade-finalization'
+                  ? [
+                      ...fixture.input.calendar,
+                      {
+                        session_open: '0930',
+                        session_close: '1600',
+                        date: '2026-09-08',
+                        open: '09:30',
+                        close: '16:00',
+                      },
+                    ]
+                  : fixture.input.calendar,
+            ),
+          ),
+          assets: equityMarketProfile.universe.map((symbol, index) =>
+            Result.getOrThrow(
+              normalizeAssetResult(
+                {
+                  id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
+                  symbol,
+                  class: AssetClass.UsEquity,
+                  exchange: AssetExchange.Nasdaq,
+                  status: AssetStatus.Active,
+                  tradable: true,
+                  fractionable: true,
+                },
+                symbol,
+                fixture.query.observedAt,
+              ),
+            ),
+          ),
+          quoteAt: (symbol, atMs, source) => Effect.succeed(observedQuoteAt(cursor.projection, symbol, atMs, source)),
+          ...(timing === undefined ? {} : { submissionTime: timing.currentUtcInstant }),
+          advanceToArrival: (atMs) =>
+            advanceMarketTo(atMs).pipe(
+              Effect.mapError(
+                (cause) => new ReplayBrokerFailure({ message: 'Cannot advance test arrival clock', cause }),
+              ),
+            ),
+        })
+        marketBroker = broker
+        const passes = yield* Ref.make<Array<Parameters<import('../app').RecordAutonomousCyclePass>[0]>>([])
+        const stallReconciliation = yield* Ref.make(false)
+        const interrupted = yield* Ref.make(false)
+        const injectProtectionTransmissionRace = yield* Ref.make(false)
+        const raceCapture = yield* Ref.make<Effect.Effect<void> | undefined>(undefined)
+        let protectedCloseRollbackVerified = false
+        const notificationConnection =
+          protectionAdmissionRace || protectionTransmissionRace ? yield* sql.reserve : undefined
+        const recordRacingNotification = Effect.gen(function* () {
+          if (notificationConnection === undefined) throw new Error('Missing independent notification connection')
+          const now = yield* currentUtcInstant
+          yield* notificationConnection
+            .executeUnprepared(
+              "INSERT INTO broker_source_events (account_id, event_id, source_revision, received_at, event_kind) VALUES ($1, $2, $3, $4::timestamptz, 'LEGACY_RECEIPT')",
+              [accountId, 'c'.repeat(64), 'a'.repeat(40), now],
+              undefined,
+            )
+            .pipe(Effect.orDie)
+        })
+        const runtimeInput = {
+          decisionLatencyStress: latencyStress
+            ? {
+                p95FullBatchMs: scenario === 'latency-stress-expired' ? 15_000 : 1_000,
+                advanceTo: (at: number) =>
+                  advanceMarketTo(at).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ReplayBrokerFailure({ message: 'Latency stress could not advance the test source', cause }),
+                    ),
+                  ),
+              }
+            : null,
+          config,
+          strategy: strategyRuntime,
+          broker: {
+            ...broker,
+            read: {
+              ...broker.read,
+              assetBySymbol: (symbol: string) =>
+                Ref.getAndSet(injectProtectionTransmissionRace, false).pipe(
+                  Effect.flatMap((inject) => (inject ? recordRacingNotification : Effect.void)),
+                  Effect.andThen(broker.read.assetBySymbol(symbol)),
+                ),
+              projection: {
+                ...broker.read.projection,
+                reconciliationSnapshot: Ref.get(stallReconciliation).pipe(
+                  Effect.flatMap((stall) =>
+                    stall
+                      ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))
+                      : broker.read.projection.reconciliationSnapshot,
+                  ),
+                ),
+              },
+            },
+          },
+          source,
+          cursor: Effect.sync(() =>
+            scenario === 'missing-benchmark'
+              ? {
+                  ...cursor,
+                  projection: {
+                    ...cursor.projection,
+                    bars: new Map([...cursor.projection.bars].filter(([symbol]) => symbol !== 'SPY')),
+                    features: new Map([...cursor.projection.features].filter(([symbol]) => symbol !== 'SPY')),
+                  },
+                }
+              : scenario === 'missing-candidate'
+                ? {
+                    ...cursor,
+                    projection: {
+                      ...cursor.projection,
+                      bars: new Map(
+                        [...cursor.projection.bars].filter(
+                          ([symbol]) => !eligibleEntrySymbols.some((candidate) => candidate === symbol),
+                        ),
+                      ),
+                    },
+                  }
+                : scenario === 'fallback' && (cursor.lastArrival?.availableAtMs ?? 0) >= closeAtMs
+                  ? { ...cursor, projection: { ...cursor.projection, quoteHistory: new Map() } }
+                  : cursor,
+          ),
+          clock,
+          currentUtcInstant: Effect.gen(function* () {
+            if (restingDayLifecycle) {
+              if (timing === undefined) yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+              else yield* providerClock.adjust(1)
+            }
+            if (scenario === 'reconciliation-idle-recovery')
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+            if (scenario === 'measured-submit-expired-reentry' && !expiredStartedSubmit) {
+              const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
+              if (started.length > 0) {
+                expiredStartedSubmit = true
+                yield* providerClock.adjust(11_000)
+              }
+            }
+            return yield* timing?.currentUtcInstant ?? currentUtcInstant
+          }),
+          recordPass: (pass: Parameters<import('../app').RecordAutonomousCyclePass>[0]) =>
+            Ref.update(passes, (values) => [...values, pass]),
+          pollIntervalMs: scenario === 'no-trade-finalization' ? 30_000 : 1000,
+          reconciliationIntervalMs:
+            scenario === 'no-trade-finalization' || protectionCaptureExpiry
+              ? 30_000
+              : measured
+                ? config.operationTimeoutMs
+                : 1000,
+          reconciliationPassTimeoutMs:
+            scenario === 'no-trade-finalization' || protectionCaptureExpiry
+              ? 30_000
+              : sessionCloseLifecycle
+                ? 1000
+                : config.operationTimeoutMs,
+        }
+        const mutations = yield* MutationStore
+        const protectedRaceMutations: typeof mutations = {
+          ...mutations,
+          beginSubmit: (intentId, requestHash, delayMs, observedAt, closeOnly, protection) =>
+            protection === undefined
+              ? mutations.beginSubmit(intentId, requestHash, delayMs, observedAt, closeOnly)
+              : mutations
+                  .beginSubmit(intentId, requestHash, delayMs, observedAt, closeOnly, {
+                    ...protection,
+                    bind: protection.bind.pipe(Effect.andThen(recordRacingNotification)),
+                  })
+                  .pipe(
+                    Effect.tapError(() =>
+                      sql`SELECT
+                      EXISTS(SELECT 1 FROM intents WHERE intent_id = ${intentId}) AS intent,
+                      EXISTS(SELECT 1 FROM autonomous_cycle_paper_closures
+                        WHERE document #>> '{document,orderedIntentIds,0}' = ${intentId}) AS closure,
+                      EXISTS(SELECT 1 FROM mutation_events WHERE intent_id = ${intentId}) AS start`.pipe(
+                        Effect.orDie,
+                        Effect.tap((rows) =>
+                          Effect.sync(() => {
+                            expect(rows).toEqual([{ intent: false, closure: false, start: false }])
+                            protectedCloseRollbackVerified = true
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+        }
+        const captureRaceMutations: typeof mutations = {
+          ...mutations,
+          beginSubmit: (...args) =>
+            mutations
+              .beginSubmit(...args)
+              .pipe(
+                Effect.tap((receipt) =>
+                  args[5] !== undefined && receipt.started
+                    ? Ref.get(raceCapture).pipe(Effect.flatMap((capture) => capture ?? Effect.void))
+                    : Effect.void,
+                ),
+              ),
+        }
+        const expiryMutations: typeof mutations = {
+          ...mutations,
+          beginSubmit: (...args) =>
+            Effect.gen(function* () {
+              if (!expiredApprovedIntent) {
+                expiredApprovedIntent = true
+                return yield* new MutationStoreError({
+                  operation: 'begin-submit',
+                  failure: 'invariant',
+                  message: 'synthetic no-I/O reservation failure',
+                })
+              }
+              return yield* mutations.beginSubmit(...args)
+            }),
+        }
+        const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
+          Effect.provideService(
+            MutationStore,
+            untouchedExpiry
+              ? expiryMutations
+              : protectionAdmissionRace
+                ? protectedRaceMutations
+                : protectionCaptureRace
+                  ? captureRaceMutations
+                  : mutations,
+          ),
+          Effect.provideService(JevClient, timing?.clients.jev ?? provider),
+
+          (operation) => (timing === undefined ? operation : timing.run(operation)),
+          Effect.map((engine) => ({
+            ...engine,
+            advance:
+              timing === undefined
+                ? engine.advance
+                : timing.run(engine.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
+            reconcile:
+              timing === undefined
+                ? engine.reconcile
+                : timing.run(engine.reconcile).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
+          })),
+        )
+        const runtime = yield* createRuntime
+        const expectConsumedEntryWindowWait = (
+          advance: typeof runtime.advance,
+          terminalState: 'COMPLETED' | 'NO_TRADE' | 'BLOCKED',
+        ) =>
+          Effect.gen(function* () {
+            const previous =
+              yield* sql`SELECT * FROM autonomous_cycles WHERE account_id=${accountId} ORDER BY created_at`
+            const waiting = yield* advance
+            const availableAt = utcInstantFromEpochMillis(initialAtMs + 60_000)
+            expect(waiting.observation).toMatchObject({
+              result: 'SUCCESS',
+              outcome: 'ALREADY_TERMINAL',
+              readiness: { reason: DecisionReadinessReason.SignalWindowObserved, availableAt },
+            })
+            expect(waiting.result).toMatchObject({ outcome: 'ALREADY_TERMINAL', cycle: { state: terminalState } })
+            expect(waiting.nextWakeAt).toBe(availableAt)
+            expect(
+              yield* sql`SELECT * FROM autonomous_cycles WHERE account_id=${accountId} ORDER BY created_at`,
+            ).toEqual(previous)
+          })
+        const expectNoUnusedEntryExpiry = Effect.gen(function* () {
+          expect(
+            yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles
+              WHERE account_id=${accountId} AND terminal_reason=${CycleTerminalReason.UnusedEntryExpired}`,
+          ).toEqual([{ count: 0 }])
+        })
+        if (latencyStress) {
+          const advances = []
+          for (let attempt = 0; attempt < 6; attempt++) {
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1_000)
+            advances.push(yield* runtime.advance)
+            const releases = yield* runtime.decisionLatencyEvidence
+            if (releases.receipts.length + releases.observationReceipts.length > 0) break
+          }
+          const passes = advances.map((advance) => advance.observation)
+          const evidence = yield* runtime.decisionLatencyEvidence
+          expect(evidence.admittedBatchCount, JSON.stringify(passes)).toBe(momentum ? 0 : 1)
+          expect(evidence.admittedObservationCount).toBe(momentum ? 1 : 0)
+          expect(evidence.unreleasedObservationHashes).toEqual([])
+          expect(evidence.unreleasedBatchIds).toEqual([])
+          expect(evidence.receipts).toHaveLength(momentum ? 0 : 1)
+          const receipt = momentum ? evidence.observationReceipts[0] : evidence.receipts[0]
+          if (receipt === undefined) throw new Error('Missing native batch release receipt')
+          const delay = Date.parse(receipt.releasedAt) - Date.parse(receipt.commandIssuedAt)
+          expect(delay).toBeGreaterThanOrEqual(scenario === 'latency-stress-expired' ? 15_000 : 1_000)
+          expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(
+            momentum ? 0 : eligibleEntrySymbols.length,
+          )
+          expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(
+            momentum ? 0 : eligibleEntrySymbols.length,
+          )
+          expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
+          const state = yield* broker.snapshot
+          if (scenario === 'latency-stress-expired') {
+            expect(state.orders).toEqual([])
+            expect(state.fills).toEqual([])
+            expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
+            expect(
+              passes.some(
+                (pass) =>
+                  pass.result === 'SUCCESS' &&
+                  pass.readiness?.reason ===
+                    (momentum ? DecisionReadinessReason.NoEligibleCandidate : DecisionReadinessReason.InferenceExpired),
+              ),
+            ).toBe(true)
+            if (!momentum) {
+              const expired = advances.find(
+                (advance) =>
+                  advance.observation.result === 'SUCCESS' &&
+                  advance.observation.readiness?.reason === DecisionReadinessReason.InferenceExpired,
+              )
+              expect(expired?.nextDelayMs).toBe(1)
+            }
+          } else {
+            expect(state.orders.length, JSON.stringify(passes)).toBeGreaterThan(0)
+            expect(state.fills.some((fill) => fill.side === OrderSide.Buy)).toBe(true)
+          }
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          return { _tag: 'LatencyStress' as const }
+        }
+        if (scenario === 'entry-lease-expires-during-bind' || scenario === 'entry-lease-expires-at-commit') {
+          yield* sql`CREATE FUNCTION expire_fixture_admission() RETURNS trigger LANGUAGE plpgsql AS $function$
+            BEGIN
+              UPDATE simulated_execution_clocks SET observed_at = (
+                SELECT LEAST(submission_cutoff_at,GREATEST(created_at,submission_open_at)+interval '1 minute')
+                FROM autonomous_cycles WHERE cycle_id=NEW.cycle_id
+              ) WHERE account_id=(SELECT account_id FROM autonomous_cycles WHERE cycle_id=NEW.cycle_id);
+              RETURN NEW;
+            END
+            $function$`
+          if (scenario === 'entry-lease-expires-during-bind')
+            yield* sql`CREATE TRIGGER expire_fixture_admission AFTER INSERT ON autonomous_cycle_shadow_decisions
+              FOR EACH ROW EXECUTE FUNCTION expire_fixture_admission()`
+          else
+            yield* sql`CREATE TRIGGER zz_expire_fixture_admission BEFORE UPDATE ON autonomous_cycles
+              FOR EACH ROW WHEN (OLD.decision_hash IS NULL AND NEW.decision_hash IS NOT NULL)
+              EXECUTE FUNCTION expire_fixture_admission()`
+        }
+        if (scenario.startsWith('entry-lease-')) {
+          yield* advanceMarketTo(initialAtMs + 30_000)
+          yield* runtime.advance
+          expect(yield* sql`SELECT decision_hash IS NULL AS unbound FROM autonomous_cycles`).toEqual([
+            { unbound: true },
+          ])
+          yield* advanceMarketTo(initialAtMs + 60_000)
+          const advanced = yield* runtime.advance
+          if (scenario === 'entry-lease-expires-at-commit')
+            expect(advanced.observation).toMatchObject({
+              result: 'SUCCESS',
+              outcome: 'RECOVERED',
+              recoveryAction: 'WAITING',
+              readiness: {
+                reason: DecisionReadinessReason.ExecutionRiskExpired,
+                riskClockRejection: { violation: 'EXPIRED' },
+              },
+            })
+          else expect(advanced.observation.result).toBe('FAILURE')
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect((yield* broker.snapshot).fills).toEqual([])
+          expect(yield* sql`SELECT decision_hash IS NULL AS unbound FROM autonomous_cycles`).toEqual([
+            { unbound: true },
+          ])
+          expect(
+            yield* sql`SELECT (SELECT count(*)::int FROM autonomous_cycle_shadow_decisions) AS decisions,
+            (SELECT count(*)::int FROM intents) AS intents,
+            ((SELECT count(*)::int FROM streaming_snapshot_references)+(SELECT count(*)::int FROM simulated_snapshot_references)) AS references`,
+          ).toEqual([{ decisions: 0, intents: 0, references: 0 }])
+          return { _tag: 'Coverage' as const }
+        }
+        if (untouchedExpiry) {
+          for (let attempt = 0; attempt < 20 && !expiredApprovedIntent; attempt++) {
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            yield* runtime.advance
+          }
+          expect(expiredApprovedIntent).toBe(true)
+          const before = yield* sql`SELECT state FROM intents`
+          expect(before).toEqual([{ state: 'APPROVED' }])
+          expect(yield* sql`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([{ count: 0 }])
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing expiry authority reader')
+          expect(yield* readAuthority).toMatchObject({ effective: Authority.Observe, kill: KillState.Active })
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 11_000)
+          if (scenario === 'approved-expiry-manual-hold') {
+            yield* runtime.store.authorityRestriction.restrictAuthority(
+              'operator expiry fixture hold',
+              yield* currentUtcInstant,
+            )
+          }
+          const heldAuthority = yield* readAuthority
+          const cycleStore = runtime.cycleStore
+          const rows = yield* sql<{ cycle_id: string }>`SELECT cycle_id FROM autonomous_cycles`
+          const cycleId = rows[0]?.cycle_id
+          if (cycleId === undefined) throw new Error('Missing bound expiry cycle')
+          const cycle = Option.getOrThrow(yield* cycleStore.read(cycleId))
+          const blocked = yield* BlockedCycleIntentStore
+          const observedAt = yield* currentUtcInstant
+          const finalizeWith = (blockedStore: typeof blocked) =>
+            terminalizeBlockedExecutionCycle(
+              cycle,
+              { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt },
+              runtime.authorityGenerationHash,
+              blockedStore,
+            ).pipe(
+              Effect.provideService(CycleStore, cycleStore),
+              Effect.provideService(AuthorityRestrictionStore, runtime.store.authorityRestriction),
+            )
+          const retainedState = Effect.all({
+            intents: sql`SELECT * FROM intents ORDER BY intent_id`,
+            cycles: sql`SELECT * FROM autonomous_cycles ORDER BY cycle_id`,
+            authority: readAuthority,
+            mutations: sql`SELECT * FROM mutation_events ORDER BY event_id`,
+            orders: sql`SELECT * FROM orders`,
+            fills: sql`SELECT * FROM fills`,
+          })
+          if (scenario === 'approved-expiry-rollback') {
+            const beforeFinalization = yield* retainedState
+            const failed = yield* finalizeWith({
+              ...blocked,
+              terminalizeUntouchedApproved: (input) =>
+                blocked.terminalizeUntouchedApproved(input).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new BlockedCycleIntentStoreError({
+                        failure: 'query',
+                        message: 'synthetic post-terminalization failure',
+                      }),
+                    ),
+                  ),
+                ),
+            }).pipe(Effect.result)
+            expect(Result.isFailure(failed)).toBe(true)
+            expect(yield* retainedState).toEqual(beforeFinalization)
+          }
+          const finalize = finalizeWith(blocked)
+          expect(yield* finalize).toMatchObject({ outcome: 'RECOVERED', action: 'BLOCKED' })
+          const settled = yield* retainedState
+          expect(yield* finalize).toMatchObject({ outcome: 'RECOVERED', action: 'BLOCKED' })
+          expect(yield* retainedState).toEqual(settled)
+          expect(yield* readAuthority).toEqual(heldAuthority)
+          expect(yield* sql`SELECT state, terminal_outcome FROM intents`).toEqual([
+            { state: 'TERMINAL', terminal_outcome: 'EXPIRED' },
+          ])
+          expect(yield* sql`SELECT state, terminal_reason FROM autonomous_cycles`).toEqual([
+            { state: 'BLOCKED', terminal_reason: CycleTerminalReason.Risk },
+          ])
+          expect(yield* Clock.currentTimeMillis).toBeLessThan(closeAtMs)
+          expect(
+            yield* sql`SELECT (SELECT count(*)::integer FROM mutation_events) AS mutations, (SELECT count(*)::integer FROM orders) AS orders, (SELECT count(*)::integer FROM fills) AS fills`,
+          ).toEqual([{ mutations: 0, orders: 0, fills: 0 }])
+          expect((yield* broker.snapshot).orders).toEqual([])
+          return { _tag: 'Coverage' as const }
+        }
+        if (scenario === 'measured-bootstrap-delay') {
+          const restarted = yield* createRuntime
+          expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
+          expect(yield* sql`SELECT maximum, effective, kill_state FROM authority_state WHERE singleton`).toEqual([
+            { maximum: 'PAPER', effective: 'PAPER', kill_state: 'CLEAR' },
+          ])
+          expect(
+            yield* sql`SELECT status, reconciled_at <= execution_account_now(${accountId}) AS observed
+              FROM reconciliations ORDER BY reconciled_at DESC LIMIT 1`,
+          ).toEqual([{ status: 'EXACT', observed: true }])
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect(measuredCalls).toEqual([])
+          return { _tag: 'Coverage' as const }
+        }
+        if (scenario === 'closed-calendar') {
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          const pass = yield* runtime.advance
+          expect(pass.observation).toMatchObject({ result: 'SUCCESS', outcome: 'WINDOW_CLOSED' })
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect(yield* sql`SELECT cycle_id FROM autonomous_cycles`).toEqual([])
+          expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
+          return { _tag: 'Coverage' as const }
+        }
+        if (scenario === 'reconciliation-idle-recovery') {
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing replay authority reader')
+          expect(yield* sql`SELECT count(*)::int AS cycles FROM autonomous_cycles`).toEqual([{ cycles: 0 }])
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          yield* runtime.store.authorityRestriction.restrictAuthority(
+            `reconciliation discrepancy ${Result.getOrThrow(canonicalHashV1Result({ transient: true }))}`,
+            yield* currentUtcInstant,
+          )
+          yield* advanceMarketTo(initialMs + 1000)
+          const restarted = yield* createRuntime
+          for (let attempt = 0; attempt < 5; attempt++) {
+            yield* restarted.advance
+            if ((yield* readAuthority).effective === Authority.Execution) break
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          const recovered = yield* readAuthority
+          expect(recovered).toMatchObject({
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+          })
+          expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
+          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
+            { state: 'ACTIVE', bound: true },
+          ])
+          expect(yield* sql`SELECT DISTINCT authority_generation_hash FROM intents`).toEqual([
+            { authority_generation_hash: recovered.generationHash },
+          ])
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          return { _tag: 'IdleRecovery' as const }
+        }
+        if (scenario === 'operator-held-replay' || scenario === 'operator-after-system-replay') {
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          if (scenario === 'operator-after-system-replay') {
+            yield* runtime.store.authorityRestriction.restrictAuthority(
+              `reconciliation discrepancy ${Result.getOrThrow(canonicalHashV1Result({ transient: true }))}`,
+              yield* currentUtcInstant,
+            )
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          yield* runtime.store.authorityRestriction.restrictAuthority('operator hold fixture', yield* currentUtcInstant)
+          expect(yield* sql`SELECT reason FROM authority_state`).toEqual([{ reason: 'operator hold fixture' }])
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          const restarted = yield* createRuntime
+          for (let attempt = 0; attempt < 3; attempt++) {
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            expect((yield* restarted.advance).observation.result).toBe('FAILURE')
+          }
+          expect((yield* broker.snapshot).orders).toHaveLength(0)
+          expect(yield* sql`SELECT count(*)::int AS calls FROM jev_evaluation_requests`).toEqual([{ calls: 0 }])
+          expect(yield* sql`SELECT generation_hash, effective, kill_state, reason FROM authority_state`).toEqual([
+            {
+              generation_hash: runtime.authorityGenerationHash,
+              effective: 'OBSERVE',
+              kill_state: 'ACTIVE',
+              reason: 'operator hold fixture',
+            },
+          ])
+          return { _tag: 'OperatorHeld' as const }
+        }
+        if (scenario === 'measured-submit-expired-reentry') {
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing replay authority reader')
+          for (let attempt = 0; attempt < 20; attempt++) {
+            yield* runtime.advance
+            const authority = yield* readAuthority
+            if (
+              expiredStartedSubmit &&
+              authority.generationHash !== runtime.authorityGenerationHash &&
+              authority.effective === Authority.Execution
+            )
+              break
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          expect(expiredStartedSubmit).toBe(true)
+          expect((yield* broker.snapshot).orders).toHaveLength(0)
+          expect(
+            yield* sql`SELECT event_type, denial_reason FROM mutation_events WHERE event_type = 'SUBMIT_DENIED'`,
+          ).toEqual([{ event_type: 'SUBMIT_DENIED', denial_reason: SubmissionDenialReason.ExpiredRiskDecision }])
+          const [denial] = yield* sql<{
+            intent_id: string
+            event_id: string
+          }>`SELECT intent_id,event_id FROM mutation_events WHERE event_type='SUBMIT_DENIED'`
+          if (denial === undefined) throw new Error('Missing durable submit denial')
+          const retainedDenial = yield* mutations.latest(denial.intent_id, MutationOperation.Submit)
+          if (retainedDenial === undefined) throw new Error('Missing decoded submit denial')
+          expect(retainedDenial).toMatchObject({
+            eventId: denial.event_id,
+            denialReason: SubmissionDenialReason.ExpiredRiskDecision,
+          })
+          const replayedDenial = yield* mutations.submitDenied(
+            denial.intent_id,
+            retainedDenial.requestHash,
+            retainedDenial.occurredAt,
+            SubmissionDenialReason.ExpiredRiskDecision,
+          )
+          expect(replayedDenial).toEqual(retainedDenial)
+          const conflictingDenial = yield* mutations
+            .submitDenied(
+              denial.intent_id,
+              replayedDenial.requestHash,
+              replayedDenial.occurredAt,
+              SubmissionDenialReason.ExecutionWindowExpired,
+            )
+            .pipe(Effect.result)
+          expect(Result.isFailure(conflictingDenial)).toBe(true)
+          expect(yield* mutations.latest(denial.intent_id, MutationOperation.Submit)).toEqual(retainedDenial)
+          const recovered = yield* readAuthority
+          expect(recovered).toMatchObject({
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+          })
+          expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
+          expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.clients.jev ?? provider))
+          expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
+          if (timing === undefined) throw new Error('Missing measured timing')
+          yield* expectConsumedEntryWindowWait(restarted.advance, 'BLOCKED')
+          yield* advanceMarketTo(reentryAtMs)
+          for (let attempt = 0; attempt < 8; attempt++) {
+            yield* restarted.advance
+            if ((yield* broker.snapshot).fills.length > 0) break
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length * 2)
+          expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(eligibleEntrySymbols.length * 2)
+          expect(
+            yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
+          ).toEqual([
+            { state: 'ACTIVE', count: 1 },
+            { state: 'BLOCKED', count: 1 },
+          ])
+          expect(
+            yield* sql`SELECT c.state, c.decision_hash IS NOT NULL AS bound FROM autonomous_cycles c
+              JOIN intents i ON i.cycle_id=c.cycle_id WHERE i.intent_id=${denial.intent_id}`,
+          ).toEqual([{ state: 'BLOCKED', bound: true }])
+          yield* expectNoUnusedEntryExpiry
+          return { _tag: 'ExpiredSubmitRecovered' as const }
+        }
+        if (scenario === 'no-trade-finalization') {
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          yield* runtime.advance
+          yield* advanceMarketTo(initialMs + 2)
+          yield* expectConsumedEntryWindowWait(runtime.advance, 'NO_TRADE')
+          expect(
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles ORDER BY created_at`,
+          ).toEqual([{ state: 'NO_TRADE', bound: true }])
+          yield* advanceMarketTo(finalizationAtMs)
+          const schedule = yield* driveReplaySession(
+            runtime,
+            (at) =>
+              advanceMarketTo(at).pipe(
+                Effect.mapError(
+                  (cause) => new ReplayBrokerFailure({ message: 'Finalization test clock failed', cause }),
+                ),
+              ),
+            finalizationAtMs + 1,
+            finalizationAtMs + 120_001,
+            true,
+          )
+          const reconciliation = yield* runtime.reconcile
+          const state = yield* broker.snapshot
+          expect(managementCalls).toBe(0)
+          expect(state.orders).toEqual([])
+          expect(state.fills).toEqual([])
+          expect(state.ledger.positions).toEqual([])
+          expect(
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2' ORDER BY entry_attempt_ordinal`,
+          ).toEqual([
+            { state: 'NO_TRADE', bound: true },
+            { state: 'NO_TRADE', bound: true },
+          ])
+          yield* expectNoUnusedEntryExpiry
+          expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
+          yield* advanceMarketTo(finalizationAtMs + 180_001)
+          expect((yield* runtime.advance).observation).toMatchObject({
+            result: 'SUCCESS',
+            outcome: 'WINDOW_CLOSED',
+          })
+          yield* advanceMarketTo(finalizationAtMs + 240_000)
+          expect((yield* runtime.advance).observation).toMatchObject({
+            result: 'SUCCESS',
+            outcome: 'WINDOW_CLOSED',
+          })
+          yield* advanceMarketTo(finalizationAtMs + 240_001)
+          const successor = yield* runtime.advance
+          expect(successor.observation).toMatchObject({ result: 'SUCCESS', outcome: 'WINDOW_CLOSED' })
+          expect(
+            yield* sql`SELECT state, entry_attempt_ordinal::int AS ordinal FROM autonomous_cycles ORDER BY entry_attempt_ordinal`,
+          ).toEqual([
+            { state: 'NO_TRADE', ordinal: 1 },
+            { state: 'NO_TRADE', ordinal: 2 },
+          ])
+          expect(
+            yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles WHERE execution_calendar_schema_version='bayn.continuous-market-hours.v1'`,
+          ).toEqual([{ count: 0 }])
+          expect(schedule.failedPassCount).toBe(0)
+          expect(schedule.unavailableDecisionPassCount).toBe(0)
+          expect(yield* sql`SELECT effective, kill_state FROM authority_state`).toEqual([
+            { effective: 'PAPER', kill_state: 'CLEAR' },
+          ])
+          expect(
+            assessBacktestSession({
+              finalWindow: true,
+              ...schedule,
+              valuationFailureCount: 0,
+              remainingPositionCount: state.ledger.positions.length,
+              remainingOpenOrderCount: state.orders.filter(({ order }) =>
+                [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+              ).length,
+              reconciliation: {
+                status: reconciliation.report.reconciliation.status,
+                metrics: reconciliation.report.metrics,
+                unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
+                unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+              },
+            }),
+          ).toEqual({ completion: 'COMPLETE', issues: [] })
+          return { _tag: 'Coverage' as const }
+        }
+        if (
+          scenario === 'missing-candidate' ||
+          scenario === 'no-trade' ||
+          scenario === 'no-trade-with-excluded-source' ||
+          scenario === 'failed-model-response'
+        ) {
+          if (scenario === 'no-trade') yield* advanceMarketTo(initialMs + 1)
+          const schedule = yield* driveReplaySession(
+            runtime,
+            (at) =>
+              clock.advanceTo(utcInstantFromEpochMillis(at)).pipe(
+                Effect.andThen(TestClock.setTime(at)),
+                Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Coverage test clock failed', cause })),
+              ),
+            initialMs + 1,
+            initialMs + 4001,
+            true,
+          )
+          const reconciliation = yield* runtime.reconcile
+          const state = yield* broker.snapshot
+          expect(schedule.failedPassCount).toBe(0)
+          expect(state.orders).toEqual([])
+          expect(state.fills).toEqual([])
+          if (scenario === 'missing-candidate') {
+            expect(schedule.passCount).toBeGreaterThanOrEqual(5)
+            expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
+            expect(
+              yield* sql`SELECT
+              (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
+              (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,
+              (SELECT count(*)::int FROM accounting_transactions WHERE account_id = ${accountId}) AS transactions
+            `,
+            ).toEqual([{ intents: 0, fills: 0, transactions: 0 }])
+          }
+          const assessment = assessBacktestSession({
+            finalWindow: true,
+            ...schedule,
+            valuationFailureCount: 0,
+            remainingPositionCount: state.ledger.positions.length,
+            remainingOpenOrderCount: state.orders.filter(({ order }) =>
+              [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+            ).length,
+            reconciliation: {
+              status: reconciliation.report.reconciliation.status,
+              metrics: reconciliation.report.metrics,
+              unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
+              unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+            },
+          })
+          if (!noTrade) {
+            expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
+            expect(assessment).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
+            if (scenario === 'failed-model-response') {
+              expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
+              expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
+            }
+          } else {
+            expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeGreaterThan(0)
+            expect(schedule.unavailableDecisionPassCount).toBe(0)
+            expect(assessment).toEqual({ completion: 'COMPLETE', issues: [] })
+          }
+          if (scenario === 'no-trade' || scenario === 'no-trade-with-excluded-source') {
+            const requestedCount =
+              scenario === 'no-trade' ? eligibleEntrySymbols.length : fixture.snapshot.manifest.candidateSymbols?.length
+            expect(yield* sql`SELECT count(*)::int AS calls FROM jev_evaluation_requests`).toEqual([
+              { calls: requestedCount },
+            ])
+            expect(yield* sql`SELECT count(*)::int AS batches FROM jev_batch_results`).toEqual([{ batches: 1 }])
+            if (scenario === 'no-trade-with-excluded-source')
+              expect(
+                yield* sql`SELECT count(*)::int AS count FROM jev_batch_plans p,
+                  jsonb_array_elements(p.payload -> 'candidates') c
+                  WHERE c ->> 'status' = 'EXCLUDED' AND c ->> 'reason' IN ('not-ready', 'freshness')`,
+              ).toEqual([{ count: eligibleEntrySymbols.length - (requestedCount ?? 0) }])
+          }
+          return { _tag: 'Coverage' as const }
+        }
+        if (scenario === 'recovery' || scenario === 'recovery-filled' || acceptedCancel) {
+          const advanceBy = (ms: number) =>
+            Effect.gen(function* () {
+              const next = (yield* Clock.currentTimeMillis) + ms
+              yield* clock.advanceTo(utcInstantFromEpochMillis(next))
+              yield* TestClock.setTime(next)
+            })
+          const store = runtime.store
+          const fence = yield* WriterFence
+          const intents = yield* IntentStore
+          const mutations = runtime.mutations
+          const blockedIntents = yield* BlockedCycleIntentStore
+          const closures = yield* ExecutionCycleClosureStore
+          const grants = yield* PersistedCapitalGrantStore
+          const readAuthority = store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing durable authority reader')
+          const resources = Context.make(BrokerRead, broker.read).pipe(
+            Context.add(DecisionConstruction, {
+              observe: constructObserveShadowDecision,
+              execution: constructExecutionDecision,
+            }),
+            Context.add(CycleStore, runtime.cycleStore),
+            Context.add(BrokerEventStore, store.events),
+            Context.add(FillAccountingStore, store.accounting),
+            Context.add(ValuationStore, store.valuation),
+            Context.add(ReconciliationStore, store.reconciliation),
+            Context.add(AuthorityGenerationStore, store.authorityGeneration),
+            Context.add(AuthorityRestrictionStore, store.authorityRestriction),
+            Context.add(WriterFence, fence),
+            Context.add(IntentStore, intents),
+            Context.add(MutationStore, mutations),
+            Context.add(JevClient, yield* JevClient),
+            Context.add(CandidateObservationStore, yield* CandidateObservationStore),
+
+            Context.add(EntryInferenceJournal, yield* EntryInferenceJournal),
+            Context.add(JevEvaluationStore, yield* JevEvaluationStore),
+            Context.add(JevBatchStore, yield* JevBatchStore),
+            Context.add(JevPositionStore, yield* JevPositionStore),
+          )
+          const asOperational = (cause: unknown) =>
+            operationalError({
+              component: 'strategy',
+              operation: 'recovery-proof',
+              message: 'Recovery proof operation failed',
+              cause,
+            })
+          const recoveryClock = yield* makeRecoveryClockFixture(advanceBy(1))
+          const reconcile = recoveryClock.reconcile(runtime.reconcile).pipe(Effect.mapError(asOperational))
+          const settle = recoverTerminalGenerationToObserve({
+            accountId,
+            blockedIntents,
+            authorityStore: {
+              ...store.authorityGeneration,
+              ensureAuthorityGeneration: (request) =>
+                recoveryClock.authority(store.authorityGeneration.ensureAuthorityGeneration(request)),
+            },
+            writerFence: fence,
+            reconcileAfterSettlement: reconcile,
+          }).pipe(
+            Effect.tapError((error) =>
+              error.message !== 'terminal generation OBSERVE rollover failed'
+                ? Effect.void
+                : sql`SELECT
+                to_char(${clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS database_clock,
+                to_char(state.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS authority_updated_at,
+                to_char(reconciliation.reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS reconciled_at
+              FROM authority_state AS state
+              LEFT JOIN LATERAL (
+                SELECT reconciled_at FROM reconciliations WHERE account_id = ${accountId}
+                ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1
+              ) AS reconciliation ON true
+              WHERE state.singleton`.pipe(
+                    Effect.flatMap((timestamps) =>
+                      Effect.logWarning('Recovery fixture clock evidence sampled after failure').pipe(
+                        Effect.annotateLogs({ scenario, timestamps }),
+                      ),
+                    ),
+                    Effect.ignoreCause,
+                  ),
+            ),
+          )
+          const reconciliationConflicts = new Set<string>()
+          const cancelRecoveryCalls = { submit: 0, cancel: 0, lookup: 0 }
+          const recoveryRead = {
+            ...broker.read,
+            orderByClientId: (clientOrderId: string) =>
+              Effect.gen(function* () {
+                cancelRecoveryCalls.lookup += 1
+                if (cancelRecoveryCalls.cancel > 0) {
+                  expect(yield* readAuthority.pipe(Effect.orDie)).toMatchObject({
+                    generationHash: runtime.authorityGenerationHash,
+                    effective: Authority.Observe,
+                    kill: KillState.Active,
+                  })
+                  expect(
+                    yield* sql`SELECT count(*)::int AS count FROM intents WHERE state='TERMINAL'`.pipe(Effect.orDie),
+                  ).toEqual([{ count: 0 }])
+                  expect(
+                    yield* sql`SELECT status,
+                    EXISTS(SELECT 1 FROM jsonb_array_elements(discrepancies) d WHERE d->>'kind'='MUTATION') AS unresolved
+                    FROM reconciliations WHERE account_id=${accountId}
+                    ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1`.pipe(Effect.orDie),
+                  ).toEqual([{ status: 'DISCREPANCY', unresolved: true }])
+                }
+                if (scenario === 'accepted-cancel-lookup-failed')
+                  return yield* new BrokerReadError({
+                    operation: 'order-by-client-id',
+                    kind: BrokerReadErrorKind.Transport,
+                    message: 'Injected cancel recovery lookup failure',
+                    retryable: true,
+                  })
+                return yield* broker.read.orderByClientId(clientOrderId)
+              }),
+          }
+          const cancelRecoveryBroker = {
+            ...broker.mutation,
+            submit: (...args: Parameters<typeof broker.mutation.submit>) =>
+              Effect.sync(() => {
+                cancelRecoveryCalls.submit += 1
+              }).pipe(Effect.andThen(broker.mutation.submit(...args))),
+            cancel: (brokerOrderId: string) =>
+              Effect.gen(function* () {
+                cancelRecoveryCalls.cancel += 1
+                if (scenario !== 'accepted-cancel-open') return yield* broker.mutation.cancel(brokerOrderId)
+                // The simulated endpoint acknowledges the request while the simulated order remains working.
+                // A successful DELETE response alone must never be treated as a terminal order observation.
+                return yield* Effect.fromResult(
+                  classifyCancelResponse({
+                    ...Result.getOrThrow(prepareCancel(brokerOrderId)),
+                    status: 204,
+                    requestId: 'accepted-cancel-open-fixture',
+                    observedAt: yield* currentUtcInstant,
+                  }),
+                )
+              }),
+          }
+          let lostResponses = 0
+          const submitResponseLost = yield* Deferred.make<void>()
+          const openGeneration = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
+            Effect.gen(function* () {
+              const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(generationHash)
+              if (generation === undefined || config.execution.brokerIdentity === undefined)
+                throw new Error('Missing recovery generation')
+              const authority = yield* Effect.fromResult(
+                makeExecutionAuthority({
+                  observedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                  brokerIdentity: config.execution.brokerIdentity,
+                  brokerAccess: BrokerAccess.Mutation,
+                  capitalAuthority: grantedCapitalAuthority(generationHash),
+                  strategy: strategyRuntime.provenance.strategy,
+                }),
+              )
+              const engine = yield* makeTradingEngine({
+                buildDecision: buildResearchMutationCycleDecision,
+                authority,
+                riskPolicyHash: generation.riskPolicyHash,
+                executionMode: mode,
+                cycle: {
+                  accountId,
+                  authorityGenerationHash: generationHash,
+                  strategy: strategyRuntime,
+                  intradayMarketData: runtime.marketData,
+                  executionCycleClosureStore: closures,
+                  blockedCycleIntentStore: blockedIntents,
+                  reconciliationIntervalMs: loseResponse ? 3000 : config.operationTimeoutMs,
+                  reconciliationPassTimeoutMs: loseResponse ? 3000 : config.operationTimeoutMs,
+                },
+                execution: {
+                  currentUtcInstant,
+                  brokerRead: acceptedCancel ? recoveryRead : broker.read,
+                  brokerMutation: loseResponse
+                    ? {
+                        ...broker.mutation,
+                        submit: (...args) =>
+                          broker.mutation.submit(...args).pipe(
+                            Effect.andThen(
+                              Effect.sync(() => {
+                                lostResponses += 1
+                              }),
+                            ),
+                            Effect.andThen(Deferred.succeed(submitResponseLost, undefined)),
+                            Effect.andThen(Effect.never),
+                          ),
+                      }
+                    : acceptedCancel
+                      ? cancelRecoveryBroker
+                      : broker.mutation,
+                  intentStore: intents,
+                  mutationStore: mutations,
+                  writerFence: fence,
+                  persistedCapitalGrants: grants,
+                  verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
+                    verifyBrokerStateVersion(sql, accountId, version, intentId, requireCryptoEntryFeeBound).pipe(
+                      Effect.tapError((cause) =>
+                        Effect.sync(() => {
+                          if (
+                            cause._tag === 'ReconciliationStoreError' &&
+                            cause.message === 'cached broker reconciliation version changed before submit'
+                          )
+                            reconciliationConflicts.add(intentId)
+                        }),
+                      ),
+                    ),
+                  readFinalExecutionRiskContext: (at) => readFinalExecutionRiskContext(sql, accountId, at),
+                },
+              })
+              const startup = yield* engine.startCycle({
+                cycleBindingId: capitalGrantKey(capitalGrantFromLegacyGeneration(generation)),
+                recordPass: runtimeInput.recordPass,
+              })
+              const driver = yield* startup.pipe(Effect.provideContext(resources))
+              const owned = yield* makeGenerationCycleDriver(
+                {
+                  generationHash,
+                  mode,
+                  readAuthority: readAuthority.pipe(Effect.mapError(asOperational)),
+                  reconcileWhenHeld: reconcile,
+                  settle,
+                },
+                driver,
+              )
+              return {
+                needsRebind: owned.needsRebind,
+                program: engine.executionProgram,
+                advance: owned.driver.advance.pipe(Effect.provideContext(resources)),
+              }
+            })
+          if (acceptedCancel) {
+            const healthy = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation')
+            for (let pass = 0; pass < 20 && cancelRecoveryCalls.submit === 0; pass++) {
+              yield* advanceBy(1000)
+              yield* healthy.advance
+            }
+            expect(cancelRecoveryCalls.submit).toBe(1)
+            const [entry] = yield* sql<{
+              intent_id: string
+            }>`SELECT intent_id FROM intents WHERE account_id=${accountId}`
+            if (entry === undefined) throw new Error('Missing accepted-cancel fixture entry')
+            const accepted = yield* healthy.program.cancel(entry.intent_id, 1000)
+            expect(accepted.eventType).toBe(MutationEventType.CancelAccepted)
+            expect(yield* sql`SELECT state, terminal_outcome FROM intents WHERE intent_id=${entry.intent_id}`).toEqual([
+              { state: 'ACKNOWLEDGED', terminal_outcome: null },
+            ])
+            const history = yield* sql`SELECT * FROM mutation_events ORDER BY event_id`
+            const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(
+              runtime.authorityGenerationHash,
+            )
+            const lookupBeforePreflight = cancelRecoveryCalls.lookup
+            yield* advanceBy(1000)
+            // The real driver's post-mutation continuation must reconcile and restrict before lookup.
+            // The lookup adapter above inspects those durable boundaries before returning any order evidence.
+            yield* healthy.advance
+            expect(cancelRecoveryCalls.lookup).toBe(lookupBeforePreflight + 1)
+            const found = yield* mutations.latest(entry.intent_id, MutationOperation.Cancel)
+            if (found === undefined) throw new Error('Missing driver cancel recovery event')
+            expect(found.eventType).toBe(
+              scenario === 'accepted-cancel-lookup-failed'
+                ? MutationEventType.RecoveryUnknown
+                : MutationEventType.RecoveryFound,
+            )
+            const restricted = yield* readAuthority
+            expect(restricted).toMatchObject({
+              generationHash: runtime.authorityGenerationHash,
+              maximum: Authority.Execution,
+              effective: Authority.Observe,
+              kill: KillState.Active,
+            })
+            expect(yield* settle).toEqual({ _tag: 'NotRequired' })
+            expect(yield* readAuthority).toEqual(restricted)
+            expect(yield* healthy.needsRebind).toBe(true)
+
+            const recovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
+            const lookupBeforeRecovery = cancelRecoveryCalls.lookup
+            // A lookup may resolve the intent, but it must not clear the restriction or grant a new generation.
+            expect(yield* readAuthority).toEqual(restricted)
+            expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+            if (scenario !== 'accepted-cancel-terminal') {
+              const reconciliationCount = sql<{ count: number }>`SELECT count(*)::int AS count
+                FROM reconciliations WHERE account_id=${accountId}`.pipe(
+                Effect.map(([row]) => {
+                  if (row === undefined) throw new Error('Missing persisted reconciliation count')
+                  return row.count
+                }),
+              )
+              for (let pass = 0; pass < 3; pass++) {
+                const lookupUnavailable = scenario === 'accepted-cancel-lookup-failed'
+                // Make the driver's normal reconciliation cadence due while only the isolated lookup is unavailable.
+                yield* advanceBy(lookupUnavailable ? config.operationTimeoutMs : 1000)
+                const beforeReconciliations = lookupUnavailable ? yield* reconciliationCount : undefined
+                yield* recovery.advance
+                if (beforeReconciliations !== undefined) {
+                  // This must come before runtime.reconcile below; that manual call used to mask driver starvation.
+                  expect(yield* reconciliationCount).toBeGreaterThan(beforeReconciliations)
+                  expect((yield* mutations.latest(entry.intent_id, MutationOperation.Cancel))?.eventType).toBe(
+                    MutationEventType.RecoveryUnknown,
+                  )
+                  expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+                }
+                expect(yield* readAuthority).toMatchObject({
+                  generationHash: runtime.authorityGenerationHash,
+                  effective: Authority.Observe,
+                  kill: KillState.Active,
+                })
+                expect(yield* sql`SELECT count(*)::int AS count FROM intents WHERE state='TERMINAL'`).toEqual([
+                  { count: 0 },
+                ])
+                expect((yield* runtime.reconcile).riskContext.unknownMutationCount).toBe(1)
+                expect(yield* settle).toEqual({ _tag: 'NotRequired' })
+              }
+              expect(yield* recovery.needsRebind).toBe(false)
+            } else {
+              expect(
+                yield* sql`SELECT state, terminal_outcome FROM intents WHERE intent_id=${entry.intent_id}`,
+              ).toEqual([{ state: 'TERMINAL', terminal_outcome: 'CANCELED' }])
+              const replay = yield* recovery.program.recover(entry.intent_id, MutationOperation.Cancel)
+              expect(replay.eventId).toBe(found.eventId)
+              expect(cancelRecoveryCalls.lookup).toBe(lookupBeforeRecovery)
+              yield* advanceBy(1)
+              const exact = yield* runtime.reconcile
+              expect(exact.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+              expect(exact.riskContext.unknownMutationCount).toBe(0)
+              expect(yield* readAuthority).toEqual(restricted)
+              for (let pass = 0; pass < 20 && !(yield* recovery.needsRebind); pass++) {
+                yield* advanceBy(1000)
+                yield* recovery.advance
+              }
+              expect(yield* recovery.needsRebind).toBe(true)
+              expect(yield* readAuthority).toMatchObject({
+                maximum: Authority.Observe,
+                effective: Authority.Observe,
+                kill: KillState.Clear,
+              })
+              expect((yield* readAuthority).generationHash).not.toBe(runtime.authorityGenerationHash)
+              expect(yield* settle).toEqual({ _tag: 'NotRequired' })
+            }
+            expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+            expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 1 }])
+            expect((yield* broker.snapshot).fills).toHaveLength(0)
+            expect((yield* broker.snapshot).ledger.positions).toHaveLength(0)
+            expect(
+              yield* store.authorityGeneration.readResearchAuthorityGeneration(runtime.authorityGenerationHash),
+            ).toEqual(generation)
+            const retained = yield* sql`SELECT * FROM mutation_events ORDER BY event_id`
+            expect(
+              retained.filter((event) => history.some((original) => original['event_id'] === event['event_id'])),
+            ).toEqual([...history])
+            return { _tag: 'Recovery' as const }
+          }
+          const deadlineClock = yield* TestClock.make()
+          yield* Deferred.await(submitResponseLost).pipe(
+            Effect.andThen(deadlineClock.adjust(3000)),
+            Effect.forkChild({ startImmediately: true }),
+          )
+          const healthy = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation', true)
+          const controllerStatuses = yield* ExecutionControllerStatusStore.pipe(
+            Effect.provide(ExecutionControllerStatusStoreLive),
+          )
+          const controllerKey = Result.getOrThrow(canonicalHashV1Result({ accountId }))
+          let sequence = 0
+          let abandoned: ExecutionControllerStatus | undefined
+          let crashedCommand: AdvanceExecutionCommand | undefined
+          const interruptedStatusStore = {
+            ...controllerStatuses,
+            project: (candidate: ExecutionControllerStatus) => {
+              if (lostResponses === 0) return controllerStatuses.project(candidate)
+              abandoned = candidate
+              return Effect.die('simulated worker loss before controller completion projection')
+            },
+          }
+          const recoveryAdvances = []
+          for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
+            yield* advanceBy(1000)
+            const command: AdvanceExecutionCommand = {
+              controllerKey,
+              epoch: 1,
+              sequence,
+              issuedAt: yield* currentUtcInstant,
+              sourceRevision: config.build.sourceRevision,
+            }
+            const advance = yield* Effect.exit(
+              executeNativeExecutionAdvance(
+                command,
+                { advance: healthy.advance, nextDelayMs: 1000 },
+                interruptedStatusStore,
+                executionControllerPlanHash,
+              ).pipe(Effect.provideService(OperationDeadlineClock, deadlineClock)),
+            )
+            if (Exit.isFailure(advance)) {
+              expect(Cause.pretty(advance.cause)).toContain(
+                'simulated worker loss before controller completion projection',
+              )
+              crashedCommand = command
+            } else {
+              recoveryAdvances.push(advance.value.observation)
+              sequence += 1
+            }
+          }
+          expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
+          if (
+            crashedCommand === undefined ||
+            abandoned === undefined ||
+            !executionControllerStatusHasCompletion(abandoned)
+          )
+            throw new Error('Missing pre-projection crash')
+          const beforeProjection = yield* controllerStatuses.read(controllerKey)
+          expect(beforeProjection?.nextSequence ?? 0).toBe(crashedCommand.sequence)
+          const readCompletionObservations = sql<{ id: string; status: unknown }>`
+            SELECT observation_id::text AS id, status FROM execution_controller_observations
+            WHERE controller_key=${controllerKey} AND (status->>'epoch')::bigint=${crashedCommand.epoch}
+              AND (status->>'last_sequence')::bigint=${crashedCommand.sequence}
+            ORDER BY observation_id`
+          expect(yield* readCompletionObservations).toEqual([])
+          const originalMutations = yield* sql`SELECT intent_id, request_hash FROM mutation_events
+            WHERE event_type = 'SUBMIT_STARTED' ORDER BY intent_id`
+          expect(originalMutations).toHaveLength(1)
+          const originalOrderIds = (yield* broker.snapshot).orders.map(({ order }) => order.clientOrderId)
+          yield* advanceBy(1000)
+          const restarted = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation')
+          const replayCommand = { ...crashedCommand, issuedAt: yield* currentUtcInstant }
+          expect(replayCommand.issuedAt).not.toBe(crashedCommand.issuedAt)
+          const committed = yield* executeNativeExecutionAdvance(
+            replayCommand,
+            { advance: restarted.advance, nextDelayMs: 1000 },
+            controllerStatuses,
+            executionControllerPlanHash,
+          ).pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
+          expect(yield* restarted.needsRebind).toBe(true)
+          expect(
+            yield* sql`SELECT intent_id, request_hash FROM mutation_events
+            WHERE event_type = 'SUBMIT_STARTED' ORDER BY intent_id`,
+          ).toEqual(originalMutations)
+          expect((yield* broker.snapshot).orders.map(({ order }) => order.clientOrderId)).toEqual(originalOrderIds)
+          expect(committed.observation?.executionIssuedAt).toBe(replayCommand.issuedAt)
+          expect(committed.outcome.receiptHash).not.toBe(abandoned.lastReceiptHash)
+          const committedObservations = yield* readCompletionObservations
+          expect(committedObservations).toHaveLength(1)
+          expect(committedObservations[0]?.status).toEqual(
+            expect.objectContaining({
+              controller_key: controllerKey,
+              plan_hash: executionControllerPlanHash,
+              active: true,
+              epoch: crashedCommand.epoch,
+              next_sequence: crashedCommand.sequence + 1,
+              last_sequence: crashedCommand.sequence,
+              last_outcome: committed.outcome._tag,
+              last_receipt_hash: committed.outcome.receiptHash,
+              last_pass: committed.observation,
+            }),
+          )
+          expect(yield* controllerStatuses.project(abandoned).pipe(Effect.flip)).toMatchObject({ failure: 'conflict' })
+          expect(
+            yield* executeNativeExecutionAdvance(
+              { ...crashedCommand, issuedAt: utcInstantFromEpochMillis(Date.parse(replayCommand.issuedAt) + 60_000) },
+              {
+                advance: Effect.die('A committed receipt must replay without advancing the broker'),
+                nextDelayMs: 1000,
+              },
+              controllerStatuses,
+              executionControllerPlanHash,
+            ),
+          ).toEqual(committed)
+          expect(yield* readCompletionObservations).toEqual(committedObservations)
+          const restricted = yield* readAuthority
+          expect(restricted).toMatchObject({
+            maximum: Authority.Execution,
+            effective: Authority.Observe,
+            kill: KillState.Active,
+          })
+          expect((yield* broker.snapshot).fills).toHaveLength(scenario === 'recovery-filled' ? 1 : 0)
+          const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+          const recovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
+          const concurrentRecovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
+          let lastRecovery
+          let protectionRestored = scenario !== 'recovery-filled'
+          let closeWindowReached = false
+          for (let attempt = 0; attempt < 20 && !(yield* recovery.needsRebind); attempt++) {
+            // Concurrent controllers may need separate passes to recover, cancel, and reconcile the entry.
+            // Reach durable protection before moving the market to the liquidation window.
+            if (!closeWindowReached && attempt >= 3 && protectionRestored) {
+              yield* advanceBy(closeAtMs - (yield* Clock.currentTimeMillis))
+              for (const arrival of closeArrivals)
+                cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+              closeWindowReached = true
+            } else {
+              if (!closeWindowReached && scenario === 'recovery-filled') {
+                const nextAt = (yield* Clock.currentTimeMillis) + 1000
+                const quote = observedQuoteAt(cursor.projection, 'AAPL', nextAt)
+                if (quote === undefined) throw new Error('Missing recovery protection quote')
+                expect(nextAt - Date.parse(quote.value.eventAt), JSON.stringify(lastRecovery)).toBeLessThanOrEqual(
+                  protocol.maximumQuoteAgeMs,
+                )
+              }
+              yield* advanceBy(1000)
+            }
+            lastRecovery = yield* Effect.all([recovery.advance, concurrentRecovery.advance], { concurrency: 2 }).pipe(
+              Effect.provideService(OperationDeadlineClock, liveClock),
+            )
+            if (!closeWindowReached && scenario === 'recovery-filled') {
+              const acceptedProtection = yield* sql<{ intent_id: string }>`SELECT i.intent_id FROM intents i
+                JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
+                WHERE i.account_id=${accountId} AND i.side='SELL' AND i.protection->>'_tag'='Oco'
+                  AND i.state='ACKNOWLEDGED' AND i.terminal_outcome IS NULL AND r.outcome='APPROVED'
+                  AND EXISTS (SELECT 1 FROM mutation_events e WHERE e.intent_id=i.intent_id
+                    AND e.event_type='SUBMIT_ACCEPTED')`
+              expect(acceptedProtection.length).toBeLessThanOrEqual(1)
+              protectionRestored = false
+              for (const accepted of acceptedProtection) {
+                const intent = Option.getOrThrow(yield* intents.read(accepted.intent_id)).intent
+                if (intent.protection?._tag !== 'Oco') throw new Error('Missing retained recovery Oco terms')
+                const protectedState = yield* broker.snapshot
+                expect(protectedState.fills).toHaveLength(1)
+                expect(protectedState.ledger.positions).toHaveLength(1)
+                const position = protectedState.ledger.positions[0]
+                const parent = protectedState.orders.find(
+                  ({ order }) => order.clientOrderId === intent.clientOrderId,
+                )?.order
+                if (position === undefined || parent === undefined) throw new Error('Missing recovery protection group')
+                expect(position.symbol).toBe(intent.symbol)
+                expect(position.quantityAtoms).toBe(intent.quantityAtoms)
+                expect(parent.accountId).toBe(accountId)
+                const children = protectedState.orders
+                  .filter(({ order }) => order.parentBrokerOrderId === parent.brokerOrderId)
+                  .map(({ order }) => order)
+                Result.getOrThrow(
+                  verifyProtectionGroup(
+                    { ...parent, legs: children },
+                    { symbol: position.symbol, quantityAtoms: position.quantityAtoms, protection: intent.protection },
+                  ),
+                )
+                expect(parent.status).toBe(OrderStatus.New)
+                expect(parent.filledQuantityAtoms).toBe('0')
+                expect(parent.firstArrivedAt).toBeDefined()
+                expect(children).toHaveLength(1)
+                const stop = children[0]
+                if (stop === undefined) throw new Error('Missing working recovery stop')
+                expect(stop.status).toBe(OrderStatus.New)
+                expect(stop.quantityAtoms).toBe(position.quantityAtoms)
+                expect(stop.filledQuantityAtoms).toBe('0')
+                expect(stop.firstArrivedAt).toBeDefined()
+                protectionRestored = true
+              }
+            }
+          }
+          expect(protectionRestored, JSON.stringify(lastRecovery)).toBe(true)
+          if (scenario === 'recovery-filled') expect(closeWindowReached, JSON.stringify(lastRecovery)).toBe(true)
+          expect(yield* recovery.needsRebind, JSON.stringify(lastRecovery)).toBe(true)
+          yield* concurrentRecovery.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+          expect(yield* concurrentRecovery.needsRebind).toBe(true)
+          const observed = yield* readAuthority
+          expect(observed).toMatchObject({
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+          })
+          const repeated = yield* Effect.all([settle, settle], { concurrency: 2 })
+          expect(repeated).toEqual([{ _tag: 'NotRequired' }, { _tag: 'NotRequired' }])
+          const previous = yield* store.authorityGeneration.readResearchAuthorityGeneration(
+            runtime.authorityGenerationHash,
+          )
+          if (previous === undefined || config.execution.brokerIdentity === undefined)
+            throw new Error('Missing prior research grant')
+          const request = yield* Effect.fromResult(
+            makeResearchCapitalActivationRequest({
+              schemaVersion: 'bayn.research-execution-mandate.v1',
+              grant: previous.grant,
+              activation: {
+                sourceRevision: config.build.sourceRevision,
+                imageRepository: config.build.imageRepository,
+                imageDigest: config.build.imageDigest,
+              },
+              strategy: {
+                ...strategyRuntime.provenance.strategy,
+                protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(strategyRuntime.provenance.strategy)),
+              },
+              broker: {
+                environment: BrokerEnvironment.Sandbox,
+                accountId,
+                identityHash: config.execution.brokerIdentity.identityHash,
+              },
+              riskPolicyHash: previous.riskPolicyHash,
+              limits: { maxOpenOrders: 0, maxPositions: 0 },
+            }),
+          )
+          yield* reconcile
+          const activated = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+            researchCapitalGrantProof(request),
+            observed.generationHash,
+          )
+          expect(activated.generationHash).not.toBe(runtime.authorityGenerationHash)
+          yield* advanceBy(1)
+          yield* store.authorityRestriction.restrictAuthority(
+            'operator kill switch active',
+            utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+          )
+          const heldBefore = yield* readAuthority
+          const held = yield* openGeneration(activated.generationHash, 'Mutation')
+          const holds = yield* Effect.all([held.advance, held.advance], { concurrency: 2 })
+          expect(holds.every((item) => item.observation.result === 'FAILURE')).toBe(true)
+          expect(yield* readAuthority).toEqual(heldBefore)
+          expect(yield* held.needsRebind).toBe(false)
+          const final = yield* runtime.reconcile
+          expect(final.report.metrics.accountingExact).toBe(true)
+          expect(final.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          expect(final.riskContext.unknownMutationCount).toBe(0)
+          expect(final.brokerState.positions).toHaveLength(0)
+          const counts = yield* sql<
+            Record<string, unknown>
+          >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
+          const retainedIntents =
+            yield* sql`SELECT i.intent_id,i.client_order_id,i.symbol,i.side,i.state,i.terminal_outcome,i.protection->>'_tag' AS protection,
+            r.outcome,r.reason_codes,
+            (SELECT jsonb_agg(jsonb_build_object('type',e.event_type,'denial',e.denial_reason,'routing',e.routing)
+              ORDER BY e.sequence) FROM mutation_events e WHERE e.intent_id=i.intent_id) AS events
+            FROM intents i LEFT JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
+            WHERE i.account_id=${accountId} ORDER BY i.created_at,i.intent_id`
+          const rejected = retainedIntents.filter((row) => row['terminal_outcome'] === 'REJECTED')
+          expect(new Set(rejected.map((row) => row['intent_id']))).toEqual(reconciliationConflicts)
+          const brokerState = yield* broker.snapshot
+          for (const row of rejected) {
+            expect(row).toMatchObject({
+              side: 'SELL',
+              state: 'TERMINAL',
+              protection: null,
+              outcome: 'APPROVED',
+            })
+            expect(row['events']).toEqual([
+              { type: 'SUBMIT_STARTED', denial: null, routing: null },
+              { type: 'SUBMIT_DENIED', denial: SubmissionDenialReason.ReconciliationStoreError, routing: null },
+            ])
+            expect(brokerState.orders.some((order) => order.order.clientOrderId === row['client_order_id'])).toBe(false)
+          }
+          expect(counts, JSON.stringify(retainedIntents)).toEqual([
+            scenario === 'recovery-filled'
+              ? { intents: 3 + rejected.length, fills: 2, transactions: 2 }
+              : { intents: 1, fills: 0, transactions: 0 },
+          ])
+          expect(
+            retainedIntents
+              .filter((row) => row['terminal_outcome'] !== 'REJECTED')
+              .map((row) => [row['side'], row['state'], row['terminal_outcome'], row['protection'], row['outcome']]),
+          ).toEqual(
+            scenario === 'recovery-filled'
+              ? [
+                  ['BUY', 'TERMINAL', 'CANCELED', 'Bracket', 'APPROVED'],
+                  ['SELL', 'TERMINAL', 'CANCELED', 'Oco', 'APPROVED'],
+                  ['SELL', 'TERMINAL', 'FILLED', null, 'APPROVED'],
+                ]
+              : [['BUY', 'TERMINAL', 'CANCELED', 'Bracket', 'APPROVED']],
+          )
+          expect(
+            yield* sql`SELECT count(*)::int AS denied FROM mutation_events e JOIN intents i USING(intent_id)
+            WHERE i.account_id=${accountId} AND e.event_type='SUBMIT_DENIED'`,
+          ).toEqual([{ denied: rejected.length }])
+          expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
+          return { _tag: 'Recovery' as const }
+        }
+        yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+        if (scenario === 'measured-zero-fill-reentry') {
+          let pendingCompletionCount = 0
+          const completeCycle = Effect.gen(function* () {
+            for (let pass = 0; pass < 20; pass++) {
+              const advanced = yield* runtime.advance
+              expect(advanced.observation.result, JSON.stringify(advanced.observation)).toBe('SUCCESS')
+              if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') return
+              if (
+                advanced.result?.outcome === 'RECOVERED' &&
+                advanced.result.action === 'WAITING' &&
+                ['COMPLETION_EVIDENCE_PENDING', 'intent-nonterminal', 'POST_MUTATION_RECONCILIATION'].includes(
+                  advanced.result.waitReason ?? '',
+                )
+              )
+                pendingCompletionCount += 1
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            }
+            throw new Error('Zero-fill cycle did not complete')
+          })
+          yield* completeCycle
+          expect(pendingCompletionCount).toBeGreaterThan(0)
+          const first = yield* broker.snapshot
+          expect(first.orders).toHaveLength(3)
+          expect(first.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+          expect(first.fills).toHaveLength(0)
+          expect(first.ledger.positions).toHaveLength(0)
+          yield* expectConsumedEntryWindowWait(runtime.advance, 'COMPLETED')
+          expect((yield* broker.snapshot).orders).toHaveLength(3)
+          yield* advanceMarketTo(reentryAtMs)
+          yield* completeCycle
+          const final = yield* broker.snapshot
+          expect(final.orders).toHaveLength(6)
+          expect(final.orders.every(({ order }) => order.status === OrderStatus.Canceled)).toBe(true)
+          expect(final.fills).toHaveLength(0)
+          expect(final.ledger.positions).toHaveLength(0)
+          expect(yield* sql`SELECT state FROM autonomous_cycles ORDER BY created_at`).toEqual([
+            { state: 'COMPLETED' },
+            { state: 'COMPLETED' },
+          ])
+          yield* expectNoUnusedEntryExpiry
+          yield* createRuntime
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing durable authority reader')
+          expect(yield* readAuthority).toMatchObject({
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+          })
+          expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          return { _tag: 'ZeroFill' as const }
+        }
+        for (let pass = 0; pass < 20; pass++) {
+          const advanced = yield* runtime.advance
+          if (advanced.observation.result === 'FAILURE' || (yield* broker.snapshot).fills.length > 0) break
+          const nextMs = (yield* Clock.currentTimeMillis) + 1000
+          yield* advanceMarketTo(nextMs)
+        }
+        const settledMs = (yield* Clock.currentTimeMillis) + 1
+        yield* advanceMarketTo(settledMs)
+        yield* runtime.reconcile
+        if (scenario === 'measured-entry-expired') {
+          const state = yield* broker.snapshot
+          yield* verifyMeasuredEntryStages
+          expect(new Set(measuredCalls.map((call) => call.requestHash)).size).toBe(measuredCalls.length)
+          expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
+          expect(state.orders).toHaveLength(0)
+          expect(state.fills).toHaveLength(0)
+          expect(state.ledger.positions).toHaveLength(0)
+          expect(managementCalls).toBe(0)
+          expect(
+            yield* sql`SELECT (SELECT count(*)::int FROM intents) AS intents,
+              (SELECT count(*)::int FROM jev_evaluation_requests) AS requests,
+              (SELECT count(*)::int FROM jev_batch_results) AS batches`,
+          ).toEqual([{ intents: 0, requests: eligibleEntrySymbols.length, batches: 1 }])
+          return { _tag: 'Expired' as const }
+        }
+        if (
+          scenario === 'early-exit' ||
+          scenario === 'partial-exit-reentry' ||
+          scenario === 'measured-exit' ||
+          partialEntryReentry
+        ) {
+          const initialState = yield* broker.snapshot
+          if (partialEntryReentry) {
+            expect(initialState.fills.length).toBeGreaterThan(0)
+            expect(initialState.fills.every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+            expect(new Set(initialState.fills.map((fill) => fill.brokerOrderId)).size).toBe(1)
+            const parent = initialState.orders[0]?.order
+            if (parent === undefined) throw new Error('Missing partial entry parent')
+            const filled = initialState.fills.reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(filled).toBe(BigInt(parent.filledQuantityAtoms))
+            expect(filled).toBeLessThan(BigInt(parent.quantityAtoms!))
+          } else
+            expect(
+              initialState.fills.map((fill) => fill.side),
+              JSON.stringify(
+                initialState.orders.map(({ order, executions }) => ({
+                  symbol: order.symbol,
+                  submittedAt: order.submittedAt,
+                  lastExecution: executions.at(-1),
+                })),
+              ),
+            ).toEqual([OrderSide.Buy])
+          let exactProtectionReadback = false
+          for (let attempt = 0; attempt < 40; attempt++) {
+            const advanced = yield* runtime.advance
+            if (
+              scenario === 'partial-exit-reentry' &&
+              !exactProtectionReadback &&
+              advanced.result?.outcome === 'RECOVERED'
+            ) {
+              const cycleId = advanced.result.cycle.identity.cycleId
+              const pending = yield* readProtectionReleaseBasis(accountId, cycleId)
+              if (pending !== undefined) {
+                const observationStore = makeBrokerObservationStore(
+                  sql,
+                  accountId,
+                  'a'.repeat(40),
+                  60_000,
+                  valkeyFixture().cache,
+                )
+                yield* observationStore.activate(0)
+                const ordinary = yield* observationStore.begin('original-poll', 0)
+                if (ordinary.status !== BrokerObservationClaimStatus.Reserved)
+                  throw new Error('Expected initial capture')
+                const publishedAtMs = Date.parse(ordinary.ticket.startedAt)
+                const ordinaryDueAtMs = publishedAtMs + 30_000
+                const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+                const allowance = yield* Effect.gen(function* () {
+                  const budget = yield* makeBrokerObservationBudget
+                  const http = HttpClient.make((request) =>
+                    Effect.succeed(
+                      HttpClientResponse.fromWeb(
+                        request,
+                        new Response('{}', {
+                          headers: {
+                            'x-ratelimit-limit': '200',
+                            'x-ratelimit-remaining': '198',
+                            'x-ratelimit-reset': String(Math.floor(publishedAtMs / 1_000)),
+                          },
+                        }),
+                      ),
+                    ),
+                  )
+                  yield* budget.beginCapture
+                  yield* budget.decorate(http).get('https://paper-api.alpaca.markets/v2/account')
+                  return yield* budget.protectionReadAllowance
+                }).pipe(Effect.provideService(Clock.Clock, liveClock))
+                expect(allowance).toBeDefined()
+                const brokerSnapshot = observedBrokerSnapshotFixture(accountId, ordinary.ticket.startedAt)
+                const bookingDate = utcDateFromEpochMillis(publishedAtMs - 2 * 86_400_000)
+                const cashFeeWitnesses = ['-0.02', '-0.03'].map((netAmount) =>
+                  Result.getOrThrow(
+                    decodeFeeActivityWitness({
+                      activity_type: 'FEE',
+                      ref_id: `cash-fee-${netAmount}`,
+                      status: 'executed',
+                      currency: 'USD',
+                      net_amount: netAmount,
+                      details: { system_date: bookingDate },
+                    }),
+                  ),
+                )
+                const pendingCashFeeCount = pendingCashFees(
+                  new Map(cashFeeWitnesses.map(({ key }) => [key, 1])),
+                  brokerSnapshot.snapshot.history.fees,
+                  ordinary.ticket.startedAt,
+                )
+                if (pendingCashFeeCount !== 2) throw new Error('Expected two unresolved cash fee witnesses')
+                expect(
+                  yield* observationStore
+                    .publish(ordinary.ticket, { ...brokerSnapshot, pendingCashFeeCount }, ordinaryDueAtMs, allowance)
+                    .pipe(Effect.provideService(Clock.Clock, liveClock)),
+                ).toBe(true)
+                const basis = yield* readProtectionReleaseBasis(accountId, cycleId)
+                if (basis === undefined) throw new Error('Expected an exact cancellation basis')
+                const claims = yield* Effect.all(
+                  ['first-proof', 'duplicate-proof'].map((id) =>
+                    observationStore.reserveProtectionRead(basis.command, id, 1_800),
+                  ),
+                  { concurrency: 2 },
+                )
+                const winner = claims.findIndex((value) => value !== undefined)
+                expect(claims.filter((value) => value !== undefined)).toEqual([ordinaryDueAtMs + 2_400])
+                const blocked = yield* observationStore.begin('too-early', 0)
+                expect(blocked.status).toBe(BrokerObservationClaimStatus.QuotaWait)
+                expect(blocked.nextPollNotBeforeMs).toBe(ordinaryDueAtMs + 2_400)
+                if (protectionProofScenario) yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 474)
+                const proof = yield* readProtectionRelease(broker.read, basis, 5_000)
+                expect(proof._tag).toBe('VerifiedProtectionRelease')
+                if (proof._tag !== 'VerifiedProtectionRelease') throw new Error(proof.reason)
+                const winnerId = winner === 0 ? 'first-proof' : 'duplicate-proof'
+                const providerBackoffAtMs = ordinaryDueAtMs + 5_000
+                yield* observationStore.settleProtectionRead(winnerId, providerBackoffAtMs)
+                expect(yield* observationStore.begin('still-too-early', 0)).toEqual({
+                  status: BrokerObservationClaimStatus.QuotaWait,
+                  nextPollNotBeforeMs: providerBackoffAtMs,
+                })
+                expect(yield* readProtectionReleaseReference(accountId, cycleId, winnerId)).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, 'unknown-claim')).toBeUndefined()
+                const proofId = yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)
+                expect(proofId).toMatch(/^[a-f0-9]{64}$/)
+                if (proofId === undefined) throw new Error('Expected a durable release proof')
+                const scope = { proofId, accountId, cycleId: basis.trigger.cycleId }
+                const readProof = withCurrentProtectionReleaseProof(scope, 5_000, (stored) =>
+                  Effect.succeed(stored.readback),
+                )
+                expect(yield* readProof).toEqual(proof)
+                expect(yield* readProtectionReleaseReference(accountId, cycleId, winnerId)).toEqual({
+                  proofId,
+                  cycleId,
+                  checkedAt: proof.checkedAt,
+                })
+                expect(yield* readProtectionReleaseReference(accountId, 'f'.repeat(64), winnerId)).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBe(proofId)
+                expect(
+                  yield* sql`SELECT count(*)::int AS count FROM protection_release_proofs WHERE proof_id = ${proofId}`,
+                ).toEqual([{ count: 1 }])
+                if (protectionProofScenario) {
+                  const release = { proofId, cycleId, checkedAt: proof.checkedAt }
+                  expect((yield* readCurrentProtectionClose(release, accountId, 5_000))?.protectionClose.proofId).toBe(
+                    proofId,
+                  )
+                  if (protectionTransmissionRace) yield* Ref.set(injectProtectionTransmissionRace, true)
+                  if (protectionCaptureRace)
+                    yield* Ref.set(
+                      raceCapture,
+                      Effect.gen(function* () {
+                        yield* sql`UPDATE broker_observations SET next_poll_not_before = date_trunc('milliseconds', clock_timestamp())
+                          WHERE account_id = ${accountId}`
+                        const capture = yield* observationStore.begin('competing-capture', 0)
+                        expect(capture.status).toBe(BrokerObservationClaimStatus.QuotaWait)
+                        if (protectionCaptureExpiry) {
+                          yield* advanceMarketTo(Date.parse(basis.trigger.commitDeadlineAt))
+                          const expired = yield* observationStore.begin('capture-after-expiry', 0)
+                          expect(expired.status).toBe(BrokerObservationClaimStatus.Reserved)
+                        }
+                      }).pipe(Effect.orDie),
+                    )
+                  const accelerated = yield* advanceExecutionOnce(
+                    {
+                      controllerKey: Result.getOrThrow(canonicalHashV1Result({ accountId })),
+                      epoch: 1,
+                      sequence: attempt,
+                      issuedAt: yield* currentUtcInstant,
+                      sourceRevision: config.build.sourceRevision,
+                      protectionRelease: release,
+                    },
+                    { advance: runtime.advance, nextDelayMs: 1000 },
+                  )
+                  const [admitted] = yield* sql<{
+                    proof_id: string
+                    start_count: number
+                    latency_ms: number
+                    latest_reconciliation: string
+                    physical_identity_count: number
+                    denied_count: number
+                    qualification_count: number
+                  }>`
+                    SELECT c.document#>>'{document,plannerInput,protectionClose,proofId}' AS proof_id,
+                      count(*) FILTER (WHERE m.event_type = 'SUBMIT_STARTED')::int AS start_count,
+                      max(EXTRACT(EPOCH FROM m.occurred_at - ${basis.trigger.observedAt}::timestamptz) * 1000)
+                        FILTER (WHERE m.event_type = 'SUBMIT_STARTED')::float8 AS latency_ms,
+                      (SELECT reconciliation_id FROM reconciliations WHERE account_id = ${accountId}
+                        ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1) AS latest_reconciliation,
+                      count(distinct m.broker_order_id) FILTER (WHERE m.event_type = 'SUBMIT_ACCEPTED')::int AS physical_identity_count,
+                      count(*) FILTER (WHERE m.event_type = 'SUBMIT_DENIED')::int AS denied_count,
+                      count(a.event_id)::int AS qualification_count
+                    FROM autonomous_cycle_paper_closures c
+                    JOIN mutation_events m ON m.intent_id = c.document #>> '{document,orderedIntentIds,0}'
+                    LEFT JOIN execution_decision_admissions a ON a.event_id = m.event_id
+                      AND a.decision_id = c.document #>> '{document,contentHash}'
+                    WHERE c.cycle_id = ${cycleId} GROUP BY c.document
+                  `
+                  if (protectionAdmissionRace) {
+                    expect(protectedCloseRollbackVerified).toBe(true)
+                    expect(admitted?.proof_id ?? null).toBeNull()
+                    expect(
+                      yield* sql`SELECT system_evidence_source_committed(xmin) AS committed
+                      FROM protection_release_close_plans WHERE proof_id = ${proofId}`,
+                    ).toEqual([{ committed: true }])
+                  } else {
+                    expect(admitted, JSON.stringify(accelerated.observation)).toMatchObject({
+                      proof_id: proofId,
+                      start_count: 1,
+                      physical_identity_count: protectionDenied ? 0 : 1,
+                      denied_count: protectionDenied ? 1 : 0,
+                      qualification_count: 1,
+                      latest_reconciliation:
+                        basis.trigger.evidence.portfolio.brokerState.reconciliation.reconciliationId,
+                    })
+                    expect(admitted?.latency_ms).toBeLessThanOrEqual(5_311)
+                    if (useProtectionProof) {
+                      expect(admitted?.latency_ms).toBeGreaterThanOrEqual(474)
+                      yield* Effect.logInfo('Native protection timing with modeled broker wait').pipe(
+                        Effect.annotateLogs({ triggerToDurableAdmissionMs: admitted?.latency_ms ?? -1 }),
+                      )
+                    }
+                  }
+                  expect(yield* readProof).toBeUndefined()
+                  if (protectionCaptureRace) {
+                    const capture = yield* observationStore.begin('capture-after-submit', 0)
+                    expect(capture.status).toBe(BrokerObservationClaimStatus.Reserved)
+                  }
+                  if (protectionCaptureExpiry) return { _tag: 'Lifecycle' as const }
+                  if (protectionTransmissionRace) {
+                    expect((yield* runtime.store.authorityGeneration.readAuthorityState).kill).toBe(KillState.Clear)
+                  }
+                } else {
+                  yield* sql`INSERT INTO broker_source_events (account_id,event_id,source_revision,received_at,event_kind)
+                    VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz,'LEGACY_RECEIPT')`
+                  expect(yield* readProof).toBeUndefined()
+                  expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBeUndefined()
+                }
+
+                const readGroup = broker.read.orderByClientId(basis.protectionIntent.clientOrderId)
+                const changedGroup = (change: (order: BrokerOrder) => BrokerOrder) => ({
+                  ...broker.read,
+                  orderByClientId: () =>
+                    readGroup.pipe(Effect.map(({ evidence, value }) => ({ evidence, value: change(value) }))),
+                })
+                for (const alternative of [
+                  changedGroup((value) => ({ ...value, status: OrderStatus.PendingCancel })),
+                  changedGroup((value) => ({ ...value, filledQuantityAtoms: '1' })),
+                  changedGroup((value) => ({ ...value, replacedBy: value.brokerOrderId })),
+                ]) {
+                  expect(yield* readProtectionRelease(alternative, basis, 5_000)).toMatchObject({ _tag: 'Unproven' })
+                }
+                expect(
+                  yield* readProtectionRelease(
+                    {
+                      ...broker.read,
+                      positions: Effect.succeed({ ...proof.positions, value: [] }),
+                    },
+                    basis,
+                    5_000,
+                  ),
+                ).toEqual({ _tag: 'Unproven', reason: 'changed-account' })
+                expect(
+                  yield* readProtectionRelease(
+                    {
+                      ...broker.read,
+                      account: Effect.succeed({ ...proof.account, value: { ...proof.account.value, cashMicros: '0' } }),
+                    },
+                    basis,
+                    5_000,
+                  ),
+                ).toEqual({ _tag: 'Unproven', reason: 'changed-account' })
+
+                const reconciled = basis.trigger.evidence.portfolio.brokerState.reconciliation
+                const [authority] = yield* sql<{
+                  version: number
+                }>`SELECT version::integer AS version FROM authority_state WHERE singleton`
+                if (authority === undefined) throw new Error('Expected an active authority')
+                const version = {
+                  reconciliationId: reconciled.reconciliationId,
+                  reconciledAt: reconciled.reconciledAt,
+                  authorityGenerationHash: runtime.authorityGenerationHash,
+                  authorityVersion: authority.version,
+                }
+                expect(
+                  Result.isFailure(
+                    yield* verifyBrokerStateVersion(sql, accountId, version, basis.command.intentId, false).pipe(
+                      Effect.result,
+                    ),
+                  ),
+                ).toBe(true)
+                exactProtectionReadback = true
+              }
+            }
+            if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
+            const next = (yield* Clock.currentTimeMillis) + 1000
+            yield* advanceMarketTo(next)
+          }
+          if (scenario === 'partial-exit-reentry') expect(exactProtectionReadback).toBe(true)
+          const state = yield* broker.snapshot
+          expect(managementCalls).toBe(0)
+          expect(state.fills[0]?.side).toBe(OrderSide.Buy)
+          const firstCover = state.fills.findIndex((fill) => fill.side === OrderSide.Sell)
+          expect(firstCover).toBeGreaterThan(0)
+          expect(state.fills.slice(0, firstCover).every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+          expect(state.fills.slice(firstCover).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
+          expect(state.fills.length).toBeGreaterThanOrEqual(scenario === 'partial-exit-reentry' ? 3 : 2)
+          expect(state.ledger.positions).toHaveLength(0)
+          const closures = yield* sql<{ target: unknown; boundToProtectiveFill: boolean }>`SELECT
+                closure.document #> '{document,strategyDecision}' AS target,
+                EXISTS (
+                  SELECT 1 FROM accounting_transactions t
+                  JOIN accounting_receipts r ON r.broker_event_id = t.broker_event_id AND r.intent_id = t.intent_id
+                  JOIN intents i ON i.intent_id = t.intent_id
+                  WHERE i.cycle_id = cycle.cycle_id AND i.protection IS NOT NULL AND t.side = 'SELL'
+                    AND t.account_id = cycle.account_id
+                    AND t.occurred_at = (closure.document #>> '{document,strategyDecision,evidence,portfolio,exitRequestedAt}')::timestamptz
+                ) AS "boundToProtectiveFill"
+              FROM autonomous_cycle_paper_closures AS closure
+              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`
+          if (partialEntryReentry) {
+            // Processing time determines whether cancellation/re-protection needs a durable close decision.
+            expect(closures.length).toBeLessThanOrEqual(1)
+          } else expect(closures).toHaveLength(scenario === 'partial-exit-reentry' ? 1 : 0)
+          for (const closure of closures) {
+            const target = yield* Schema.decodeUnknownEffect(JevExitTargetSchema, strictParseOptions)(closure.target)
+            if (useProtectionProof || protectionTransmissionRace) {
+              const [command] = yield* sql<{ exit_target: unknown }>`SELECT exit_target
+                FROM native_protection_cancel_commands WHERE account_id = ${accountId}`
+              expect(target).toEqual(
+                yield* Schema.decodeUnknownEffect(JevExitTargetSchema, strictParseOptions)(command?.exit_target),
+              )
+              continue
+            }
+            expect(target.reason).toBe(JevExitReason.ProtectionReleased)
+            const portfolio = target.evidence.portfolio
+            if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Missing held closure evidence')
+            const exitRequestedAt = portfolio.exitRequestedAt
+            if (exitRequestedAt === null) throw new Error('Missing causal exit request')
+            if (!portfolio.profitExitRequested) {
+              // Stop and unclassified native disposals still bind the actual causal accounting fill.
+              expect(closure.boundToProtectiveFill).toBe(true)
+              continue
+            }
+            // A verified partial TP reduces inventory while its sibling stop remains armed. A later
+            // quote-backed profit exit must bind its exact durable command, not reuse the TP fill time.
+            expect(closure.boundToProtectiveFill).toBe(false)
+            const commands = yield* sql<{ intentId: string; brokerOrderId: string; exitTarget: unknown }>`SELECT
+                c.intent_id AS "intentId", c.broker_order_id AS "brokerOrderId", c.exit_target AS "exitTarget"
+              FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
+              WHERE i.account_id = ${accountId} AND i.cycle_id = ${target.cycleId}
+                AND c.requested_at = ${exitRequestedAt}::timestamptz`
+            expect(commands).toHaveLength(1)
+            const command = commands[0]
+            if (command === undefined) throw new Error('Missing exact protection cancellation')
+            const trigger = yield* Schema.decodeUnknownEffect(
+              JevExitTargetSchema,
+              strictParseOptions,
+            )(command.exitTarget)
+            expect(trigger.reason).toBe(JevExitReason.ProfitTarget)
+            expect(trigger.cycleId).toBe(target.cycleId)
+            expect(trigger.entryDecisionHash).toBe(target.entryDecisionHash)
+            const beforeCancel = trigger.evidence.portfolio
+            if (beforeCancel.purpose !== JevPurpose.Manage) throw new Error('Missing pre-cancel held evidence')
+            expect(beforeCancel.brokerState.account.accountId).toBe(accountId)
+            expect(beforeCancel.exitRequestedAt).toBeNull()
+            expect(beforeCancel.profitExitRequested).toBe(false)
+            expect(beforeCancel.exitPolicy).toEqual(portfolio.exitPolicy)
+            expect(beforeCancel.entryFills).toEqual(portfolio.entryFills)
+            expect(beforeCancel.protectionDisposals).toEqual(portfolio.protectionDisposals)
+            expect(BigInt(beforeCancel.protectionDisposals.quantityAtoms)).toBeGreaterThan(0n)
+            expect(Date.parse(trigger.observedAt)).toBeLessThanOrEqual(Date.parse(exitRequestedAt))
+            expect(Date.parse(exitRequestedAt)).toBeLessThan(Date.parse(trigger.commitDeadlineAt))
+            const protectedIntent = Option.getOrThrow(yield* (yield* IntentStore).read(command.intentId)).intent
+            if (protectedIntent.protection?._tag !== 'Oco') throw new Error('Missing partial-entry Oco protection')
+            expect(protectedIntent.protection.entryDecisionHash).toBe(target.entryDecisionHash)
+            expect(beforeCancel.protectionIntentIds).toContain(command.intentId)
+            const cancelled = state.orders.find(({ order }) => order.brokerOrderId === command.brokerOrderId)?.order
+            const parent =
+              cancelled?.parentBrokerOrderId === undefined
+                ? cancelled
+                : state.orders.find(({ order }) => order.brokerOrderId === cancelled.parentBrokerOrderId)?.order
+            if (parent === undefined) throw new Error('Missing native TP parent')
+            const children = state.orders
+              .filter(({ order }) => order.parentBrokerOrderId === parent.brokerOrderId)
+              .map(({ order }) => order)
+            Result.getOrThrow(
+              verifyProtectionGroup(
+                { ...parent, legs: children },
+                {
+                  symbol: protectedIntent.symbol,
+                  quantityAtoms: protectedIntent.quantityAtoms,
+                  protection: protectedIntent.protection,
+                },
+              ),
+            )
+            const working = beforeCancel.brokerState.orders.filter((order) => order.intentId === command.intentId)
+            expect(working).toHaveLength(2)
+            const profit = working.find((order) => order.orderType === 'LIMIT')
+            const stop = working.find((order) => order.orderType === 'STOP_LIMIT')
+            const position = beforeCancel.brokerState.positions.find(
+              (position) => position.symbol === protectedIntent.symbol,
+            )
+            if (
+              profit === undefined ||
+              profit.quantityAtoms === undefined ||
+              stop === undefined ||
+              position === undefined
+            )
+              throw new Error('Missing native TP residual coverage')
+            expect([profit.brokerOrderId, stop.brokerOrderId]).toContain(command.brokerOrderId)
+            expect(profit.status).toBe(ExecutionOrderStatus.PartiallyFilled)
+            expect(profit.limitPriceMicros).toBe(protectedIntent.protection.profitLimitPriceMicros)
+            expect(BigInt(profit.quantityAtoms) - BigInt(profit.filledQuantityAtoms)).toBe(
+              BigInt(position.quantityAtoms),
+            )
+            expect(stop.status).toBe(ExecutionOrderStatus.New)
+            expect(stop.parentBrokerOrderId).toBe(profit.brokerOrderId)
+            expect(stop.stopPriceMicros).toBe(protectedIntent.protection.stopPriceMicros)
+            expect(stop.limitPriceMicros).toBe(protectedIntent.protection.stopLimitPriceMicros)
+            expect(stop.quantityAtoms).toBe(position.quantityAtoms)
+            expect(stop.filledQuantityAtoms).toBe('0')
+            const nativeProfitFills = state.fills.filter((fill) => fill.brokerOrderId === profit.brokerOrderId)
+            expect(nativeProfitFills).toHaveLength(1)
+            const nativeProfitFill = nativeProfitFills[0]
+            if (nativeProfitFill === undefined) throw new Error('Missing actual partial TP fill')
+            expect(nativeProfitFill.accountId).toBe(accountId)
+            expect(nativeProfitFill.symbol).toBe(protectedIntent.symbol)
+            expect(nativeProfitFill.side).toBe(OrderSide.Sell)
+            expect(nativeProfitFill.quantityAtoms).toBe(beforeCancel.protectionDisposals.quantityAtoms)
+            expect(nativeProfitFill.leavesQuantityAtoms).toBe(position.quantityAtoms)
+            expect(BigInt(nativeProfitFill.priceAtoms)).toBeGreaterThanOrEqual(
+              BigInt(protectedIntent.protection.profitLimitPriceMicros) * 1000n,
+            )
+            expect(Date.parse(nativeProfitFill.transactionTime)).toBeLessThan(Date.parse(trigger.observedAt))
+          }
+          const reconciliation = yield* runtime.reconcile
+          expect(reconciliation.report.metrics.accountingExact).toBe(true)
+          expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
+          expect(reconciliation.brokerState.account.cashMicros).toBe(state.ledger.cashMicros)
+          const entryRoot = state.orders.find(({ order }) => order.side === OrderSide.Buy)?.order
+          if (entryRoot === undefined) throw new Error('Missing accounted entry parent')
+          expect(
+            yield* sql`SELECT
+              paper_partial_limit_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+                o.filled_quantity_atoms,${yield* currentUtcInstant}::timestamptz) AS complete,
+              paper_partial_limit_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+                o.filled_quantity_atoms,i.updated_at) AS entry_cut_complete
+              FROM intents i JOIN LATERAL (
+                SELECT o.* FROM orders o JOIN broker_events e USING(event_id)
+                WHERE o.intent_id=i.intent_id AND o.side='BUY' AND o.client_order_id=i.client_order_id ORDER BY e.source_sequence DESC LIMIT 1
+              ) o ON true WHERE i.account_id=${accountId} AND i.side='BUY'`,
+          ).toEqual([
+            {
+              complete: BigInt(entryRoot.filledQuantityAtoms) < BigInt(entryRoot.quantityAtoms),
+              entry_cut_complete: false,
+            },
+          ])
+          expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
+            { state: 'COMPLETED' },
+          ])
+          if (partialEntryReentry) {
+            expect(state.orders.some(({ order }) => order.nativeProtection?._tag === 'Oco')).toBe(true)
+            const entryQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Buy)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            const exitQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Sell)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(entryQuantity).toBeGreaterThan(0n)
+            expect(entryQuantity).toBeLessThan(BigInt(entryRoot.quantityAtoms!))
+            expect(exitQuantity).toBe(entryQuantity)
+            expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+            const restarted = yield* createRuntime
+            yield* advanceMarketTo(reentryAtMs)
+            for (let attempt = 0; attempt < 20; attempt++) {
+              const advanced = yield* restarted.advance
+              if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            }
+            const repeated = yield* broker.snapshot
+            expect(
+              repeated.fills
+                .filter((fill, index, fills) => index === 0 || fills[index - 1]?.side !== fill.side)
+                .map((fill) => fill.side),
+            ).toEqual([OrderSide.Buy, OrderSide.Sell, OrderSide.Buy, OrderSide.Sell])
+            expect(repeated.ledger.positions).toHaveLength(0)
+            expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+            expect(
+              yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'COMPLETED' }])
+            expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
+          }
+          if (scenario === 'measured-exit') {
+            yield* verifyMeasuredEntryStages
+            const entryCalls = measuredCalls.filter((call) => call.stage === 'JEV')
+            expect(new Set(measuredCalls.map((call) => call.requestHash)).size).toBe(measuredCalls.length)
+            for (const call of measuredCalls) {
+              expect(call.outcome.status).toBe('RECEIVED')
+              expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBeGreaterThanOrEqual(
+                call.stage === 'JEV' ? 100 : 0,
+              )
+            }
+            const lastEntryResponse = Math.max(
+              ...entryCalls.map(
+                (call) =>
+                  Date.parse(call.simulatedStartedAt) +
+                  Date.parse(call.providerCompletedAt) -
+                  Date.parse(call.providerStartedAt),
+              ),
+            )
+            const entry = state.orders[0]?.executions.at(-1)
+            expect(entry).toBeDefined()
+            if (entry === undefined) throw new Error('Missing measured entry execution')
+            expect(Date.parse(entry.submittedAt)).toBeGreaterThanOrEqual(lastEntryResponse)
+            for (const order of state.orders) {
+              if (BigInt(order.order.filledQuantityAtoms) === 0n) continue
+              const execution = order.executions.findLast((execution) => execution.outcome.status === 'filled')
+              if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
+                throw new Error('Measured lifecycle requires complete execution quote evidence')
+              const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)
+              const expectedMidpoint = 100 * (1 + measuredPremium(tick))
+              expect(execution.quote.availableAtMs).toBe(initialAtMs + tick * 200)
+              expect(execution.quote.askPrice).toBeCloseTo(expectedMidpoint + 0.01, 8)
+              expect(execution.quote.bidPrice).toBeCloseTo(expectedMidpoint - 0.01, 8)
+              const fillPrice = order.order.side === OrderSide.Buy ? execution.quote.askPrice : execution.quote.bidPrice
+              const quotedMicros = BigInt(Math.round(fillPrice * 1_000_000))
+              const tickRoundedMicros =
+                order.order.side === OrderSide.Buy
+                  ? ((quotedMicros + 9999n) / 10000n) * 10000n
+                  : (quotedMicros / 10000n) * 10000n
+              expect(execution.outcome.fillPriceMicros).toBe(tickRoundedMicros.toString())
+              if (order.order.side === OrderSide.Buy) {
+                if (order.order.limitPriceMicros === undefined) throw new Error('Capped entry has no limit')
+                expect(BigInt(execution.outcome.fillPriceMicros)).toBeLessThanOrEqual(
+                  BigInt(order.order.limitPriceMicros),
+                )
+              }
+              const conditional =
+                order.order.parentBrokerOrderId !== undefined || order.order.nativeProtection?._tag === 'Oco'
+              if (conditional) expect(Date.parse(execution.arrivedAt)).toBe(execution.quote.availableAtMs)
+              else expect(Date.parse(execution.arrivedAt) - Date.parse(execution.submittedAt)).toBe(10)
+            }
+          }
+          if (scenario === 'partial-exit-reentry') {
+            const buys = state.fills.filter((fill) => fill.side === OrderSide.Buy)
+            const sells = state.fills.filter((fill) => fill.side === OrderSide.Sell)
+            expect(buys).toHaveLength(1)
+            expect(sells.every((fill) => BigInt(fill.quantityAtoms) <= 10_000_000_000n)).toBe(true)
+            expect(sells.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)).toBe(
+              BigInt(buys[0]?.quantityAtoms ?? '0'),
+            )
+            const restarted = yield* createRuntime
+            expect(restarted.authorityGenerationHash).toBe(
+              (yield* runtime.store.authorityGeneration.readAuthorityState).generationHash,
+            )
+            yield* expectConsumedEntryWindowWait(restarted.advance, 'COMPLETED')
+            expect((yield* broker.snapshot).fills).toHaveLength(state.fills.length)
+            yield* advanceMarketTo(reentryAtMs)
+            for (let attempt = 0; attempt < 20; attempt++) {
+              const advanced = yield* restarted.advance
+              if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            }
+            const repeated = yield* broker.snapshot
+            expect(repeated.fills.slice(0, state.fills.length)).toEqual([...state.fills])
+            expect(
+              repeated.fills.slice(state.fills.length).map((fill) => fill.side),
+              JSON.stringify(yield* Ref.get(passes)),
+            ).toEqual([OrderSide.Buy, OrderSide.Sell])
+            expect(managementCalls).toBe(0)
+            expect(repeated.ledger.positions).toHaveLength(0)
+            const final = yield* restarted.reconcile
+            expect(final.report.metrics.accountingExact).toBe(true)
+            expect(final.brokerState.account.cashMicros).toBe(repeated.ledger.cashMicros)
+            expect(final.riskContext.unknownMutationCount).toBe(0)
+            expect(final.brokerState.unknownOrderCount).toBe(0)
+            expect(
+              yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'COMPLETED' }])
+            yield* expectNoUnusedEntryExpiry
+            expect(
+              yield* sql`
+                SELECT payload #>> '{manifest,rangeEndAt}' AS window_end
+                FROM intraday_candidate_observations
+                WHERE payload #>> '{portfolio,purpose}' = 'ENTRY'
+                ORDER BY observed_at
+              `,
+            ).toEqual([{ window_end: '2026-09-04T14:30:00.000Z' }, { window_end: '2026-09-04T14:34:00.000Z' }])
+            expect(
+              yield* sql`
+                SELECT count(*)::integer AS plans,
+                  bool_and(replan.document #> '{document,strategyDecision}' =
+                    original.document #> '{document,strategyDecision}') AS same_exit_evidence
+                FROM autonomous_cycle_paper_close_replans AS replan
+                JOIN autonomous_cycle_paper_closures AS original USING (cycle_id)
+              `,
+            ).toEqual(
+              protectionTransmissionRace
+                ? [{ plans: 1, same_exit_evidence: true }]
+                : [{ plans: 0, same_exit_evidence: null }],
+            )
+          }
+          return { _tag: 'Lifecycle' as const }
+        }
+        let managementStartedAt = yield* currentUtcInstant
+        let waiting = yield* runtime.advance
+        for (
+          let attempt = 0;
+          attempt < 20 && waiting.result?.outcome === 'RECOVERED' && waiting.result.waitReason !== 'JEV_POSITION_HELD';
+          attempt++
+        ) {
+          const nextMs = (yield* Clock.currentTimeMillis) + 1000
+          yield* advanceMarketTo(nextMs)
+          managementStartedAt = yield* currentUtcInstant
+          waiting = yield* runtime.advance
+        }
+        const entryFill = (yield* broker.snapshot).fills.find((fill) => fill.side === OrderSide.Buy)
+        if (entryFill === undefined) throw new Error('Held-position wait requires its actual entry fill')
+        expect(waiting.result).toMatchObject({
+          outcome: 'RECOVERED',
+          action: 'WAITING',
+          waitReason: 'JEV_POSITION_HELD',
+          maximumHoldDueAt: utcInstantFromEpochMillis(
+            Date.parse(entryFill.transactionTime) + protocol.maximumHoldingMinutes * 60_000,
+          ),
+        })
+        if (waiting.result?.outcome !== 'RECOVERED' || waiting.result.action !== 'WAITING')
+          throw new Error('Expected the full execution cycle to forward its held-position wait')
+        expect(typeof waiting.result.maximumHoldEvaluatedAt).toBe('string')
+        const evaluatedMs = Date.parse(waiting.result.maximumHoldEvaluatedAt ?? '')
+        expect(evaluatedMs).toBeGreaterThanOrEqual(Date.parse(managementStartedAt))
+        expect(evaluatedMs).toBeLessThanOrEqual(Date.parse(waiting.result.observedAt))
+        expect(Date.parse(waiting.nextWakeAt ?? '')).toBeLessThanOrEqual(evaluatedMs + 5000)
+        expect(Date.parse(waiting.nextWakeAt ?? '')).toBeLessThanOrEqual(
+          Date.parse(waiting.result.maximumHoldDueAt ?? ''),
+        )
+        expect(waiting.nextDelayMs).toBeGreaterThan(0)
+        const recreated = yield* createRuntime
+        expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
+        const frozenAt = yield* Clock.currentTimeMillis
+        const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+        yield* Ref.set(stallReconciliation, true)
+        const stalledFinal = yield* Effect.exit(
+          runtime.reconcile.pipe(Effect.provideService(OperationDeadlineClock, liveClock)),
+        )
+        expect(stalledFinal._tag).toBe('Failure')
+        expect(JSON.stringify(stalledFinal)).toContain('Replay reconciliation exceeded 1000ms')
+        expect(yield* Ref.get(interrupted)).toBe(true)
+        expect(yield* Clock.currentTimeMillis).toBe(frozenAt)
+        yield* Ref.set(stallReconciliation, false)
+        yield* advanceMarketTo(closeAtMs)
+        for (const arrival of closeArrivals)
+          cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+        yield* clock.advanceTo(utcInstantFromEpochMillis(closeAtMs))
+        yield* TestClock.setTime(closeAtMs)
+        for (let attempt = 0; attempt < 20 && (yield* broker.snapshot).ledger.positions.length > 0; attempt++) {
+          yield* runtime.advance
+          const nextMs = (yield* Clock.currentTimeMillis) + 1000
+          yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
+          yield* TestClock.setTime(nextMs)
+        }
+        const brokerState = yield* broker.snapshot
+        const reconciliation = yield* runtime.reconcile
+        if (scenario === 'fallback') {
+          expect(brokerState.orders.at(-1)?.order).toMatchObject({
+            orderType: BrokerOrderType.Limit,
+            timeInForce: BrokerTimeInForce.Day,
+            extendedHours: true,
+          })
+        }
+        expect(
+          brokerState.ledger.positions,
+          JSON.stringify(
+            brokerState.orders.map((entry) => ({ order: entry.order, execution: entry.executions.at(-1) })),
+          ),
+        ).toHaveLength(0)
+        const entryOrder = brokerState.orders.find(({ order }) => order.side === OrderSide.Buy)?.order
+        expect(entryOrder?.nativeProtection?._tag).toBe('Bracket')
+        expect(
+          brokerState.orders.filter(({ order }) => order.parentBrokerOrderId === entryOrder?.brokerOrderId),
+        ).toHaveLength(2)
+        expect(
+          brokerState.orders.every(({ order }) =>
+            [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(
+              order.status,
+            ),
+          ),
+        ).toBe(true)
+        const [nativeEvidence] = yield* sql<{ matches: boolean }>`SELECT bool_and(
+          i.protection ->> '_tag' = 'Bracket' AND m.request_body ->> 'order_class' = 'bracket'
+          AND m.request_body #>> '{stop_loss,stop_price}' IS NOT NULL
+          AND m.request_body #>> '{take_profit,limit_price}' IS NOT NULL) AS matches
+          FROM intents i JOIN mutation_events m USING (intent_id)
+          WHERE i.side = 'BUY' AND i.account_id = ${accountId} AND m.event_type = 'SUBMIT_STARTED'`
+        expect(nativeEvidence?.matches).toBe(true)
+        expect(brokerState.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
+        const rows = yield* sql<Record<string, unknown>>`SELECT
+      (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
+      (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,
+      (SELECT count(*)::int FROM accounting_transactions WHERE account_id = ${accountId}) AS transactions`
+        if (scenario === 'missing-benchmark') {
+          const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
+            count(*)::int AS count,
+            bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
+            bool_and(payload #>> '{protocol,schemaVersion}' = ${fixture.protocol.schemaVersion}) AS current_protocol
+            FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
+          expect(source?.count).toBeGreaterThan(0)
+          expect(source?.candidate_only).toBe(true)
+          expect(source?.current_protocol).toBe(true)
+        }
+        if (momentum) {
+          expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+          expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
+          const targets = yield* sql<{
+            schema: string
+            policy: string
+          }>`SELECT document #>> '{strategyDecision,schemaVersion}' AS schema,
+            document #>> '{strategyDecision,policy,schemaVersion}' AS policy
+            FROM autonomous_cycle_shadow_decisions WHERE document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'`
+          expect(targets.length).toBeGreaterThan(0)
+          expect(targets.every((target) => target.policy === 'bayn.repeated-momentum-policy.v1')).toBe(true)
+          const [retained] = yield* sql<{ target: unknown }>`SELECT document->'strategyDecision' AS target
+            FROM autonomous_cycle_shadow_decisions WHERE document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1' LIMIT 1`
+          const target = yield* Schema.decodeUnknownEffect(RepeatedMomentumTargetSchema)(retained?.target)
+          const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(target.evidence.observation))
+          const { contentHash, snapshot, ...payload } = reproduced
+          const source = { contentHash, payload: { ...payload, manifest: snapshot.manifest } }
+          const observationStore = yield* CandidateObservationStore
+          yield* Effect.all(
+            [observationStore.record(source, target.policy), observationStore.record(source, target.policy)],
+            { concurrency: 2 },
+          )
+          const duplicates = yield* sql<{
+            count: number
+          }>`SELECT count(*)::int AS count FROM intraday_candidate_observations WHERE content_hash = ${source.contentHash}`
+          expect(duplicates).toEqual([{ count: 1 }])
+          expect(yield* observationStore.record(source).pipe(Effect.result, Effect.map(Result.isFailure))).toBe(true)
+          const forbidden = yield* Effect.fromResult(
+            makeJevTradingSignalBatch({
+              observation: source.payload,
+              expiresAt: utcInstantFromEpochMillis(
+                Date.parse(source.payload.observedAt) + protocol.inferenceValidityMs,
+              ),
+              planVersion: JevBatchPlanVersion.V8,
+            }),
+          )
+          const inserted =
+            yield* sql`INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+            VALUES (${forbidden.batchId}, ${forbidden.cycleId}, ${forbidden.authorityGenerationHash}, ${forbidden.observationHash}, ${sql.json(forbidden)})`.pipe(
+              Effect.result,
+            )
+          expect(Result.isFailure(inserted)).toBe(true)
+          if (Result.isFailure(inserted))
+            expect(inserted.failure).toMatchObject({
+              reason: {
+                _tag: 'ConstraintError',
+                cause: { code: '23514', where: expect.stringContaining('enforce_entry_policy_identity') },
+              },
+            })
+        }
+        if (ablation) {
+          const receipts = yield* sql<{ count: number }>`SELECT count(*)::int AS count FROM jev_evaluation_receipts
+            WHERE payload #>> '{outcome,completion,jev,status}' = 'OMITTED_BY_POLICY'`
+          expect(receipts[0]?.count).toBeGreaterThan(0)
+          expect(
+            yield* sql`SELECT request_id FROM jev_evaluation_receipts
+            WHERE payload #>> '{outcome,completion,jev,status}' = 'RECEIVED'`,
+          ).toEqual([])
+        }
+        return { _tag: 'Fill' as const, brokerState, reconciliation, rows, passes: yield* Ref.get(passes) }
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(
+          JevClient,
+          entryProviderFixture(
+            {
+              evaluate: (raw) =>
+                Effect.gen(function* () {
+                  if (ablation || momentum || mode === 'missing-candidate')
+                    return yield* Effect.die('This control must not dispatch a Jev provider request')
+                  const started = yield* Clock.currentTimeMillis
+                  const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
+                  const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+                    request.state,
+                  ).pipe(Effect.orDie)
+                  if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
+                    managementCalls += 1
+                    throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')
+                  }
+                  if (measured) {
+                    if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
+                    yield* measuredProviderClock.adjust(100)
+                  }
+                  const now = yield* Clock.currentTimeMillis
+                  if (scenario === 'failed-model-response') {
+                    const rejected = {
+                      ...nativeJevInference(raw, utcInstantFromEpochMillis(now), true).response,
+                      answers: {},
+                    }
+                    return yield* new JevError({
+                      failure: JevFailure.Response,
+                      message: 'Response has billed usage but no valid decision answers',
+                      requestHash,
+                      responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
+                      rejectedResponse: Redacted.make(rejected),
+                    })
+                  }
+                  return {
+                    ...nativeJevInference(
+                      raw,
+                      utcInstantFromEpochMillis(now),
+                      noTrade || !['AAPL', 'AMZN'].includes(symbol) ? false : true,
+                      symbol === 'AMZN' ? 0.8 : 0.9,
+                    ),
+                    startedAt: utcInstantFromEpochMillis(started),
+                  }
+                }),
+            },
+            chartProvider,
+          ),
+        ),
+        Effect.provide(stores),
+        Effect.provideService(DecisionConstruction, {
+          observe: constructObserveShadowDecision,
+          execution: constructExecutionDecision,
+        }),
+        Effect.provide(TestClock.layer()),
+        Effect.provide(NodeServices.layer),
+        Effect.timeout('60 seconds'),
+      ),
+    )
+    if (outcome._tag !== 'Fill') return
+    expect(outcome.brokerState.fills.length, JSON.stringify(outcome.passes)).toBeGreaterThan(0)
+    expect(outcome.rows[0]?.['intents']).toBeGreaterThan(0)
+    expect(outcome.rows[0]?.['fills']).toBe(outcome.brokerState.fills.length)
+    expect(outcome.rows[0]?.['transactions']).toBe(outcome.brokerState.fills.length)
+    expect(outcome.reconciliation.brokerState.unknownOrderCount).toBe(0)
+    expect(outcome.reconciliation.brokerState.account.cashMicros).toBe(outcome.brokerState.ledger.cashMicros)
+    expect(outcome.reconciliation.report.metrics.accountingExact).toBe(true)
+    expect(outcome.reconciliation.riskContext.unknownMutationCount).toBe(0)
+  },
+  90_000,
+)

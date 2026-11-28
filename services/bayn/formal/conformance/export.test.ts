@@ -51,10 +51,11 @@ formal('complete owned Lean proof export', () => {
     const names = new Set(scope.declarations.map((declaration) => declaration.name))
     for (const name of [
       'Bayn.profit_conservation',
-      'Bayn.safety_has_no_error_budget',
+      'Bayn.native_safety_known_violation_cannot_pass',
       'Bayn.conditional_radius_never_understates_variance',
       'Bayn.registered_expected_profit_bound',
       'Bayn.executable_radius_covers_registered_expected_profit',
+      'Bayn.zero_width_point_support_has_no_strict_lower_bound_failure',
       'Bayn.evaluated_economics_requires_positive_observed_profit',
       'Bayn.supported_series_contains_every_observation',
       'Bayn.mismatched_calendar_cannot_reconcile',

@@ -120,7 +120,7 @@ func TestRoutingReconciliationWorkflow(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
 			env := suite.NewTestWorkflowEnvironment()
 			env.RegisterWorkflowWithOptions(func(ctx workflow.Context, args *deploymentspb.WorkerDeploymentWorkflowArgs) error {
-				return Workflow(ctx, func() DeploymentWorkflowVersion { return VersionDataRevisionNumber }, func() int { return 100 }, args)
+				return Workflow(ctx, func() DeploymentWorkflowVersion { return VersionDataRevisionNumber }, func() int { return 100 }, func() bool { return false }, args)
 			}, workflow.RegisterOptions{Name: WorkerDeploymentWorkflowType})
 			env.OnUpsertMemo(mock.Anything).Return(nil).Maybe()
 			state := &deploymentspb.WorkerDeploymentLocalState{

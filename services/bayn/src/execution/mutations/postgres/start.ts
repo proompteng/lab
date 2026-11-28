@@ -16,7 +16,13 @@ import {
   storeError,
   startStoreOperationFor,
 } from '../decisions'
-import type { ExpiredEntryCancellationAdmission, MutationStartInput, MutationStoreError, StartReceipt } from '../model'
+import type {
+  ExpiredEntryCancellationAdmission,
+  MutationStartInput,
+  MutationStoreError,
+  ProtectionCloseCommit,
+  StartReceipt,
+} from '../model'
 import {
   decodeAuthoritySnapshot,
   decodeExpiredEntryCancellationFacts,
@@ -27,6 +33,8 @@ import {
 import type { MutationEventPostgres } from './events'
 import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
+import { WriterFence } from '../../writer-fence'
+import { readProtectionSubmit } from '../../../db/protection-release'
 
 export interface MutationStartPostgres {
   readonly authorizeSubmit: (
@@ -42,6 +50,7 @@ export interface MutationStartPostgres {
     brokerOrderId?: string,
     closeOnly?: boolean,
     expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+    protectionClose?: ProtectionCloseCommit,
   ) => Effect.Effect<StartReceipt, MutationStoreError | SqlError | WriterFenceError>
 }
 
@@ -50,22 +59,21 @@ export const makeMutationStartPostgres = (
   fence: WriterFenceService,
   events: MutationEventPostgres,
 ): MutationStartPostgres => {
+  // All events for a mutation belong to one intent. Discard terminal intents before ranking
+  // their history, but apply the outcome predicate only to the newest event of each mutation.
   const otherUnresolved = (intentId: string) => sql`
       EXISTS (
         SELECT 1
         FROM (
           SELECT DISTINCT ON (events.mutation_id)
-            events.intent_id,
             events.operation,
-            events.event_type,
-            intents.state
+            events.event_type
           FROM mutation_events AS events
           JOIN intents ON intents.intent_id = events.intent_id
+          WHERE intents.intent_id <> ${intentId} AND intents.state <> 'TERMINAL'
           ORDER BY events.mutation_id, events.sequence DESC
         ) AS latest
-        WHERE latest.intent_id <> ${intentId}
-          AND latest.state <> 'TERMINAL'
-          AND (
+        WHERE (
             latest.event_type IN (
               'SUBMIT_STARTED',
               'SUBMIT_UNKNOWN',
@@ -211,7 +219,11 @@ export const makeMutationStartPostgres = (
         })
     })
 
-  const beginTransaction = (operation: MutationOperation, input: MutationStartInput) =>
+  const beginTransaction = (
+    operation: MutationOperation,
+    input: MutationStartInput,
+    protectionClose?: ProtectionCloseCommit,
+  ) =>
     Effect.gen(function* () {
       const existing = yield* events.readLatest(input.intentId, operation)
       const replay = yield* fromDecision(() => decideMutationStartReplay(operation, input, existing))
@@ -224,6 +236,15 @@ export const makeMutationStartPostgres = (
         input.closeOnly === true,
         operation === MutationOperation.Submit ? input.intentId : undefined,
       )
+      if (protectionClose !== undefined) {
+        if (operation !== MutationOperation.Submit || input.closeOnly !== true)
+          return yield* storeError({
+            operation: startStoreOperationFor(operation),
+            failure: 'authority',
+            message: 'a protection release can only bind a close submission',
+          })
+        yield* protectionClose.bind
+      }
       const intent = yield* readIntent(operation, input.intentId)
       const submitted =
         operation === MutationOperation.Cancel
@@ -238,6 +259,34 @@ export const makeMutationStartPostgres = (
             message: 'expired entry cancellation admission cannot authorize submission',
           })
         yield* validateExpiredEntryCancellation(input)
+      }
+      if (input.protectionProofId !== undefined) {
+        const proof =
+          operation === MutationOperation.Submit && input.closeOnly === true && protectionClose !== undefined
+            ? yield* readProtectionSubmit(
+                input.intentId,
+                input.protectionProofId,
+                'admission',
+                protectionClose.submitExpiresAt,
+              ).pipe(
+                Effect.provideService(PgClient.PgClient, sql),
+                Effect.provideService(WriterFence, fence),
+                Effect.mapError((cause) =>
+                  storeError({
+                    operation: 'begin-submit',
+                    failure: 'authority',
+                    message: 'could not verify the protected close admission',
+                    cause,
+                  }),
+                ),
+              )
+            : undefined
+        if (proof === undefined)
+          return yield* storeError({
+            operation: startStoreOperationFor(operation),
+            failure: 'authority',
+            message: 'current protection release cannot authorize this close admission',
+          })
       }
       yield* events.appendEvent(
         startStoreOperationFor(operation),
@@ -257,6 +306,7 @@ export const makeMutationStartPostgres = (
     brokerOrderId?: string,
     closeOnly?: boolean,
     expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+    protectionClose?: ProtectionCloseCommit,
   ) =>
     fromDecision(() =>
       decodeStartInput(operation, {
@@ -267,6 +317,7 @@ export const makeMutationStartPostgres = (
         ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
         ...(closeOnly === true ? { closeOnly: true as const } : {}),
         ...(expiredEntryCancellation === undefined ? {} : { expiredEntryCancellation }),
+        ...(protectionClose === undefined ? {} : { protectionProofId: protectionClose.proofId }),
       }),
     ).pipe(
       Effect.flatMap((input) =>
@@ -277,7 +328,7 @@ export const makeMutationStartPostgres = (
               failure: 'invariant',
               message: 'mutation admission must commit independently before broker routing',
             })
-          return yield* fence.transaction(beginTransaction(operation, input))
+          return yield* fence.transaction(beginTransaction(operation, input, protectionClose))
         }),
       ),
     )

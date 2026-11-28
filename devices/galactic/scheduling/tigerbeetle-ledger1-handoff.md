@@ -26,12 +26,19 @@ two hosts do not provide tolerance of either host's failure.
 The target is a retained, static local PV under the Omni-owned `UserVolumeConfig/tigerbeetle` with
 `volumeType: directory`. It uses Turin's 4.1 TB ORICO system disk, whose existing `EPHEMERAL` partition is persistent
 XFS at `/var`. Talos exposes this directory volume writable to the kubelet without partitioning or formatting a disk.
-It is outside both rebuildable scratch mounts and the provisioner's scratch-directory
-allocation. Preserve it across normal Omni upgrades, and treat a Talos reset or system-disk replacement as a ledger
-replica loss requiring healthy peers and the retained source copy. Never place a ledger on `turin-nvme-intel` or
-`turin-nvme-transcend`; those disks remain scratch-only. Check the target helper's actual filesystem device and free
-space against the live Talos `EPHEMERAL` volume before copying. The legacy `local-path` class name is preserved only
-because the existing PVC's class is immutable; this procedure creates the retained PV explicitly.
+This fixed target remains separate from the provisioner's general and CI allocation directories. Preserve it
+across normal Omni upgrades, and treat a Talos reset or system-disk replacement as a ledger replica loss requiring
+healthy peers and the retained source copy. Check the target helper's actual filesystem device and free space
+against the live Talos `EPHEMERAL` volume before copying. These directories share the system disk and its I/O.
+The legacy `local-path` class name is preserved only because the existing PVC's class is immutable; this procedure
+creates the retained PV explicitly.
+
+The Intel and Transcend user volumes are persistent mounts reserved for explicit retained workloads under the
+[current local-path policy](../../../argocd/applications/local-path/README.md).
+The [Turin storage guide](../../turin/docs/local-nvme-scratch.md) records their current identities; `data-ledger-0`
+already uses the Intel mount. Preserve those mounts and every existing bound path. This replica 1 handoff does
+not authorize moving, reusing, or clearing replica 0 or another workload's storage. A persistent mount and the
+cluster's `deletionPolicy: Retain` do not establish each PV's reclaim policy; verify the actual bound PV separately.
 
 Require three Ready hosts, healthy Ceph data/quorum, and working cross-host Services. Bayn must report EXACT
 reconciliation, zero unresolved mutations, and continuing progress from its existing exclusive execution owner.

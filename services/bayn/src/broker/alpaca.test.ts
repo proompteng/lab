@@ -13,6 +13,8 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
+  NonTradeActivityStatementSchema,
+  verifyNonTradeActivityStatement,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -28,6 +30,7 @@ import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/prefligh
 import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
 import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
 import { make, alpacaHttpLayer } from './alpaca/http'
+import { fillActivityIdentity } from './activities'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -183,6 +186,17 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
+  test('preserves ledger identity across Eastern daylight time and microsecond rounding', () => {
+    expect(fillActivityIdentity(orderId, '2026-10-05T15:12:39.021034500Z')).toEqual({
+      activityId: `20261005111239021::${orderId}`,
+      transactionTime: '2026-10-05T15:12:39.021034000Z',
+    })
+    expect(fillActivityIdentity(orderId, '2026-11-05T15:12:39.999999500Z')).toEqual({
+      activityId: `20261105101239999::${orderId}`,
+      transactionTime: '2026-11-05T15:12:40.000000000Z',
+    })
+  })
+
   test('retains the broker crypto fee tier with its account response evidence', async () => {
     const raw = { ...accountResponse, crypto_status: 'ACTIVE', crypto_tier: 4 }
     const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
@@ -265,6 +279,7 @@ describe('Alpaca paper reads', () => {
       'feeActivities',
       'fillActivities',
       'marketCalendar',
+      'nonTradeActivityStatement',
       'orderByClientId',
       'orderById',
       'orders',
@@ -1332,6 +1347,102 @@ describe('Alpaca paper reads', () => {
     expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
   })
 
+  test('captures all non-trade activity through empty terminal pages in both directions', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = {
+      id: `20260911010000000::${orderId}`,
+      activity_type: 'FEE',
+      date: '2026-09-10',
+      net_amount: '-0.21',
+      description: 'private account detail',
+    }
+    const deposit = {
+      id: `20260910160000000::${assetId}`,
+      activity_type: 'CSD',
+      date: '2026-09-10',
+      created_at: '2026-09-10T16:00:00Z',
+      net_amount: '0.21',
+    }
+    const calls: { direction: string | null; pageToken: string | null }[] = []
+    const client = HttpClient.make((request, url) => {
+      expect(request.method).toBe('GET')
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      expect(url.pathname).toBe('/v2/account/activities')
+      expect(url.searchParams.get('category')).toBe('non_trade_activity')
+      expect(url.searchParams.has('activity_types')).toBe(false)
+      expect(url.searchParams.get('after')).toBe(bounds.after)
+      expect(url.searchParams.get('until')).toBe(bounds.until)
+      const direction = url.searchParams.get('direction')
+      const pageToken = url.searchParams.get('page_token')
+      calls.push({ direction, pageToken })
+      const [first, second] = direction === 'asc' ? [deposit, fee] : [fee, deposit]
+      return Effect.succeed(
+        jsonResponse(request, pageToken === null ? [first] : pageToken === first.id ? [second] : []),
+      )
+    })
+    const result = await Effect.runPromise(
+      make(options).pipe(
+        Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    )
+    expect(calls).toEqual([
+      { direction: 'asc', pageToken: null },
+      { direction: 'asc', pageToken: deposit.id },
+      { direction: 'asc', pageToken: fee.id },
+      { direction: 'desc', pageToken: null },
+      { direction: 'desc', pageToken: fee.id },
+      { direction: 'desc', pageToken: deposit.id },
+    ])
+    expect(result.accountIdentityHash).toBe(options.identity.identityHash)
+    expect(result.window).toEqual(bounds)
+    const statement = Result.getOrThrow(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))
+    expect(statement.accountBody).toEqual(accountResponse)
+    expect(
+      verifyNonTradeActivityStatement({ ...statement, accountBody: { ...accountResponse, id: assetId } }, assetId),
+    ).toMatchObject({ _tag: 'Failure' })
+    expect(Result.getOrThrow(verifyNonTradeActivityStatement(statement, accountId)).activities).toEqual([
+      {
+        activityId: deposit.id,
+        activityType: 'CSD',
+        date: deposit.date,
+        createdAt: deposit.created_at,
+        netAmount: '0.21',
+      },
+      { activityId: fee.id, activityType: 'FEE', date: fee.date, createdAt: null, netAmount: '-0.21' },
+    ])
+    expect(result.firstPass.at(-1)?.body).toEqual([])
+    expect(result.secondPass.at(-1)?.body).toEqual([])
+    expect(result.firstPass[1]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee])))
+  })
+
+  test('withholds the non-trade statement for repeated, changing, wrong-account or out-of-window activities', async () => {
+    const bounds = { after: '2026-09-10T13:00:00.000Z', until: '2026-09-11T13:00:00.000Z' }
+    const fee = { id: `20260911010000000::${orderId}`, activity_type: 'FEE', date: '2026-09-10', net_amount: '-0.21' }
+    const scenarios = [
+      () => [fee],
+      (url: URL) =>
+        url.searchParams.has('page_token')
+          ? []
+          : [{ ...fee, net_amount: url.searchParams.get('direction') === 'asc' ? '-0.21' : '-0.22' }],
+      () => [{ ...fee, account_id: assetId }],
+      () => [{ ...fee, created_at: bounds.until }],
+    ]
+    for (const scenario of scenarios) {
+      const client = HttpClient.make((request, url) =>
+        Effect.succeed(jsonResponse(request, url.pathname === '/v2/account' ? accountResponse : scenario(url))),
+      )
+      const failure = await Effect.runPromise(
+        make(options).pipe(
+          Effect.flatMap((read) => read.nonTradeActivityStatement(bounds)),
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.flip,
+        ),
+      )
+      expect(failure).toMatchObject({ operation: 'non-trade-activities', kind: BrokerReadErrorKind.InvalidResponse })
+    }
+  })
+
   test('retains available cash CFEE through the HTTP adapter in a stable broker snapshot', async () => {
     const raw = {
       activity_type: 'CFEE',
@@ -1364,6 +1475,127 @@ describe('Alpaca paper reads', () => {
     })
     expect(snapshot.history.fees[0]?.value.coinDebit).toBeUndefined()
     expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([raw])))
+  })
+
+  test.each([
+    ['buy', OrderSide.Buy],
+    ['sell', OrderSide.Sell],
+    ['sell_short', OrderSide.Sell],
+  ] as const)('normalizes trade activity side %s with exact fractional fill evidence', async (side, expected) => {
+    const raw = [{ ...fillResponse, side, qty: '0.625', cum_qty: '0.625' }]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const result = await Effect.runPromise(withClient(client, (read) => read.fillActivities()))
+    expect(result.value.items).toEqual([
+      {
+        accountId,
+        activityId: fillResponse.id,
+        cumulativeQuantityAtoms: '625000000',
+        leavesQuantityAtoms: '0',
+        priceAtoms: '120125000000',
+        quantityAtoms: '625000000',
+        side: expected,
+        symbol: fillResponse.symbol,
+        transactionTime: fillResponse.transaction_time,
+        brokerOrderId: orderId,
+        type: TradeActivityType.Fill,
+        orderStatus: OrderStatus.Filled,
+      },
+    ])
+    expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
+  })
+
+  test.each(['sell_short_exempt', 'buy_to_cover', 'undisclosed', 'SELL_SHORT', ''])(
+    'rejects unsupported trade activity side %s with the original response evidence',
+    async (side) => {
+      const raw = [{ ...fillResponse, side }]
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.fillActivities())))
+      expect(failure).toMatchObject({
+        operation: 'fill-activities',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+        status: 200,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(raw)),
+      })
+    },
+  )
+
+  test('retains a sell_short fill on a later history page through both stable snapshot reads', async () => {
+    const shortOrderId = '4bd18603-8a5c-43bb-99b6-382a43862c9b'
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      ...fillResponse,
+      id: `20260721113406977::00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      symbol: 'MSFT',
+      qty: '1',
+      cum_qty: String(index + 1),
+      leaves_qty: String(99 - index),
+      type: index === 99 ? 'fill' : 'partial_fill',
+      order_status: index === 99 ? 'filled' : 'partially_filled',
+    }))
+    const lastPage = [
+      {
+        ...fillResponse,
+        id: `20260721113506977::${shortOrderId}`,
+        order_id: shortOrderId,
+        qty: '0.625',
+        cum_qty: '0.625',
+        side: 'sell_short',
+      },
+    ]
+    const orders = [
+      {
+        ...orderResponse,
+        symbol: 'MSFT',
+        qty: '100',
+        filled_qty: '100',
+        filled_avg_price: '120.125',
+        status: 'filled',
+      },
+      {
+        ...orderResponse,
+        id: shortOrderId,
+        side: 'sell',
+        qty: '0.625',
+        filled_qty: '0.625',
+        filled_avg_price: '120.125',
+        status: 'filled',
+      },
+    ]
+    const fillPages: (string | null)[] = []
+    const client = HttpClient.make((request, url) => {
+      expect(request.method).toBe('GET')
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/orders') return Effect.succeed(jsonResponse(request, orders))
+      if (url.pathname === '/v2/positions' || url.pathname === '/v2/account/activities')
+        return Effect.succeed(jsonResponse(request, []))
+      if (url.pathname === '/v2/account/activities/FILL') {
+        const token = url.searchParams.get('page_token')
+        fillPages.push(token)
+        return Effect.succeed(jsonResponse(request, token === null ? firstPage : lastPage))
+      }
+      return Effect.die(new Error('Unexpected broker endpoint'))
+    })
+    const snapshot = await Effect.runPromise(
+      withClient(client, (read) => readStableBrokerSnapshot(read, Effect.succeed('2026-07-21T16:00:00.000Z'))),
+    )
+    expect(fillPages).toEqual([null, firstPage[99]?.id, null, firstPage[99]?.id])
+    expect(snapshot.history.fills).toHaveLength(101)
+    expect(snapshot.history.fills.at(-1)?.value).toMatchObject({
+      activityId: lastPage[0]?.id,
+      brokerOrderId: shortOrderId,
+      side: OrderSide.Sell,
+      quantityAtoms: '625000000',
+      priceAtoms: '120125000000',
+    })
+    expect(snapshot.history.fills.at(-1)?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(lastPage)))
+    expect(snapshot.history.orders.rows[1]?.value.side).toBe(OrderSide.Sell)
+  })
+
+  test('keeps sell_short outside the order response side contract', async () => {
+    const raw = { ...orderResponse, side: 'sell_short' }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.orderById(orderId))))
+    expect(failure).toMatchObject({ operation: 'order-by-id', kind: BrokerReadErrorKind.InvalidResponse })
   })
 
   test('rejects trade timestamp filters on daily fee queries before dispatch', async () => {
@@ -1425,6 +1657,85 @@ describe('Alpaca paper reads', () => {
       ],
       nextPageToken: fillResponse.id,
     })
+  })
+
+  test('normalizes short-sale fills and buy covers without losing surrounding fill history', async () => {
+    const quantities = ['10', '32', '273', '231', '84']
+    const cumulative = ['10', '42', '315', '231', '315']
+    const leaves = ['305', '273', '0', '84', '0']
+    const shortFills = quantities.map((qty, index) => ({
+      ...fillResponse,
+      id: `short-fill-${index}::${orderId}`,
+      side: index < 3 ? 'sell_short' : 'buy',
+      qty,
+      cum_qty: cumulative[index],
+      leaves_qty: leaves[index],
+      type: leaves[index] === '0' ? 'fill' : 'partial_fill',
+      order_status: leaves[index] === '0' ? 'filled' : 'partially_filled',
+    }))
+    const page = [fillResponse, { ...fillResponse, id: `long-sell::${orderId}`, side: 'sell' }, ...shortFills]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, page)))
+
+    const result = await Effect.runPromise(withClient(client, (read) => read.fillActivities({ pageSize: 7 })))
+
+    expect(result.value.items.map((fill) => fill.activityId)).toEqual(page.map((fill) => fill.id))
+    expect(result.value.items.map((fill) => fill.side)).toEqual([
+      OrderSide.Buy,
+      OrderSide.Sell,
+      OrderSide.Sell,
+      OrderSide.Sell,
+      OrderSide.Sell,
+      OrderSide.Buy,
+      OrderSide.Buy,
+    ])
+    expect(result.value.items.slice(2).map((fill) => fill.quantityAtoms)).toEqual(
+      quantities.map((quantity) => (BigInt(quantity) * 1_000_000_000n).toString()),
+    )
+    expect(result.value.items.slice(2).map((fill) => fill.cumulativeQuantityAtoms)).toEqual(
+      cumulative.map((quantity) => (BigInt(quantity) * 1_000_000_000n).toString()),
+    )
+    expect(result.value.items.every((fill) => fill.accountId === accountId && fill.brokerOrderId === orderId)).toBe(
+      true,
+    )
+    expect(result.value.nextPageToken).toBe(page.at(-1)?.id)
+    expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(page)))
+  })
+
+  test.each(['short', 'sell_short_unexpected', 'BUY'])(
+    'rejects a full fill page containing unknown provider side %s',
+    async (side) => {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(jsonResponse(request, [fillResponse, { ...fillResponse, side }])),
+      )
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.fillActivities())))
+      expect(failure).toMatchObject({
+        operation: 'fill-activities',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    },
+  )
+
+  test('short-sale fill decoding preserves account and cumulative-quantity checks', async () => {
+    for (const invalid of [{ account_id: assetId }, { cum_qty: '4' }]) {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(jsonResponse(request, [{ ...fillResponse, side: 'sell_short', ...invalid }])),
+      )
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.fillActivities())))
+      expect(failure).toMatchObject({
+        operation: 'fill-activities',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    }
+  })
+
+  test('short-sale activity vocabulary does not widen broker order sides', async () => {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(jsonResponse(request, { ...orderResponse, side: 'sell_short' })),
+    )
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.orderById(orderId))))
+    expect(failure).toMatchObject({ operation: 'order-by-id', kind: BrokerReadErrorKind.InvalidResponse })
   })
 
   test('requests the default fill page size explicitly and returns a cursor for a full page', async () => {

@@ -8,6 +8,7 @@ import {
   StagedInferenceCostLineSchema,
   CheckpointInferenceCostLineSchema,
   ThreeStageInferenceCostLineSchema,
+  UndispatchedInferenceCostLineSchema,
   HistoricalInferenceRateSchema,
   InferenceStage,
   inferenceStageKey,
@@ -88,6 +89,14 @@ export const InferenceExpenseSourceSchema = Schema.Struct({
 export type InferenceExpenseSource = typeof InferenceExpenseSourceSchema.Type
 
 export const InferenceExpenseQuoteSchema = Schema.Union([
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.inference-expense-quote.v5'),
+    accountBindingHash: Sha256Schema,
+    sessionDate: IsoDateSchema,
+    line: UndispatchedInferenceCostLineSchema,
+    rate: Schema.NullOr(InferenceRateSchema),
+    quoteHash: Sha256Schema,
+  }),
   Schema.Struct({
     schemaVersion: Schema.Literal('bayn.inference-expense-quote.v4'),
     accountBindingHash: Sha256Schema,
@@ -193,6 +202,7 @@ const quotesFromEvidence = (evidence: DecodedInferenceCostEvidence, rateCard: Ex
           if (source?.stagedCheckpoint !== undefined)
             return (
               source.resolution !== null ||
+              'notDispatchedByTerminalHash' in line ||
               ('stageClaimHash' in line && (line.stageClaimHash !== null || line.stageSkipHash !== null))
             )
           return (
@@ -208,13 +218,15 @@ const quotesFromEvidence = (evidence: DecodedInferenceCostEvidence, rateCard: Ex
               if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
             const material = {
               schemaVersion:
-                'stageClaimHash' in line
-                  ? 'bayn.inference-expense-quote.v4'
-                  : 'chartClaimHash' in line
-                    ? 'bayn.inference-expense-quote.v3'
-                    : 'stage' in line
-                      ? 'bayn.inference-expense-quote.v2'
-                      : 'bayn.inference-expense-quote.v1',
+                'notDispatchedByTerminalHash' in line
+                  ? 'bayn.inference-expense-quote.v5'
+                  : 'stageClaimHash' in line
+                    ? 'bayn.inference-expense-quote.v4'
+                    : 'chartClaimHash' in line
+                      ? 'bayn.inference-expense-quote.v3'
+                      : 'stage' in line
+                        ? 'bayn.inference-expense-quote.v2'
+                        : 'bayn.inference-expense-quote.v1',
               accountBindingHash: evidence.accountBindingHash,
               sessionDate: evidence.sessionDate,
               line,
@@ -277,9 +289,25 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
     if (quoteHash !== expected)
       return yield* Result.fail(new InferenceCostError({ message: 'Frozen inference expense quote hash differs' }))
     const line = quote.line
+    const undispatchedProof = 'notDispatchedByTerminalHash' in line
+    if (
+      quote.schemaVersion === 'bayn.inference-expense-quote.v5' &&
+      (!undispatchedProof ||
+        line.usageStatus !== InferenceUsageStatus.NotDispatched ||
+        line.receiptHash !== null ||
+        line.resolutionHash !== null ||
+        line.handoffHash !== null ||
+        line.stageSkipHash !== null ||
+        (line.stage === InferenceStage.Chart
+          ? line.stageClaimHash === null || line.stageTerminalHash !== line.notDispatchedByTerminalHash
+          : line.stage !== InferenceStage.Jev || line.stageClaimHash !== null || line.stageTerminalHash !== null))
+    )
+      return yield* Result.fail(new InferenceCostError({ message: 'Undispatched expense lacks its exact stage proof' }))
     if (
       'stageClaimHash' in line &&
-      ((line.stageClaimHash !== null && line.usageStatus === InferenceUsageStatus.NotDispatched) ||
+      ((line.stageClaimHash !== null &&
+        line.usageStatus === InferenceUsageStatus.NotDispatched &&
+        !undispatchedProof) ||
         (line.stageTerminalHash !== null && line.stageClaimHash === null) ||
         (line.stageSkipHash !== null &&
           (line.stage !== InferenceStage.BaseStart ||
@@ -334,6 +362,7 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         (line.receiptHash === null &&
           !('handoffHash' in line && line.handoffHash !== null) &&
           !('chartTerminalHash' in line && line.chartTerminalHash !== null) &&
+          !undispatchedProof &&
           !('stageSkipHash' in line && line.stageSkipHash !== null)) ||
         line.inputTokens !== '0' ||
         line.outputTokens !== '0' ||
@@ -420,6 +449,25 @@ const quoteSourcePrefix = (
       const checkpoint = source.stagedCheckpoint
       if (checkpoint === undefined)
         return yield* Result.fail(new InferenceCostError({ message: 'Staged expense has no versioned source journal' }))
+      if ('notDispatchedByTerminalHash' in line) {
+        const terminal = checkpoint.terminals.find(
+          (item) =>
+            item.stage === 'CHART' &&
+            item.terminalHash === line.notDispatchedByTerminalHash &&
+            item.outcome.status === 'NOT_DISPATCHED',
+        )
+        const claim = checkpoint.claims.find((item) => item.stage === 'CHART')
+        if (terminal === undefined || claim === undefined || source.receipt !== null || source.handoff !== null)
+          return yield* Result.fail(
+            new InferenceCostError({ message: 'Undispatched expense differs from its immutable pre-dispatch proof' }),
+          )
+        return {
+          receipt: null,
+          handoff: null,
+          resolution: null,
+          stagedCheckpoint: { claims: [claim], terminals: [terminal], skips: [] },
+        }
+      }
       if (line.stage === InferenceStage.Jev || (line.stageClaimHash === null && line.stageSkipHash === null))
         return {
           receipt:
@@ -430,7 +478,21 @@ const quoteSourcePrefix = (
               : null,
           handoff: line.handoffHash !== null ? source.handoff : null,
           resolution: source.resolution,
-          stagedCheckpoint: checkpoint,
+          // A retained Jev gap can precede a late positive chart non-dispatch proof.
+          // The complete current graph was verified above; reproduce only the older quote's cut.
+          stagedCheckpoint:
+            line.stage === InferenceStage.Jev &&
+            checkpoint.terminals.some(
+              (terminal) => terminal.stage === InferenceStage.Chart && terminal.outcome.status === 'NOT_DISPATCHED',
+            )
+              ? {
+                  ...checkpoint,
+                  terminals: checkpoint.terminals.filter(
+                    (terminal) =>
+                      terminal.stage !== InferenceStage.Chart || terminal.outcome.status !== 'NOT_DISPATCHED',
+                  ),
+                }
+              : checkpoint,
         }
       const claim = checkpoint.claims.find((item) => item.stage === line.stage)
       const terminal = checkpoint.terminals.find((item) => item.stage === line.stage)
@@ -651,7 +713,9 @@ export const verifyInferenceExpenseCoverage = (
           ('stageTerminalHash' in row.quote.line ? row.quote.line.stageTerminalHash : null) ===
             ('stageTerminalHash' in line ? line.stageTerminalHash : null) &&
           ('stageSkipHash' in row.quote.line ? row.quote.line.stageSkipHash : null) ===
-            ('stageSkipHash' in line ? line.stageSkipHash : null),
+            ('stageSkipHash' in line ? line.stageSkipHash : null) &&
+          ('notDispatchedByTerminalHash' in row.quote.line ? row.quote.line.notDispatchedByTerminalHash : null) ===
+            ('notDispatchedByTerminalHash' in line ? line.notDispatchedByTerminalHash : null),
       )
       if (matches.length > 1)
         return yield* Result.fail(

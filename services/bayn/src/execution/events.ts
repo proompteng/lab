@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Context, Schema } from 'effect'
 
 import { sha256 } from '../hash'
 import { Sha256Schema, SourceRevisionSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -13,6 +13,28 @@ export const BrokerObservationWakeupSchema = Schema.TaggedStruct('BrokerObservat
   ...envelope,
   snapshotHash: Sha256Schema,
   observedAt: UtcInstantSchema,
+})
+
+export const BrokerEventWakeupSchema = Schema.TaggedStruct('BrokerEvent', {
+  ...envelope,
+  observedAt: UtcInstantSchema,
+})
+
+export const ProtectionReleaseReferenceSchema = Schema.Struct({
+  proofId: Sha256Schema,
+  cycleId: Sha256Schema,
+  checkedAt: UtcInstantSchema,
+})
+export type ProtectionReleaseReference = typeof ProtectionReleaseReferenceSchema.Type
+
+export const ExecutionProtectionRelease = Context.Reference<ProtectionReleaseReference | undefined>(
+  '@proompteng/bayn/execution/ExecutionProtectionRelease',
+  { defaultValue: () => undefined },
+)
+
+const ProtectionReleaseWakeupSchema = Schema.TaggedStruct('ProtectionRelease', {
+  ...envelope,
+  ...ProtectionReleaseReferenceSchema.fields,
 })
 
 export enum MarketChangeReason {
@@ -45,6 +67,8 @@ export const InferenceCompletedWakeupSchema = Schema.TaggedStruct('InferenceComp
 
 export const ExecutionWakeupSchema = Schema.Union([
   BrokerObservationWakeupSchema,
+  BrokerEventWakeupSchema,
+  ProtectionReleaseWakeupSchema,
   MarketChangedSchema,
   InferenceCompletedWakeupSchema,
 ])

@@ -13,7 +13,7 @@ class AgentsConfigTest {
 
     assertEquals("http://agents.agents.svc.cluster.local", config.baseUrl)
     assertEquals("agents", config.namespace)
-    assertEquals("graf-codex-agent", config.agentName)
+    assertNull(config.agentName)
     assertEquals("agents-sa", config.serviceAccountName)
     assertNull(config.tokenPath)
     assertEquals(10L, config.pollIntervalSeconds)

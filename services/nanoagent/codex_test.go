@@ -781,7 +781,7 @@ sleep 30
 				t.Fatal("Codex supervisor was not ready after the initialization handshake")
 			}
 			args, err := os.ReadFile(arguments)
-			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
+			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.2-sol\n") {
 				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
 			}
 			if !strings.Contains(string(args), "-c\nfeatures.apps=false\n") {

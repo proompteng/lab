@@ -56,7 +56,6 @@ rules:
       - coordination.k8s.io
       - core.openfeature.dev
       - core.strimzi.io
-      - crdb.cockroachlabs.com
       - csi.ceph.io
       - discovery.k8s.io
       - eventing.knative.dev

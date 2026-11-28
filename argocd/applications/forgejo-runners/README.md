@@ -108,7 +108,7 @@ jobs:
 
 ## Runner 13 and Docker 29 rollout
 
-The fleet uses Forgejo Runner 13.1.0 and Docker 29.8.0 on both architectures,
+The fleet uses Forgejo Runner 13.2.2 and Docker 29.8.0 on both architectures,
 with immutable multi-architecture image digests. Docker retains the classic
 `overlay2` image store explicitly. Docker is a Kubernetes native sidecar: its
 startup probe must pass before the runner starts, and Kubernetes keeps it alive

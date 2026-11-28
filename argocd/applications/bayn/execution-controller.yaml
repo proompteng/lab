@@ -90,9 +90,9 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
+              value: "d04cc79fb733975def34d2f2ced4f0d647bc76ed17fa2506e677d4dc73ba28de"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696"
+              value: "f632170473534577a59a98c800bca69917b710c3857a68d0c52ec776ebcdd509"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
@@ -102,12 +102,9 @@ spec:
                 secretKeyRef:
                   name: bayn-alpaca-auth
                   key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
+                  optional: true
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"activation":{"imageDigest":"sha256:0b6ddb52c548cb16791843a3a6c13e20e06abe81cce3f99e9b1833d6dd4cd841","imageRepository":"registry.ide-newton.ts.net/lab/bayn","sourceRevision":"503cb2d60c58c5309c2e031d032069481ac4b0db"},"authoredActivation":{"imageDigest":"sha256:0b6ddb52c548cb16791843a3a6c13e20e06abe81cce3f99e9b1833d6dd4cd841","imageRepository":"registry.ide-newton.ts.net/lab/bayn","sourceRevision":"503cb2d60c58c5309c2e031d032069481ac4b0db"},"requestHash":"6856f071e54529227ea48fa7b077506209ffd887c939d7351e948d7e03020130","schemaVersion":"bayn.research-capital-build-lineage.v1"}'
-            - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
+              value: '{}'
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
@@ -177,10 +174,10 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
-            # Main, projection and decision isolates share 1 GiB; leave native/buffer headroom.
-            # Node otherwise derives a separate heap budget from the full limit for each isolate.
+            # Three isolates share 3 GiB: 3 * (640 + 3 * 16) MiB leaves 1,008 MiB for native memory.
+            # The prior 384 MiB old-generation cap exhausted the active owner's heap during a session.
             - name: NODE_OPTIONS
-              value: --max-old-space-size=192 --max-semi-space-size=16
+              value: --max-old-space-size=640 --max-semi-space-size=16
             - name: BAYN_KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: BAYN_KAFKA_USERNAME
@@ -243,10 +240,13 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
-            limits:
-              cpu: "2"
               memory: 1Gi
+            limits:
+              # The owner, projection, decision worker and V8 GC can run together.
+              cpu: "8"
+              # Reserve native memory and buffers beyond all three V8 ceilings.
+              # Retained-state growth still requires full-session measurement.
+              memory: 3Gi
           securityContext:
             # TigerBeetle's native client requires io_uring, which containerd's
             # RuntimeDefault seccomp profile blocks. Keep every other control.

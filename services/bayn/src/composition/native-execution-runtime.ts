@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
   Clock,
@@ -20,13 +21,14 @@ import { operationalError, type OperationalError } from '../errors'
 import type { CycleRunnerError } from '../cycle/runner/model'
 import type { ExecutionBuild } from '../build'
 import {
+  maximumRetainedAlphaObservationReferences,
   maximumRetainedJevObservationReferences,
   type RetainedAutonomousCyclePassObservation,
 } from '../cycle/runner/pass-observation'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevInferenceWorkStore, executeJevInferenceWork } from '../jev/inference-work'
-import type { JevInferenceCompletion, JevInferenceJob } from '../jev/inference-work'
+import type { JevInferenceController } from '../jev/inference-work'
 import type { EntryInferenceRuntime } from '../restate/restate-entry-inference'
 import {
   ExecutionControllerOutcome,
@@ -50,17 +52,19 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeExecutionCycleDriver } from './autonomous-runtime'
 import { nativeActivationPreflight } from './native-activation-preflight'
+import { previousConfiguredController, selectConfiguredBrokerAccount } from '../db/execution-store/observe-authority'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
+  JevRuntimeResourcesLive,
   WorkerMarketProjectionLive,
+  type JevRuntimeServices,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
 import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { awaitJevInferenceDispatch } from '../db/jev-inference-work-postgres'
 import { IntradayMarketData } from '../market-data/intraday/model'
-import { restoreJevObservation } from '../jev/observation'
-import { KillState } from '../execution/contracts'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -82,10 +86,6 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError>
   readonly nextDelayMs: number
-  readonly inference?: {
-    readonly pending: Effect.Effect<readonly JevInferenceJob[], OperationalError>
-    readonly execute: (jobId: string) => Effect.Effect<JevInferenceCompletion | null, OperationalError>
-  }
 }
 
 export class ExecutionCycleDriver extends Context.Service<ExecutionCycleDriver, BoundRecoveryFirstCycleDriver>()(
@@ -129,6 +129,46 @@ const pendingInferenceForAuthority = (context: Context.Context<RecoveryFirstRunt
     return yield* work.value.pending(authority.generationHash)
   })
 
+const executeNativeJevInference = (jobId: string, controller: JevInferenceController) =>
+  executeJevInferenceWork(jobId, controller).pipe(
+    Effect.mapError((cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'jev-batch',
+        message: 'admitted inference failed',
+        cause,
+      }),
+    ),
+  )
+
+export const makeNativeEntryInferenceRuntime = (
+  runtime: Pick<
+    ManagedRuntime.ManagedRuntime<
+      Effect.Services<ReturnType<typeof executeNativeJevInference>> | PgClient.PgClient,
+      unknown
+    >,
+    'runPromise'
+  >,
+  account: Pick<JevInferenceController, 'accountId' | 'planHash'>,
+): EntryInferenceRuntime => {
+  const controller = ({ controllerKey, epoch }: Pick<JevInferenceController, 'controllerKey' | 'epoch'>) => ({
+    ...account,
+    controllerKey,
+    epoch,
+  })
+  const run = <A, E, R extends Effect.Services<ReturnType<typeof executeNativeJevInference>> | PgClient.PgClient>(
+    effect: Effect.Effect<A, E, R>,
+    signal: AbortSignal,
+  ) => {
+    const parent = currentOpenTelemetryParentSpan()
+    return runtime.runPromise(parent === undefined ? effect : effect.pipe(Effect.withParentSpan(parent)), { signal })
+  }
+  return {
+    executeInference: (command, signal) => run(executeNativeJevInference(command.jobId, controller(command)), signal),
+    awaitDispatch: (scope, pending, signal) => run(awaitJevInferenceDispatch(controller(scope), pending), signal),
+  }
+}
+
 export const executionReceiptDelayMs = (completedAt: string, nextWakeAt?: string): number =>
   nextWakeAt === undefined ? 1 : Math.min(86_400_000, Math.max(1, Date.parse(nextWakeAt) - Date.parse(completedAt)))
 
@@ -148,6 +188,35 @@ export const bindRecoveryFirstCycleDriver = (
       advance: Effect.gen(function* () {
         const hashes = new Set<string>()
         let complete = true
+        const alphaHashes = new Set<string>()
+        let alphaComplete = true
+        const observeAlpha = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: () => string) =>
+          effect.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                try {
+                  if (Exit.isFailure(exit)) {
+                    alphaComplete = false
+                    return
+                  }
+                  const hash = reference()
+                  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+                    alphaComplete = false
+                    return
+                  }
+                  if (alphaHashes.has(hash)) return
+                  if (alphaHashes.size === maximumRetainedAlphaObservationReferences) {
+                    alphaComplete = false
+                    return
+                  }
+                  alphaHashes.add(hash)
+                } catch {
+                  // Timing evidence must never change the source write or financial pass result.
+                  alphaComplete = false
+                }
+              }),
+            ),
+          )
         const observe = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: (value: A) => string | null) =>
           effect.pipe(
             Effect.onExit((exit) =>
@@ -181,13 +250,19 @@ export const bindRecoveryFirstCycleDriver = (
         if (Option.isSome(observations)) {
           const store = observations.value
           observedContext = Context.add(observedContext, CandidateObservationStore, {
+            ...store,
             record: (observation, policy) =>
-              observe(store.record(observation, policy), () =>
-                observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
-              ),
+              observation.payload.schemaVersion === 'bayn.intraday-alpha-observation.v2'
+                ? observeAlpha(store.record(observation, policy), () => observation.contentHash)
+                : observe(store.record(observation, policy), () =>
+                    observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
+                  ),
             latestJevWindowEnd: (input) => observe(store.latestJevWindowEnd(input), () => null),
           })
-        } else complete = false
+        } else {
+          complete = false
+          alphaComplete = false
+        }
         const batches = Context.getOption(context, JevBatchStore)
         if (Option.isSome(batches)) {
           const store = batches.value
@@ -195,19 +270,9 @@ export const bindRecoveryFirstCycleDriver = (
             read: (batchId) =>
               observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
             pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
-            begin: (plan, observation, options) =>
+            begin: (batch, options) =>
               observe(
                 Effect.gen(function* () {
-                  const source = yield* Effect.fromResult(restoreJevObservation(observation)).pipe(
-                    Effect.mapError((cause) =>
-                      operationalError({
-                        component: 'market-data',
-                        operation: 'jev-batch',
-                        message: 'admitted source could not be restored',
-                        cause,
-                      }),
-                    ),
-                  )
                   const marketData = Context.getOption(context, IntradayMarketData)
                   if (Option.isNone(marketData))
                     return yield* operationalError({
@@ -215,8 +280,8 @@ export const bindRecoveryFirstCycleDriver = (
                       operation: 'jev-batch',
                       message: 'deferred inference requires the current market source verifier',
                     })
-                  const sourceReference = yield* marketData.value.verifyReference(source.snapshot)
-                  return yield* store.begin(plan, source.observation, {
+                  const sourceReference = yield* marketData.value.verifyReference(batch.source.verified.snapshot)
+                  return yield* store.begin(batch, {
                     ...options,
                     deferProviderDispatch: true,
                     sourceReference,
@@ -244,58 +309,15 @@ export const bindRecoveryFirstCycleDriver = (
         return {
           ...advanced,
           ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
-          ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore)) ? { inferenceJobs: pending } : {}),
           observation: {
             ...advanced.observation,
             executionBuild,
             jevObservationReferences: { hashes: [...hashes].sort(), complete },
+            alphaObservationReferences: { hashes: [...alphaHashes].sort(), complete: alphaComplete },
           },
         }
       }),
       nextDelayMs: driver.nextDelayMs,
-      ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore))
-        ? {
-            inference: {
-              pending: pendingInferenceForAuthority(context),
-              execute: (jobId: string) => {
-                const work = Context.getOption(context, JevInferenceWorkStore)
-                if (Option.isNone(work))
-                  return Effect.fail(
-                    operationalError({
-                      component: 'config',
-                      operation: 'jev-batch',
-                      message: 'inference work store disappeared',
-                    }),
-                  )
-                return Effect.provideContext(
-                  executeJevInferenceWork(
-                    jobId,
-                    Effect.gen(function* () {
-                      const job = yield* work.value.read(jobId)
-                      const authority = yield* Context.get(context, AuthorityGenerationStore).readAuthorityState
-                      return (
-                        job !== null &&
-                        job.authorityGenerationHash === authority.generationHash &&
-                        authority.kill === KillState.Clear &&
-                        authority.effective === authority.maximum
-                      )
-                    }),
-                  ),
-                  Context.add(context, JevInferenceWorkStore, work.value),
-                ).pipe(
-                  Effect.mapError((cause) =>
-                    operationalError({
-                      component: 'strategy',
-                      operation: 'jev-batch',
-                      message: 'admitted inference failed',
-                      cause,
-                    }),
-                  ),
-                )
-              },
-            },
-          }
-        : {}),
     })),
   )
 
@@ -471,7 +493,6 @@ const advanceAndProject = (
       ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
         completedAt,
         observation: outcome.observation,
-        ...(outcome.inferenceJobs === undefined ? {} : { inferenceJobs: outcome.inferenceJobs }),
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
@@ -519,14 +540,6 @@ export const executeNativeExecutionAdvance = (
     Effect.flatMap((replayed) =>
       replayed === null ? advanceAndProject(command, driver, statusStore, planHash) : Effect.succeed(replayed),
     ),
-    Effect.flatMap((step) =>
-      driver.inference === undefined || step.inferenceJobs !== undefined
-        ? Effect.succeed(step)
-        : driver.inference.pending.pipe(
-            Effect.mapError(projectionFailure),
-            Effect.map((inferenceJobs) => ({ ...step, inferenceJobs })),
-          ),
-    ),
   )
 
 const logEffect = (
@@ -559,10 +572,14 @@ export const makeExecutionCycleDriverLive = <E, R>(
     ),
   )
 
-export const ExecutionCycleDriverLive = (plan: ApplicationPlan) =>
+const executionCycleDriverLive = (plan: ApplicationPlan, inferenceContext: Context.Context<JevRuntimeServices>) =>
   makeExecutionCycleDriverLive(
     plan.config.operationTimeoutMs,
-    makeExecutionCycleDriver(plan, nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs)).pipe(
+    makeExecutionCycleDriver(
+      plan,
+      nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs),
+      inferenceContext,
+    ).pipe(
       Effect.flatMap(({ driver, context }) =>
         bindRecoveryFirstCycleDriver(driver, {
           sourceRevision: plan.config.build.sourceRevision,
@@ -707,6 +724,7 @@ export const awaitNativeMarketProjectionReady = (projection: typeof KafkaMarketP
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlan,
+  allowAccountHandoff = true,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* Effect.fromResult(executionControllerConfig(plan))
@@ -717,6 +735,22 @@ export const acquireNativeExecutionRuntime = (
     const { layer: prewarmedProjection, market } = yield* prewarmNativeMarketProjection(
       WorkerMarketProjectionLive(plan),
     )
+    const projectionManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
+    )
+    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
+
+    const inferenceContext = yield* Layer.build(JevRuntimeResourcesLive(plan)).pipe(
+      Effect.mapError((cause) => runtimeError('initialize', 'native inference resource preparation failed', cause)),
+    )
+    const inferenceManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(
+        Layer.succeedContext(inferenceContext).pipe(
+          Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+          Layer.provideMerge(metricIdentity),
+        ),
+      ),
+    )
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
@@ -726,51 +760,51 @@ export const acquireNativeExecutionRuntime = (
     )
     const executionResources = Layer.merge(
       sharedResources,
-      ExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
+      executionCycleDriverLive(plan, inferenceContext).pipe(Layer.provide(sharedResources)),
     )
     // Kafka is independently supervised in the server scope; bootstrap readiness still gates signal reads.
     // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
     // Endpoint registration itself neither acquires trading state nor grants execution authority.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
 
-    const projectionManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
-    )
-    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
-    const logManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
-    )
     const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
       managed,
       executionResources,
       projectionManaged,
-      logManaged,
+      inferenceManaged,
       config.planHash,
       (signal) =>
         projectionManaged.runPromise(
-          awaitNativeMarketProjectionReady(market).pipe(Effect.andThen(nativeActivationPreflight(plan))),
+          awaitNativeMarketProjectionReady(market).pipe(
+            Effect.andThen(nativeActivationPreflight(plan, allowAccountHandoff)),
+          ),
           { signal },
         ),
     )
+    const identity = plan.config.alpaca.identity
     return {
       config,
-      runtime,
-      inferenceRuntime: {
-        executeInference: (jobId, signal) =>
-          ScopedRef.getUnsafe(managed).runPromise(
-            ExecutionCycleDriver.pipe(
-              Effect.flatMap(
-                (
-                  driver,
-                ): Effect.Effect<JevInferenceCompletion | null, NativeExecutionRuntimeError | OperationalError> =>
-                  driver.inference === undefined
-                    ? Effect.fail(runtimeError('binding', 'native execution driver has no admitted inference port'))
-                    : driver.inference.execute(jobId),
-              ),
+      runtime: {
+        ...runtime,
+        brokerAccount: {
+          bind: (signal) =>
+            projectionManaged.runPromise(
+              selectConfiguredBrokerAccount(identity, plan.config.reconciliationStaleThresholdMs, allowAccountHandoff),
+              { signal },
             ),
-            { signal },
-          ),
+          previousController: (signal) =>
+            allowAccountHandoff
+              ? projectionManaged.runPromise(
+                  PgClient.PgClient.pipe(Effect.flatMap((sql) => previousConfiguredController(sql, identity))),
+                  { signal },
+                )
+              : Promise.resolve(null),
+        },
       },
+      inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, {
+        accountId: plan.config.alpaca.expectedAccountId,
+        planHash: config.planHash,
+      }),
       readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
       startMarketWakeups: market.startWakeups,
     }

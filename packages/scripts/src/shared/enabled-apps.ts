@@ -148,6 +148,10 @@ const manifestOnlyRepoImageApps = new Map<string, string>([
     'relay source lives in the upstream block/buzz repository; lab builds a bounded Ceph RGW compatibility derivative and pins its image digest',
   ],
   [
+    'forgejo',
+    'Forgejo source lives at code.forgejo.org/forgejo/forgejo; lab mirrors the reviewed upstream image for Kargo and migration rehearsals',
+  ],
+  [
     'hermes',
     'agent source lives in the upstream NousResearch/hermes-agent repository; lab mirrors a reviewed release and pins its image digest',
   ],

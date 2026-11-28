@@ -12,7 +12,7 @@ helmCharts:
     includeCRDs: true
   - name: spire
     repo: https://spiffe.github.io/helm-charts-hardened
-    version: 0.30.2
+    version: 0.31.0
     releaseName: spire
     namespace: spire-server
     valuesFile: values.yaml

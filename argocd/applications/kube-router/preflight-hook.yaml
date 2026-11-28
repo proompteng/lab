@@ -44,7 +44,7 @@ spec:
               expected_namespaces=$(
                 {
                   printf '%s\n' agents argocd bayn bilig hermes kafka media pgadmin synthesis torghut
-                  printf '%s\n' buzz observability proompteng restate restate-example temporal
+                  printf '%s\n' buzz codex-devbox froussard keycloak observability ofz opencode paperless pelican proompteng restate rook-ceph stash temporal
                   if kubectl -n kube-system get namespace tengri >/dev/null 2>&1 &&
                     kubectl -n tengri get networkpolicies.networking.k8s.io -o json |
                       jq -e '.items | length > 0' >/dev/null; then
@@ -83,7 +83,7 @@ spec:
                     ' >/dev/null
                   ;;
                 hermes)
-                  expected_hermes_policy_hash=9480db61358cfe0459d7d0de9e755751dee551616c2f576b0cb312c581bf066a
+                  expected_hermes_policy_hash=bfeb4503d73ed6e5cd59550e0f11dc0d38cad66a167c1cb7237f059e093116e3
                   actual_hermes_policy_hash=$(
                     kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json |
                       jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)' |
@@ -96,7 +96,7 @@ spec:
                   fi
                   ;;
                 tengri)
-                  expected_tengri_policy_hash=3aae04083116479377970484377940d53dbd7f28ef700ef4110dcd67549d12a2
+                  expected_tengri_policy_hash=82a1075a565197cb3fd0af979fdbbe15f2eef6f7b2f8b84abdb75dc11bd3eb0a
                   actual_tengri_policy_hash=$(
                     kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json |
                       jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)' |
@@ -120,13 +120,21 @@ spec:
                     exit 1
                   fi
                   ;;
-                buzz|observability|proompteng|restate|restate-example|temporal)
+                buzz|codex-devbox|froussard|keycloak|observability|ofz|opencode|paperless|pelican|proompteng|restate|rook-ceph|stash|temporal)
                   case "$namespace" in
-                  buzz) expected_reviewed_policy_hash=ee25664228868c28750e36ff48db913fe8d193e7b374f17b0e8f26d72675e369 ;;
-                  observability) expected_reviewed_policy_hash=6d7b899e361542c477b1f6b81a6d106dcf95017c6c356f37729e019e25cc36b4 ;;
-                  proompteng) expected_reviewed_policy_hash=4e552b1f815f3e73c6fa89b3f5b1e8db20179d41caca78cdb326862cc06c2d39 ;;
-                  restate) expected_reviewed_policy_hash=76f18dc30c1e0ab7e796a508bd4574e803018cd9b398aabfcdee1df4ee5118bd ;;
-                  restate-example) expected_reviewed_policy_hash=8c60dd47fe42b26c7a3eb02269c35d07a440066cf905a3ae4c15c9ab9f53cf9e ;;
+                  buzz) expected_reviewed_policy_hash=da668d68ed6a1b164bd46d6e0a6851fe9fe18d4f729dfd644b16d71f4810e11a ;;
+                  codex-devbox) expected_reviewed_policy_hash=cbed530fd151e4753b5d2f72a7aa29b167d2c61f40c605f9a8b8623995d842ef ;;
+                  froussard) expected_reviewed_policy_hash=5033e69d6c8b8a2585d44eec1df70c4f6a90917761ccd078234beb628e95c1d0 ;;
+                  keycloak) expected_reviewed_policy_hash=f684292a357941c6a41c29f41a8d8af5471dd7f47b08f729193c28a1d66a71d5 ;;
+                  observability) expected_reviewed_policy_hash=bc98480fcfafda9fc71b8707689995fabf8aeecd02621d53cd4cb33c3dd4d38d ;;
+                  ofz) expected_reviewed_policy_hash=4b4dd587be50f798059261d810285d0ab21701daf41d5fa611d9e688c7496fad ;;
+                  opencode) expected_reviewed_policy_hash=cc8671be21d2e10a2758a97729b76e5da7b8c9793a8500dfc2c7ae7870c06cbc ;;
+                  paperless) expected_reviewed_policy_hash=174d06c341da8f594d157ec41b3b2a3c66e98443f15243c29a73f3c54effca99 ;;
+                  pelican) expected_reviewed_policy_hash=d67eb7e0bb254c9ce30e2338ca2ab4bbf6b2d802d0f56a54543b270c7b0bb959 ;;
+                  proompteng) expected_reviewed_policy_hash=b869ee0dcb75f3071ce3bedeed428e281dd9cc1d49a469a62041ce395bf74e73 ;;
+                  restate) expected_reviewed_policy_hash=e835a9694f394494a44600541f7f28aec57fec9e3c5e3c6fe49c1e0838addeea ;;
+                  rook-ceph) expected_reviewed_policy_hash=0827941f4c30c003e17a7294e596fb80e9a5dc8502bf2e30fc33ca37301c3149 ;;
+                  stash) expected_reviewed_policy_hash=8564654c8298dd42db2da5af776b925a6a146bdc05a303e87d26cd1caa89de54 ;;
                   temporal) expected_reviewed_policy_hash=affa4a91e9481be1a52ff5a714da49e28b9a414961519985479a39b70b5feebf ;;
                   esac
                   actual_reviewed_policy_hash=$(

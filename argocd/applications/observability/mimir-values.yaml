@@ -15,7 +15,7 @@ global:
 
 image:
   repository: docker.io/grafana/mimir
-  tag: 3.2.1
+  tag: 3.2.6@sha256:32d79dc873a804d4dbf2724afcbb7b141553b5ed9118f9295972c4bb2982d6fd
 
 mimir:
   structuredConfig:
@@ -105,6 +105,11 @@ distributor:
 
 ingester:
   replicas: 3
+  # Reserve working memory for the TSDB head and replay without capping either.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
   statefulStrategy:
     type: RollingUpdate
   zoneAwareReplication:

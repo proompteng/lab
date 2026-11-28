@@ -164,7 +164,7 @@ Optional overrides:
 - `JANGAR_CODEX_BINARY` (defaults to `codex`)
 - `CODEX_AUTH_JSON` (defaults to `~/.codex/auth.json` when staging the isolated `CODEX_HOME`)
 - `OPENWEBUI_E2E_CODEX_HOME` (defaults to `services/jangar/output/playwright/codex-home`)
-- `JANGAR_MODELS` / `JANGAR_DEFAULT_MODEL` / `OPENWEBUI_E2E_MODEL` (default `gpt-6-astra`)
+- `JANGAR_MODELS` / `JANGAR_DEFAULT_MODEL` / `OPENWEBUI_E2E_MODEL` (default `gpt-6.2-sol`)
 
 Requirements for the default mock-Codex path:
 
@@ -803,4 +803,4 @@ export OPENAI_EMBEDDING_DIMENSION='4096'
 Jangar selects the `flamingo` Codex provider only for `JANGAR_FLAMINGO_MODEL`, using the configured Responses
 endpoint without OpenAI authentication. Flamingo accepts `low`, `medium` or `xhigh` reasoning. Hosted web search and
 ChatGPT Apps are disabled for this provider; the configured MCP servers remain available. Other advertised models,
-including explicit Astra requests, retain the OpenAI provider.
+including GPT-6.2 Sol, retain the OpenAI provider.

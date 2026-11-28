@@ -12,7 +12,12 @@ import {
 } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
-import { SystemRegistrationSchema, validateSystemRegistration, retainedAssessmentTerms } from './policy'
+import {
+  SystemRegistrationSchema,
+  validateSystemRegistration,
+  retainedAssessmentTerms,
+  nativeBrokerRecoveryClose,
+} from './policy'
 import { RealismEvidenceSchema, RealismStatus, measureRealism } from './realism'
 import { ReliabilityInputSchema, ReliabilityStatus, measureReliability } from './reliability'
 import { SessionEvidenceSchema, assessSession } from './session'
@@ -157,7 +162,7 @@ export const evaluateSystemAssessment = (
     requireSource(data.obligationCoverageHash)
     if (data.calendarEvidence === null) missing.push('MISSING_BROKER_CALENDAR')
     else {
-      const observed = qualificationCalendar(data.calendarEvidence)
+      const observed = qualificationCalendar(data.calendarEvidence, registration.calendar.operatingHours)
       if (Result.isFailure(observed)) violations.push('INVALID_BROKER_CALENDAR')
       else {
         requireSource(observed.success.sourceHash)
@@ -173,6 +178,9 @@ export const evaluateSystemAssessment = (
     }
     if (Date.parse(data.asOf) < Date.parse(registration.registeredAt))
       violations.push('ASSESSMENT_PREDATES_REGISTRATION')
+    const recoveryClose = nativeBrokerRecoveryClose(registration)
+    if (recoveryClose !== undefined && Date.parse(data.asOf) < Date.parse(recoveryClose))
+      missing.push('NATIVE_BROKER_RECOVERY_WINDOW_OPEN')
     const evaluated = []
     const expectedDecisions: string[] = []
     const expectedFills: string[] = []
@@ -289,7 +297,7 @@ export const evaluateSystemAssessment = (
       requireSource(violation.sourceHash)
       violations.push(`SAFETY:${violation.kind}`)
     }
-    if (registration.schemaVersion === 'bayn.system-registration.v4')
+    if ('statisticalPlan' in registration)
       for (const support of registration.statisticalPlan.supports) requireSource(support.sourceHash)
     type NumericalEvaluation =
       | ReturnType<typeof evaluateEconomicQualification>
@@ -385,7 +393,7 @@ export const evaluateSystemAssessment = (
         status: edge,
         confidence,
         statisticalAssumptions:
-          registration.schemaVersion === 'bayn.system-registration.v4'
+          'statisticalPlan' in registration
             ? [
                 ...registration.statisticalAssumptions,
                 ...conditionalStatisticalAssumptions,

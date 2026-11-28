@@ -369,7 +369,7 @@ pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value
         .instrument(span.clone()),
     )
     .await
-    .context("guest lifecycle timed out")
+    .context(super::GUEST_LIFECYCLE_TIMEOUT)
     .and_then(|result| result);
     if result.is_err() {
         span.set_status(opentelemetry::trace::Status::error("Operation failed"));

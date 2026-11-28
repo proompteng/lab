@@ -38,9 +38,11 @@ import { momentumReplayProviders, type ReplayInferenceProviders } from './intrad
 import { JevHttpClientLive } from './jev/http'
 import { jevInstructions } from './jev/instructions'
 import { ReplayBrokerFailure } from './intraday-replay/broker'
+import { decodeEquityExecutionTape } from './intraday-replay/equity-execution-tape'
+import { currentEquityMarketProfile as equityMarketProfile } from './jev/markets'
 
 const usage =
-  'Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --instructions | --help'
+  'Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> [--equity-execution-tape <tape.json>] | --instructions | --help'
 
 export const measuredReplayProviderLayer = (policy: NativeReplayPolicy, timeoutMs: number) =>
   Layer.unwrap(
@@ -57,7 +59,12 @@ export const parseBacktestArgs = (args: readonly string[]) => {
   if (args.length === 1 && args[0] === '--help') return { _tag: 'Help' } as const
   if (args.length === 1 && args[0] === '--instructions') return { _tag: 'Instructions' } as const
   if (
-    args.length === 10 &&
+    (args.length === 10 ||
+      (args.length === 12 &&
+        args[10] === '--equity-execution-tape' &&
+        args[11] !== undefined &&
+        args[11].trim().length > 0 &&
+        !args[11].startsWith('--'))) &&
     args[0] === '--input' &&
     args[2] === '--arrivals' &&
     args[4] === '--source-receipt' &&
@@ -78,6 +85,7 @@ export const parseBacktestArgs = (args: readonly string[]) => {
       sourceReceiptPath: args[5],
       sourceReceiptHash: args[7],
       outputPath: args[9],
+      ...(args[11] === undefined ? {} : { equityExecutionTapePath: args[11] }),
     } as const
   return { _tag: 'Invalid' } as const
 }
@@ -125,6 +133,21 @@ const main = Effect.scoped(
       validateBacktestSourceReceipt(sourceReceiptText, args.sourceReceiptHash),
     )
     const prepared = yield* Effect.fromResult(prepareBacktest(parsed, sourceReceipt))
+    const tapeReference = prepared.input.equityExecutionTape
+    if ((tapeReference === undefined) !== (args.equityExecutionTapePath === undefined))
+      return yield* new BacktestCommandFailure({
+        message: 'An equity execution tape requires its declared content and file',
+      })
+    const tape =
+      tapeReference === undefined || args.equityExecutionTapePath === undefined
+        ? undefined
+        : yield* Effect.fromResult(
+            decodeEquityExecutionTape(yield* fs.readFileString(args.equityExecutionTapePath), tapeReference, {
+              universeId: equityMarketProfile.universeId,
+              universeSymbolHash: equityMarketProfile.universeSymbolHash,
+              symbols: equityMarketProfile.universe,
+            }),
+          )
     const databaseInput = yield* Config.all({
       postgresUrl: Config.Redacted('BAYN_BACKTEST_POSTGRES_URL'),
       tigerBeetleAddress: Config.String('BAYN_BACKTEST_TIGERBEETLE_ADDRESS'),
@@ -189,9 +212,10 @@ const main = Effect.scoped(
             ),
           ),
         liveProviders,
+        tape,
       )
     const replay =
-      prepared.input.inference.mode === 'retained-responses' || prepared.input.policy === JevResearchPolicy.Momentum
+      prepared.input.inference.mode === 'retained-responses' || !prepared.requiresInference
         ? execute(null)
         : Effect.gen(function* () {
             const proxy = yield* Config.NonEmptyString('BAYN_EGRESS_PROXY')

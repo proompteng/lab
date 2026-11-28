@@ -34,7 +34,8 @@ bash test-control.sh
 ```
 
 The policy and platform fixtures start disposable, loopback-only SpiceDB and PostgreSQL processes using the production
-versions packaged in `nix build .#ofz-fixture-tools`. Add the resulting `bin` directory to `PATH`, or use the
+versions packaged in `nix build .#ofz-fixture-tools`. PostgreSQL comes from a signed Nixpkgs cache at a pinned revision,
+with its version checked against the AgentRun package. Add the resulting `bin` directory to `PATH`, or use the
 [AgentRun environment](../../docs/agents/runner-environment.md). These callers require no Docker daemon.
 It never reads or modifies production relationships. It checks the complete human role matrix, platform membership
 revocation, workspace isolation, and native grant expiration. API, crash, broker and product acceptance are
@@ -306,7 +307,7 @@ The fixture promotes a two-node disposable database; it does not establish three
 synchronous write availability. Ofz CI runs the combined control and promotion fixture once, and rejects an empty
 selection of the exact promotion test. Shared runtime validation remains in the Tengri image workflow.
 
-The HA fixture also forms a two-node Keycloak 26.7.4 production cluster with JDBC discovery and transport mTLS.
+The HA fixture also forms a two-node Keycloak 26.8.2 production cluster with JDBC discovery and transport mTLS.
 Killing its serving process during an in-flight passkey challenge preserves the subject and credential identities,
 completing authentication on the survivor within thirty seconds. The fixture does not prove CNPG or Kubernetes
 node failover. Validate the complete prepared targets with `bash services/ofz/test-ha-manifests.sh`; the PR schema

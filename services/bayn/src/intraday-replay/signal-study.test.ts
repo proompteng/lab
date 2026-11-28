@@ -7,7 +7,13 @@ import { Result } from 'effect'
 import { OrderSide, OrderType } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
+import { decodeJevResponse } from '../jev/contract'
+import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
+import { JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
+import { decideJevEntry } from '../jev/decision'
+import { shortNativeEntryFixture } from '../jev/short-entry.test-support'
+import { retainedJevProtocolV41Document } from '../jev/protocol'
 import { makeJevObservation } from '../jev/observation'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -26,6 +32,54 @@ const batch = (supportsEntry = true) => {
   const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence(fixture, supportsEntry)
   return evidence
 }
+
+test('refuses a reproduced native short instead of evaluating its symbol as a long', () => {
+  const short = Result.getOrThrow(shortNativeEntryFixture())
+  const { decidedAt: _at, ...evidence } = short.evidence
+  expect(short.decision.selectedSymbols).toEqual(['AAPL'])
+  expect(short.decision.targetWeights['AAPL']).toBe(-0.2)
+
+  const actual = prepareSignalStudyBatch(evidence)
+  expect(Result.isFailure(actual)).toBe(true)
+  if (Result.isSuccess(actual)) throw new Error('A short selection must not become a long study label')
+  expect(actual.failure).toMatchObject({
+    _tag: 'SignalStudyFailure',
+    cause: {
+      message: expect.stringContaining(
+        `SHORT selection AAPL (target weight -0.2) in batch ${evidence.batchPlan.batchId}`,
+      ),
+    },
+  })
+})
+
+test('retains a native long selection when its candidate evidence also contains funded shorts', () => {
+  const short = Result.getOrThrow(shortNativeEntryFixture(undefined, retainedJevProtocolV41Document))
+  const { decidedAt, ...evidence } = nativeJevDecisionEvidence({
+    observation: {
+      payload: short.observation,
+      contentHash: Result.getOrThrow(canonicalHashV1Result(short.observation)),
+    },
+    protocol: short.protocol,
+  })
+  const native = Result.getOrThrow(decideJevEntry({ ...evidence, decidedAt }))
+  expect(native.selectedSymbols).toEqual(['AAPL'])
+  expect(native.targetWeights['AAPL']).toBe(0.2)
+  const candidate = evidence.batchResult.candidates.find((entry) => entry.symbol === 'AAPL')
+  if (
+    candidate?.status !== 'RESOLVED' ||
+    candidate.receipt === null ||
+    candidate.receipt.outcome.status !== 'COMPLETED'
+  )
+    throw new Error('Expected source-bound native AAPL completion')
+  const disposition = candidate.receipt.outcome.completion.handoff.disposition
+  if (disposition.status !== 'READY') throw new Error('Expected funded native proposals')
+  expect(
+    disposition.evaluation.proposals.some(
+      (proposal) => proposal.schemaVersion === 'bayn.equity-short-entry-proposal.v1',
+    ),
+  ).toBe(true)
+  expect(Result.getOrThrow(prepareSignalStudyBatch(evidence)).selected[SignalScreenRule.Jev]).toBe('AAPL')
+})
 const at = Date.parse(fixture.observation.payload.observedAt)
 const assumptions = {
   instruments: replayTestInstruments,
@@ -124,13 +178,101 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   expect(Object.keys(factors.answers)).toEqual([
     'equity_support_recovery_confirmed',
     'equity_support_recovery_stop_invalidates',
+    'equity_support_recovery_target_obstructed',
     'equity_base_breakout_confirmed',
     'equity_base_breakout_stop_invalidates',
+    'equity_base_breakout_target_obstructed',
   ])
   expect(factors.answers['equity_support_recovery_confirmed']).toMatchObject({
     type: 'noul',
     noul: expect.closeTo(0.1),
   })
+})
+
+test('screen enforces v42 target obstruction thresholds and weighting in judgmentSupport', () => {
+  const base = batch()
+  const rebuildWithObstruction = (aaplObstruction: number) => {
+    const at = base.batchResult!.completedAt
+    const candidates = base.batchPlan.candidates.map((candidate) => {
+      if (candidate.status === 'EXCLUDED')
+        return { status: JevCandidateResultStatus.Excluded, symbol: candidate.symbol }
+      const existing = base.batchResult!.candidates.find((entry) => entry.symbol === candidate.symbol)
+      if (existing?.status !== 'RESOLVED' || existing.receipt?.outcome.status !== 'COMPLETED')
+        throw new Error('Expected completed candidate receipt')
+      const completion = existing.receipt.outcome.completion
+      if (completion.handoff.disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
+        throw new Error('Expected READY completion with Jev response')
+      const answers =
+        candidate.symbol === 'AAPL'
+          ? Object.fromEntries(
+              Object.entries(completion.jev.inference.response.answers).map(([name, answer]) => [
+                name,
+                name.endsWith('_target_obstructed') ? { type: 'noul' as const, noul: aaplObstruction } : answer,
+              ]),
+            )
+          : completion.jev.inference.response.answers
+      const response = Result.getOrThrow(
+        decodeJevResponse(completion.handoff.disposition.jevRequest, {
+          model: completion.jev.inference.response.model,
+          answers,
+          usage: completion.jev.inference.response.usage,
+        }),
+      )
+      const receipt = Result.getOrThrow(
+        makeJevEvaluationReceipt(candidate.request, {
+          schemaVersion: 'bayn.jev-evaluation-receipt.v3',
+          requestId: candidate.request.requestId,
+          startedAt: at,
+          completedAt: at,
+          outcome: {
+            status: JevOutcome.Completed,
+            completion: {
+              ...completion,
+              jev: {
+                ...completion.jev,
+                inference: {
+                  ...completion.jev.inference,
+                  response,
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                },
+              },
+            },
+          },
+        }),
+      )
+      const resolution = Result.getOrThrow(
+        makeJevResolution(candidate.request, receipt, {
+          schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+          requestId: candidate.request.requestId,
+          status: JevResolutionStatus.Recorded,
+          receiptHash: receipt.receiptHash,
+        }),
+      )
+      return {
+        status: JevCandidateResultStatus.Resolved,
+        symbol: candidate.symbol,
+        requestId: candidate.request.requestId,
+        receipt,
+        resolution,
+      }
+    })
+    return {
+      observation: base.observation,
+      batchPlan: base.batchPlan,
+      batchResult: Result.getOrThrow(
+        makeJevBatchResult(base.batchPlan, {
+          schemaVersion: 'bayn.jev-batch-result.v1',
+          batchId: base.batchPlan.batchId,
+          completedAt: at,
+          candidates,
+        }),
+      ),
+    }
+  }
+  const weighted = Result.getOrThrow(prepareSignalStudyBatch(rebuildWithObstruction(0.2)))
+  expect(weighted.signals.find((signal) => signal.symbol === 'AAPL')?.judgmentSupport).toBeCloseTo(0.8)
+  const obstructed = Result.getOrThrow(prepareSignalStudyBatch(rebuildWithObstruction(0.5)))
+  expect(obstructed.signals.find((signal) => signal.symbol === 'AAPL')?.judgmentSupport).toBeNull()
 })
 
 test('factor outcomes retain unselected candidates and unresolved labels in each denominator', () => {

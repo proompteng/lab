@@ -10,6 +10,7 @@ import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { isBracketProtection, isOcoProtection } from '../../execution/contracts'
 import {
   CycleDecisionRow,
+  CycleDecisionJsonRow,
   FillExecutionRow,
   IntentExecutionRow,
   MarketVolumeBindingRow,
@@ -53,6 +54,19 @@ export const verifyPerformanceDecisions = (rows: readonly (typeof CycleDecisionR
     else verifiedRows.push({ ...row, document: decoded.success })
   }
   return { verifiedRows, unverifiedDecisionHashes: [...new Set(unverifiedDecisionHashes)].sort() }
+}
+
+const decodeDecisionJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
+
+/** Keep the PostgreSQL JSON text opaque until its owning verifier, avoiding a deep cross-thread clone. */
+export const verifyPerformanceDecisionJson = (
+  row: typeof CycleDecisionJsonRow.Type,
+): ReturnType<typeof verifyPerformanceDecisions> => {
+  const { document_json: _json, ...metadata } = row
+  if (row.document_json === null) return verifyPerformanceDecisions([{ ...metadata, document: null }])
+  const parsed = decodeDecisionJson(row.document_json)
+  if (Result.isFailure(parsed)) return { verifiedRows: [], unverifiedDecisionHashes: [row.decision_hash] }
+  return verifyPerformanceDecisions([{ ...metadata, document: parsed.success }])
 }
 
 export const uniqueRows = <Row>(rows: readonly Row[], key: (row: Row) => string): ReadonlyMap<string, Row | null> => {

@@ -5,7 +5,7 @@ const metadata: CodexHistoryPage = {
   type: 'page',
   part: 'thread',
   eventSequence: 10,
-  rawJson: JSON.stringify({ thread: { id: 'thread-one', historyMode: 'paginated', turns: [] }, model: 'gpt-6.1-sol' }),
+  rawJson: JSON.stringify({ thread: { id: 'thread-one', historyMode: 'paginated', turns: [] }, model: 'gpt-6.2-sol' }),
 }
 const items = (data: unknown[], cursor: string | null, sequence = 20): CodexHistoryPage => ({
   type: 'page',
@@ -45,7 +45,7 @@ test('restores more than 10 MiB across bounded pages without losing items, empty
   expect(restored.itemEventSequences).toEqual({ first: 20, second: 25 })
   const snapshot = JSON.parse(restored.rawJson)
   expect(restored.rawJson.length).toBeGreaterThan(10 * 1024 * 1024)
-  expect(snapshot.model).toBe('gpt-6.1-sol')
+  expect(snapshot.model).toBe('gpt-6.2-sol')
   expect(snapshot.thread.turns[0].items).toEqual([item('first', text).item, item('second', text).item])
   expect(snapshot.thread.turns[1]).toMatchObject({
     id: 'empty-active',

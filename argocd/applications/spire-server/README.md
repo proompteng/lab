@@ -1,7 +1,7 @@
 # Galactic SPIRE
 
 The `spire-server` and `spire-system` Applications install SPIRE through the platform ApplicationSet.
-The upstream SPIRE chart is pinned to `0.30.2`, SPIRE to `1.15.3`, and the CRD chart to `0.6.1`.
+The upstream SPIRE chart is pinned to `0.31.0`, SPIRE to `1.16.0`, and the CRD chart to `0.6.1`.
 Both Helm applications use the existing Lovely renderer and its Helm 3 toolchain.
 
 ## Ownership and identity
@@ -105,7 +105,7 @@ the agents through a reviewed GitOps pod-template change so they load the replac
 ## Persistence and availability
 
 Three SPIRE servers share the dedicated `spire-db` PostgreSQL datastore through its primary Service. The CloudNativePG
-cluster has three PostgreSQL 18.6 instances with preferred host separation, one synchronous standby, generated application
+cluster has three PostgreSQL 18.7 instances with preferred host separation, one synchronous standby, generated application
 credentials, automatic primary failover, and daily Ceph volume-snapshot backups. The connection validates the server
 certificate and hostname with the CNPG CA; no password is stored in Git or the server ConfigMap. No Prometheus server
 is introduced.

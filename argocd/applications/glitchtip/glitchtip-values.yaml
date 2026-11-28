@@ -1,8 +1,8 @@
-# MIT-licensed GlitchTip 6.2.6 on the official Helm chart 9.0.1.
+# MIT-licensed GlitchTip 7.0.0 on the official Helm chart 9.2.0.
 # Keep logs and distributed tracing in Loki/Tempo; only ingest Sentry SDK errors here.
 image:
   repository: glitchtip/glitchtip
-  tag: 6.2.6
+  tag: 7.0.0@sha256:c245745b4179667da3aebd73fb8d4f1fd918f7d68ba07d1fd73ea688933b6e01
   pullPolicy: IfNotPresent
 
 replicaCount: 2
@@ -24,7 +24,7 @@ postgresql:
       size: 20Gi
       storageClass: rook-ceph-block
 
-# GlitchTip 6.2 supports PostgreSQL-backed async tasks and session storage.
+# GlitchTip supports PostgreSQL-backed async tasks and session storage.
 # Avoid adding a second cache cluster to this low-volume internal service.
 valkey:
   enabled: false
@@ -56,7 +56,7 @@ resources:
 migrationJob:
   enabled: true
   activeDeadlineSeconds: 900
-  # Upstream chart 9.0.1 does not inherit extraEnvVars in the migration pod.
+  # Keep the migration pod on the same database-backed queue as the web pods.
   # Without this, Django skips the PostgreSQL-backed task and session apps,
   # reporting a successful migration while omitting db_* / django_session.
   extraEnvVars:

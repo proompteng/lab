@@ -4,6 +4,12 @@
 over immediately executable positive benchmark-relative momentum on the same observed opportunities? It runs entirely offline and
 never calls a provider, places orders, changes safeguards or promotes a strategy.
 
+This frozen experiment evaluates long entries. A reproduced native short selection is rejected with its symbol,
+signed target weight and batch identity before simulation; it is never simulated as a long or counted as an
+abstention. A v41 batch which selects a long remains eligible even when other funded proposals are short. The
+signal and capital study callers share this guard. Evaluating the current long/short strategy requires a separate
+frozen definition with signed entry/cover management and witnessed borrow, margin and cost assumptions.
+
 The definition is TypeScript in `src/intraday-replay/matched-entry-study.ts`. It fixes five consecutive exchange sessions or continuous UTC observation days,
 at least twenty different selections, a USD 10,000 budget quantized by frozen broker instrument increments per opportunity, five-second management polls,
 a 50 bp price stop, a 100 bp estimated execution-net profit target including adverse exit allowance, a 15-minute maximum hold and the five-minute close window. Three independent arms use identical execution assumptions and mechanical management. Immediate momentum starts

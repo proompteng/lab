@@ -19,6 +19,7 @@ import {
 } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
+import { freezeEvidence } from '../immutable-evidence'
 import { JevContractError } from './contract'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { instrumentMarket, MarketKind } from '../instruments'
@@ -28,9 +29,10 @@ import {
   JevCandidatePlanStatus,
   JevEntryExclusion,
   makeJevBatchPlan,
+  type JevBatchPlan,
 } from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
-import { reproduceJevCandidateObservation } from './observation'
+import { isOwnedJevObservation, reproduceJevCandidateObservation, type OwnedJevObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
@@ -47,12 +49,15 @@ const signalPriceMicros = (value: number, field: string) =>
     return yield* scaledNumber(Number(BigDecimal.scale(rounded, 6).value), field, 1)
   })
 
-export const jevEntryQuoteExclusion = (quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>) =>
+export const jevEntryQuoteExclusion = (
+  quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>,
+  maximumEntrySpreadBps?: number,
+) =>
   Result.gen(function* () {
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-    if ((ask - bid) * 20_000n > BigInt(jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps) * (ask + bid))
-      return JevEntryExclusion.Spread
+    const spreadCap = maximumEntrySpreadBps ?? jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps
+    if ((ask - bid) * 20_000n > BigInt(spreadCap) * (ask + bid)) return JevEntryExclusion.Spread
     if (quote.bidSize <= 0 || quote.askSize <= 0) return JevEntryExclusion.DisplayedSize
     return null
   })
@@ -360,7 +365,10 @@ export const jevTradingSignalRequestMaterial = (
         askMicros: candidate.prices.ask.toString(),
         capitalMicros: native.portfolio.brokerState.account.equityMicros,
         cryptoFeeTier,
-        ...(native.protocol.schemaVersion === 'bayn.jev.protocol.v41' &&
+        ...((native.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+          native.protocol.schemaVersion === 'bayn.jev.protocol.v42' ||
+          native.protocol.schemaVersion === 'bayn.jev.protocol.v43' ||
+          native.protocol.schemaVersion === 'bayn.jev.protocol.v44') &&
         equityClockSession(snapshot.manifest.observedAt) === 'regular' &&
         equityShortIsEligible(
           native.equityShortEligibility?.[symbol],
@@ -559,6 +567,36 @@ export const makeJevTradingSignalBatch = (input: {
   reproduceJevCandidateObservation(input.observation).pipe(
     Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt, input.planVersion)),
   )
+
+const PreparedBatchTypeId: unique symbol = Symbol('PreparedJevBatch')
+
+export interface PreparedJevBatch {
+  readonly [PreparedBatchTypeId]: true
+  readonly plan: JevBatchPlan
+  readonly source: OwnedJevObservation
+}
+
+// Admission authenticates the original frozen object, including its plan and source pairing.
+const preparedBatches = new WeakSet<PreparedJevBatch>()
+
+export const isPreparedJevBatch = (batch: PreparedJevBatch) => preparedBatches.has(batch)
+
+export const prepareJevTradingSignalBatch = (
+  source: OwnedJevObservation,
+  expiresAt: string,
+  planVersion: JevBatchPlanVersion,
+) =>
+  Result.gen(function* () {
+    if (!isOwnedJevObservation(source)) return yield* unavailable('Jev batch requires an independently verified source')
+    const plan = yield* batchFromObservation(source.verified, expiresAt, planVersion)
+    const batch = Object.freeze({
+      [PreparedBatchTypeId]: true,
+      plan: freezeEvidence(plan),
+      source,
+    } satisfies PreparedJevBatch)
+    preparedBatches.add(batch)
+    return batch
+  })
 
 export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>
   Result.gen(function* () {

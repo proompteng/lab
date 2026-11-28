@@ -9,7 +9,7 @@ test('native Alloy accepts Kubernetes RGW line endings and forwards only sanitiz
   const alloy = process.env.ALLOY ?? 'alloy'
   const version = spawnSync(alloy, ['--version'], { encoding: 'utf8' })
   expect(version.status).toBe(0)
-  expect(version.stdout).toContain('version v1.19.2')
+  expect(version.stdout).toContain('version v1.22.0')
   const config = readFileSync(
     new URL('../../../../../argocd/applications/observability/cluster-metrics-alloy-config.river', import.meta.url),
     'utf8',

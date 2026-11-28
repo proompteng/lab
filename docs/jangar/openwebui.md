@@ -36,11 +36,11 @@ The request header `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and 
 
 ## Model & backend wiring
 
-- OpenAI backends: Flamingo first at `http://flamingo.flamingo.svc.cluster.local/v1`, then Jangar at `http://jangar.jangar.svc.cluster.local/openai/v1`. Chart values select the default model and preserve this order.
+- OpenAI backends: Flamingo first at `http://flamingo.flamingo.svc.cluster.local/v1`, then Jangar at `http://jangar.jangar.svc.cluster.local/openai/v1`. New chats default to GPT-6.2 Sol through Jangar.
 - Auth/signup remain disabled (`WEBUI_AUTH=false`, `ENABLE_SIGNUP=false`).
 - Websockets: `WEBSOCKET_MANAGER=redis`, `WEBSOCKET_REDIS_URL=redis://jangar-openwebui-redis:6379/0` (Redis provided by the operator, not the chart).
 - Database: `DATABASE_URL` from CNPG secret `jangar-db-app`; TLS root cert from `jangar-db-ca`.
-- Current code returns configured models from `/v1/models` (default `gpt-6-astra`); set `JANGAR_MODELS`/`JANGAR_DEFAULT_MODEL` or update `services/jangar/src/server/config.ts` if this needs to change.
+- Current code returns configured models from `/v1/models` (default `gpt-6.2-sol`); set `JANGAR_MODELS`/`JANGAR_DEFAULT_MODEL` or update `services/jangar/src/server/chat-config.ts` if this needs to change.
 
 ## Delivery and recovery
 

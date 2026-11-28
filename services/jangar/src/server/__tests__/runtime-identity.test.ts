@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isAgentsRuntimeService, resolveRuntimeServiceName } from '../runtime-identity'
+import { resolveRuntimeServiceName } from '../runtime-identity'
 
 describe('Jangar runtime identity', () => {
   it('defaults to Jangar for Jangar image metadata', () => {
@@ -20,7 +20,6 @@ describe('Jangar runtime identity', () => {
   })
 
   it('ignores transitional Agents runtime overrides', () => {
-    expect(isAgentsRuntimeService({ AGENTS_RUNTIME_SERVICE: 'agents' })).toBe(false)
     expect(resolveRuntimeServiceName({ AGENTS_RUNTIME_SERVICE: '1' })).toBe('jangar')
   })
 })

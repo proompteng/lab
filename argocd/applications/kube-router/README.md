@@ -1,20 +1,20 @@
 # kube-router NetworkPolicy controller
 
-This manual Argo CD application runs kube-router v2.11.1 only as a Kubernetes NetworkPolicy controller. Flannel remains
+This manual Argo CD application runs kube-router v2.12.0 only as a Kubernetes NetworkPolicy controller. Flannel remains
 the CNI and kube-proxy remains the nftables service proxy. Routing, service proxying, load-balancer allocation, CNI
 installation, and IPv6 are explicitly disabled.
 
 The image is pinned to the multi-architecture index
-`sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a`. Its expected Linux platform manifests are:
+`sha256:e1da38f71e2f1521e7a74c5cdaa511fdee9d2ee76972b25c9b5785b030b96fe4`. Its expected Linux platform manifests are:
 
-- amd64: `sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2`
-- arm64: `sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b`
+- amd64: `sha256:29034446e59a9e984a8a720c03f2ba1ce4e61ebb938d1a88c8f40b08bdb06c78`
+- arm64: `sha256:c9b534a88b5a09abe452ba5a20d528e106c640416de95f4e9b6cc308fd24c54a`
 
 ## Activation safety
 
 The application is manual. Sync wave `-3` retains allow-all policies in agents, argocd, bilig, kafka, media,
 pgadmin, synthesis and torghut. Bayn retains an inert policy whose selector must match no Pods.
-Hermes, optional Tengri and Relay, and the six policy sets listed in the rollout runbook keep their restrictive
+Hermes, optional Tengri and Relay, and the reviewed policy sets listed in the rollout runbook keep their restrictive
 policies enforced. Those namespaces receive no allow-all policy during activation.
 
 The bounded wave `-2` hook validates the complete live namespace set, each retained safety policy and the

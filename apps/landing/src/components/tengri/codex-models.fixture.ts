@@ -2,8 +2,8 @@ import type { TengriCodexModel } from '@/lib/tengri/codex-models'
 
 export const codexModelFixtures = [
   {
-    model: 'gpt-6.1-sol',
-    displayName: 'GPT-6.1 Sol',
+    model: 'gpt-6.2-sol',
+    displayName: 'GPT-6.2 Sol',
     description: 'Coding and everyday work',
     defaultReasoningEffort: 'low',
     supportedReasoningEfforts: [

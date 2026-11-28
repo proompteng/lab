@@ -357,13 +357,24 @@ const groupIntradayVolumeRequests = (requests: readonly ForwardPerformanceIntrad
     return [...groups.values()]
   })
 
-const readIntradayPerformanceVolume = (group: Effect.Success<ReturnType<typeof groupIntradayVolumeRequests>>[number]) =>
+type IntradayWatermarkCapture = ReturnType<
+  ReturnType<typeof makeIntradayMarketDataQueries>['captureIntradayArchiveWatermarks']
+>
+type SharedIntradayWatermarkCapture = Effect.Effect<
+  Effect.Success<IntradayWatermarkCapture>,
+  Effect.Error<IntradayWatermarkCapture>
+>
+
+const readIntradayPerformanceVolume = (
+  group: Effect.Success<ReturnType<typeof groupIntradayVolumeRequests>>[number],
+  capture: SharedIntradayWatermarkCapture,
+) =>
   Effect.gen(function* () {
     const first = group[0]
     if (first === undefined) return []
     const { original, query } = first
     const queries = makeIntradayMarketDataQueries(yield* ClickhouseClient.ClickhouseClient)
-    const rawWatermarks = yield* queries.captureIntradayArchiveWatermarks(query)
+    const rawWatermarks = yield* capture
     const archiveWatermarks = yield* Effect.fromResult(verifyIntradayArchiveWatermarks(original, rawWatermarks))
     const archiveRequest = { ...query, archiveWatermarks }
     const rawBars = yield* loadIntradayArchivePages(
@@ -493,7 +504,28 @@ export const readForwardPerformanceMarketVolumeWithClient = (
     const intradayGroups = yield* groupIntradayVolumeRequests(
       requests.filter((request) => 'decisionManifest' in request),
     )
-    const intraday = yield* Effect.forEach(intradayGroups, readIntradayPerformanceVolume, { concurrency: 8 })
+    const queries = makeIntradayMarketDataQueries(sql)
+    const captures = new Map<string, SharedIntradayWatermarkCapture>()
+    const intradayReads = yield* Effect.forEach(intradayGroups, (group) =>
+      Effect.gen(function* () {
+        const first = group[0]
+        if (first === undefined) return { group, capture: Effect.succeed([]) }
+        // Watermark SQL scans the entire universe; symbol-specific bar queries retain their original grouping.
+        const { symbols: _symbols, archiveWatermarks: _decisionWatermarks, ...captureQuery } = first.query
+        const key = yield* Effect.fromResult(canonicalHashV1Result(captureQuery))
+        let capture = captures.get(key)
+        if (capture === undefined) {
+          capture = yield* Effect.cached(queries.captureIntradayArchiveWatermarks(first.query))
+          captures.set(key, capture)
+        }
+        return { group, capture }
+      }),
+    )
+    const intraday = yield* Effect.forEach(
+      intradayReads,
+      ({ group, capture }) => readIntradayPerformanceVolume(group, capture),
+      { concurrency: 8 },
+    )
     const evidence: ForwardPerformanceMarketVolumeEvidence[] = [
       ...groups.flat(),
       ...intraday.flat().filter((item) => item !== undefined),
@@ -791,6 +823,10 @@ const completeForwardPerformanceInput = (
           ...(record.coin_cost_basis_micros === null ? {} : { inventoryCostMicros: record.coin_cost_basis_micros }),
         })),
       executionEvidence,
+      ...(postgres.alphaDecisions === undefined ? {} : { alphaDecisions: postgres.alphaDecisions }),
+      ...(postgres.unverifiedAlphaDecisionHashes === undefined
+        ? {}
+        : { unverifiedAlphaDecisionHashes: postgres.unverifiedAlphaDecisionHashes }),
       ...(postgres.unverifiedDecisionHashes === undefined
         ? {}
         : { unverifiedDecisionHashes: postgres.unverifiedDecisionHashes }),

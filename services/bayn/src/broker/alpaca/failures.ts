@@ -36,6 +36,7 @@ export type BrokerReadOperation =
   | 'order-by-client-id'
   | 'fill-activities'
   | 'fee-activities'
+  | 'non-trade-activities'
   | 'asset-by-symbol'
   | 'market-calendar'
 
@@ -48,8 +49,7 @@ export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
   readonly requestId?: string
   readonly contentHash?: string
   readonly observedAt?: string
-  /** Local projection absence, never inferred from a provider timeout or response. */
-  readonly observationFailure?: 'NO_ADMISSIBLE_CUT'
+  readonly observationFailure?: 'NO_ADMISSIBLE_CUT' | 'CASH_FEES_PENDING'
   readonly pollFailureReason?: BrokerPollFailureReason
   readonly cause?: unknown
 }> {}

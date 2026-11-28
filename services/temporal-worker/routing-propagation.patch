@@ -1,6 +1,6 @@
 --- a/service/worker/workerdeployment/workflow.go
 +++ b/service/worker/workerdeployment/workflow.go
-@@ -30,6 +30,7 @@
+@@ -33,6 +33,7 @@
  	// SignalHandler encapsulates the signal handling logic
  	SignalHandler struct {
  		signalSelector    workflow.Selector
@@ -8,15 +8,15 @@
  		processingSignals int
  	}
  
-@@ -72,6 +73,7 @@
- 		unsafeMaxVersion:             unsafeMaxVersion,
+@@ -83,6 +84,7 @@
+ 		versionDemotionSignalEnabledGetter: versionDemotionSignalEnabledGetter,
  		signalHandler: &SignalHandler{
  			signalSelector: workflow.NewSelector(ctx),
 +			drainSignals:   workflow.NewChannel(ctx),
  		},
  	}
  
-@@ -131,6 +133,12 @@
+@@ -177,6 +179,12 @@
  		d.setStateChanged()
  	})
  
@@ -29,7 +29,7 @@
  	// Keep waiting for signals, when it's time to CaN the main goroutine will exit.
  	for {
  		d.signalHandler.signalSelector.Select(ctx)
-@@ -385,7 +393,7 @@
+@@ -431,7 +439,7 @@
  
  	// Wait until we can continue as new or are cancelled. The workflow will continue-as-new iff
  	// there are no pending updates/signals and the state has changed.
@@ -38,14 +38,14 @@
  		canContinue := d.deleteDeployment || // deployment is deleted -> it's ok to drop all signals and updates.
  			// There is no pending signal or update, but the state is dirty or forceCaN is requested:
  			(!d.signalHandler.signalSelector.HasPending() && d.signalHandler.processingSignals == 0 && workflow.AllHandlersFinished(ctx) &&
-@@ -405,10 +413,22 @@
+@@ -451,9 +459,21 @@
  				"routing_config", d.State.GetRoutingConfig())
  		}
  		return canContinue
 -	})
 -	if err != nil {
 -		return err
- 	}
++	}
 +	for {
 +		if err := workflow.Await(ctx, readyToContinue); err != nil {
 +			return err
@@ -60,11 +60,10 @@
 +		if readyToContinue() {
 +			break
 +		}
-+	}
+ 	}
  
  	if d.deleteDeployment {
- 		return nil
-@@ -1227,9 +1247,9 @@
+@@ -1300,9 +1320,9 @@
  	}, nil
  }
  
@@ -76,7 +75,7 @@
  		return temporal.NewApplicationError("no change", errNoChangeType, d.State.ConflictToken)
  	}
  	if args.ConflictToken != nil && !bytes.Equal(args.ConflictToken, d.State.ConflictToken) {
-@@ -1252,7 +1272,7 @@
+@@ -1325,7 +1345,7 @@
  		return err
  	}
  
@@ -85,7 +84,7 @@
  }
  
  //nolint:staticcheck // deprecated stuff will be cleaned
-@@ -1286,7 +1306,8 @@
+@@ -1359,7 +1379,8 @@
  	// might be accepted by the validator since the state of the workflow, at that point in time, is valid for the updates to take place. Since this update handler
  	// enforces sequential updates, after the first update completes, the local state of the deployment workflow will change. The second update,
  	// now already accepted by the validator, should now not be allowed to run since the state of the workflow is different.
@@ -95,10 +94,10 @@
  	if err != nil {
  		return nil, err
  	}
-@@ -1437,6 +1458,10 @@
+@@ -1526,6 +1547,10 @@
  
- 		// update local state - use pendingRoutingConfig (initialized for both sync and async modes)
- 		d.State.RoutingConfig = pendingRoutingConfig
+ 			d.State.RoutingConfig = pendingRoutingConfig
+ 		}
 +	} else if len(d.State.PropagatingRevisions) > 0 && reconcilePending {
 +		if err := d.reconcilePendingRouting(ctx, args); err != nil {
 +			return nil, err

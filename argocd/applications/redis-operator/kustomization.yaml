@@ -4,7 +4,21 @@ namespace: redis-operator
 helmCharts:
   - name: redis-operator
     repo: https://ot-container-kit.github.io/helm-charts
-    version: 0.26.1
+    version: 0.27.0
     releaseName: redis-operator
     namespace: redis-operator
     includeCRDs: true
+    valuesInline:
+      rbac:
+        aggregate: false
+patches:
+  - target:
+      kind: CustomResourceDefinition
+    patch: |-
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: redis-operator-crds
+        annotations:
+          argocd.argoproj.io/sync-wave: "-1"
+          argocd.argoproj.io/sync-options: ServerSideApply=true
