@@ -1,10 +1,23 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+
 import { expect, test } from 'bun:test'
 
 import { createReplay, netAt, prepare, type Bar, type Day } from './noise-area-study-replay'
 import { stationaryBootstrap } from './noise-area-study-statistics'
 import { decomposition, summarize } from './overnight-etf-statistics'
-import { afterFreeze, b0, books, gateAtClose, replayBook, settleNoise } from './research-10yr-etf-overnight-vs-intraday'
-import { assets, universe, type Session, type Symbol } from './vol-regime-carry-data'
+import {
+  afterFreeze,
+  b0,
+  books,
+  gateAtClose,
+  replayBook,
+  settleNoise,
+  verifyPublished,
+} from './research-10yr-etf-overnight-vs-intraday'
+import { assets, hash, universe, type Session, type Symbol } from './vol-regime-carry-data'
 
 const session = (date: string, prices: Partial<Record<Symbol, readonly [number, number]>> = {}): Session => ({
   date,
@@ -161,6 +174,76 @@ test('mismatched development receipt never opens holdout', async () => {
   expect(() => afterFreeze('computed', 'different', load)).toThrow('does not reproduce')
   expect(opens).toBe(0)
   expect(await afterFreeze('exact', 'exact', load)).toBe(1)
+})
+
+test('authenticates the original receipts when one squash commit introduces both files', () => {
+  const evidence = 'docs/bayn/evidence/2026-11-27-10yr-etf-overnight-vs-intraday'
+  const protocolPath = `${evidence}/protocol.md`
+  const freezePath = `${evidence}/freeze.json`
+  const original = JSON.parse(readFileSync(new URL(`../../../${freezePath}`, import.meta.url), 'utf8')) as {
+    files: Record<string, string>
+  }
+  const cwd = mkdtempSync(join(tmpdir(), 'bayn-wave9a-'))
+  const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' })
+  const write = (path: string, content: string) => {
+    const file = join(cwd, path)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, content)
+  }
+  const commit = (message: string) => {
+    git('add', '.')
+    git('commit', '--quiet', '-m', message)
+    return git('rev-parse', 'HEAD').trim()
+  }
+  try {
+    git('init', '--quiet', '--initial-branch=checkout')
+    git('config', 'user.name', 'Wave 9A test')
+    git('config', 'user.email', 'wave9a@example.invalid')
+    git('config', 'commit.gpgsign', 'false')
+    git('commit', '--quiet', '--allow-empty', '-m', 'base')
+    git('switch', '--quiet', '-c', 'published')
+    const protocol = 'registered protocol\n'
+    write(protocolPath, protocol)
+    const protocolCommit = commit('publish protocol')
+    const files = Object.fromEntries(
+      Object.keys(original.files).map((path) => {
+        const content = path === protocolPath ? protocol : `published ${path}\n`
+        write(path, content)
+        return [path, hash(content)]
+      }),
+    )
+    const freeze = JSON.stringify({ schema: 'bayn.research.wave-9a.freeze.v1', protocolCommit, files }) + '\n'
+    write(freezePath, freeze)
+    const freezeCommit = commit('publish freeze')
+    const freezeSha256 = hash(freeze)
+    const receipt = { protocolCommit, freezeCommit, freezeSha256 }
+
+    git('switch', '--quiet', 'checkout')
+    git('merge', '--quiet', '--squash', 'published')
+    write('services/bayn/tools/noise-area-study-replay.ts', 'merged replay with the same B0 behavior\n')
+    const squash = commit('squash published branch')
+    expect(git('log', '-1', '--format=%H', '--', protocolPath).trim()).toBe(squash)
+    expect(git('log', '-1', '--diff-filter=A', '--format=%H', '--', freezePath).trim()).toBe(squash)
+    expect(git('merge-base', freezeCommit, 'HEAD').trim()).not.toBe(freezeCommit)
+
+    expect(verifyPublished(git, receipt)).toEqual({
+      protocolCommit,
+      files,
+      publication: { freezeCommit, freezeSha256, freeze },
+    })
+    expect(() => verifyPublished(git, { ...receipt, protocolCommit: freezeCommit })).toThrow('merge-base')
+    expect(() => verifyPublished(git, { ...receipt, freezeSha256: hash('different bytes') })).toThrow(
+      'published SHA-256',
+    )
+    write(protocolPath, 'changed protocol\n')
+    expect(() => verifyPublished(git, receipt)).toThrow('git diff HEAD')
+    commit('change protocol')
+    expect(() => verifyPublished(git, receipt)).toThrow(
+      `Checkout differs from the published freeze for ${protocolPath}`,
+    )
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 test('C4 funds a realized B0 loss through a closing core sale, including its fee', () => {

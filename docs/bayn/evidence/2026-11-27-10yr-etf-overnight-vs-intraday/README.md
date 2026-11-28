@@ -54,7 +54,17 @@ at 5 bp in Full. This report's Sharpe divides dollar P&L by each actual prior NA
 denominator; the 2 bp B0 Sharpe is **1.07** rather than the original fixed-reference **1.11**. The 2 bp Full
 B0 dollar drawdown is still **$8,702.36**.
 
-To reproduce from the repo root with the published head reachable and configured read-only S3 access:
+To reproduce from the repo root at the reviewed Wave 9A revision, configure read-only S3 access. If the
+original publication objects are missing locally after a squash or in a shallow checkout, fetch them by
+their recorded commits first:
+
+```sh
+git fetch origin d8b364b97b36e83b9d27a6cc673583043bd2fe6a 5266509f14b4eaaf2a4384784b72530a17aa2fdb
+```
+
+The runner authenticates those commits and the published freeze hashes independently of the current
+branch's history. The merged replay and receipt tooling retain the original file fingerprints in the
+reproduced freeze; scoring still requires that freeze to reproduce byte-for-byte before opening Holdout.
 
 ```sh
 runner=services/bayn/tools/research-10yr-etf-overnight-vs-intraday.ts

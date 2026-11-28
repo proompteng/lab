@@ -2,7 +2,7 @@ import { lstatSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 
 import { NodeRuntime } from '@effect/platform-node'
-import { Data, Effect } from 'effect'
+import { Data, Effect, Schema } from 'effect'
 
 import { dailySharpe, expectedMaximumSharpe } from './midday-research-statistics'
 import { loadDevelopment, loadHoldout, sources as noiseSources, withArchive } from './noise-area-study-data'
@@ -35,7 +35,29 @@ import { signalModel, trendSeries, weights } from './vol-regime-carry-signals'
 const evidence = 'docs/bayn/evidence/2026-11-27-10yr-etf-overnight-vs-intraday'
 const protocolPath = evidence + '/protocol.md'
 const freezePath = evidence + '/freeze.json'
-const branch = 'refs/heads/codex/bayn-w9a-10yr-etf-overnight-vs-intraday'
+const published = {
+  protocolCommit: 'd8b364b97b36e83b9d27a6cc673583043bd2fe6a',
+  freezeCommit: '5266509f14b4eaaf2a4384784b72530a17aa2fdb',
+  freezeSha256: 'e5c7b3d8c654f16f4065b0865771157d11db463307567ca694af0a53b3b466f9',
+}
+const decodeFreeze = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      schema: Schema.Literal('bayn.research.wave-9a.freeze.v1'),
+      protocolCommit: Schema.String,
+      files: Schema.Record(Schema.String, Schema.String),
+    }),
+  ),
+)
+// These tools changed to reconcile the shared replay and verify the original publication after squash.
+// Their published hashes still belong to the immutable freeze, not to the updated checkout.
+const updatedTools = new Set(
+  [
+    'research-10yr-etf-overnight-vs-intraday',
+    'research-10yr-etf-overnight-vs-intraday.test',
+    'noise-area-study-replay',
+  ].map((name) => `services/bayn/tools/${name}.ts`),
+)
 const locked = [
   protocolPath,
   'bun.lock',
@@ -337,33 +359,32 @@ const git = (...args: string[]) => {
   if (!result.success) throw new Error(`git ${args[0]} failed: ${result.stderr.toString().trim()}`)
   return result.stdout.toString()
 }
-const lock = () => {
-  git('ls-files', '--error-unmatch', '--', ...locked)
-  git('diff', 'HEAD', '--exit-code', '--', ...locked)
-  const protocolCommit = git('log', '-1', '--format=%H', 'HEAD', '--', protocolPath).trim()
-  const remote = git('ls-remote', '--refs', 'origin', branch).trim().split('\t')
-  if (!/^[a-f0-9]{40}$/.test(protocolCommit) || remote[1] !== branch)
-    throw new Error('Publish the protocol on the registered branch before development')
-  return { protocolCommit, remoteRevision: remote[0] }
-}
-const verifyPublished = (stage: '--develop' | '--score') => {
-  const { protocolCommit, remoteRevision } = lock()
-  git('merge-base', '--is-ancestor', protocolCommit, remoteRevision)
-  git('diff', protocolCommit, 'HEAD', '--exit-code', '--', protocolPath)
-  const files = Object.fromEntries(locked.map((path) => [path, hash(git('show', `HEAD:${path}`))]))
-  if (stage === '--develop') {
-    // A post-study development reproduction may run from a later commit with the same locked files.
-    git('diff', remoteRevision, 'HEAD', '--exit-code', '--', ...locked)
-    return { protocolCommit, files, publication: undefined }
-  }
-  const freezeCommit = git('log', '--diff-filter=A', '-1', '--format=%H', 'HEAD', '--', freezePath).trim()
-  if (!/^[a-f0-9]{40}$/.test(freezeCommit) || freezeCommit === protocolCommit)
-    throw new Error('Commit and publish the development freeze before Holdout')
-  git('merge-base', '--is-ancestor', freezeCommit, remoteRevision)
-  git('diff', freezeCommit, 'HEAD', '--exit-code', '--', freezePath, ...locked)
-  git('diff', 'HEAD', '--exit-code', '--', freezePath)
-  const freeze = git('show', `${freezeCommit}:${freezePath}`)
-  return { protocolCommit, files, publication: { freezeCommit, freezeSha256: hash(freeze), freeze } }
+export const verifyPublished = (readGit = git, receipt = published) => {
+  const { protocolCommit, freezeCommit, freezeSha256 } = receipt
+  readGit('ls-files', '--error-unmatch', '--', freezePath, ...locked)
+  readGit('diff', 'HEAD', '--exit-code', '--', freezePath, ...locked)
+  // Only the original publications must be ordered in Git; neither must be an ancestor of this checkout.
+  readGit('merge-base', '--is-ancestor', protocolCommit, `${freezeCommit}^`)
+  const freeze = readGit('show', `${freezeCommit}:${freezePath}`)
+  if (hash(freeze) !== freezeSha256 || readGit('show', `HEAD:${freezePath}`) !== freeze)
+    throw new Error('Development freeze does not match the published SHA-256')
+  const recorded = decodeFreeze(freeze)
+  if (
+    recorded.protocolCommit !== protocolCommit ||
+    recorded.files[protocolPath] !== hash(readGit('show', `${protocolCommit}:${protocolPath}`))
+  )
+    throw new Error('Protocol does not match the published freeze')
+  const files = Object.fromEntries(
+    locked.map((path) => {
+      const digest = hash(readGit('show', `${freezeCommit}:${path}`))
+      if (digest !== recorded.files[path]) throw new Error(`Published freeze hash mismatch for ${path}`)
+      if (!updatedTools.has(path) && hash(readGit('show', `HEAD:${path}`)) !== digest)
+        throw new Error(`Checkout differs from the published freeze for ${path}`)
+      return [path, digest]
+    }),
+  )
+  if (Object.keys(recorded.files).length !== locked.length) throw new Error('Unexpected files in the published freeze')
+  return { protocolCommit, files, publication: { freezeCommit, freezeSha256, freeze } }
 }
 
 const sources = {
@@ -402,7 +423,7 @@ const main = Effect.gen(function* () {
   const lockedInputs = yield* Effect.try({
     try: () => {
       if (lstatSync(output, { throwIfNoEntry: false }) !== undefined) throw new Error(`Refusing to overwrite ${output}`)
-      return verifyPublished(stage)
+      return verifyPublished()
     },
     catch: failure,
   })
@@ -430,7 +451,7 @@ const main = Effect.gen(function* () {
       ...comparisonReport(devLedgers, hurdles),
     }
     const publication = lockedInputs.publication
-    if (publication === undefined) return freeze
+    if (stage === '--develop') return freeze
     const holdout = await afterFreeze(serialize(freeze), publication.freeze, () => loadHoldout(archive))
     const sessions = loadSessions(daily, end)
     const ledgers = buildLedgers(sessions, [...dev.days, ...holdout.days])
