@@ -12,6 +12,7 @@ spec:
       sandbox: danger-full-access
       approval: never
       cwd: /workspace/lab
+      bootstrapTimeoutMs: 60000
       threadConfig:
         mcp_servers: {}
         web_search: live
@@ -30,13 +31,13 @@ spec:
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
         web_search = "live"
+        mcp_servers = {}
         suppress_unstable_features_warning = true
 
         [features]
         enable_request_compression = true
         unified_exec = true
         shell_snapshot = true
-        multi_agent = true
         goals = true
 
         [shell_environment_policy]
