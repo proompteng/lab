@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: torghut-clickhouse-auto-ontology-ingress
+spec:
+  podSelector:
+    matchLabels:
+      clickhouse.altinity.com/chi: torghut-clickhouse
+      clickhouse.altinity.com/cluster: default
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-ontology
+      ports:
+        - port: 8123
+          protocol: TCP
