@@ -33,7 +33,7 @@ import {
 
 const symbols = ['QQQ', 'SMH', 'XLK', 'SPY', 'IWM'] as const
 type StudySymbol = (typeof symbols)[number]
-export const costs = [0, 2.5, 5, 10] as const
+const costs = [0, 2.5, 5, 10] as const
 const primaryCostIndex = costs.indexOf(5)
 const oos = { fromExclusive: '2016-11-25', throughInclusive: '2026-11-25' }
 const startYear = 2017
@@ -515,6 +515,34 @@ const score = (days: readonly Day[]) => {
       },
     ]
   })
+  // Price gaps may prevent a decade-wide score. Keep the full result null and compare every book
+  // on the same resolved dates separately; nothing from this sensitivity enters inference or gates.
+  const excluded = new Set(dates.filter((_, i) => paths.some(({ rows }) => rows[i].unresolved > 0)))
+  const matched = <A>(rows: readonly A[]) => rows.filter((_, i) => !excluded.has(dates[i]))
+  const matchedBenchmark = benchmark.map((values) => (values === null ? null : matched(values)))
+  const commonResolved =
+    excluded.size === 0
+      ? null
+      : {
+          excludedDates: [...excluded],
+          sessions: dates.length - excluded.size,
+          books: paths.map(({ trial, rows }) => {
+            const resolved = matched(rows)
+            return {
+              id: trial.id,
+              breakEvenSlippageBp: breakEvenSlippage(resolved.reduce((total, row) => add(total, row), empty())),
+              costs: costs.map((bp, i) => {
+                const returns = returnsAt(resolved, bp)
+                const b0Returns = matchedBenchmark[i]
+                return {
+                  bp,
+                  ...riskMetrics(returns),
+                  correlationVsB0: returns === null || b0Returns === null ? null : correlation(returns, b0Returns).r,
+                }
+              }),
+            }
+          }),
+        }
   return {
     schema: 'bayn.research.wave-19s.results.v1',
     verdict: gates.some(({ qualified }) => qualified) ? 'PROMOTE' : 'DO NOT PROMOTE',
@@ -538,6 +566,7 @@ const score = (days: readonly Day[]) => {
     folds,
     books,
     gates,
+    commonResolved,
   }
 }
 
