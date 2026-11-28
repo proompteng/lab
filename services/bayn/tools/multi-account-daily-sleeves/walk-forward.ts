@@ -18,7 +18,7 @@ const annualSessions = 252
 const micros = (usd: number) => BigInt(Math.round(usd * 1_000_000))
 const usd = (value: bigint) => Number(value) / 1_000_000
 
-type Cost = (typeof costs)[number]
+export type Cost = (typeof costs)[number]
 type Book = { cash: bigint; shares: Map<Etf, bigint> }
 type Day = {
   date: string
@@ -163,7 +163,7 @@ export const prepareCashWalkForward = (frames: readonly DailyFrame[]) => {
   }
 }
 
-const replayFrozenPair = (daily: readonly DailySession[], bps: Cost): readonly Day[] => {
+export const replayFrozenPair = (daily: readonly DailySession[], bps: Cost): readonly Day[] => {
   const traded = daily.map(() => 0)
   const trade = (i: number, notional: number) => {
     traded[i] += notional
