@@ -9,6 +9,7 @@ import { isGitHubCloneBaseUrl, LAB_REPOSITORY, SHARED_WORKSPACE_CACHE_MOUNT_PATH
 import { providerUsesControllerAuthSecret, resolveProviderSecretEnv } from './policy'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
+import { hashAgentRunImmutableSpec } from './immutable-spec'
 import { createImplementationContractTools } from './implementation-contract'
 import { resolveParam, resolveParameters, resolveRunGoal } from './run-utils'
 import { buildRuntimeRef } from './runtime-resources'
@@ -637,6 +638,11 @@ export const applyJobTtlAfterStatus = async (
   await kube.patch('job', name, namespace, { spec: { ttlSecondsAfterFinished: ttlSeconds } })
 }
 
+export const AGENT_RUN_SPEC_HASH_ANNOTATION = 'agents.proompteng.ai/spec-hash'
+
+export const getJobAcceptanceSpecHash = (job: Record<string, unknown>) =>
+  asString(readNested(job, ['metadata', 'annotations', AGENT_RUN_SPEC_HASH_ANNOTATION]))
+
 export type SubmitJobRunOptions = {
   nameSuffix?: string
   labels?: Record<string, string>
@@ -647,33 +653,38 @@ export type SubmitJobRunOptions = {
   systemPrompt?: string | null
   systemPromptHash?: string | null
   systemPromptRef?: SystemPromptRef | null
+  specHash?: string | null
+}
+
+export const isJobOwnedByAgentRun = (job: Record<string, unknown>, agentRun: Record<string, unknown>) => {
+  const name = asString(readNested(agentRun, ['metadata', 'name']))
+  const labels = asRecord(readNested(job, ['metadata', 'labels'])) ?? {}
+  if (!name || asString(labels['agents.proompteng.ai/agent-run']) !== name) return false
+
+  const uid = asString(readNested(agentRun, ['metadata', 'uid']))
+  if (!uid) return true
+  const labeledUid = asString(labels['agents.proompteng.ai/run-uid'])
+  const owners = readNested(job, ['metadata', 'ownerReferences'])
+  const owner = Array.isArray(owners) ? owners.map(asRecord).find((entry) => entry?.kind === 'AgentRun') : null
+  if ((labeledUid && labeledUid !== uid) || (owner && (owner.name !== name || owner.uid !== uid))) return false
+  return labeledUid === uid || owner?.uid === uid
 }
 
 const getExistingAgentRunJobRef = async (
   kube: ReturnType<typeof createKubernetesClient>,
   jobName: string,
   namespace: string,
-  runName: string,
+  agentRun: Record<string, unknown>,
   runtimeType: 'job' | 'workflow',
 ) => {
   const existing = await kube.get('job', jobName, namespace)
   if (!existing) return null
 
-  const labels = asRecord(readNested(existing, ['metadata', 'labels'])) ?? {}
-  const existingRunName = asString(labels['agents.proompteng.ai/agent-run'])
-  if (existingRunName !== runName) {
-    throw new Error(
-      `job ${jobName} already exists in ${namespace} but belongs to AgentRun ${existingRunName ?? 'unknown'}`,
-    )
+  if (!isJobOwnedByAgentRun(existing, agentRun)) {
+    throw new Error(`job ${namespace}/${jobName} already exists but is not owned by this AgentRun`)
   }
 
   return buildRuntimeRef(runtimeType, jobName, namespace, { uid: asString(readNested(existing, ['metadata', 'uid'])) })
-}
-
-const isImmutableJobApplyError = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error)
-  const normalized = message.toLowerCase()
-  return normalized.includes('job.batch') && normalized.includes('field is immutable')
 }
 
 const isKubeNotFoundMessage = (error: unknown) => {
@@ -883,7 +894,7 @@ export const submitJobRun = async (
   const runName = asString(metadata.name) ?? 'agentrun'
   const runUid = asString(metadata.uid)
   const jobName = makeName(runName, options.nameSuffix ?? 'job')
-  const existingJobRef = await getExistingAgentRunJobRef(kube, jobName, namespace, runName, runtimeType)
+  const existingJobRef = await getExistingAgentRunJobRef(kube, jobName, namespace, agentRun, runtimeType)
 
   const agentName = asString(readNested(agent, ['metadata', 'name']))
   const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
@@ -1209,6 +1220,7 @@ export const submitJobRun = async (
     jobPodSpec.schedulerName = schedulerName
   }
 
+  const acceptanceSpecHash = asString(options.specHash) ?? hashAgentRunImmutableSpec(agentRun)
   const jobResource = {
     apiVersion: 'batch/v1',
     kind: 'Job',
@@ -1216,6 +1228,9 @@ export const submitJobRun = async (
       name: jobName,
       namespace,
       labels: mergedLabels,
+      annotations: {
+        [AGENT_RUN_SPEC_HASH_ANNOTATION]: acceptanceSpecHash,
+      },
       ...(runUid
         ? {
             ownerReferences: [
@@ -1245,9 +1260,9 @@ export const submitJobRun = async (
   try {
     applied = await kube.apply(jobResource)
   } catch (error) {
-    if (!isImmutableJobApplyError(error)) throw error
-    const existingAfterConflict = await getExistingAgentRunJobRef(kube, jobName, namespace, runName, runtimeType)
-    if (existingAfterConflict) return existingAfterConflict
+    // The API server may have created the Job even if the request failed locally.
+    const recovered = await getExistingAgentRunJobRef(kube, jobName, namespace, agentRun, runtimeType)
+    if (recovered) return recovered
     throw error
   }
   return buildRuntimeRef(runtimeType, jobName, namespace, { uid: asString(readNested(applied, ['metadata', 'uid'])) })

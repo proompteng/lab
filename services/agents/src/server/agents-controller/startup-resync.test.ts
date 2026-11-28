@@ -13,6 +13,7 @@ vi.mock('../kube-watch', () => ({
 import type { WatchOptions } from '../kube-watch'
 import { RESOURCE_MAP } from '../kube-types'
 import { asRecord, asString, readNested } from '../primitives'
+import { hashAgentRunImmutableSpec } from './immutable-spec'
 import { __test, configureAgentsControllerRuntime, stopAgentsController } from './index'
 import { createControllerState } from './namespace-state'
 
@@ -22,6 +23,36 @@ const defaultConcurrency = {
   cluster: 100,
   repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map<string, number>() },
 }
+
+const makeJobRun = (name: string, namespace = 'agents', status: Record<string, unknown> = {}) => ({
+  apiVersion: 'agents.proompteng.ai/v1alpha1',
+  kind: 'AgentRun',
+  metadata: {
+    name,
+    namespace,
+    uid: `uid-${name}`,
+    generation: 1,
+    resourceVersion: '10',
+    finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+  },
+  spec: {
+    agentRef: { name: 'agent' },
+    implementation: { inline: { text: 'run the fixture' } },
+    runtime: { type: 'job' },
+    workload: { image: 'registry.example/runner:test' },
+  },
+  status: { observedGeneration: 1, ...status },
+})
+
+const makeRunJob = (run: ReturnType<typeof makeJobRun>, status: Record<string, unknown> = {}) => ({
+  metadata: {
+    name: `${run.metadata.name}-job`,
+    namespace: run.metadata.namespace,
+    uid: `job-${run.metadata.uid}`,
+    labels: { 'agents.proompteng.ai/agent-run': run.metadata.name, 'agents.proompteng.ai/run-uid': run.metadata.uid },
+  },
+  status,
+})
 
 const buildKube = (overrides: Record<string, unknown> = {}) => ({
   apply: vi.fn(async (resource: Record<string, unknown>) => resource),
@@ -46,16 +77,67 @@ const awaitNamespaceIdle = async (namespace: string) => {
   await awaitNamespaceIdle(namespace)
 }
 
-const getWatch = (resource: string) => {
+const getWatch = (resource: string, namespace = 'agents') => {
   const calls = watchMocks.startResourceWatch.mock.calls as unknown as Array<[WatchOptions]>
-  const watch = calls.find(([options]) => options.resource === resource)?.[0]
+  const watch = calls.find(([options]) => options.resource === resource && options.namespace === namespace)?.[0]
   if (!watch) throw new Error(`Missing watch for ${resource}`)
   return watch
+}
+
+const buildJobApi = (initial: ReturnType<typeof makeJobRun>[]) => {
+  const runs = new Map(initial.map((run) => [`${run.metadata.namespace}/${run.metadata.name}`, run]))
+  const jobs = new Map<string, Record<string, unknown>>()
+  let resourceVersion = 11
+  const revise = (run: ReturnType<typeof makeJobRun>, status: Record<string, unknown>, watch = true) => {
+    const { name, namespace } = run.metadata
+    const next = {
+      ...run,
+      metadata: { ...run.metadata, resourceVersion: String(resourceVersion++) },
+      status: { ...run.status, ...status },
+    }
+    runs.set(`${namespace}/${name}`, next)
+    if (watch) void getWatch(RESOURCE_MAP.AgentRun, namespace).onEvent({ type: 'MODIFIED', object: next })
+    return next
+  }
+  const applyStatus = vi.fn(async (patch: Record<string, unknown>) => {
+    const metadata = asRecord(patch.metadata)
+    const previous = runs.get(`${asString(metadata?.namespace)}/${asString(metadata?.name)}`)
+    if (!previous || metadata?.resourceVersion !== previous.metadata.resourceVersion) {
+      throw Object.assign(new Error('resourceVersion conflict'), { code: 409 })
+    }
+    return revise(previous, asRecord(patch.status) ?? {})
+  })
+  const get = vi.fn(async (kind: string, name: string, namespace: string) => {
+    if (kind === RESOURCE_MAP.AgentRun) return runs.get(`${namespace}/${name}`) ?? null
+    if (kind === RESOURCE_MAP.Agent) {
+      return { metadata: { name }, spec: { providerRef: { name: 'provider' }, defaults: { systemPrompt: 'fixture' } } }
+    }
+    if (kind === RESOURCE_MAP.AgentProvider) return { metadata: { name }, spec: {} }
+    if (kind === 'job') return jobs.get(`${namespace}/${name}`) ?? null
+    if (kind === 'configmap') return { metadata: { name } }
+    return null
+  })
+  const apply = vi.fn(async (resource: Record<string, unknown>) => {
+    if (resource.kind !== 'Job') return resource
+    const metadata = asRecord(resource.metadata)
+    const name = asString(metadata?.name)
+    const key = `${asString(metadata?.namespace)}/${name}`
+    if (jobs.has(key)) throw new Error(`Duplicate Job create: ${key}`)
+    const job = { ...resource, metadata: { ...metadata, uid: `uid-${name}` } }
+    jobs.set(key, job)
+    return job
+  })
+  const list = vi.fn(async (kind: string, namespace: string) => ({
+    items:
+      kind === RESOURCE_MAP.AgentRun ? [...runs.values()].filter((run) => run.metadata.namespace === namespace) : [],
+  }))
+  return { ...buildKube(), runs, jobs, revise, applyStatus, get, apply, list }
 }
 
 describe('agents controller startup resync', () => {
   beforeEach(() => {
     stopAgentsController()
+    __test.resetControllerRateState()
     watchMocks.startResourceWatch.mockClear()
   })
 
@@ -109,6 +191,276 @@ describe('agents controller startup resync', () => {
       releaseManualResync()
       await startup
       await awaitNamespaceIdle('agents')
+      __test.stopWatchHandles(handles)
+    }
+  })
+
+  it.each(['Pending', ''])('repairs phase %j with an existing Job on periodic resync', async (phase) => {
+    const runtimeRef = {
+      type: 'job',
+      name: 'stale-job',
+      namespace: 'agents',
+      uid: 'job-uid-stale',
+      jobObservedAt: '2026-11-28T10:00:00.000Z',
+    }
+    const run = makeJobRun('stale', 'agents', { phase, runtimeRef })
+    const state = createControllerState()
+    state.runs.update('agents', 'stale', run)
+    const kube = buildKube({
+      get: vi.fn(async (kind: string) => (kind === 'job' ? makeRunJob(run, { active: 1 }) : null)),
+      list: vi.fn(async (kind: string) => ({ items: kind === RESOURCE_MAP.AgentRun ? [run] : [] })),
+    })
+
+    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state, defaultConcurrency, 'periodic')
+
+    expect(kube.applyStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { name: 'stale', namespace: 'agents', resourceVersion: '10' },
+        status: expect.objectContaining({ phase: 'Running', runtimeRef: expect.objectContaining(runtimeRef) }),
+      }),
+    )
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('finishes an owned Job left by a restart before checking admission', async () => {
+    const run = makeJobRun('orphan')
+    const job = makeRunJob(run, { succeeded: 1 })
+    const state = createControllerState()
+    const running = makeJobRun('occupant', 'agents', { phase: 'Running' })
+    state.runs.update('agents', 'occupant', running)
+    const kube = buildKube({
+      get: vi.fn(async (kind: string, name: string) => (kind === 'job' && name === job.metadata.name ? job : null)),
+      list: vi.fn(async (kind: string) => ({ items: kind === RESOURCE_MAP.AgentRun ? [run, running] : [] })),
+    })
+
+    await __test.resyncAgentRunsForNamespace(
+      kube as never,
+      'agents',
+      state,
+      { ...defaultConcurrency, perAgent: 1 },
+      'manual',
+    )
+
+    expect(kube.applyStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: expect.objectContaining({
+          phase: 'Succeeded',
+          runtimeRef: { type: 'job', name: job.metadata.name, namespace: 'agents', uid: job.metadata.uid },
+        }),
+      }),
+    )
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a stale status write and adopts the Job without charging a second start', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('AGENTS_CONTROLLER_RATE_CLUSTER', '1')
+    const run = makeJobRun('replayed')
+    const kube = buildJobApi([run])
+    kube.applyStatus.mockImplementationOnce(async (patch) => {
+      expect(readNested(patch, ['metadata', 'resourceVersion'])).toBe('10')
+      expect(readNested(patch, ['status', 'phase'])).toBe('Running')
+      kube.revise(run, {}, false)
+      throw Object.assign(new Error('resourceVersion conflict'), { code: 409 })
+    })
+
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, 'agents', createControllerState(), defaultConcurrency, handles)
+      await awaitNamespaceIdle('agents')
+      expect(kube.get).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'replayed', 'agents')
+      expect(kube.applyStatus).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(500)
+      await awaitNamespaceIdle('agents')
+
+      expect(kube.applyStatus.mock.calls[1]?.[0]).toMatchObject({
+        metadata: { resourceVersion: '11' },
+        status: {
+          phase: 'Running',
+          runtimeRef: { name: 'replayed-job', uid: 'uid-replayed-job' },
+          specHash: hashAgentRunImmutableSpec(run),
+        },
+      })
+      expect(kube.apply.mock.calls.filter(([resource]) => resource.kind === 'Job')).toHaveLength(1)
+      expect(kube.runs.get('agents/replayed')?.status).toMatchObject({
+        phase: 'Running',
+        specHash: hashAgentRunImmutableSpec(run),
+      })
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
+  it('enforces immutability after adopting a Job whose initial Running status write conflicted with a spec mutation', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED', 'true')
+    const run = makeJobRun('mutated-in-flight')
+    const originalSpecHash = hashAgentRunImmutableSpec(run)
+    const kube = buildJobApi([run])
+    kube.applyStatus.mockImplementationOnce(async (patch) => {
+      expect(readNested(patch, ['metadata', 'resourceVersion'])).toBe('10')
+      expect(readNested(patch, ['status', 'phase'])).toBe('Running')
+      const mutated = {
+        ...run,
+        metadata: { ...run.metadata, generation: 2, resourceVersion: '11' },
+        spec: {
+          ...run.spec,
+          implementation: { inline: { text: 'tampered while job submission was in flight' } },
+        },
+      }
+      kube.runs.set('agents/mutated-in-flight', mutated)
+      throw Object.assign(new Error('resourceVersion conflict'), { code: 409 })
+    })
+
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, 'agents', createControllerState(), defaultConcurrency, handles)
+      await awaitNamespaceIdle('agents')
+      await vi.advanceTimersByTimeAsync(500)
+      await awaitNamespaceIdle('agents')
+
+      expect(kube.apply.mock.calls.filter(([resource]) => resource.kind === 'Job')).toHaveLength(1)
+      expect(kube.delete).toHaveBeenCalledWith('job', 'mutated-in-flight-job', 'agents', { wait: false })
+      expect(kube.runs.get('agents/mutated-in-flight')?.status).toMatchObject({
+        phase: 'Failed',
+        specHash: originalSpecHash,
+        conditions: expect.arrayContaining([
+          expect.objectContaining({ type: 'Failed', status: 'True', reason: 'SpecImmutableViolation' }),
+        ]),
+      })
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
+  it('keeps a terminal phase found during conflict refresh even if an older watch update arrives', async () => {
+    vi.useFakeTimers()
+    const runtimeRef = { type: 'job', name: 'finishing-job', namespace: 'agents', uid: 'job-uid-finishing' }
+    const run = makeJobRun('finishing', 'agents', { phase: 'Running', runtimeRef })
+    const kube = buildJobApi([run])
+    kube.jobs.set('agents/finishing-job', makeRunJob(run, { active: 1 }))
+    kube.applyStatus.mockImplementationOnce(async (patch) => {
+      expect(readNested(patch, ['metadata', 'resourceVersion'])).toBe('10')
+      expect(readNested(patch, ['status', 'phase'])).toBe('Running')
+      kube.revise(run, { phase: 'Cancelled', finishedAt: new Date().toISOString() }, false)
+      throw Object.assign(new Error('resourceVersion conflict'), { code: 409 })
+    })
+    const state = createControllerState()
+    state.runs.update('agents', 'finishing', run)
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, 'agents', state, defaultConcurrency, handles)
+      await awaitNamespaceIdle('agents')
+      void getWatch(RESOURCE_MAP.AgentRun).onEvent({ type: 'MODIFIED', object: run })
+      await vi.advanceTimersByTimeAsync(500)
+      await awaitNamespaceIdle('agents')
+
+      expect(kube.applyStatus).toHaveBeenCalledTimes(1)
+      expect(state.runs.get('agents', 'finishing')?.status).toMatchObject({ phase: 'Cancelled' })
+      expect(kube.runs.get('agents/finishing')?.status).toMatchObject({ phase: 'Cancelled' })
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
+  it('wakes a concurrency-blocked run in another namespace when cluster capacity frees', async () => {
+    const running = makeJobRun('running', 'agents', { phase: 'Running' })
+    const waiting = makeJobRun('waiting', 'agents-other')
+    const kube = buildJobApi([running, waiting])
+    const state = createControllerState()
+    const concurrency = { ...defaultConcurrency, cluster: 1 }
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, 'agents', state, concurrency, handles)
+      await awaitNamespaceIdle('agents')
+      await __test.startNamespaceWatches(kube as never, 'agents-other', state, concurrency, handles)
+      await awaitNamespaceIdle('agents-other')
+      expect(kube.runs.get('agents-other/waiting')?.status).toMatchObject({
+        phase: 'Pending',
+        conditions: expect.arrayContaining([expect.objectContaining({ type: 'Blocked', reason: 'ConcurrencyLimit' })]),
+      })
+      expect(kube.jobs.size).toBe(0)
+      kube.list.mockClear()
+
+      kube.revise(running, { phase: 'Succeeded', finishedAt: new Date().toISOString() })
+      await awaitNamespaceIdle('agents-other')
+
+      expect(kube.runs.get('agents-other/waiting')?.status).toMatchObject({ phase: 'Running' })
+      expect(kube.jobs.has('agents-other/waiting-job')).toBe(true)
+      expect(kube.list).not.toHaveBeenCalled()
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
+  it('retries a rate-blocked run at the window reset without a Job signal or resync', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('AGENTS_CONTROLLER_RATE_WINDOW_SECONDS', '2')
+    vi.stubEnv('AGENTS_CONTROLLER_RATE_NAMESPACE', '1')
+    const kube = buildJobApi([makeJobRun('first'), makeJobRun('second')])
+    const handles: Array<{ stop: () => void }> = []
+    try {
+      await __test.startNamespaceWatches(kube as never, 'agents', createControllerState(), defaultConcurrency, handles)
+      await awaitNamespaceIdle('agents')
+      expect(kube.jobs.has('agents/first-job')).toBe(true)
+      expect(kube.runs.get('agents/second')?.status).toMatchObject({
+        phase: 'Pending',
+        conditions: expect.arrayContaining([expect.objectContaining({ type: 'Blocked', reason: 'RateLimit' })]),
+      })
+      kube.list.mockClear()
+
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(kube.jobs.has('agents/second-job')).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await awaitNamespaceIdle('agents')
+
+      expect(kube.jobs.has('agents/second-job')).toBe(true)
+      expect(kube.runs.get('agents/second')?.status).toMatchObject({ phase: 'Running' })
+      expect(kube.list).not.toHaveBeenCalled()
+    } finally {
+      __test.stopWatchHandles(handles)
+    }
+  })
+
+  it('reserves capacity during a Job create and wakes a rate-blocked run when the create fails', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('AGENTS_CONTROLLER_RATE_CLUSTER', '1')
+    vi.stubEnv('AGENTS_CONTROLLER_RATE_NAMESPACE', '1')
+    const kube = buildJobApi([makeJobRun('rejected'), makeJobRun('next', 'agents-other')])
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    const apply = kube.apply.getMockImplementation()!
+    kube.apply.mockImplementation(async (resource) => {
+      if (resource.kind === 'Job' && readNested(resource, ['metadata', 'name']) === 'rejected-job') {
+        started.resolve()
+        await finish.promise
+        throw new Error('Job creation rejected')
+      }
+      return apply(resource)
+    })
+    const handles: Array<{ stop: () => void }> = []
+    const state = createControllerState()
+    try {
+      await __test.startNamespaceWatches(kube as never, 'agents', state, defaultConcurrency, handles)
+      await started.promise
+      await __test.startNamespaceWatches(kube as never, 'agents-other', state, defaultConcurrency, handles)
+      await awaitNamespaceIdle('agents-other')
+      expect(kube.runs.get('agents-other/next')?.status).toMatchObject({
+        phase: 'Pending',
+        conditions: expect.arrayContaining([expect.objectContaining({ type: 'Blocked', reason: 'RateLimit' })]),
+      })
+      expect(kube.jobs.size).toBe(0)
+
+      finish.resolve()
+      await awaitNamespaceIdle('agents')
+      await awaitNamespaceIdle('agents-other')
+
+      expect(kube.runs.get('agents/rejected')?.status).toMatchObject({ phase: 'Failed' })
+      expect(kube.runs.get('agents-other/next')?.status).toMatchObject({ phase: 'Running' })
+      expect([...kube.jobs.keys()]).toEqual(['agents-other/next-job'])
+    } finally {
+      finish.resolve()
       __test.stopWatchHandles(handles)
     }
   })
@@ -221,7 +573,7 @@ describe('agents controller startup resync', () => {
 
       expect(kube.delete).toHaveBeenCalledWith('job', 'job-deleting', namespace, expect.anything())
       expect(kube.patch).toHaveBeenCalledExactlyOnceWith(RESOURCE_MAP.AgentRun, 'deleting-run', namespace, {
-        metadata: { finalizers: [] },
+        metadata: { finalizers: [], resourceVersion: '205' },
       })
     } finally {
       __test.stopWatchHandles(handles)
@@ -281,7 +633,7 @@ describe('agents controller startup resync', () => {
       })
       await awaitNamespaceIdle('agents')
       expect(kube.patch).toHaveBeenCalledExactlyOnceWith(RESOURCE_MAP.AgentRun, 'cleanup', 'agents', {
-        metadata: { finalizers: [] },
+        metadata: { finalizers: [], resourceVersion: '2' },
       })
       expect(markAgentRunIdempotencyKeyTerminal).toHaveBeenCalledTimes(1)
     } finally {

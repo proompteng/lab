@@ -143,6 +143,21 @@ describe('agents controller temporal-runtime module', () => {
     )
   })
 
+  it('propagates a completion status conflict without publishing a workflow failure', async () => {
+    const { deps, mocks } = buildDeps()
+    const conflict = Object.assign(new Error('resourceVersion conflict'), { code: 409 })
+    mocks.setStatus.mockRejectedValueOnce(conflict)
+    const { reconcileTemporalRun } = createTemporalRuntimeTools(deps)
+
+    await expect(reconcileTemporalRun({}, {}, { type: 'temporal', name: 'wf-1' })).rejects.toBe(conflict)
+    expect(mocks.setStatus).toHaveBeenCalledTimes(1)
+    expect(mocks.setStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ phase: 'Succeeded' }),
+    )
+  })
+
   it('treats temporal poll timeout errors as pending and leaves status unchanged', async () => {
     const { deps, mocks } = buildDeps()
     mocks.result.mockRejectedValue(new Error('deadline exceeded'))
