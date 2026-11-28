@@ -132,6 +132,7 @@ export type PassivePricing =
       readonly stage: ExecutionPricingStage
       readonly limitPriceMicros: bigint
       readonly spreadMicros: bigint
+      readonly marketableTouchPriceMicros: bigint
     }
   | { readonly _tag: 'Defer'; readonly reason: PassiveDeferReason }
 
@@ -140,6 +141,7 @@ export type PassiveExitPricing = {
   readonly stage: ExecutionPricingStage
   readonly limitPriceMicros: bigint
   readonly spreadMicros: bigint
+  readonly marketableTouchPriceMicros: bigint
 }
 
 export type PassiveReanchorDecision =
@@ -296,6 +298,7 @@ export const pricePassiveEntry = (
     }
 
     const isBuy = side === OrderSide.Buy
+    const marketableTouchPriceMicros = isBuy ? current.ask : current.bid
     if (stage === ExecutionPricingStage.Marketable) {
       const paddingBps = BigInt(policy.marketablePaddingBps ?? 0)
       if (isBuy) {
@@ -308,6 +311,7 @@ export const pricePassiveEntry = (
           stage,
           limitPriceMicros: max(touch, min(collar, padded)),
           spreadMicros: current.spread,
+          marketableTouchPriceMicros,
         } as const
       }
       const touch = quantizeInstrumentPriceMicros(symbol, current.bid, 'DOWN')
@@ -319,12 +323,19 @@ export const pricePassiveEntry = (
         stage,
         limitPriceMicros: min(touch, max(collar, padded)),
         spreadMicros: current.spread,
+        marketableTouchPriceMicros,
       } as const
     }
 
     const limitPriceMicros = passiveMicropriceLimit(symbol, side, current, adverseLimitMicros)
     if (limitPriceMicros === null) return { _tag: 'Defer', reason: PassiveDeferReason.NoPassiveTick } as const
-    return { _tag: 'Price', stage, limitPriceMicros, spreadMicros: current.spread } as const
+    return {
+      _tag: 'Price',
+      stage,
+      limitPriceMicros,
+      spreadMicros: current.spread,
+      marketableTouchPriceMicros,
+    } as const
   })
 
 const isUntouchedWorkingLimitOrder = (
@@ -371,6 +382,7 @@ const decideReanchorFromProposal = (input: {
     readonly stage: ExecutionPricingStage
     readonly limitPriceMicros: bigint
     readonly spreadMicros: bigint
+    readonly marketableTouchPriceMicros: bigint
   }
   readonly reanchorDeadbandBpsOfSpread: number
   readonly minimumReanchorTicks?: number
@@ -389,7 +401,10 @@ const decideReanchorFromProposal = (input: {
   } = input
   const isBuy = side === OrderSide.Buy
   if (proposed.stage === ExecutionPricingStage.Marketable) {
-    const alreadyMarketable = isBuy ? working >= proposed.limitPriceMicros : working <= proposed.limitPriceMicros
+    // Retain working orders that still cross the current NBBO touch even when the padded proposal moves further.
+    const alreadyMarketable = isBuy
+      ? working >= proposed.marketableTouchPriceMicros
+      : working <= proposed.marketableTouchPriceMicros
     return alreadyMarketable
       ? ({ _tag: 'Keep' } as const)
       : ({
@@ -502,6 +517,8 @@ export const pricePassiveExit = (
       elapsedNanos >= millisecondsAsNanos(policy.escalateToMarketableAfterMs) ||
       remainingNanos <= millisecondsAsNanos(policy.mandatoryEscalationLeadMs)
 
+    const isBuy = side === OrderSide.Buy
+    const marketableTouchPriceMicros = isBuy ? current.ask : current.bid
     if (!mustEscalate) {
       const passiveLimit = passiveMicropriceLimit(symbol, side, current)
       if (passiveLimit !== null) {
@@ -510,17 +527,17 @@ export const pricePassiveExit = (
           stage: ExecutionPricingStage.Passive,
           limitPriceMicros: passiveLimit,
           spreadMicros: current.spread,
+          marketableTouchPriceMicros,
         } as const
       }
     }
 
-    const isBuy = side === OrderSide.Buy
     const slippageBps = BigInt(policy.marketableSlippageBps)
     const rawMarketable = isBuy
       ? (current.ask * (BPS + slippageBps)) / BPS
       : (current.bid * (BPS - slippageBps) + BPS - 1n) / BPS
     const quantized = quantizeInstrumentPriceMicros(symbol, rawMarketable, isBuy ? 'DOWN' : 'UP')
-    const touch = quantizeInstrumentPriceMicros(symbol, isBuy ? current.ask : current.bid, isBuy ? 'UP' : 'DOWN')
+    const touch = quantizeInstrumentPriceMicros(symbol, marketableTouchPriceMicros, isBuy ? 'UP' : 'DOWN')
     const limitPriceMicros = isBuy ? max(touch, quantized) : min(touch, quantized)
     if (limitPriceMicros <= 0n) return yield* invalid('Passive exit marketable limit is outside positive price domain')
     return {
@@ -528,6 +545,7 @@ export const pricePassiveExit = (
       stage: ExecutionPricingStage.Marketable,
       limitPriceMicros,
       spreadMicros: current.spread,
+      marketableTouchPriceMicros,
     } as const
   })
 

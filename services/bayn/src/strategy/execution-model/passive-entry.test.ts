@@ -741,6 +741,261 @@ test('entry churn guards enforce minimumReanchorTicks, maximumReanchors, and sin
   ).toBe(true)
 })
 
+test('escalated entries and exits retain orders that still cross the current NBBO touch', () => {
+  const buyEntry = signal('QQQ', OrderSide.Buy)
+  const workingBuy = order(buyEntry, 10_006n * cent, 20_500, 29_000)
+
+  // Ask moves $100.04 -> $100.05: padded proposal rises to $100.07, but $100.06 still crosses the $100.05 ask.
+  const buyMovedMarket = market(quote(29_000, 9_997, 10_005), at(29_000))
+  expect(
+    Result.getOrThrow(
+      pricePassiveEntry({
+        policy: steppedPolicy,
+        symbol: 'QQQ',
+        side: OrderSide.Buy,
+        adverseLimitMicros: 10_025n * cent,
+        market: buyMovedMarket,
+        windowStartedAt: at(0),
+      }),
+    ),
+  ).toMatchObject({
+    _tag: 'Price',
+    stage: ExecutionPricingStage.Marketable,
+    limitPriceMicros: 10_007n * cent,
+    marketableTouchPriceMicros: 10_005n * cent,
+  })
+  expect(
+    Result.getOrThrow(
+      planNoiseAreaEntryReanchor({
+        policy: strategy,
+        signal: buyEntry,
+        executionPolicy: steppedPolicy,
+        market: buyMovedMarket,
+        order: workingBuy,
+        reanchorCount: 2,
+      }),
+    )._tag,
+  ).toBe('Keep')
+  // Exact touch equality ($100.06 working vs $100.06 ask) also remains marketable and is retained.
+  expect(
+    Result.getOrThrow(
+      planNoiseAreaEntryReanchor({
+        policy: strategy,
+        signal: buyEntry,
+        executionPolicy: steppedPolicy,
+        market: market(quote(29_000, 9_998, 10_006), at(29_000)),
+        order: workingBuy,
+        reanchorCount: 2,
+      }),
+    )._tag,
+  ).toBe('Keep')
+  // Ask moves to $100.07: $100.06 no longer crosses the ask, so re-anchor escalates cleanly to $100.09.
+  expect(
+    Result.getOrThrow(
+      planNoiseAreaEntryReanchor({
+        policy: strategy,
+        signal: buyEntry,
+        executionPolicy: steppedPolicy,
+        market: market(quote(29_000, 9_999, 10_007), at(29_000)),
+        order: workingBuy,
+        reanchorCount: 2,
+      }),
+    ),
+  ).toEqual({
+    _tag: 'CancelForReanchor',
+    brokerOrderId: 'order-20500',
+    reason: PassiveReanchorReason.TimeDecayEscalation,
+    targetStage: ExecutionPricingStage.Marketable,
+    proposedLimitPriceMicros: 10_009n * cent,
+  })
+  // When ask moves above the $100.25 collar, collar deferral prevents re-anchoring beyond bounds.
+  expect(
+    Result.getOrThrow(
+      planNoiseAreaEntryReanchor({
+        policy: strategy,
+        signal: buyEntry,
+        executionPolicy: steppedPolicy,
+        market: market(quote(29_000, 10_018, 10_026), at(29_000)),
+        order: workingBuy,
+        reanchorCount: 2,
+      }),
+    )._tag,
+  ).toBe('Keep')
+
+  // Symmetric sell entry with 3 bp padding: at $99.96 bid the escalated limit is $99.94; when bid moves
+  // to $99.95 the padded proposal becomes $99.93, yet $99.94 still crosses the $99.95 bid and is retained.
+  const sellSteppedPolicy = Result.getOrThrow(
+    decodePassiveEntryPolicy({
+      ...policyInput,
+      escalateToMarketableAfterMs: 20_000,
+      marketablePaddingBps: 3,
+      maximumSpreadBps: 12,
+      minimumReanchorTicks: 3,
+      maximumReanchors: 1,
+    }),
+  )
+  const sellEntry = signal('SMH', OrderSide.Sell)
+  const workingSell = order(sellEntry, 9_994n * cent, 20_500, 29_000)
+  const sellMovedMarket = market(quote(29_000, 9_995, 10_003, 'SMH'), at(29_000))
+  expect(
+    Result.getOrThrow(
+      pricePassiveEntry({
+        policy: sellSteppedPolicy,
+        symbol: 'SMH',
+        side: OrderSide.Sell,
+        adverseLimitMicros: 9_975n * cent,
+        market: sellMovedMarket,
+        windowStartedAt: at(0),
+      }),
+    ),
+  ).toMatchObject({
+    _tag: 'Price',
+    stage: ExecutionPricingStage.Marketable,
+    limitPriceMicros: 9_993n * cent,
+    marketableTouchPriceMicros: 9_995n * cent,
+  })
+  expect(
+    Result.getOrThrow(
+      planNoiseAreaEntryReanchor({
+        policy: strategy,
+        signal: sellEntry,
+        executionPolicy: sellSteppedPolicy,
+        market: sellMovedMarket,
+        order: workingSell,
+        reanchorCount: 2,
+      }),
+    )._tag,
+  ).toBe('Keep')
+  // Exact touch equality ($99.94 working vs $99.94 bid) also remains marketable and is retained.
+  expect(
+    Result.getOrThrow(
+      planNoiseAreaEntryReanchor({
+        policy: strategy,
+        signal: sellEntry,
+        executionPolicy: sellSteppedPolicy,
+        market: market(quote(29_000, 9_994, 10_002, 'SMH'), at(29_000)),
+        order: workingSell,
+        reanchorCount: 2,
+      }),
+    )._tag,
+  ).toBe('Keep')
+  // Bid drops to $99.93: $99.94 no longer crosses the bid, so re-anchor escalates cleanly to $99.91.
+  expect(
+    Result.getOrThrow(
+      planNoiseAreaEntryReanchor({
+        policy: strategy,
+        signal: sellEntry,
+        executionPolicy: sellSteppedPolicy,
+        market: market(quote(29_000, 9_993, 10_001, 'SMH'), at(29_000)),
+        order: workingSell,
+        reanchorCount: 2,
+      }),
+    ),
+  ).toEqual({
+    _tag: 'CancelForReanchor',
+    brokerOrderId: 'order-20500',
+    reason: PassiveReanchorReason.TimeDecayEscalation,
+    targetStage: ExecutionPricingStage.Marketable,
+    proposedLimitPriceMicros: 9_991n * cent,
+  })
+
+  // Escalated reduce-only exits also check marketability against the current NBBO touch (both sides).
+  const flattenStart = Date.parse('2026-11-27T17:58:00.000Z')
+  const exitAt = (offsetMs: number) => new Date(flattenStart + offsetMs).toISOString()
+  const deadlineAt = '2026-11-27T17:59:00.000Z'
+  const exitMarket = (offsetMs: number, bidCents: number, askCents: number) => ({
+    cut: {
+      observedAt: exitAt(offsetMs),
+      regularOpenAt: '2026-11-27T14:30:00.000Z',
+      regularCloseAt: '2026-11-27T18:00:00.000Z',
+    },
+    quote: {
+      ...quote(0, bidCents, askCents, 'SMH'),
+      event_at: exitAt(offsetMs - 100),
+      ingested_at: exitAt(offsetMs - 75),
+      source_offset: String(3_000_000 + offsetMs),
+    },
+  })
+  const makeExitOrder = (side: OrderSide, limitCents: bigint): Order => ({
+    ...order(signal('SMH', side), limitCents * cent, 0, 0),
+    createdAt: exitAt(20_500),
+    submittedAt: exitAt(20_500),
+    updatedAt: exitAt(20_500),
+    observedAt: exitAt(29_000),
+    brokerOrderId: `exit-${side.toLowerCase()}-escalated`,
+  })
+
+  // Sell exit working at $99.94 is retained when bid is $99.95 (even though 5 bp padded proposal is $99.91),
+  // and re-anchors to $99.89 once bid drops to $99.93.
+  expect(
+    Result.getOrThrow(
+      planPassiveExitReanchor({
+        policy: exitPolicy,
+        symbol: 'SMH',
+        side: OrderSide.Sell,
+        market: exitMarket(29_000, 9_995, 10_003),
+        windowStartedAt: exitAt(0),
+        deadlineAt,
+        order: makeExitOrder(OrderSide.Sell, 9_994n),
+      }),
+    )._tag,
+  ).toBe('Keep')
+  expect(
+    Result.getOrThrow(
+      planPassiveExitReanchor({
+        policy: exitPolicy,
+        symbol: 'SMH',
+        side: OrderSide.Sell,
+        market: exitMarket(29_000, 9_993, 10_001),
+        windowStartedAt: exitAt(0),
+        deadlineAt,
+        order: makeExitOrder(OrderSide.Sell, 9_994n),
+      }),
+    ),
+  ).toEqual({
+    _tag: 'CancelForReanchor',
+    brokerOrderId: 'exit-sell-escalated',
+    reason: PassiveReanchorReason.TimeDecayEscalation,
+    targetStage: ExecutionPricingStage.Marketable,
+    proposedLimitPriceMicros: 9_989n * cent,
+  })
+
+  // Buy (short-cover) exit working at $100.06 is retained when ask is $100.05 (padded proposal $100.10),
+  // and re-anchors to $100.12 once ask rises to $100.07.
+  expect(
+    Result.getOrThrow(
+      planPassiveExitReanchor({
+        policy: exitPolicy,
+        symbol: 'SMH',
+        side: OrderSide.Buy,
+        market: exitMarket(29_000, 9_997, 10_005),
+        windowStartedAt: exitAt(0),
+        deadlineAt,
+        order: makeExitOrder(OrderSide.Buy, 10_006n),
+      }),
+    )._tag,
+  ).toBe('Keep')
+  expect(
+    Result.getOrThrow(
+      planPassiveExitReanchor({
+        policy: exitPolicy,
+        symbol: 'SMH',
+        side: OrderSide.Buy,
+        market: exitMarket(29_000, 9_999, 10_007),
+        windowStartedAt: exitAt(0),
+        deadlineAt,
+        order: makeExitOrder(OrderSide.Buy, 10_006n),
+      }),
+    ),
+  ).toEqual({
+    _tag: 'CancelForReanchor',
+    brokerOrderId: 'exit-buy-escalated',
+    reason: PassiveReanchorReason.TimeDecayEscalation,
+    targetStage: ExecutionPricingStage.Marketable,
+    proposedLimitPriceMicros: 10_012n * cent,
+  })
+})
+
 test('passive-to-marketable reduce-only exits capture spread early and guarantee pre-deadline escalation', () => {
   const flattenStart = Date.parse('2026-11-27T17:58:00.000Z')
   const exitAt = (offsetMs: number) => new Date(flattenStart + offsetMs).toISOString()
