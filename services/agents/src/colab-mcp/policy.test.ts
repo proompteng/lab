@@ -382,4 +382,78 @@ describe('createColabRuntimePolicy security isolation', () => {
     expect(retried.structuredContent).toEqual({ name: `runtimes/${prefixA}r5` })
     expect(createAttempt).toBe(2)
   })
+
+  it('retains an uncertain reservation when a matching retry is rejected with HTTP 429/401 or error payload', async () => {
+    const requestId = '33333333-3333-4333-8333-333333333333'
+    const runtimes = [
+      { name: `runtimes/${prefixA}r1` },
+      { name: `runtimes/${prefixB}r2` },
+      { name: 'runtimes/human-r3' },
+      { name: 'runtimes/human-r4' },
+    ]
+    let createAttempt = 0
+    const { upstream } = mockUpstream((name, args) => {
+      if (name === 'list_runtimes') return { content: [], structuredContent: { runtimes } }
+      if (name === 'create_runtime') {
+        createAttempt++
+        if (createAttempt === 1) {
+          return { isError: true, content: [{ type: 'text', text: '{"error":{"status":"DEADLINE_EXCEEDED"}}' }] }
+        }
+        if (createAttempt === 2) {
+          throw new ColabError('colab_upstream_error', 'Colab returned HTTP 429.', true)
+        }
+        if (createAttempt === 3) {
+          return { isError: true, content: [{ type: 'text', text: '{"error":{"status":"PERMISSION_DENIED"}}' }] }
+        }
+        return {
+          content: [],
+          structuredContent: { name: `runtimes/${args.runtimeId}`, connectionInfo: { token: 'strip-me' } },
+        }
+      }
+      return { content: [], structuredContent: {} }
+    })
+    const call = createColabRuntimePolicy(upstream, 5)
+
+    // Attempt 1: times out, keeping the 5th slot reserved.
+    const timedOut = await call(
+      'create_runtime',
+      { runtime: { region: 'us-central1' }, runtimeId: 'r5', requestId },
+      context(),
+      runA,
+    )
+    expect(timedOut.isError).toBe(true)
+
+    // Attempt 2: matching retry hits HTTP 429 (creationRejected=true) — error propagates, reservation stays held.
+    await expectColabError(
+      call('create_runtime', { runtime: { region: 'us-central1' }, runtimeId: 'r5', requestId }, context(), runA),
+      'colab_upstream_error',
+    )
+    await expectColabError(
+      call('create_runtime', { runtime: { region: 'us-central1' }, runtimeId: 'r6' }, context(), runB),
+      'colab_runtime_limit_reached',
+    )
+
+    // Attempt 3: matching retry returns an error payload — reservation still stays held.
+    const deniedRetry = await call(
+      'create_runtime',
+      { runtime: { region: 'us-central1' }, runtimeId: 'r5', requestId },
+      context(),
+      runA,
+    )
+    expect(deniedRetry.isError).toBe(true)
+    await expectColabError(
+      call('create_runtime', { runtime: { region: 'us-central1' }, runtimeId: 'r6' }, context(), runB),
+      'colab_runtime_limit_reached',
+    )
+
+    // Attempt 4: subsequent matching retry still succeeds at 5/5 capacity.
+    const completed = await call(
+      'create_runtime',
+      { runtime: { region: 'us-central1' }, runtimeId: 'r5', requestId },
+      context(),
+      runA,
+    )
+    expect(completed.structuredContent).toEqual({ name: `runtimes/${prefixA}r5` })
+    expect(createAttempt).toBe(4)
+  })
 })

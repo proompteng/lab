@@ -490,10 +490,14 @@ export const createColabRuntimePolicy = (upstream: ColabUpstream, maxConcurrentR
     let result: CallToolResult
     try {
       result = await upstream.callTool(name, { ...parsed.data, requestId, runtimeId: id }, token, context)
-      rejected = result.isError === true && creationRejected(toolPayload(result), { allowAlreadyExists: isRetry })
+      // A retry rejection (e.g. HTTP 429/401 or error) does not cancel an original in-flight creation at Google;
+      // retain the uncertain reservation so the concurrency cap cannot be exceeded.
+      rejected = !isRetry && result.isError === true && creationRejected(toolPayload(result))
     } catch (error) {
-      rejected = error instanceof ColabError && error.creationRejected && !(isRetry && error.alreadyExists)
-      if (rejected) throw error
+      if (error instanceof ColabError && error.creationRejected) {
+        rejected = !isRetry
+        throw error
+      }
       throw new ColabError(
         'colab_runtime_creation_unconfirmed',
         `Colab did not confirm creation of ${resource}. Check list_runtimes before trying again.`,

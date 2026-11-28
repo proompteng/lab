@@ -375,18 +375,25 @@ it('allows matching idempotent create_runtime retries after DEADLINE_EXCEEDED at
   expect(attempt).toBe(3)
 })
 
-it('releases a reserved slot when a retried create_runtime permanently fails, and preserves it on ALREADY_EXISTS', async () => {
+it('retains an uncertain reservation when a retried create_runtime is rejected, releasing only on confirmed delete', async () => {
   const runtimes = fourRuntimes()
   const requestId = '33333333-3333-4333-8333-333333333333'
-  const responses: CallToolResult[] = [
-    deadlineExceededResult,
-    { isError: true, content: [{ type: 'text', text: '{"error":{"status":"ALREADY_EXISTS"}}' }] },
-    { isError: true, content: [{ type: 'text', text: '{"error":{"status":"RESOURCE_EXHAUSTED"}}' }] },
-    toolResult({ name: ownedRuntime('sixth') }),
-  ]
-  const create = vi.fn(async () => responses.shift()!)
+  let attempt = 0
   const { call } = fixture({
-    callTool: async ({ params }) => (params.name === 'list_runtimes' ? toolResult({ runtimes }) : create()),
+    callTool: async ({ params }) => {
+      if (params.name === 'list_runtimes') return toolResult({ runtimes })
+      if (params.name === 'delete_runtime') return toolResult({})
+      expect(params.name).toBe('create_runtime')
+      attempt++
+      if (attempt === 1) return deadlineExceededResult
+      if (attempt === 2) {
+        return { isError: true, content: [{ type: 'text', text: '{"error":{"status":"ALREADY_EXISTS"}}' }] }
+      }
+      if (attempt === 3) {
+        return { isError: true, content: [{ type: 'text', text: '{"error":{"status":"RESOURCE_EXHAUSTED"}}' }] }
+      }
+      return toolResult({ name: ownedRuntime('sixth') })
+    },
   })
 
   // Initial create times out -> slot retained.
@@ -398,14 +405,19 @@ it('releases a reserved slot when a retried create_runtime permanently fails, an
     result: { isError: true },
   })
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
-  // Retry permanently fails with RESOURCE_EXHAUSTED -> reservation released so a new runtime fits.
+  // Retry gets RESOURCE_EXHAUSTED -> does not cancel the in-flight create, so the reservation stays held.
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'fifth', requestId })).toMatchObject({
     result: { isError: true },
+  })
+  expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject(runtimeLimit)
+  // Confirmed deletion releases the uncertain reservation so a new runtime fits.
+  expect(await call('delete_runtime', { name: ownedRuntime('fifth') })).toMatchObject({
+    result: { structuredContent: {} },
   })
   expect(await call('create_runtime', { runtime: {}, runtimeId: 'sixth' })).toMatchObject({
     result: { structuredContent: { name: ownedRuntime('sixth') } },
   })
-  expect(create).toHaveBeenCalledTimes(4)
+  expect(attempt).toBe(4)
 })
 
 it('allows a matching idempotent retry even if Google already listed the runtime after DEADLINE_EXCEEDED', async () => {
