@@ -50,6 +50,7 @@ resources:
   - tailscale-networkpolicy.yaml
   - auto-ontology-mcp-token-sealedsecret.yaml
   - auto-ontology-networkpolicy.yaml
+  - auto-ontology-db-networkpolicy.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
