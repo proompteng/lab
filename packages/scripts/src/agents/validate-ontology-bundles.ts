@@ -11,6 +11,7 @@ const migrations = new Map([
   ['agents', 'services/agents/src/server/migrations'],
   ['bayn', 'services/bayn/migrations'],
 ])
+const maxRuleTagLength = 25
 const bundleFiles = new Bun.Glob('docs/*/ontology/*knowledge*.json')
 const { printWidth, tabWidth, useTabs } = formatterConfig
 
@@ -281,13 +282,18 @@ const checkBundle = async (
       value,
       'bundle',
       [...sectionKeys, 'version', ...(owner === 'agents' ? ['dataSource'] : [])],
-      owner === 'agents' ? ['database'] : ['dataSource', 'database'],
+      owner === 'agents' ? ['database', 'ruleTag'] : ['dataSource', 'database', 'ruleTag'],
     )
     if (bundle.version !== 1) throw new Error('Unsupported knowledge bundle version')
     if (owner === 'agents' && bundle.dataSource !== 'agents-db-next')
       throw new Error('bundle.dataSource: expected agents-db-next')
-    if (bundle.dataSource !== undefined) text(bundle.dataSource, 'bundle.dataSource')
+    const dataSource = bundle.dataSource !== undefined ? text(bundle.dataSource, 'bundle.dataSource') : undefined
     if (bundle.database !== undefined) text(bundle.database, 'bundle.database')
+    const ruleTag = bundle.ruleTag !== undefined ? text(bundle.ruleTag, 'bundle.ruleTag').trim() : undefined
+    const resolvedRuleTag = ruleTag ?? (dataSource !== undefined ? `${dataSource} canonical rule` : undefined)
+    if (resolvedRuleTag !== undefined && resolvedRuleTag.length > maxRuleTagLength) {
+      throw new Error(`bundle.ruleTag: canonical rule tag must be at most ${maxRuleTagLength} characters`)
+    }
   }
 
   const declared =
