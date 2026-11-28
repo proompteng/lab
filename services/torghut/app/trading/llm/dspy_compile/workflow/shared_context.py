@@ -36,7 +36,7 @@ DSPyWorkflowLane = Literal[
 
 DSPyWorkflowExecutionMode = Literal["agentrun", "local"]
 
-DEFAULT_DSPY_AGENT_NAME = "codex-spark-agent"
+DEFAULT_DSPY_AGENT_NAME = "codex-agent"
 SIGNATURE_VERSIONS_METADATA_KEY = "signature_versions"
 
 IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
@@ -761,6 +761,4 @@ __all__ = (
     "sanitize_idempotency_key",
 )
 
-# Public aliases used by split-module consumers.
 http_json_request = _http_json_request
-normalize_string_parameter = _normalize_string_parameter

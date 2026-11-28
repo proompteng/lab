@@ -15,7 +15,12 @@ import { resolveImplementation, resolveParameters } from './run-utils'
 import { buildRuntimeRef, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
 import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } from './vcs-context'
-import { extractRunnerStatusFromJobPods, mergeAgentRunArtifacts, runnerStatusOutputArtifacts } from './runner-status'
+import {
+  extractRunnerStatusFromJobPods,
+  mergeAgentRunArtifacts,
+  runnerStatusOutputArtifacts,
+  type RunnerTerminalStatus,
+} from './runner-status'
 import {
   normalizeWorkflowStatus,
   parseWorkflowSteps,
@@ -37,6 +42,12 @@ type WorkflowContractCheck =
   | { ok: true; requiredKeys: string[] }
   | { ok: false; reason: string; message: string; requiredKeys: string[]; missing?: string[] }
 
+export type CompletedWorkflowRunner = {
+  runner: RunnerTerminalStatus
+  jobStartedAt: string | null
+  jobFinishedAt: string | null
+}
+
 type WorkflowReconcilerDependencies = {
   resolveRunnerServiceAccount: (
     runtimeConfig: Record<string, unknown>,
@@ -49,7 +60,12 @@ type WorkflowReconcilerDependencies = {
   ) => WorkflowContractCheck
   buildContractStatus: (result: WorkflowContractCheck) => Record<string, unknown> | undefined
   buildConditions: (resource: Record<string, unknown>) => Condition[]
-  setStatus: (kube: KubeClient, resource: Record<string, unknown>, status: Record<string, unknown>) => Promise<void>
+  setStatus: (
+    kube: KubeClient,
+    resource: Record<string, unknown>,
+    status: Record<string, unknown>,
+    completedRunners?: CompletedWorkflowRunner[],
+  ) => Promise<void>
   nowIso: () => string
   submitJobRun: (
     kube: KubeClient,
@@ -1168,15 +1184,22 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     }
 
     let completedJobOutputArtifacts: Record<string, unknown>[] = []
+    const completedRunners: CompletedWorkflowRunner[] = []
     for (const entry of completedJobs) {
       const jobName = asString(readNested(entry.job, ['metadata', 'name']))
       if (!jobName) continue
-      const runnerStatus = await extractRunnerStatusFromJobPods(kube, entry.namespace, jobName, [
+      const runner = await extractRunnerStatusFromJobPods(kube, entry.namespace, jobName, [
         'succeeded',
         'failed',
         'cancelled',
       ])
-      const runnerArtifacts = runnerStatus ? runnerStatusOutputArtifacts(runnerStatus) : []
+      if (!runner) continue
+      completedRunners.push({
+        runner,
+        jobStartedAt: asString(readNested(entry.job, ['status', 'startTime'])),
+        jobFinishedAt: asString(readNested(entry.job, ['status', 'completionTime'])),
+      })
+      const runnerArtifacts = runnerStatusOutputArtifacts(runner)
       if (runnerArtifacts.length > 0) {
         completedJobOutputArtifacts = mergeAgentRunArtifacts(completedJobOutputArtifacts, runnerArtifacts)
       }
@@ -1185,6 +1208,22 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       completedJobOutputArtifacts.length > 0
         ? { artifacts: mergeAgentRunArtifacts(status.artifacts, completedJobOutputArtifacts) }
         : {}
+
+    const commitProgress = async (nextStatus: Record<string, unknown>) => {
+      await deps.setStatus(
+        kube,
+        agentRun,
+        {
+          ...nextStatus,
+          ...artifactStatusUpdate,
+          ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
+        },
+        completedRunners,
+      )
+      for (const entry of completedJobs) {
+        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+      }
+    }
 
     if (workflowFailure) {
       setWorkflowPhase(workflowStatus, 'Failed')
@@ -1206,7 +1245,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         message: workflowFailure.message,
         durationMs: Date.now() - reconcileStartedAt,
       })
-      await deps.setStatus(kube, agentRun, {
+      await commitProgress({
         observedGeneration,
         phase: 'Failed',
         reason: workflowFailure.reason,
@@ -1217,12 +1256,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         conditions: updated,
         vcs: vcsStatus ?? undefined,
         contract: workflowContractStatus,
-        ...artifactStatusUpdate,
-        ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
-      for (const entry of completedJobs) {
-        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
-      }
       return
     }
 
@@ -1242,7 +1276,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         message: 'workflow completed',
         durationMs: Date.now() - reconcileStartedAt,
       })
-      await deps.setStatus(kube, agentRun, {
+      await commitProgress({
         observedGeneration,
         phase: 'Succeeded',
         reason: undefined,
@@ -1252,12 +1286,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         workflow: workflowStatus,
         conditions: updated,
         vcs: vcsStatus ?? undefined,
-        ...artifactStatusUpdate,
-        ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
-      for (const entry of completedJobs) {
-        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
-      }
       return
     }
 
@@ -1275,7 +1304,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         })
       }
       updated = upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' })
-      await deps.setStatus(kube, agentRun, {
+      await commitProgress({
         observedGeneration,
         phase: 'Running',
         reason: undefined,
@@ -1286,13 +1315,8 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         conditions: updated,
         vcs: vcsStatus ?? undefined,
         contract: workflowContractStatus,
-        ...artifactStatusUpdate,
         ...(options.initialSubmit ? { specHash: hashAgentRunImmutableSpec(agentRun) } : {}),
-        ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
-      for (const entry of completedJobs) {
-        await deps.applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
-      }
     }
   }
 

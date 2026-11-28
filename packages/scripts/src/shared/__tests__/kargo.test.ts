@@ -644,7 +644,7 @@ describe('Kargo direct-push GitOps contract', () => {
   })
 
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
-    expect(kargoHelmElement?.version).toBe('1.12.6')
+    expect(kargoHelmElement?.version).toBe('1.12.7')
     expect(kargoHelmValues.global.systemResources).toEqual({ namespace: 'kargo', createNamespace: false })
     expect(kargoHelmValues.global.sharedResources).toEqual({ namespace: 'kargo', createNamespace: false })
     expect(kargoHelmValues.global).not.toHaveProperty('clusterSecretsNamespace')
@@ -1062,7 +1062,7 @@ describe('Kargo direct-push GitOps contract', () => {
   it('retains post-deploy verification for the core Torghut application', () => {
     expect(torghutVerifierWorkflow).toContain('for app in torghut; do')
     expect(torghutVerifierWorkflow).toContain('torghut-ta \\')
-    expect(torghutVerifierWorkflow).toContain('torghut-ws; do')
+    expect(torghutVerifierWorkflow).toContain('kubectl rollout status deployment/torghut-ws -n bayn --timeout=10m')
     expect(torghutVerifierWorkflow).not.toContain('torghut-options')
     expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
   })
@@ -1137,12 +1137,15 @@ describe('Kargo direct-push GitOps contract', () => {
         expect.arrayContaining(keys),
       )
     }
-    expectYamlUpdate('arc-runner', './out/argocd/applications/arc/application.yaml', [
-      ...[1, 2].map((index) => `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`),
-      'spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image',
-      'spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image',
-    ])
-    expect(stagesSource).not.toContain('spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image')
+    expectYamlUpdate(
+      'arc-runner',
+      './out/argocd/applications/arc/application.yaml',
+      [1, 2, 3, 4, 5, 6].flatMap((index) =>
+        ['initContainers', 'containers'].map(
+          (container) => `spec.sources.${index}.helm.valuesObject.template.spec.${container}.0.image`,
+        ),
+      ),
+    )
     expectYamlUpdate('bumba', './out/argocd/applications/bumba/deployment.yaml', [
       'spec.template.spec.containers.0.env.6.value',
     ])

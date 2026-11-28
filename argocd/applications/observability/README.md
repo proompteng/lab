@@ -13,6 +13,9 @@ use the internal TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecu
 and existing BoltDB Shipper schema. The compatibility gateway Service preserves the original client address.
 Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for the verified drain, cutover and recovery
 procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
+Loki bounds push bodies at 8 MiB on the wire and 16 MiB decoded, and rejects lines over 2 MiB without truncating
+records. The [cluster performance runbook](../../../docs/runbooks/cluster-performance-audit-2026-11-27.md#lgtm)
+covers these limits, the Mimir and Tempo capacity changes, and mixed-load acceptance.
 Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
 [Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
 and live acceptance. Mimir uses the shared Strimzi Kafka cluster at
@@ -174,6 +177,8 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `bayn-cycle-operations-dashboard`: nine overview panels for the current condition, blocker, planner outcome, runtime, authority,
   ledger, accounting coverage and execution funnel. Expand execution, account/P&L and export diagnostics as needed.
   Running accounting is distinct from terminal qualification; missing terminal evidence never becomes zero profit.
+- `bayn-multi-sleeve-operations-dashboard`: current cycle and controller outcome, controller stage errors, last successful
+  and unrecovered failed daily Jobs, Bayn database streaming and flush lag, and advisory Auto Ontology availability.
 - `bayn-cache-performance-dashboard`: critical-path activity, outcomes and p95 duration, plus broker snapshot age
   relative to its configured limit. Expand cache replication, dependency failures and PostgreSQL diagnostics after
   identifying the affected path. The API uses
@@ -190,6 +195,29 @@ cluster cannot clear it. A daily full backup can take hours, so this is not a sh
 backup does not establish a successful restore. [Native scenarios](tests/bayn-backup-alerts.yaml) cover the age and
 hold boundaries, recovery, missing telemetry, excluded clusters and stable alert identity.
 
+`BaynExecutionControllerErrorBurst` fires when any tracked stage estimates at least four errors or interruptions
+in three minutes for one minute. Broker-snapshot and liquidation reads are tracked separately because the enclosing
+cycle pass can report success after handling a failed read. The dashboard shows the same counts as errors per minute.
+`BaynDailyCronJobFailed` checks terminal failures of Jobs owned by `bayn-macro-daily-sleeves` and
+`bayn-daily-scorecard`; a newer CronJob success clears retained failures. `BaynDailyCronJobStale` uses Kubernetes
+schedule timestamps and a two-hour budget, not a fixed weekday cadence. It warns after five minutes when a scheduled
+run has not succeeded or an expected run was never scheduled. Suspend and terminal-failure observations suppress
+the staleness alert. Before the CronJobs exist, there is no schedule to alert on.
+
+The Jobs collector uses the chart's read-only Job list/watch grant; Alloy forwards only the Job families for those
+two name prefixes and the rules verify owner references. `AutoOntologyDeploymentUnavailable` warns after five
+minutes below the desired replica count. It is advisory (no email route) and is not a trading-readiness check.
+
+Run the [multi-sleeve scenarios](tests/bayn-multi-sleeve-alerts.yaml) against the loaded Mimir rule file:
+
+```sh
+rules_dir="$(mktemp -d)"
+trap 'rm -rf "$rules_dir"' EXIT
+yq -r '.data["graf-rules.yaml"]' argocd/applications/observability/graf-mimir-rules.yaml > "$rules_dir/rules.yaml"
+cp argocd/applications/observability/tests/bayn-multi-sleeve-alerts.yaml "$rules_dir/"
+promtool test rules "$rules_dir/bayn-multi-sleeve-alerts.yaml"
+```
+
 The TA and market-data archive scrapes retain separate pipeline identities. Their critical email alerts detect a
 missing scrape, no running Flink job, and stalled or missing checkpoints, with mutually exclusive failure conditions
 to avoid duplicate pages for one failed pipeline. Bayn runtime degradation still fires after one minute. Its service-level identity survives Pod replacement, and
@@ -200,7 +228,7 @@ mailbox delivery alone does not establish the current alert state.
 The adjusted-daily publisher has a separate warning email when its latest scheduled run remains newer than its last
 successful completion beyond the two-hour start and execution budget, followed by a five-minute hold. An owned
 recovery completion resolves the incident; a successful Friday publication does not page over the weekend. The
-collector retains both CronJob timestamps without enabling the Job collector or changing Kubernetes permissions.
+collector retains both CronJob timestamps; the publisher alert does not depend on the Jobs collector.
 Alertmanager sends warnings carrying `notify="email"` to the existing email receiver, with a four-hour repeat
 interval and fifteen-minute group updates. Critical group updates use five minutes. This includes the existing
 Bayn input, execution and replica warnings and Restate metadata lag. Warnings
@@ -229,9 +257,8 @@ Raw block-device capacity does not establish free space inside a VM; that requir
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
-and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
-`torghut`. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
-Other Torghut containers remain excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn`, including its shared `torghut-ws` producer. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
+Containers in the `torghut` namespace are excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
 than zero throttling. See [producer stall diagnostics](../../../services/dorvud/README.md#producer-stall-diagnostics)
 for JVM, Kafka, probe, and restart correlation.
 The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic

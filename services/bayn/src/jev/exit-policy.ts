@@ -9,7 +9,7 @@ export const positionProtectionIntervalMs = 5_000 as const
 export const JevPositionExitPolicySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.position-exit-policy.v5'),
   maximumPriceCheckIntervalMs: Schema.Literal(positionProtectionIntervalMs),
-  maximumHoldingMinutes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60)),
+  maximumHoldingMinutes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(390)),
   plans: Schema.Record(SymbolSchema, FundedEntryExitPlanSchema),
 })
 

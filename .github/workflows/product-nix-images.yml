@@ -9,42 +9,23 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, edited]
     branches:
       - main
+    # Only the native App dependency-closure verifier runs on PRs.
     paths:
-      - '.github/actions/affected-inputs/**'
-      - 'packages/scripts/src/ci/**'
-      - 'apps/app/**'
-      - 'apps/docs/**'
-      - 'apps/landing/**'
-      - 'apps/synthesis/**'
-      - 'packages/backend/**'
-      - 'packages/design/**'
-      - 'services/tengri/proto/**'
-      - 'services/tengri/migrations/**'
-      - 'services/tengri/fixtures/**'
+      - '**/package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'tsconfig.base.json'
+      - 'patches/**'
       - 'nix/images/app.nix'
-      - 'nix/check-bun-dependency-closure.sh'
-      - '.github/workflows/nix-bun-dependency-closure.yml'
-      - 'nix/images/docs.nix'
-      - 'nix/images/proompteng.nix'
-      - 'nix/tengri-schema-hash.py'
-      - 'nix/images/synthesis.nix'
       - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/relativize-bun-cache.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
       - 'nix/packages.nix'
       - 'flake.nix'
       - 'flake.lock'
-      - 'bun.lock'
-      - 'argocd/applications/proompteng/**'
-      - 'argocd/applications/app/**'
-      - 'argocd/applications/synthesis/**'
-      - 'argocd/applications/docs/**'
-      - package.json
-      - bunfig.toml
-      - .npmrc
-      - patches/**
-      - tsconfig.base.json
-      - nix/images/relativize-bun-cache.sh
-      - nix/images/prune-bun-dependency-metadata.sh
-      - '**/package.json'
+      - 'nix/check-bun-dependency-closure.sh'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
   push:
     branches:
       - main
@@ -365,6 +346,7 @@ jobs:
     with:
       image_name: synthesis
       package_attr: synthesis-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: true
@@ -377,6 +359,7 @@ jobs:
     with:
       image_name: docs
       package_attr: docs-image
+      tmpfs: true
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: true

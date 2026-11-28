@@ -2,12 +2,12 @@ import { DecisionConstruction } from '../decision-construction'
 import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
-import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
+import { MarketCalendarObservationSchema, MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import { beforeAll, describe, expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Option, Result, Schema } from 'effect'
 
 const runWithConstruction = <A, E>(program: Effect.Effect<A, E, DecisionConstruction>) =>
   Effect.runPromise(
@@ -27,6 +27,8 @@ import {
   Authority,
   IntentState,
   KillState,
+  isBracketProtection,
+  type Order,
   OrderType,
   OrderSide,
   OrderStatus,
@@ -50,9 +52,13 @@ import {
   type ExecutionCycleClosure,
   type ExecutionCycleClosureStoreShape,
 } from '../db/execution-cycle-closure'
-import { ensureExecutionCycleClosure } from './execution-cycle'
+import { nativeAlphaDecisionFixture } from '../strategy/intraday-alpha/alpha-decision.test-support'
+import { IntradayAlphaPhase } from '../strategy/intraday-alpha/policy'
+import { closeWindowForCycle, ensureExecutionCycleClosure } from './execution-cycle'
 import { resolveExecutionCycleCloseWindow } from './execution-window'
-import { prepareMutationIntent } from './mutation-intent-interpreter'
+import { BrokerAccess, grantedCapitalAuthority } from '../execution/authority'
+import { advancePositionProtection } from './position-protection-interpreter'
+import { prepareMutationIntent, readPreparedExecutionIntents } from './mutation-intent-interpreter'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -312,6 +318,539 @@ describe('closing market-data fallback boundaries', () => {
     const { input, ...state } = defaultFixture
     return { input: { ...input }, ...structuredClone(state) }
   }
+
+  test.each(['16:28:02.379', '17:55:02.000', '18:02:03.000'])(
+    'Black Friday MorningOrb closes GOOGL -103 with a stale IEX quote at %sZ',
+    async (time) => {
+      const date = '2026-11-27'
+      const calendar = Result.getOrThrow(
+        normalizeMarketCalendarResult(
+          [{ date, open: '09:30', close: '13:00', session_open: '0400', session_close: '1700' }],
+          { start: date, end: date },
+        ),
+      )
+      const { document, cycle, strategy, prepared, riskPolicy, reconciliation, policy } =
+        await nativeAlphaDecisionFixture({
+          calendar: Schema.decodeUnknownSync(MarketCalendarObservationSchema)(calendar),
+          snapshot: {
+            minutesFromOpen: 32,
+            spyProfile: { basePrice: 550, endReturnBps: -55 },
+            profiles: {
+              GOOGL: {
+                basePrice: 274,
+                endReturnBps: -60,
+                openingRangeLow: 272,
+                overridePrevClose: 272.1,
+                overrideLatestClose: 271.08,
+              },
+            },
+          },
+        })
+      expect(document.strategyDecision).toMatchObject({
+        phase: IntradayAlphaPhase.MorningOrb,
+        selectedSymbols: ['GOOGL'],
+        exitPolicy: {
+          plans: { GOOGL: { levels: { minimumEntryPriceMicros: '270810000', maximumHoldingMinutes: 60 } } },
+        },
+      })
+      expect(document.executionSession?.executionSession.closeAt).toBe('2026-11-27T22:00:00.000Z')
+      const observedAt = `${date}T${time}Z`
+      const state = {
+        ...reconciliation.brokerState,
+        account: { ...reconciliation.brokerState.account, observedAt },
+        positions: [
+          {
+            schemaVersion: 'bayn.position.v2' as const,
+            accountId: cycle.identity.accountId,
+            symbol: 'GOOGL',
+            quantityAtoms: '-103000000000',
+            averageEntryPriceMicros: '271025500',
+            costBasisMicros: '-27915626500',
+            marketPriceMicros: '275880000',
+            marketValueMicros: '-28415640000',
+            unrealizedPnlMicros: '-500013500',
+            observedAt,
+          },
+        ],
+        positionsObservedAt: observedAt,
+        ordersObservedAt: observedAt,
+      }
+      const hash = Result.getOrThrow(reconciledStateHash(state))
+      const cut = { ...state.reconciliation, reconciledAt: observedAt, expectedHash: hash, observedHash: hash }
+      const exact = {
+        ...reconciliation,
+        brokerState: { ...state, reconciliation: cut },
+        report: { ...reconciliation.report, reconciliation: cut },
+        riskContext: {
+          ...reconciliation.riskContext,
+          authority: { ...reconciliation.riskContext.authority, updatedAt: observedAt },
+          authorityObservedAt: observedAt,
+        },
+      }
+      const window = await Effect.runPromise(closeWindowForCycle(cycle, document, policy.sharedProtocol, observedAt))
+      expect(window.startAt).toBe('2026-11-27T16:28:00.000Z')
+      const postClose = time === '18:02:03.000'
+      expect(window.expiresAt).toBe(postClose ? '2026-11-27T18:05:03.000Z' : '2026-11-27T18:00:00.000Z')
+      let quoteReads = 0
+      const input = {
+        accountId: cycle.identity.accountId,
+        authorityGenerationHash: document.bindings.authorityGenerationHash,
+        pollIntervalMs: 30_000,
+        reconciliationIntervalMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        strategy,
+        intradayMarketData: {
+          ...freshMarket,
+          loadSnapshot: () => {
+            quoteReads++
+            return Effect.fail(
+              retryableOperationalError({
+                component: 'market-data',
+                operation: 'load',
+                message: 'Streaming snapshot verification failed',
+                cause: new IntradaySnapshotFailure({
+                  reason: 'not-ready',
+                  message: 'intraday snapshot lacks a post-range quote for every symbol',
+                  facts: { symbol: 'GOOGL', quoteAgeMs: 61_000 },
+                }),
+              }),
+            )
+          },
+        },
+      }
+      if (!postClose) {
+        const unused = () => Effect.die('Unexpected protection operation')
+        let stored: StoredIntent | undefined
+        let submitted: MutationEvent | undefined
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* TestClock.setTime(Date.parse(observedAt))
+            const [entry] = yield* readPreparedExecutionIntents(document)
+            if (entry === undefined || !isBracketProtection(entry.intent.protection))
+              throw new Error('Expected a durable native short bracket')
+            const intent = entry.intent
+            const terms = entry.intent.protection
+            stored = {
+              intent: { ...intent, state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Filled },
+              stateVersion: 3,
+              updatedAt: '2026-11-27T15:02:09.000Z',
+            }
+            submitted = {
+              schemaVersion: 'bayn.paper-mutation-event.v1',
+              eventId: 'a'.repeat(64),
+              mutationId: 'b'.repeat(64),
+              intentId: intent.intentId,
+              sequence: 2,
+              operation: MutationOperation.Submit,
+              eventType: MutationEventType.SubmitAccepted,
+              requestHash: 'c'.repeat(64),
+              consistencyDelayMs: 1_000,
+              brokerOrderId: 'googl-entry',
+              occurredAt: stored.updatedAt,
+            }
+            const stop: Order = {
+              schemaVersion: 'bayn.order.v3',
+              accountId: input.accountId,
+              brokerOrderId: 'googl-stop',
+              clientOrderId: 'googl-stop-client',
+              intentId: intent.intentId,
+              symbol: 'GOOGL',
+              side: OrderSide.Buy,
+              orderType: OrderType.StopLimit,
+              timeInForce: TimeInForce.Day,
+              quantityAtoms: '103000000000',
+              filledQuantityAtoms: '0',
+              status: OrderStatus.New,
+              stopPriceMicros: terms.stopPriceMicros,
+              limitPriceMicros: terms.stopLimitPriceMicros,
+              observedAt,
+            }
+            const { stopPriceMicros: _stop, ...profit } = stop
+            const orders: readonly Order[] = [
+              stop,
+              {
+                ...profit,
+                brokerOrderId: 'googl-profit',
+                clientOrderId: 'googl-profit-client',
+                orderType: OrderType.Limit,
+                limitPriceMicros: terms.profitLimitPriceMicros,
+              },
+            ]
+            const cancels: string[] = []
+            const advance = (openOrders: readonly Order[]) =>
+              advancePositionProtection({
+                input,
+                cycle,
+                document,
+                protocol: policy.sharedProtocol,
+                policy: riskPolicy,
+                reconciliation: { ...exact, brokerState: { ...exact.brokerState, orders: openOrders } },
+                closeDue: observedAt >= window.startAt,
+                closeExpiresAt: window.expiresAt,
+                capability: {
+                  _tag: 'Mutation',
+                  executionProgram: {
+                    _tag: 'ExecutionProgram',
+                    schemaVersion: 'bayn.execution-program.v1',
+                    authority: {
+                      brokerAccess: BrokerAccess.Mutation,
+                      brokerIdentity: exact.riskContext.brokerIdentity,
+                      capitalAuthority: grantedCapitalAuthority(input.authorityGenerationHash),
+                      strategy: strategy.provenance.strategy,
+                    },
+                    recordReconciliation: unused,
+                    invalidateBrokerState: unused(),
+                    dryRunSubmit: unused,
+                    submit: unused,
+                    submitProtectionClose: unused,
+                    cancel: unused,
+                    recover: unused,
+                    cancelProtectionOrder: (intentId, brokerOrderId) =>
+                      Effect.sync(() => {
+                        cancels.push(brokerOrderId)
+                        return {
+                          _tag: 'Accepted',
+                          phase: 'Fresh',
+                          receipt: {
+                            command: { intentId, accountId: input.accountId, brokerOrderId, requestedAt: observedAt },
+                            requestHash: 'a'.repeat(64),
+                            evidence: {
+                              requestId: 'incident-test-cancel',
+                              status: 204,
+                              contentHash: 'b'.repeat(64),
+                              observedAt,
+                            },
+                          },
+                        } as const
+                      }),
+                  },
+                },
+              })
+            expect(yield* advance(orders)).toMatchObject({ _tag: 'PostMutationReconciliation' })
+            expect(cancels).toEqual(['googl-stop'])
+            expect(yield* advance([])).toEqual({ _tag: 'Ready' })
+            expect(quoteReads).toBe(0)
+          }).pipe(
+            Effect.provideService(IntentStore, {
+              read: () => Effect.succeed(Option.fromUndefinedOr(stored)),
+              protectionForCycle: () => Effect.succeed(stored === undefined ? [] : [stored]),
+              beginProtectionCancel: unused,
+              recordProtectionCancelAccepted: unused,
+              commit: unused,
+            }),
+            Effect.provideService(MutationStore, {
+              latest: (_id, operation) =>
+                Effect.succeed(operation === MutationOperation.Submit ? submitted : undefined),
+              authorizeSubmit: unused,
+              beginSubmit: unused,
+              submitAccepted: unused,
+              submitRejected: unused,
+              submitDenied: unused,
+              submitUnknown: unused,
+              beginCancel: unused,
+              cancelAccepted: unused,
+              cancelUnknown: unused,
+              recoveryFound: unused,
+              recoveryNotFound: unused,
+              recoveryUnknown: unused,
+            }),
+            Effect.provideService(JevPositionStore, { read: unused }),
+            Effect.provide(TestClock.layer()),
+          ),
+        )
+      }
+      const closed = await runWithConstruction(
+        TestClock.setTime(Date.parse(observedAt)).pipe(
+          Effect.andThen(
+            prepareClosingExecutionCycleDecision({
+              input,
+              preparation: prepared,
+              policy: riskPolicy,
+              cycle,
+              entryDocument: document,
+              closeExpiresAt: window.expiresAt,
+              reconcile: Effect.succeed(exact),
+            }),
+          ),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+      expect(quoteReads).toBe(postClose ? 0 : 1)
+      expect(closed.document.dispatchable).toBe(true)
+      expect(closed.document.deltaRisk[0]?.limitPriceMicros).toBe('276150000')
+      expect(closed.document.targetPlan.executionTerms?.priceReference).toBe('reconciled-broker-position-mark')
+      expect(closed.document.targetPlan.intentTargets).toMatchObject([
+        { symbol: 'GOOGL', side: OrderSide.Buy, quantityAtoms: '103000000000', orderType: OrderType.Limit },
+      ])
+    },
+  )
+
+  test.each([
+    'stop',
+    'target',
+    'wide-stop',
+    'inside',
+    'pending',
+    'typed-error',
+    'defect',
+    'interruption',
+    'timeout',
+    'near-expiry',
+    'expired',
+    'stale',
+    'missing-bid',
+    'missing-ask',
+    'malformed',
+    'partial',
+    'cancel-accepted',
+  ] as const)('pending entry preserves its original price boundaries: %s', async (scenario) => {
+    const request = await fixture()
+    const document = request.entryDocument
+    const entry = document.strategyDecision
+    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
+    const plan = entry.exitPolicy.plans['AAPL']
+    const risk = document.deltaRisk[0]
+    const target = document.targetPlan.intentTargets[0]
+    if (plan === undefined || risk === undefined || target === undefined) throw new Error('Expected a funded entry')
+    const buildAt = document.createdAt
+    const checkAt =
+      scenario === 'expired'
+        ? risk.evaluation.decision.expiresAt
+        : scenario === 'near-expiry'
+          ? new Date(Date.parse(risk.evaluation.decision.expiresAt) - 1).toISOString()
+          : new Date(Date.parse(buildAt) + 1_499).toISOString()
+    expect(checkAt <= risk.evaluation.decision.expiresAt).toBe(true)
+    const initial = factsAt(checkAt)
+    const authority = initial.riskContext.authority
+    if (authority === null) throw new Error('Expected entry authority')
+    const intent = await runWithConstruction(
+      planExecutionIntent(
+        {
+          schemaVersion: 'bayn.intent-plan.v3',
+          ...target,
+          limitPriceMicros: risk.limitPriceMicros,
+          notionalLimitMicros: risk.notionalLimitMicros,
+          ...(risk.protection === undefined ? {} : { protection: risk.protection }),
+          createdAt: buildAt,
+        },
+        { authority },
+      ),
+    )
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(intent)))),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'unfilled-boundary-entry',
+      occurredAt: buildAt,
+    }
+    const open = Result.getOrThrow(decidePreparedMutationIntent(intent, accepted))
+    if (open._tag !== 'Pending') throw new Error('Expected acknowledged entry')
+    const record: StoredIntent = {
+      intent: { ...intent, state: IntentState.Acknowledged, riskDecisionId: risk.evaluation.decision.decisionId },
+      decision: risk.evaluation.decision,
+      stateVersion: 3,
+      updatedAt: buildAt,
+    }
+    const state = {
+      ...initial.brokerState,
+      positions: scenario === 'partial' ? factsAt(checkAt, true).brokerState.positions : initial.brokerState.positions,
+      orders: [
+        ...initial.brokerState.orders,
+        { ...open.order, status: OrderStatus.New, filledQuantityAtoms: '0', observedAt: checkAt },
+      ],
+    }
+    const hash = Result.getOrThrow(reconciledStateHash(state))
+    const exact = { ...state.reconciliation, expectedHash: hash, observedHash: hash }
+    const reconciliation = {
+      ...initial,
+      brokerState: { ...state, reconciliation: exact },
+      report: { ...initial.report, reconciliation: exact },
+    }
+    const stop = Number(plan.levels.stopPriceMicros) / 1_000_000
+    const profit = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
+    const bid =
+      scenario === 'inside' || scenario === 'cancel-accepted'
+        ? (stop + profit) / 2
+        : scenario === 'target'
+          ? profit
+          : stop
+    let marketReads = 0
+    const finalizedAt: number[] = []
+    const defect = new Error('Pending entry source defect')
+    const typedFailure = new OperationalError({
+      component: 'market-data',
+      operation: 'snapshot',
+      message: 'Pending entry source contract failed',
+      retryable: false,
+    })
+    const market: IntradayMarketDataService = {
+      ...freshMarket,
+      loadSnapshot: (query) =>
+        Effect.suspend(() => {
+          marketReads += 1
+          if (scenario === 'pending') return Effect.fail(marketFailure)
+          if (scenario === 'typed-error') return Effect.fail(typedFailure)
+          if (scenario === 'defect') return Effect.die(defect)
+          if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') return Effect.never
+          const raw = makeIntradayMomentumTestSnapshot(
+            native.protocol,
+            { ...query, archiveWatermarks: [] },
+            { AAPL: 0.02 },
+            10,
+          )
+          const snapshot = streamingFixtureFromRaw(
+            {
+              ...raw,
+              quotes: raw.quotes.map((quote) => ({
+                ...quote,
+                eventAt:
+                  scenario === 'stale'
+                    ? new Date(Date.parse(checkAt) - native.protocol.maximumQuoteAgeMs + 1).toISOString()
+                    : quote.eventAt,
+                bidPrice: bid,
+                askPrice: bid + (scenario === 'wide-stop' ? 1 : 0.001),
+                bidSize: scenario === 'missing-bid' ? 0 : quote.bidSize,
+                askSize: scenario === 'missing-ask' ? 0 : quote.askSize,
+              })),
+            },
+            query,
+          ).snapshot
+          return Effect.succeed(
+            scenario === 'malformed'
+              ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
+              : snapshot,
+          )
+        }).pipe(
+          Effect.ensuring(
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => {
+                finalizedAt.push(now)
+              }),
+            ),
+          ),
+        ),
+    }
+    const unused = () => Effect.die(new Error('Pending entry must retain its immutable commit and mutation owner'))
+    const cancel: MutationEvent = {
+      ...accepted,
+      sequence: 3,
+      operation: MutationOperation.Cancel,
+      eventType: MutationEventType.CancelAccepted,
+      occurredAt: checkAt,
+    }
+    const program = prepareMutationIntent(
+      { ...request.input, intradayMarketData: market },
+      request.preparation,
+      request.policy,
+      request.cycle,
+      document,
+      Effect.succeed(reconciliation),
+      true,
+      false,
+      {
+        now:
+          scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption'
+            ? currentUtcInstant
+            : Effect.sync(() =>
+                scenario === 'stale' && marketReads > 0 ? new Date(Date.parse(checkAt) + 2).toISOString() : checkAt,
+              ),
+        restrictAuthority: unused,
+        readFacts: () =>
+          Effect.succeed({
+            snapshot: {
+              contentHash: document.bindings.snapshotContentHash,
+              finalizedAt: document.bindings.snapshotFinalizedAt,
+            },
+            reconciliation,
+            authority,
+            evaluatedAt: checkAt,
+          }),
+      },
+    ).pipe(
+      Effect.provideService(IntentStore, {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: unused,
+        recordProtectionCancelAccepted: unused,
+        read: () => Effect.succeed(Option.some(record)),
+        commit: unused,
+        commitClosing: unused,
+      }),
+      Effect.provideService(MutationStore, {
+        latest: (_id: string, operation: MutationOperation) =>
+          Effect.succeed(
+            operation === MutationOperation.Submit ? accepted : scenario === 'cancel-accepted' ? cancel : undefined,
+          ),
+      } as unknown as MutationStoreShape),
+      Effect.result,
+    )
+    const exit = await runWithConstruction(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(checkAt))
+        const fiber = yield* program.pipe(Effect.forkChild({ startImmediately: true }))
+        if (scenario === 'timeout' || scenario === 'near-expiry' || scenario === 'interruption') {
+          yield* Effect.yieldNow
+          expect(marketReads).toBe(1)
+          expect(finalizedAt).toEqual([])
+          if (scenario === 'interruption') yield* Fiber.interrupt(fiber)
+          else {
+            const budget = Math.min(
+              native.protocol.maximumQuoteAgeMs,
+              Date.parse(risk.evaluation.decision.expiresAt) - Date.parse(checkAt),
+            )
+            yield* TestClock.adjust(budget - 1)
+            expect(finalizedAt).toEqual([])
+            yield* TestClock.adjust(1)
+            expect(finalizedAt).toEqual([Date.parse(checkAt) + budget])
+            expect(finalizedAt[0]).toBeLessThanOrEqual(Date.parse(risk.evaluation.decision.expiresAt))
+          }
+        }
+        return yield* Fiber.await(fiber)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(finalizedAt).toHaveLength(marketReads)
+    if (scenario === 'defect' || scenario === 'interruption') {
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        if (scenario === 'defect') expect(Cause.squash(exit.cause)).toBe(defect)
+        else expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      }
+      expect(marketReads).toBe(1)
+      return
+    }
+    if (Exit.isFailure(exit)) throw Cause.squash(exit.cause)
+    const outcome = exit.value
+    if (scenario === 'malformed' || scenario === 'typed-error') {
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome))
+        expect(outcome.failure.message).toBe('Pending entry boundary evidence could not be verified')
+    } else {
+      expect(Result.getOrThrow(outcome)).toEqual(
+        scenario === 'cancel-accepted'
+          ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
+          : scenario === 'inside' ||
+              scenario === 'pending' ||
+              scenario === 'wide-stop' ||
+              scenario === 'stale' ||
+              scenario === 'missing-bid' ||
+              scenario === 'missing-ask'
+            ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'intent-nonterminal' }
+            : {
+                _tag: 'Execute',
+                action: 'CANCEL',
+                intentId: intent.intentId,
+                observedAt:
+                  scenario === 'timeout' || scenario === 'near-expiry' ? risk.evaluation.decision.expiresAt : checkAt,
+              },
+      )
+    }
+    expect(marketReads).toBe(scenario === 'partial' || scenario === 'cancel-accepted' || scenario === 'expired' ? 0 : 1)
+  })
 
   test.each([
     'profit',

@@ -79,7 +79,7 @@ import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
-import { makeActiveStrategyRuntime } from '../strategy'
+import { makeJevStrategyRuntime } from '../strategy'
 import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevClient, JevError } from '../jev/client'
@@ -276,7 +276,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
     const reentryAtMs = initialAtMs + 240_100
     // Improving arrival quotes fill under the fixed buy ceiling before the later protected-exit jump.
     const measuredPremium = (tick: number) =>
-      0.02 + (tick >= (partialEntryReentry ? 100 : 50) ? 0.04 + tick * 0.00002 : -tick * 0.00002)
+      0.02 + (tick >= (partialEntryReentry ? 100 : 50) ? 0.052 + tick * 0.00002 : -tick * 0.00002)
     const lifecycleObservations = admissionRace
       ? [{ at: initialAtMs + 60_000, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
       : scenario === 'partial-exit-reentry'
@@ -287,10 +287,10 @@ export const testReplayRuntime = registerRuntimeScenarios(
               fullWindow: (index + 1) % 5 === 0,
               offset: BigInt((index + 2) * 1000),
               bidSize: 10,
-              premium: index >= 9 ? 0.06 : 0.02,
+              premium: index >= 9 ? 0.072 : 0.02,
             })),
             { at: reentryAtMs, fullWindow: true, offset: 30_000n, bidSize: 100, premium: 0.02 },
-            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.06 },
+            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.072 },
           ]
         : measured
           ? [
@@ -310,7 +310,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
                     ...(slippedExit
                       ? [{ at: reentryAtMs + 1000, fullWindow: false, offset: 310_000n, bidSize: 100, premium: 0.0198 }]
                       : []),
-                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.06 },
+                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.072 },
                   ]
                 : []),
             ]
@@ -324,7 +324,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
                     fullWindow: index % 5 === 0,
                     offset: BigInt((index + 1) * 1000),
                     bidSize: 100,
-                    premium: scenario === 'early-exit' && index >= 10 ? 0.06 : 0.02,
+                    premium: scenario === 'early-exit' && index >= 10 ? 0.072 : 0.02,
                   }))
                 : []
     const lifecycleArrivals = lifecycleObservations
@@ -357,7 +357,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
               bar.eventAt === original.bars[0]?.eventAt && bar.symbol !== 'SPY'
                 ? {
                     ...bar,
-                    high: Math.max(bar.high, bar.open * (bar.symbol === 'AAPL' ? 1.056 : 1.035)),
+                    high: Math.max(bar.high, bar.open * (bar.symbol === 'AAPL' ? 1.067 : 1.045)),
                     low: Math.min(bar.low, bar.open * 0.99),
                   }
                 : bar,
@@ -394,7 +394,7 @@ export const testReplayRuntime = registerRuntimeScenarios(
         return arrivals
       })
       .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
-    const candidateRuntime = makeActiveStrategyRuntime(protocol, {
+    const candidateRuntime = makeJevStrategyRuntime(protocol, {
       ...fixtureRuntime.provenance,
       strategy: {
         ...fixtureRuntime.provenance.strategy,

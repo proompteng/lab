@@ -1,3 +1,5 @@
+import { MarketKind } from '../../instruments'
+import { marketHistoryMinutes } from '../history'
 import { snapshotMarketCloseAt } from '../../market-hours'
 import { nativeFeatureMatchesBars, rollingWindowStartMs } from '../features/native-feature'
 import { isCryptoMarketFeature } from '../features/crypto-contract'
@@ -30,6 +32,7 @@ import { sha256 } from '../../hash'
 import {
   discardedRejectionsOverlap,
   observedBarsAt,
+  observedQuoteAt,
   type StreamingProjection,
   type ObservedMarketValue,
 } from './projection'
@@ -110,25 +113,25 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
         )
     }
     for (const symbol of symbols) {
+      const quote = observedQuoteAt(state, symbol, observedAtMs)
+      if (request.purpose !== undefined) {
+        if (quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= start) entries.push(quote)
+        continue
+      }
       const bars = observedBarsAt(state, symbol, start, end, observedAtMs)
-      const quote = state.quoteHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
-      const trade = state.tradeHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
-      if (request.purpose === undefined) {
-        entries.push(...bars)
-        for (const bar of bars) {
-          const publication = bar.firstPublication
-          publicationBars.push((publication ?? bar).value)
-          if (publication !== undefined) {
-            if (publication.availableAtMs > observedAtMs || publication.sequence >= bar.sequence)
-              return yield* Result.fail(failure('not-ready', 'Bar publication witness is outside the observed cut'))
-            barPublications.push(publication)
-          }
+      entries.push(...bars)
+      for (const bar of bars) {
+        const publication = bar.firstPublication
+        publicationBars.push((publication ?? bar).value)
+        if (publication !== undefined) {
+          if (publication.availableAtMs > observedAtMs || publication.sequence >= bar.sequence)
+            return yield* Result.fail(failure('not-ready', 'Bar publication witness is outside the observed cut'))
+          barPublications.push(publication)
         }
       }
       if (quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= start) entries.push(quote)
-      if (request.purpose === undefined && trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start)
-        entries.push(trade)
-      if (request.purpose !== undefined) continue
+      const trade = state.tradeHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
+      if (trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start) entries.push(trade)
       if (technicalTopic !== undefined) {
         for (const candidate of state.technicalFeatures.get(symbol) ?? []) {
           if (
@@ -155,13 +158,17 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
         }
       }
       let selected: StreamingFeatureReceipt | undefined
+      const expectedEquityFeatureStartMs = Math.max(
+        Date.parse(request.rangeEndAt) - marketHistoryMinutes[MarketKind.Equity] * 60_000,
+        Date.parse(request.rangeStartAt),
+      )
       for (const candidate of state.features.get(symbol) ?? []) {
         if (
           candidate.availableAtMs > observedAtMs ||
           (!isCryptoMarketFeature(candidate.value) && candidate.value.material.sessionDate !== request.sessionDate) ||
           (isCryptoMarketFeature(candidate.value)
             ? rollingWindowStartMs(candidate.value) < Date.parse(request.rangeStartAt)
-            : rollingWindowStartMs(candidate.value) !== Date.parse(request.rangeStartAt)) ||
+            : rollingWindowStartMs(candidate.value) !== expectedEquityFeatureStartMs) ||
           candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
         )
           continue
@@ -330,7 +337,7 @@ export const diagnoseStreamingInputs = (state: StreamingProjection, query: Intra
         intradayInstantNanos(query.rangeEndAt),
         observedAtMs,
       )
-      const quote = state.quoteHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
+      const quote = observedQuoteAt(state, symbol, observedAtMs)
       const exclusion = selected.exclusions.get(symbol)
       return {
         symbol,

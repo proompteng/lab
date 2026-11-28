@@ -4,6 +4,7 @@ namespace: saigak
 resources:
   - configmap.yaml
   - pvc-altra.yaml
+  - pvc-ryzen.yaml
   - pvc.yaml
   - statefulset.yaml
   - service.yaml

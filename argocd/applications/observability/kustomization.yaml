@@ -34,8 +34,10 @@ resources:
   - observability-mimir-rule-loader.yaml
   - graf-bumba-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
+  - agents-fleet-operations-dashboard-configmap.yaml
   - bayn-cycle-operations-dashboard-configmap.yaml
   - bayn-cache-performance-dashboard-configmap.yaml
+  - bayn-multi-sleeve-operations-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
   - mimir-config-check.yaml
@@ -72,7 +74,7 @@ helmCharts:
     valuesFile: tempo-v3-values.yaml
   - name: grafana
     repo: https://grafana-community.github.io/helm-charts
-    version: 14.5.0
+    version: 14.5.1
     releaseName: observability-grafana
     namespace: observability
     valuesFile: grafana-values.yaml

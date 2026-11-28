@@ -381,8 +381,9 @@ The experiment's external-cost accrual starts at its observation boundary and st
 
 ### Export original deliveries for the controls
 
-Build research commands with `bun run --filter @proompteng/bayn build:research`. Run `native:export` in the Bayn
-service directory with the existing archive connection and CA configuration:
+Live workers no longer record native arrivals. Use an existing export where available. For a database that
+contains historical captures, build research commands with `bun run --filter @proompteng/bayn build:research`.
+Run `native:export` in the Bayn service directory with that database's connection and CA configuration:
 
 ```sh
 bun run native:export --capture-id <capture-id> --through-ordinal <final-chunk-ordinal> --output <new-private-directory>

@@ -16,7 +16,7 @@ flowchart LR
   N --> V["Jangar /agents visibility"]
   T --> AR["AgentRun Scheduler"]
   J --> AR
-  AR --> C["codex-spark-agent"]
+  AR --> C["codex-agent"]
   C --> G["GitHub PR + CI"]
   G --> A["Argo CD"]
   A --> K["Kubernetes Runtime"]
@@ -52,7 +52,7 @@ sequenceDiagram
   participant S as Signal CRD
   participant J as Jangar Swarm
   participant R as AgentRun
-  participant C as codex-spark-agent
+  participant C as codex-agent
   participant V as Jangar /agents
   participant G as GitHub/CI
   participant A as Argo CD
@@ -106,8 +106,8 @@ Expected:
 ### 2a. Post-sync smoke
 
 ```bash
-kubectl -n agents get agentrun codex-spark-smoke -o json | jq '{phase:.status.phase,reason:.status.reason,message:.status.message}'
-kubectl -n agents logs job/$(kubectl -n agents get job -l agents.proompteng.ai/agent-run=codex-spark-smoke -o jsonpath='{.items[0].metadata.name}') --tail=200
+kubectl -n agents get agentrun codex-smoke -o json | jq '{phase:.status.phase,reason:.status.reason,message:.status.message}'
+kubectl -n agents logs job/$(kubectl -n agents get job -l agents.proompteng.ai/agent-run=codex-smoke -o jsonpath='{.items[0].metadata.name}') --tail=200
 ```
 
 Expected:

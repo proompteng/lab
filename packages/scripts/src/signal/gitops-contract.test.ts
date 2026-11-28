@@ -77,7 +77,7 @@ describe('Signal publisher GitOps authority contract', () => {
     const cronVariables = environment(cronJob.spec.jobTemplate.spec.template.spec.containers[0])
     const coreSymbols = csv(websocketConfig.data.SYMBOLS)
     const schedulerSymbols = csv(schedulerVariables.get('TRADING_UNIVERSE_SYMBOL_ALLOWLIST')?.value ?? '')
-    const decisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
+    const decisionSymbols = ['AAPL', 'AMZN', 'NVDA', 'SPY']
     const channels = csv(websocketConfig.data.ALPACA_MARKET_DATA_CHANNELS)
     const symbolsByChannel = {
       bars: csv(websocketConfig.data.ALPACA_MARKET_DATA_BARS_SYMBOLS),
@@ -95,15 +95,19 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     expect(schedulerSymbols.every((symbol) => coreSymbols.includes(symbol))).toBe(true)
     expect(csv(websocketConfig.data.SYMBOLS_ALLOWLIST)).toEqual(coreSymbols)
-    expect(symbolsByChannel.bars).toHaveLength(16)
-    const restBars = csv(websocketConfig.data.ALPACA_LATEST_BAR_SYMBOLS)
-    expect(restBars).toEqual(['GOOGL', 'INTC', 'META', 'MSFT', 'NFLX', 'TSLA'])
-    expect(restBars.some((symbol) => symbolsByChannel.bars.includes(symbol))).toBe(false)
-    expect([...symbolsByChannel.bars, ...restBars].sort()).toEqual(coreSymbols)
+    expect(symbolsByChannel.bars).toEqual(coreSymbols)
+    expect(symbolsByChannel.bars).toHaveLength(22)
+    expect(websocketConfig.data.ALPACA_LATEST_BAR_SYMBOLS).toBeUndefined()
     expect(channels).toEqual(['trades', 'quotes', 'bars'])
     expect(symbolsByChannel.quotes).toEqual(decisionSymbols)
     expect(symbolsByChannel.trades).toEqual(decisionSymbols)
+    expect(csv(websocketConfig.data.ALPACA_LATEST_SYMBOLS)).toEqual(
+      coreSymbols.filter((symbol) => !decisionSymbols.includes(symbol)),
+    )
     expect(channels.reduce((total, channel) => total + symbolsByChannel[channel].length, 0)).toBe(30)
+    expect(
+      websocketDeployment.spec.template.metadata.annotations['torghut.proompteng.ai/market-data-subscription-plan'],
+    ).toBe('iex-all-bars-v1')
     expect(selected.length * 4).toBeLessThanOrEqual(30)
     expect(websocketVariables.get('ALPACA_OBSERVATION_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
     expect(websocketVariables.get('MARKET_DATA_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
@@ -265,6 +269,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'metrics-service.yaml',
       'taskmanager-metrics-service.yaml',
       'pdb.yaml',
+      'sip-shadow-configmap.yaml',
     ])
     expect(archive.spec).toMatchObject({
       restartNonce: 14,
@@ -309,7 +314,7 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     const liveCoreSymbols = csv(websocket.data.SYMBOLS)
     const liveCoreChannels = csv(websocket.data.ALPACA_MARKET_DATA_CHANNELS)
-    const liveDecisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
+    const liveDecisionSymbols = ['AAPL', 'AMZN', 'NVDA', 'SPY']
     expect(liveCoreSymbols).toEqual(coreArchiveSymbols)
     expect(csv(websocket.data.SYMBOLS_ALLOWLIST)).toEqual(liveCoreSymbols)
     expect(csv(websocket.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS)).toEqual(liveDecisionSymbols)
@@ -317,9 +322,17 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(liveCoreChannels).toEqual(['trades', 'quotes', 'bars'])
     const websocketBars = csv(websocket.data.ALPACA_MARKET_DATA_BARS_SYMBOLS)
     expect(websocketBars.length + liveDecisionSymbols.length * 2).toBe(30)
-    expect([...websocketBars, ...csv(websocket.data.ALPACA_LATEST_BAR_SYMBOLS)].sort()).toEqual(coreArchiveSymbols)
+    expect(websocketBars).toEqual(coreArchiveSymbols)
+    expect(websocket.data.ALPACA_LATEST_BAR_SYMBOLS).toBeUndefined()
     expect(coreTopics.find((topic) => topic.metadata.name === 'torghut.quotes.v1')?.spec.partitions).toBe(13)
     expect(websocket.data.ALPACA_FEED).toBe('iex')
+    expect(websocketDeployment.metadata.namespace).toBe('bayn')
+    expect(websocketDeployment.spec.replicas).toBe(1)
+    expect(websocketDeployment.spec.strategy.type).toBe('Recreate')
+    expect(websocket.data.ALPACA_MARKET_DATA_PROXY_URL).toBe('http://bayn-egress-proxy.bayn.svc.cluster.local:3130')
+    expect(websocket.data.ENABLE_TRADE_UPDATES).toBe('false')
+    expect(websocket.data.ALPACA_TRADE_STREAM_URL).toBeUndefined()
+    expect(websocket.data.TORGHUT_ACCOUNT_LABEL).toBeUndefined()
     expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
     expect(websocket.data.ALPACA_CRYPTO_LOCATION).toBe(config.data.ARCHIVE_CRYPTO_LOCATION)
     expect(websocket.data.ALPACA_CRYPTO_SYMBOLS).toBe(config.data.ARCHIVE_CRYPTO_SYMBOLS)
@@ -332,11 +345,11 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).not.toBe(ta.data.TA_CRYPTO_TOPIC)
     expect(environment(websocketDeployment.spec.template.spec.containers[0]).get('ALPACA_KEY_ID')).toEqual({
       name: 'ALPACA_KEY_ID',
-      valueFrom: { secretKeyRef: { name: 'torghut-alpaca', key: 'APCA_API_KEY_ID' } },
+      valueFrom: { secretKeyRef: { name: 'bayn-alpaca-auth', key: 'key-id' } },
     })
     expect(environment(websocketDeployment.spec.template.spec.containers[0]).get('ALPACA_SECRET_KEY')).toEqual({
       name: 'ALPACA_SECRET_KEY',
-      valueFrom: { secretKeyRef: { name: 'torghut-alpaca', key: 'APCA_API_SECRET_KEY' } },
+      valueFrom: { secretKeyRef: { name: 'bayn-alpaca-auth', key: 'secret-key' } },
     })
     const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
     expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
@@ -357,6 +370,71 @@ describe('Signal publisher GitOps authority contract', () => {
     })
   })
 
+  test('parks the SIP forwarder and archive settings without attaching them to live routes', () => {
+    const torghut = resolve(root, 'argocd/applications/torghut')
+    const load = (path: string) => parse(readFileSync(resolve(torghut, path), 'utf8'))
+    const sip = load('ws/sip-configmap.yaml')
+    const deployment = load('ws/sip-deployment.yaml')
+    const service = load('ws/sip-service.yaml')
+    const producer = deployment.spec.template.spec.containers[0]
+    const archive = load('market-data-archive/flinkdeployment.yaml')
+    const archiveConfig = load('market-data-archive/configmap.yaml')
+    const shadow = load('market-data-archive/sip-shadow-configmap.yaml')
+    const symbols = csv(sip.data.SYMBOLS)
+    const hash = '89de937a84155ab0cffdfbc5687edf0ace82f68dcd07ffcdc724c58efb28960b'
+
+    expect(symbols).toHaveLength(73)
+    expect(symbols).toEqual([...new Set(symbols)].sort())
+    expect(createHash('sha256').update(sip.data.SYMBOLS).digest('hex')).toBe(hash)
+    expect(sip.data).toMatchObject({
+      ALPACA_FEED: 'sip',
+      ALPACA_MARKET_DATA_ENTITLEMENT: 'algo_trader_plus',
+      ALPACA_MARKET_DATA_CHANNELS: 'bars,quotes,trades',
+      SYMBOLS_ALLOWLIST: sip.data.SYMBOLS,
+      MARKET_DATA_UNIVERSE_ID: 'torghut-core-equity-sip-v1',
+      MARKET_DATA_UNIVERSE_SYMBOL_HASH: hash,
+      ENABLE_TRADE_UPDATES: 'false',
+      ENABLE_BARS_BACKFILL: 'false',
+      ENABLE_TRADES_BACKFILL: 'false',
+      TOPIC_BARS_1M: 'bayn.market-data.sip.bars.1m.v1',
+      TOPIC_QUOTES: 'bayn.market-data.sip.quotes.v1',
+      TOPIC_TRADES: 'bayn.market-data.sip.trades.v1',
+      TOPIC_STATUS: 'bayn.market-data.sip.status.v1',
+    })
+    expect(sip.data.ALPACA_LATEST_SYMBOLS).toBeUndefined()
+    expect(sip.data.ALPACA_OBSERVATION_FEEDS).toBeUndefined()
+    expect(load('ws/kustomization.yaml').resources).toEqual(
+      expect.arrayContaining(['sip-configmap.yaml', 'sip-deployment.yaml', 'sip-service.yaml']),
+    )
+    expect(deployment.spec.replicas).toBe(0)
+    expect(deployment.spec.strategy.type).toBe('Recreate')
+    expect(deployment.spec.selector.matchLabels).toEqual({ app: 'torghut-ws-sip' })
+    expect(deployment.spec.template.metadata.labels).toMatchObject(deployment.spec.selector.matchLabels)
+    expect(service.spec.selector).toEqual(deployment.spec.selector.matchLabels)
+    const liveProducer = parse(readWsDeployment()).spec.template.spec.containers[0]
+    expect(producer.image.split('@')[0]).toBe(liveProducer.image.split('@')[0])
+    expect(producer.envFrom).toEqual([{ configMapRef: { name: sip.metadata.name } }])
+    for (const key of ['ALPACA_KEY_ID', 'ALPACA_SECRET_KEY', 'KAFKA_SASL_USER', 'KAFKA_SASL_PASSWORD']) {
+      expect(environment(producer).get(key)).toEqual(environment(liveProducer).get(key))
+    }
+
+    expect(shadow.data).toEqual({
+      ARCHIVE_SIP_SHADOW_UNIVERSE_ID: sip.data.MARKET_DATA_UNIVERSE_ID,
+      ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOLS: sip.data.SYMBOLS,
+      ARCHIVE_SIP_SHADOW_UNIVERSE_SYMBOL_HASH: hash,
+      ARCHIVE_SIP_SHADOW_BARS_TOPIC: sip.data.TOPIC_BARS_1M,
+      ARCHIVE_SIP_SHADOW_QUOTES_TOPIC: sip.data.TOPIC_QUOTES,
+      ARCHIVE_SIP_SHADOW_TRADES_TOPIC: sip.data.TOPIC_TRADES,
+    })
+    const archiveContainer = archive.spec.podTemplate.spec.containers[0]
+    expect(archiveContainer.envFrom).not.toContainEqual({ configMapRef: { name: shadow.metadata.name } })
+    expect(
+      [...environment(archiveContainer).keys(), ...Object.keys(archiveConfig.data)].some((key) =>
+        key.startsWith('ARCHIVE_SIP_SHADOW_'),
+      ),
+    ).toBe(false)
+  })
+
   test('provisions isolated bounded Kafka topics for observation feeds', () => {
     const topicsPath = resolve(root, 'argocd/applications/kafka/bayn-market-data-topics.yaml')
     const topics = parseAllDocuments(readFileSync(topicsPath, 'utf8')).map((document) => document.toJS())
@@ -365,7 +443,7 @@ describe('Signal publisher GitOps authority contract', () => {
     )
     const names = topics.map((topic) => topic.metadata.name)
 
-    expect(new Set(names).size).toBe(9)
+    expect(new Set(names).size).toBe(13)
     expect(names).toEqual(
       expect.arrayContaining([
         'bayn.market-data.delayed-sip.trades.v1',
@@ -377,6 +455,10 @@ describe('Signal publisher GitOps authority contract', () => {
         'bayn.market-data.observation.status.v1',
         'bayn.market-data.crypto.v1',
         'bayn.market-data.crypto.features.v1',
+        'bayn.market-data.sip.trades.v1',
+        'bayn.market-data.sip.quotes.v1',
+        'bayn.market-data.sip.bars.1m.v1',
+        'bayn.market-data.sip.status.v1',
       ]),
     )
     for (const topic of topics) {
@@ -387,6 +469,12 @@ describe('Signal publisher GitOps authority contract', () => {
       } else {
         expect(topic.spec.config['retention.ms']).toBe(604_800_000)
       }
+    }
+    for (const channel of ['bars.1m', 'quotes', 'trades', 'status']) {
+      const predecessor = channel === 'status' ? 'observation' : 'delayed-sip'
+      const existing = topics.find((topic) => topic.metadata.name === `bayn.market-data.${predecessor}.${channel}.v1`)
+      const sip = topics.find((topic) => topic.metadata.name === `bayn.market-data.sip.${channel}.v1`)
+      expect(sip.spec).toEqual(existing.spec)
     }
     expect(kafkaKustomization.resources).toContain('bayn-market-data-topics.yaml')
   })

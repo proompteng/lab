@@ -36,7 +36,7 @@ import {
   OperationalSourceCutSchema,
   persistOperationalSourceCut,
 } from './operational-source-cut'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema } from './source-cut'
 import { makeSystemSourceRecord, persistSystemSourceRecord, SystemSourceRecordKind } from './source-records'
 import { captureOperationalSafetySource } from './operational-safety-source'
 
@@ -150,13 +150,13 @@ export const captureOperationalSourceCut = (
             if (entries === undefined) fillsByIntent.set(intentId, [{ observation, index }])
             else entries.push({ observation, index })
           }
-          const capturedFills = new Map<number, (typeof SystemSourceCutSchema.Type)['fills'][number]>()
+          const capturedFills = new Map<number, (typeof RetainedSystemSourceCutSchema.Type)['fills'][number]>()
           const decisions: { sessionDate: string; decisionHash: string }[] = []
           const consumeDecisions = yield* openSnapshotRows(sql, systemDecisionQuery(sql, scope))
           yield* consumeDecisions((input) =>
             Effect.gen(function* () {
               const row = yield* Schema.decodeUnknownEffect(
-                SystemSourceCutSchema.fields.decisions.value,
+                RetainedSystemSourceCutSchema.fields.decisions.value,
                 strictParseOptions,
               )(input)
               if (!decisionMarketScopeSupported(row.document, registration))
@@ -235,7 +235,7 @@ export const captureOperationalSourceCut = (
           yield* consumeControllers((input) =>
             Effect.gen(function* () {
               const pass = yield* Schema.decodeUnknownEffect(
-                SystemSourceCutSchema.fields.controllerPasses.value,
+                RetainedSystemSourceCutSchema.fields.controllerPasses.value,
                 strictParseOptions,
               )(input)
               yield* spool(SystemSourceRecordKind.Controller, pass.receiptHash, pass)

@@ -277,6 +277,39 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const schedule = executionControllerSuccessorSchedule(state, result)
+  if (Result.isFailure(schedule)) return Result.fail(schedule.failure)
+  const {
+    nextDueAt: _previousDeadline,
+    marketEligibleAt: _previousEligibility,
+    marketDataWakeSuppressed: _previousMarketSuppression,
+    wakeScheduledSequence: _previousWake,
+    wakeAcceptedAt: _previousWakeAcceptedAt,
+    ...completedState
+  } = state
+  return Result.succeed({
+    ...completedState,
+    nextSequence: state.nextSequence + 1,
+    lastCompletion: {
+      sequence: tick.sequence,
+      outcome: result.outcome._tag,
+      receiptHash: result.outcome.receiptHash,
+      completedAt: result.completedAt,
+    },
+    ...schedule.success,
+  })
+}
+
+/** Shared by the durable controller and versioned replay; a legacy delay never invents a timer. */
+export const executionControllerSuccessorSchedule = (
+  state: Pick<ExecutionControllerState, 'nextDueAt'>,
+  result: Pick<ExecutionAdvanceStepResult, 'completedAt' | 'observation'> & {
+    readonly outcome: Pick<ExecutionAdvanceStepResult['outcome'], '_tag' | 'nextWakeAt'>
+  },
+): Result.Result<
+  Pick<ExecutionControllerState, 'nextDueAt' | 'marketEligibleAt' | 'marketDataWakeSuppressed'>,
+  ExecutionControllerDecisionError
+> => {
   const brokerReconciliationRetry =
     result.outcome._tag === ExecutionControllerOutcome.Blocked &&
     result.observation?.result === 'FAILURE' &&
@@ -320,14 +353,6 @@ export const completeExecutionControllerTick = (
     state.nextDueAt < decodedNextDueAt.success
       ? state.nextDueAt
       : decodedNextDueAt.success
-  const {
-    nextDueAt: _previousDeadline,
-    marketEligibleAt: _previousEligibility,
-    marketDataWakeSuppressed: _previousMarketSuppression,
-    wakeScheduledSequence: _previousWake,
-    wakeAcceptedAt: _previousWakeAcceptedAt,
-    ...completedState
-  } = state
   // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
   // without inventing polling from a legacy delay; broker observations can still wake promptly.
   const availableAt = brokerReconciliationRetry
@@ -336,23 +361,16 @@ export const completeExecutionControllerTick = (
       ? undefined
       : result.observation.outcome === 'WINDOW_CLOSED' ||
           result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'CLOSE_MARKET_DATA_UNAVAILABLE' ||
           result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
         ? dueAt
         : result.observation.readiness?.availableAt
   return Result.succeed({
-    ...completedState,
-    nextSequence: state.nextSequence + 1,
-    lastCompletion: {
-      sequence: tick.sequence,
-      outcome: result.outcome._tag,
-      receiptHash: result.outcome.receiptHash,
-      completedAt: result.completedAt,
-    },
     ...(dueAt === undefined ? {} : { nextDueAt: dueAt }),
     ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
     ...(result.observation?.result === 'SUCCESS' &&
-    result.observation.outcome === 'WINDOW_CLOSED' &&
-    decodedNextDueAt.success === undefined
+    (result.observation.waitReason === 'CLOSE_WINDOW_EXPIRED' ||
+      (result.observation.outcome === 'WINDOW_CLOSED' && decodedNextDueAt.success === undefined))
       ? { marketDataWakeSuppressed: true as const }
       : {}),
   })

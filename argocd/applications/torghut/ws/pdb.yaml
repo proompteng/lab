@@ -2,7 +2,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: torghut-ws
-  namespace: torghut
+  namespace: bayn
 spec:
   maxUnavailable: 1
   selector:

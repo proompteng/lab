@@ -62,6 +62,9 @@ spec:
             - name: proxy
               containerPort: 3128
               protocol: TCP
+            - name: marketdata
+              containerPort: 3130
+              protocol: TCP
             - name: opencode
               containerPort: 3129
               protocol: TCP
@@ -148,6 +151,10 @@ spec:
     - name: proxy
       port: 3128
       targetPort: proxy
+      protocol: TCP
+    - name: marketdata
+      port: 3130
+      targetPort: marketdata
       protocol: TCP
     - name: opencode
       port: 3129
