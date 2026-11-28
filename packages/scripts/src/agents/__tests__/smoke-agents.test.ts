@@ -667,8 +667,8 @@ describe('scheduled AgentRun templates', () => {
     const requests = objectAt(resources, 'requests')
     const limits = objectAt(resources, 'limits')
 
-    expect(objectAt(requests, 'cpu')).toBe('2')
-    expect(objectAt(requests, 'memory')).toBe('8Gi')
+    expect(objectAt(requests, 'cpu')).toBe('500m')
+    expect(objectAt(requests, 'memory')).toBe('4Gi')
     expect(objectAt(requests, 'ephemeral-storage')).toBe('8Gi')
     expect(objectAt(limits, 'memory')).toBe('32Gi')
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
@@ -685,12 +685,16 @@ describe('scheduled AgentRun templates', () => {
     })
     expect(objectAt(defaultWorkload, 'topologySpreadConstraints')).toEqual([
       {
-        maxSkew: 2,
+        maxSkew: 16,
         topologyKey: 'kubernetes.io/hostname',
         whenUnsatisfiable: 'ScheduleAnyway',
         labelSelector: { matchExpressions: [{ key: 'agents.proompteng.ai/agent-run', operator: 'Exists' }] },
       },
     ])
+    const concurrency = objectAt(controller, 'concurrency')
+    expect(objectAt(concurrency, 'perAgent')).toBe(96)
+    expect(objectAt(concurrency, 'perNamespace')).toBe(112)
+    expect(objectAt(concurrency, 'cluster')).toBe(160)
   })
 
   it('enables Swarm primitive RBAC for the live controllers while keeping domain admission env out of Agents', () => {
