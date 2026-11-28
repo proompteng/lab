@@ -299,7 +299,9 @@ evidence pages. During an observed inference-request insert on October 29, 2026,
 memory-limit hits and reclaimed about 120 MiB of file cache. Separate samples showed receipt and resolution inserts
 waiting on physical reads, and a batch completion took 17.4 seconds against its original ten-second inference window.
 This allocation addresses the observed cache pressure; verify its effect on native batch and dispatch latency after
-rollout. PostgreSQL parameters, synchronous replication, storage, backups and trading limits retain their contracts.
+rollout. The [cluster performance runbook](../../../docs/runbooks/cluster-performance-audit-2026-11-27.md#bayn-postgresql)
+records the planner and vacuum settings for this memory budget. Synchronous replication, storage, backups and
+trading limits retain their contracts.
 
 CNPG applies the resource update through its existing unsupervised switchover policy. Allow for a brief connection
 interruption; verify both pods' resource limits, current primary, synchronous standby, exact financial reconciliation,
