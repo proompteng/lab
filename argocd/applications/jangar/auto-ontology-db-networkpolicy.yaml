@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jangar-db-auto-ontology-ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: jangar-db
+      cnpg.io/instanceRole: replica
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-ontology
+      ports:
+        - port: 5432
+          protocol: TCP
