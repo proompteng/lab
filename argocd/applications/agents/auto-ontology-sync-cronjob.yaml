@@ -34,11 +34,11 @@ spec:
               args: ["--bundle", "/etc/auto-ontology-sync/agents-knowledge.json", "--mode", "apply"]
               env:
                 - name: AUTO_ONTOLOGY_API_URL
-                  value: http://frontend.auto-ontology.svc.cluster.local:3000
+                  value: https://auto-ontology.ide-newton.ts.net
                 - name: AUTO_ONTOLOGY_API_TOKEN
                   valueFrom:
                     secretKeyRef:
-                      name: auto-ontology-mcp-token
+                      name: auto-ontology-publisher-token
                       key: AUTO_ONTOLOGY_API_TOKEN
               resources:
                 requests:

@@ -83,12 +83,23 @@ not a live account-capability decision. Auction cutoffs refer to [Alpaca's order
 
 ### Execution quality through MCP
 
-After migration 0230 reaches the standby, verify both views appear in the Bayn catalog and sync the seed. Use
-`list_custom_analyses` in Auto Ontology MCP to find `Bayn: Daily execution order churn`,
-`Bayn: Daily execution fill slippage`, and `Bayn: Session fill fee drag`.
-Use `check_answerable` and `ask_question` with the `bayn` datasource and the relevant view below. For direct SQL,
+After migration 0230 reaches the standby, verify both views appear in the Bayn catalog and sync the seed. Use the
+UI's Analysis page or the [AgentRun gateway](../../agents/auto-ontology-mcp.md)'s `list_custom_analyses` tool
+to find `Bayn: Daily execution order churn`, `Bayn: Daily execution fill slippage`, and `Bayn: Session fill fee drag`.
+On the private NVIDIA MCP endpoint, use `check_answerable` and `ask_question` with a question about the relevant
+Bayn term. The server derives the database from the SQL and returns the executed query and rows. For direct SQL,
 bind the verified live account and an inclusive/exclusive pair of New York midnights. Daily rows cannot answer an
 intraday range.
+
+For a read-only release check, ask “Across all accounts and symbols, how many canceled orders does daily execution
+order churn report for the November 25, 2026 trading session?” Compare its SQL and result with this aggregate on
+the approved Bayn standby:
+
+```sql
+SELECT COALESCE(SUM(canceled_orders), 0) AS canceled_orders
+FROM public.execution_order_churn_daily
+WHERE session_date = DATE '2026-11-25';
+```
 
 - `public.execution_order_churn_daily` groups orders by the New York date of their first retained broker update and
   uses their latest status. This is not an as-of snapshot or a count of cancel requests. An order can be canceled
