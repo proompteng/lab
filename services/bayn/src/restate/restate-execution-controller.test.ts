@@ -1307,7 +1307,7 @@ describe('native Restate execution controller', () => {
     })
   })
 
-  test('serializes null activation into one first pass and its explicit recovery deadline', async () => {
+  test.each(['', 'sleeve-4'])('serializes activation and successor routing for prefix %j', async (servicePrefix) => {
     let state: ExecutionControllerState | null = null
     const deliveries: Delivery[] = []
     const events: string[] = []
@@ -1365,13 +1365,14 @@ describe('native Restate execution controller', () => {
       date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
       request: () => ({ id: 'invocation-1', attemptCompletedSignal: attempt.signal }),
     } as unknown as TestContext
-    const object = handlers(makeBaynExecutionController(config, runtime))
+    const object = handlers(makeBaynExecutionController({ ...config, servicePrefix }, runtime))
 
     expect(await object.activate(context, activation)).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
     expect(projectedStates).toHaveLength(1)
     expect(projectedStates[0]).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
     expect(deliveries).toHaveLength(2)
     expect(deliveries.shift()).toMatchObject({
+      service: servicePrefix === '' ? 'BaynEntryInference' : 'sleeve-4-BaynEntryInference',
       method: 'watch',
       parameter: { controllerKey, epoch: 1, sourceRevision, pending: [] },
     })
@@ -1382,6 +1383,7 @@ describe('native Restate execution controller', () => {
       'first-pass-scheduled',
     ])
     expect(deliveries[0]).toMatchObject({
+      service: servicePrefix === '' ? 'BaynExecutionController' : 'sleeve-4-BaynExecutionController',
       delay: 0,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 4, 0),
       parameter: { epoch: 1, sequence: 4, attempt: 0 },
@@ -1414,6 +1416,7 @@ describe('native Restate execution controller', () => {
     expect((state as ExecutionControllerState | null)?.lastCompletion).not.toHaveProperty('lastPass')
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
+      service: servicePrefix === '' ? 'BaynExecutionController' : 'sleeve-4-BaynExecutionController',
       delay: 31_000,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 5, 0),
       parameter: { epoch: 1, sequence: 5, attempt: 0 },

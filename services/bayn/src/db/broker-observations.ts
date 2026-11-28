@@ -17,7 +17,7 @@ import {
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { protectionReleaseReadCount, type ProtectionReadAllowance } from '../broker/alpaca/poll-budget'
-import { IntentState } from '../execution/contracts'
+import { IntentState, OrderSchema } from '../execution/contracts'
 import type { NativeProtectionCancelCommand } from '../execution/intents/domain'
 import { currentUtcInstant } from '../time'
 import { canonicalHashV1Result, sha256 } from '../hash'
@@ -26,6 +26,7 @@ import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerNotificationSchema, type BrokerNotification } from '../broker/notifications'
 import { acquireExecutionWriterFence } from '../execution/writer-fence'
+import { brokerActivitySourceContentIsConsistent } from './broker-activity-conflicts'
 import {
   BrokerSourceProjectionReceiptSchema,
   type BrokerSourceProjectionReceipt,
@@ -86,6 +87,7 @@ const ActivityProjectionRows = Schema.Array(
   Schema.Struct({
     projection: Schema.Literals(['FILL', 'FEE', 'BUST', 'CANONICAL_ONLY', 'DUPLICATE', 'RECONCILE_REQUIRED']),
     sourceEventHash: Schema.String,
+    equivalentContent: Schema.Boolean,
   }),
 ).check(Schema.isMaxLength(1))
 
@@ -347,11 +349,12 @@ export const makeBrokerObservationStore = (
       })),
     ),
   )
-  const retainedActivityProjection = (sourceEventId: string) =>
-    sql`SELECT projection.outcome AS projection, event.source_event_hash AS "sourceEventHash"
-      FROM broker_activity_events AS event
+  const retainedActivityProjection = (event: BrokerActivityEvent) =>
+    sql`SELECT projection.outcome AS projection, original.source_event_hash AS "sourceEventHash",
+        original.activity_json::jsonb = ${event.activityJson}::jsonb AS "equivalentContent"
+      FROM broker_activity_events AS original
       JOIN broker_activity_event_projections AS projection USING (account_id,source_event_id)
-      WHERE event.account_id = ${accountId} AND event.source_event_id = ${sourceEventId}`.pipe(
+      WHERE original.account_id = ${accountId} AND original.source_event_id = ${event.sourceEventId}`.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ActivityProjectionRows, strictParseOptions)),
       Effect.map((rows) => rows[0]),
     )
@@ -400,9 +403,9 @@ export const makeBrokerObservationStore = (
           if (current === undefined) return yield* observationUnavailable('Durable activity cursor is absent')
           const retained =
             current.cursor !== null && event.sourceEventId <= current.cursor
-              ? yield* retainedActivityProjection(event.sourceEventId)
+              ? yield* retainedActivityProjection(event)
               : undefined
-          const admission = decideBrokerActivityEvent(current, event, retained?.sourceEventHash, true)
+          const admission = decideBrokerActivityEvent(current, event, retained, true)
           if (Result.isFailure(admission)) {
             const inserted = yield* sql`INSERT INTO broker_activity_source_conflicts(
               account_id,source_event_id,retained_source_event_hash,conflicting_source_event_hash,
@@ -753,8 +756,38 @@ export const makeBrokerObservationStore = (
           const admission = decideBrokerActivityHeartbeat(current, heartbeat)
           if (Result.isFailure(admission))
             return yield* observationUnavailable('Activity heartbeat does not cover a caught-up durable cursor')
-          const { activated } = admission.success
+          // Repair only historical representation-only conflicts on an authenticated, cursor-bound heartbeat.
+          // The existing heartbeat-age check still independently gates activity reads and readiness.
+          // Finite publication proofs keep their original raw hashes and remain independently fail-closed.
+          const recovered =
+            !current.fillFeeComplete &&
+            (yield* sql`SELECT (
+              EXISTS (SELECT 1 FROM broker_activity_source_conflicts WHERE account_id = ${accountId})
+              AND (${brokerActivitySourceContentIsConsistent(sql, accountId)})
+              AND NOT EXISTS (
+                SELECT 1 FROM broker_activity_events AS event
+                LEFT JOIN broker_activity_event_projections AS projection USING (account_id,source_event_id)
+                WHERE event.account_id = ${accountId}
+                  AND (projection.outcome IS NULL OR projection.outcome = 'RECONCILE_REQUIRED')
+              )
+              AND NOT EXISTS (SELECT 1 FROM broker_activity_coverage_receipts
+                WHERE account_id = ${accountId} AND status = 'POISONED')
+            ) AS recoverable`.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.Tuple([Schema.Struct({ recoverable: Schema.Boolean })]),
+                  strictParseOptions,
+                ),
+              ),
+              Effect.map(([row]) => row.recoverable),
+            ))
+          const fillFeeComplete = current.fillFeeComplete || recovered
+          const activated = admission.success.activated || recovered
+          if (recovered)
+            yield* sql`UPDATE broker_observations SET generation = generation + 1, available = false
+              WHERE account_id = ${accountId}`
           yield* sql`UPDATE broker_activity_cursors SET source_revision = ${sourceRevision},
+              fill_fee_complete = ${fillFeeComplete},
               session_id = ${heartbeat.session.sessionId}, request_id = ${heartbeat.session.requestId},
               heartbeat_at = CASE
                 WHEN session_id = ${heartbeat.session.sessionId} AND request_id = ${heartbeat.session.requestId}
@@ -770,7 +803,7 @@ export const makeBrokerObservationStore = (
               replayFromId: current.replayFromId,
               replayUntilId: current.replayUntilId,
               completionHash: current.completionHash,
-              fillFeeComplete: current.fillFeeComplete,
+              fillFeeComplete,
               sourceRevision,
               activated,
             },
@@ -882,6 +915,52 @@ export const makeBrokerObservationStore = (
           Effect.mapError((cause) => observationUnavailable('Durable broker source event payload is invalid', cause)),
         )
       }),
+    )
+  const readProtectionOrder = (brokerOrderId: string, clientOrderId: string) =>
+    run(
+      // Canonical nested protection normalization is the only first writer of this association. Stream updates
+      // can reuse that exact identity, never create one. This proves identity, while the independent session
+      // financial fence and complete-history reconciliation continue to govern readiness and money.
+      sql`SELECT jsonb_strip_nulls(jsonb_build_object(
+        'schemaVersion', child.schema_version, 'accountId', child.account_id,
+        'brokerOrderId', child.broker_order_id, 'parentBrokerOrderId', child.parent_broker_order_id,
+        'clientOrderId', child.client_order_id, 'intentId', child.intent_id, 'symbol', child.symbol,
+        'side', child.side, 'orderType', child.order_type, 'timeInForce', child.time_in_force,
+        'quantityAtoms', child.quantity_atoms::text, 'notionalMicros', child.notional_micros::text,
+        'filledQuantityAtoms', child.filled_quantity_atoms::text, 'limitPriceMicros', child.limit_price_micros::text,
+        'stopPriceMicros', child.stop_price_micros::text, 'status', child.status,
+        'observedAt', to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      )) AS value
+      FROM orders AS child JOIN broker_events AS event USING (event_id)
+      JOIN intents AS intent ON intent.intent_id = child.intent_id AND intent.account_id = child.account_id
+      WHERE child.account_id = ${accountId} AND child.broker_order_id = ${brokerOrderId}
+        AND child.client_order_id = ${clientOrderId} AND child.parent_broker_order_id IS NOT NULL
+        AND child.symbol = intent.symbol AND child.quantity_atoms > 0 AND child.quantity_atoms <= intent.quantity_atoms
+        AND child.time_in_force = 'DAY' AND child.notional_micros IS NULL
+        AND intent.protection->>'_tag' IN ('Bracket','EquityShortBracket','Oco','EquityShortOco')
+        AND child.side = CASE WHEN intent.protection->>'_tag' IN ('EquityShortBracket','EquityShortOco') THEN 'BUY' ELSE 'SELL' END
+        AND ((child.order_type = 'STOP_LIMIT' AND child.stop_price_micros = (intent.protection->>'stopPriceMicros')::numeric
+          AND child.limit_price_micros = (intent.protection->>'stopLimitPriceMicros')::numeric)
+          OR (child.order_type = 'LIMIT' AND child.stop_price_micros IS NULL
+            AND child.limit_price_micros = (intent.protection->>'profitLimitPriceMicros')::numeric))
+        AND EXISTS (
+          SELECT 1 FROM orders AS parent WHERE parent.account_id = child.account_id
+            AND parent.broker_order_id = child.parent_broker_order_id AND parent.intent_id = child.intent_id
+            AND parent.client_order_id = intent.client_order_id AND parent.parent_broker_order_id IS NULL
+            AND parent.symbol = intent.symbol AND parent.side = intent.side
+            AND parent.quantity_atoms = intent.quantity_atoms AND parent.notional_micros IS NULL
+            AND parent.order_type = intent.order_type AND parent.time_in_force = intent.time_in_force
+            AND parent.limit_price_micros = intent.limit_price_micros AND parent.stop_price_micros IS NULL
+        )
+      ORDER BY event.source_sequence DESC LIMIT 1`.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ value: OrderSchema })).check(Schema.isMaxLength(1)),
+            strictParseOptions,
+          ),
+        ),
+        Effect.map((rows) => rows[0]?.value),
+      ),
     )
   const readSourceProjection = (eventId: string) =>
     run(
@@ -1387,6 +1466,7 @@ export const makeBrokerObservationStore = (
     isNotificationCovered,
     isSessionBoundaryCovered,
     readNotification,
+    readProtectionOrder,
     readSourceProjection,
     readProjectionBacklog,
     recordProjection,

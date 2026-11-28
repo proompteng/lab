@@ -12,6 +12,8 @@ This Quarkus/Kotlin microservice implements the persistence layer described in [
 
 ## Environment
 
+Research endpoints require an explicitly configured `AGENTS_GRAF_AGENT_NAME`. With no agent configured, they return HTTP 503 before dispatch.
+
 | Variable                          | Purpose                                                                                                              |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `NEO4J_URI`                       | Bolt/Neo4j URI (e.g. `bolt://graf-neo4j.graf.svc.cluster.local:7687`).                                               |

@@ -1,6 +1,7 @@
 import { Data, Effect } from 'effect'
 
-import { OrderStatus, ReconciliationStatus } from './contracts'
+import { ReconciliationStatus } from './contracts'
+import { reconciledOpenProtectionOrders } from './reconciled-protection-orders'
 import type { Order } from '../broker/alpaca/model'
 import type { ReconciliationPassResult } from '../reconciler'
 
@@ -39,6 +40,7 @@ export const makeBrokerStateCache = (accountId: string, authorityGenerationHash:
       Effect.sync(() => {
         const authority = result.riskContext.authority
         const reconciliation = result.report.reconciliation
+        let openOrders: readonly Order[] | null = null
         if (reconciliation.reconciliationId === consumedVersion) {
           current = { _tag: 'Unavailable', reason: 'consumed' }
         } else if (reconciliation.accountId !== accountId || result.brokerState.account.accountId !== accountId) {
@@ -54,20 +56,13 @@ export const makeBrokerStateCache = (accountId: string, authorityGenerationHash:
           current = { _tag: 'Unavailable', reason: 'inexact' }
         } else if (authority === null || authority.generationHash !== authorityGenerationHash) {
           current = { _tag: 'Unavailable', reason: 'authority' }
-        } else if (
-          result.brokerState.orders.some(
-            (order) =>
-              order.status === OrderStatus.New ||
-              order.status === OrderStatus.Pending ||
-              order.status === OrderStatus.PartiallyFilled,
-          )
-        ) {
+        } else if ((openOrders = reconciledOpenProtectionOrders(result)) === null) {
           current = { _tag: 'Unavailable', reason: 'pending-orders' }
         } else {
           current = {
             _tag: 'Available',
             cached: {
-              openOrders: [],
+              openOrders,
               version: {
                 reconciliationId: reconciliation.reconciliationId,
                 reconciledAt: reconciliation.reconciledAt,

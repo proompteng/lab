@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       bayn: ${{ github.event_name != 'pull_request' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn }}
+      pr_checks: ${{ github.event_name != 'pull_request' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn || fromJSON(steps.filter.outputs.affected).contracts }}
       formal: ${{ github.event_name != 'pull_request' && steps.manual.outputs.formal || fromJSON(steps.filter.outputs.affected).formal }}
       gepa: ${{ github.event_name != 'pull_request' && steps.manual.outputs.gepa || fromJSON(steps.filter.outputs.affected).gepa }}
     steps:
@@ -32,21 +33,23 @@ jobs:
         uses: ./.github/actions/affected-inputs
         with:
           workspaces: |
-            bayn: ['', 'services/bayn', 'packages/scripts']
+            bayn: ['', 'services/bayn']
+            contracts: ['', 'packages/scripts']
             formal: ['', 'services/bayn']
             gepa: ['']
           filters: |
             bayn:
               - 'services/bayn/**'
-              - '!services/bayn/README.md'
+              - '!services/bayn/**/*.md'
+              - '!services/bayn/**/*.mdx'
               - '!services/bayn/formal/**'
+              - '!services/bayn/gepa/**'
               - 'services/dorvud/**'
-              - 'packages/scripts/src/bayn/**'
-              - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
-              - 'argocd/applications/bayn/**'
-              - '!argocd/applications/bayn/README.md'
+              - '!services/dorvud/**/*.md'
+              - '!services/dorvud/**/*.mdx'
+              # Read by the PostgreSQL monitoring integration test.
+              - 'argocd/applications/bayn/postgres-monitoring.yaml'
               - 'argocd/applications/torghut/clickhouse/**'
-              - 'argocd/applicationsets/product.yaml'
               - 'nix/images/bayn.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/bayn-frozen-control.nix'
@@ -67,6 +70,17 @@ jobs:
               - 'bunfig.toml'
               - 'patches/**'
               - 'tsconfig.base.json'
+            contracts:
+              - 'services/bayn/**/*.md'
+              - 'services/bayn/**/*.mdx'
+              - '!services/bayn/README.md'
+              - '!services/bayn/formal/**'
+              - 'services/bayn/gepa/**'
+              - 'packages/scripts/src/bayn/**'
+              - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
+              - 'argocd/applications/bayn/**'
+              - '!argocd/applications/bayn/README.md'
+              - 'argocd/applicationsets/product.yaml'
             formal:
               - 'services/bayn/src/**'
               - '!services/bayn/**/*.test.ts'
@@ -76,6 +90,8 @@ jobs:
               - 'services/bayn/src/db/candidate-observation-window.integration.test.ts'
               - 'services/bayn/migrations/**'
               - 'services/bayn/formal/**'
+              - '!services/bayn/**/*.md'
+              - '!services/bayn/**/*.mdx'
               - 'services/bayn/package.json'
               - 'services/bayn/tsconfig*.json'
               - 'tsconfig.base.json'
@@ -104,7 +120,7 @@ jobs:
 
   pr-checks:
     needs: changes
-    if: needs.changes.outputs.bayn == 'true'
+    if: needs.changes.outputs.pr_checks == 'true'
     uses: ./.github/workflows/common-monorepo.yml
     with:
       bun-version: 1.4.2
@@ -524,6 +540,7 @@ jobs:
           MERGE_GROUP: ${{ github.event_name == 'merge_group' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
+          PR_CHECKS_RELEVANT: ${{ needs.changes.outputs.pr_checks }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
           FORMAL_RELEVANT: ${{ needs.changes.outputs.formal }}
           FORMAL_RESULT: ${{ needs.formal-verification.result }}
@@ -542,24 +559,26 @@ jobs:
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
             exit 1
           fi
-          if [[ "${MERGE_GROUP}" == 'true' && "${BAYN_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'true/true/true' ]]; then
+          if [[ "${MERGE_GROUP}" == 'true' && "${BAYN_RELEVANT}/${PR_CHECKS_RELEVANT}/${FORMAL_RELEVANT}/${GEPA_RELEVANT}" != 'true/true/true/true' ]]; then
             echo 'Merge group validation must select every Bayn check.' >&2
             exit 1
           fi
-          if [[ "${FORMAL_RELEVANT}" == 'true' && "${FORMAL_RESULT}" != 'success' ]]; then
-            echo "FORMAL_RESULT must be success for proof or conformance inputs, got ${FORMAL_RESULT}" >&2
-            exit 1
-          fi
-          if [[ "${GEPA_RELEVANT}" == 'true' && "${GEPA_RESULT}" != 'success' ]]; then
-            echo "GEPA_RESULT must be success for Python inputs, got ${GEPA_RESULT}" >&2
-            exit 1
-          fi
-          if [[ "${BAYN_RELEVANT}" != 'true' ]]; then
-            echo 'No Bayn release inputs changed; the required gate is satisfied without running Bayn-specific jobs.'
-            exit 0
-          fi
+          require_check() {
+            local selected="$1" result_name="$2" expected
+            case "${selected}" in
+              true) expected=success ;;
+              false) expected=skipped ;;
+              *) echo "Invalid change selection for ${result_name}: ${selected}" >&2; exit 1 ;;
+            esac
+            if [[ "${!result_name}" != "${expected}" ]]; then
+              echo "${result_name} must be ${expected}, got ${!result_name}" >&2
+              exit 1
+            fi
+          }
+          require_check "${PR_CHECKS_RELEVANT}" PR_CHECKS_RESULT
+          require_check "${FORMAL_RELEVANT}" FORMAL_RESULT
+          require_check "${GEPA_RELEVANT}" GEPA_RESULT
           for result_name in \
-            PR_CHECKS_RESULT \
             UNIT_RESULT \
             ARCHIVE_RESULT \
             LEDGER_RESULT \
@@ -567,10 +586,6 @@ jobs:
             MARKET_DATA_REPLAY_RESULT \
             STREAMING_INTEGRATION_RESULT \
             REPLAY_EXECUTION_RESULT; do
-            result="${!result_name}"
-            if [[ "${result}" != 'success' ]]; then
-              echo "${result_name} must be success, got ${result}" >&2
-              exit 1
-            fi
+            require_check "${BAYN_RELEVANT}" "${result_name}"
           done
           echo 'All applicable Bayn unit, type, archive, PostgreSQL, ledger, replay, and dependency-boundary checks passed.'

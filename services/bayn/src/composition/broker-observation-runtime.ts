@@ -54,6 +54,7 @@ import {
   type BrokerSourceProjectionReceipt,
 } from '../broker/trade-update-projection'
 import { withObservedStage } from '../telemetry'
+import { utcInstantFromEpochMillis } from '../time'
 import { ValkeyCache, ValkeyCacheError, ValkeyCacheInputError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import { OrderStatus } from '../broker/alpaca/model'
@@ -370,7 +371,7 @@ export const acquireBrokerObservationRuntime = (
             Effect.flatMap(store, (value) => value.isNotificationCovered(eventId)),
             { signal },
           ),
-        project: (signal, eventId) =>
+        project: (signal, eventId, allowProtectionWait = true) =>
           projection.runPromise(
             Effect.gen(function* () {
               const source = yield* store
@@ -423,7 +424,37 @@ export const acquireBrokerObservationRuntime = (
                         }),
                       }
                     const bindings = yield* (yield* IntentBindingStore).bindings(plan.config.alpaca.expectedAccountId)
-                    const decision = projectBrokerTradeUpdate(notification, bindings)
+                    let decision = projectBrokerTradeUpdate(notification, bindings)
+                    if (decision._tag === 'ProtectionBindingRequired') {
+                      const protectionOrder = yield* source.readProtectionOrder(
+                        decision.brokerOrderId,
+                        decision.clientOrderId,
+                      )
+                      if (protectionOrder !== undefined)
+                        decision = projectBrokerTradeUpdate(notification, bindings, protectionOrder)
+                    }
+                    if (decision._tag === 'ProtectionBindingRequired') {
+                      const deadlineMs = Date.parse(notification.receivedAt) + plan.config.operationTimeoutMs
+                      if (decision.canWait && allowProtectionWait && (yield* Clock.currentTimeMillis) < deadlineMs)
+                        return {
+                          _tag: 'Pending' as const,
+                          pending: {
+                            _tag: 'AwaitingProtection' as const,
+                            eventId: notification.eventId,
+                            observedAt: notification.receivedAt,
+                            deadlineAt: utcInstantFromEpochMillis(deadlineMs),
+                          },
+                        }
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'ReconcileRequired',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                          reason: BrokerStreamReconciliationReason.MissingIntent,
+                        }),
+                      }
+                    }
                     if (decision._tag === 'ReconcileRequired')
                       return { _tag: 'Receipt' as const, receipt: yield* retain(decision) }
                     const events = yield* BrokerEventStore
@@ -458,6 +489,7 @@ export const acquireBrokerObservationRuntime = (
                 }
                 return yield* failure
               }
+              if (prepared.success._tag === 'Pending') return prepared.success.pending
               yield* observeBrokerSourceProjection(prepared.success.receipt, false)
               return prepared.success.receipt
             }).pipe(

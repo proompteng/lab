@@ -3,6 +3,8 @@
 fullnameOverride: observability-loki-v3
 nameOverride: observability-loki-v3
 deploymentMode: Distributed
+test:
+  enabled: false
 
 defaults:
   extraArgs:
@@ -313,9 +315,6 @@ lokiCanary:
     limits:
       cpu: 50m
       memory: 64Mi
-
-minio:
-  enabled: false
 
 memcachedExporter:
   resources:

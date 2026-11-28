@@ -1,13 +1,19 @@
 import { Schema } from 'effect'
 import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
-import { SystemSourceCutSchema } from './source-cut'
+import { RetainedSystemSourceCutSchema } from './source-cut'
 import { CapturedTradingFactsSchema } from './session'
+import type { SystemRegistration } from './policy'
 
-export const emptySourceCutFixture = ({ input, verifiedSources } = supportedAssessmentFixture()) => {
+export const emptySourceCutFixture = (
+  {
+    input,
+    verifiedSources,
+  }: ReturnType<typeof supportedAssessmentFixture<SystemRegistration>> = supportedAssessmentFixture(),
+) => {
   const candidate = input.registration.policies.find((p) => p.policy === 'JEV')
   const policy = input.policies.find((p) => p.policy === 'JEV')
   if (candidate === undefined || policy === undefined) throw new Error('Missing candidate fixture')
-  const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
+  const cut = Schema.decodeUnknownSync(RetainedSystemSourceCutSchema)({
     schemaVersion: 'bayn.system-source-cut.v4',
     protectionIntents: [],
     decisionAdmissions: [],
@@ -40,7 +46,9 @@ export const emptySourceCutFixture = ({ input, verifiedSources } = supportedAsse
   return { input: { ...input, sourceCutHash: testHash(cut) }, cut, verifiedSources }
 }
 
-export const capturedAccountsFixture = (assessment = supportedAssessmentFixture()) => {
+export const capturedAccountsFixture = (
+  assessment: ReturnType<typeof supportedAssessmentFixture<SystemRegistration>> = supportedAssessmentFixture(),
+) => {
   const { input, cut, verifiedSources } = emptySourceCutFixture(assessment)
   const financial = input.registration.policies.map((definition) => {
     const policy = input.policies.find((policy) => policy.policy === definition.policy)
@@ -72,7 +80,7 @@ export const capturedAccountsFixture = (assessment = supportedAssessmentFixture(
       })),
     )
   })
-  const captured = Schema.decodeUnknownSync(SystemSourceCutSchema)({
+  const captured = Schema.decodeUnknownSync(RetainedSystemSourceCutSchema)({
     ...cut,
     financial,
     accountMarks,

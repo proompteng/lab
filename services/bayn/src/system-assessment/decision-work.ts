@@ -19,7 +19,8 @@ import {
   type RecordedExecutionDecisionDocument as ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import type { ScheduledEvaluation } from './policy'
+import { isNativeSystemRegistration, isStrategyBoundSystemRegistration, type ScheduledEvaluation } from './policy'
+import { ResearchStrategyEngine, validateResearchStrategyBinding } from './strategy-binding'
 import type { RecordedProtectedEntryTarget as ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
@@ -81,7 +82,7 @@ const sourceMarketScopeSupported = (
     )
   )
     return false
-  if (native && registration.schemaVersion !== 'bayn.system-registration.v5') return true
+  if (native && !isNativeSystemRegistration(registration)) return true
   const calendar = qualificationCalendar(manifest['calendar'], registration.calendar.operatingHours)
   if (Result.isFailure(calendar)) return false
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
@@ -126,7 +127,8 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
     sourceAt,
     correct:
       completedAt >= sourceAt &&
-      (strategy.schemaVersion === 'bayn.repeated-momentum-target.v1'
+      (strategy.schemaVersion === 'bayn.repeated-momentum-target.v1' ||
+      strategy.schemaVersion === 'bayn.intraday-alpha-target.v2'
         ? exclusions === undefined || (Array.isArray(exclusions) && exclusions.length === 0)
         : strategy.evidence.batchPlan.candidates.every(
             (c) => c.status !== 'EXCLUDED' || (c.reason !== 'not-ready' && c.reason !== 'freshness'),
@@ -141,6 +143,32 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
   }
 }
 
+const entryMatchesRegisteredEngine = (target: ProtectedEntryTarget, registration: ScheduledEvaluation): boolean => {
+  if (!isStrategyBoundSystemRegistration(registration)) return true
+  const definition = registration.policies.find(
+    (policy) => policy.authorityGenerationHash === target.evidence.observation.authorityGenerationHash,
+  )
+  if (definition === undefined || !('strategyBinding' in definition)) return false
+  const checked = validateResearchStrategyBinding(definition.strategyBinding)
+  if (Result.isFailure(checked)) return false
+  const binding = checked.success
+  const parameters =
+    binding.engine === ResearchStrategyEngine.IntradayAlpha && target.schemaVersion === 'bayn.intraday-alpha-target.v2'
+      ? target.policy
+      : binding.engine === ResearchStrategyEngine.Jev && target.schemaVersion === 'bayn.jev-entry-target.v7'
+        ? target.evidence.observation.protocol
+        : binding.engine === ResearchStrategyEngine.EntryAblation &&
+            target.schemaVersion === 'bayn.entry-ablation-target.v1'
+          ? target.policy
+          : binding.engine === ResearchStrategyEngine.RepeatedMomentum &&
+              target.schemaVersion === 'bayn.repeated-momentum-target.v1'
+            ? target.policy
+            : null
+  if (parameters === null) return false
+  const hash = canonicalHashV1Result(parameters)
+  return Result.isSuccess(hash) && hash.success === binding.strategy.parameterHash
+}
+
 export const decisionDocumentWork = (document: ExecutionDecisionDocument, registration: ScheduledEvaluation) => {
   const strategy = document.strategyDecision
   if (isProtectedEntryTarget(strategy)) {
@@ -149,6 +177,7 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
       ...work,
       correct:
         work.correct &&
+        entryMatchesRegisteredEngine(strategy, registration) &&
         sourceFitsRegisteredSession(
           strategy.evidence.observation.manifest,
           registration,
@@ -240,6 +269,23 @@ const registeredControllerOwns = (
       parameterHash: historicalParameters,
       parameterSchemaVersion: protocol.schemaVersion,
     })
+    const runtime = registration.obligations.configuration
+    const strategyBound = runtime.schemaVersion === 'bayn.qualification-runtime.v3'
+    const binding = strategyBound ? yield* validateResearchStrategyBinding(runtime.strategyBinding) : null
+    const strategyMatches =
+      binding === null
+        ? Schema.is(JevProtocolSchema)(protocol)
+          ? jevProtocolIdentityMatches(protocol, candidate?.protocolHash ?? '')
+          : historicalParameters === candidate?.parametersHash &&
+            historicalIdentity === candidate?.protocolHash &&
+            historicalBehavior === candidate?.strategyHash
+        : candidate !== undefined &&
+          'strategyBinding' in candidate &&
+          (yield* canonicalHashV1Result(candidate.strategyBinding)) === (yield* canonicalHashV1Result(binding)) &&
+          (yield* canonicalHashV1Result(protocol)) === (yield* canonicalHashV1Result(runtime.protocol)) &&
+          binding.strategy.behaviorHash === candidate.strategyHash &&
+          binding.strategy.parameterHash === candidate.parametersHash &&
+          binding.protocolHash === candidate.protocolHash
     return (
       candidate !== undefined &&
       (buildBinding === 'RETAINED_OPERATIONAL_V1'
@@ -249,11 +295,7 @@ const registeredControllerOwns = (
       pass.controllerKey === identity.identityHash &&
       candidate.accountBindingHash === accountHash &&
       candidate.authorityGenerationHash === generationHash &&
-      (Schema.is(JevProtocolSchema)(protocol)
-        ? jevProtocolIdentityMatches(protocol, candidate.protocolHash)
-        : historicalParameters === candidate.parametersHash &&
-          historicalIdentity === candidate.protocolHash &&
-          historicalBehavior === candidate.strategyHash)
+      strategyMatches
     )
   })
 
@@ -358,6 +400,7 @@ export const entryAbstentionWork = (
       ...work,
       correct:
         work.correct &&
+        entryMatchesRegisteredEngine(target, registration) &&
         target.selectedSymbols.length === 0 &&
         sourceFitsRegisteredSession(source.manifest, registration, source.observedAt) &&
         (yield* registeredControllerOwns(

@@ -3,10 +3,24 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { MarketKind } from '../instruments'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { jevEntryEconomics } from './entry-economics'
-import { EntrySetup, makeEntryProposals, ProposalRejection } from './entry-proposals'
-import { defaultJevProtocolDocument, retainedJevProtocolV41Document, type JevProtocolMaterial } from './protocol'
+import {
+  EntrySetup,
+  hasRequiredRewardRiskRatio,
+  makeEntryProposals,
+  makeEntrySourceCandidates,
+  mayHaveRetainedFundableSourceProposal,
+  ProposalRejection,
+} from './entry-proposals'
+import {
+  defaultJevProtocolDocument,
+  retainedJevProtocolV41Document,
+  retainedJevProtocolV42Document,
+  retainedJevProtocolV43Document,
+  type JevProtocolMaterial,
+} from './protocol'
 
 const source = {
   symbol: 'AAPL',
@@ -103,7 +117,7 @@ describe('source-anchored complete entry proposals', () => {
   test('an unidentified base cannot remove an independently funded recovery', () => {
     const input = fixture({
       ...source,
-      bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 112 } : bar)),
+      bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 113 } : bar)),
     })
     const result = Result.getOrThrow(
       makeEntryProposals({
@@ -147,7 +161,7 @@ describe('source-anchored complete entry proposals', () => {
   test('does not require a breakout judgment to construct a recovery proposal', () => {
     const input = fixture({
       ...source,
-      bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 112 } : bar)),
+      bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 113 } : bar)),
     })
     const refused = { status: 'REFUSED' } as const
     const result = Result.getOrThrow(
@@ -173,20 +187,179 @@ describe('source-anchored complete entry proposals', () => {
   })
 
   test('v42 rejects sub-unity modeled risk-reward setups and admits G/L >= 1.0 recoveries', () => {
-    const rejected = Result.getOrThrow(makeEntryProposals(fixture()))
+    const rejected = Result.getOrThrow(makeEntryProposals(fixture(source, retainedJevProtocolV42Document)))
     expect(rejected.proposals).toEqual([])
     expect(rejected.rejections).toEqual([
       { setup: EntrySetup.SupportRecovery, reason: ProposalRejection.Unfunded },
       { setup: EntrySetup.BaseBreakout, reason: ProposalRejection.Unfunded },
     ])
 
-    const favorable = fixture({
-      ...source,
-      bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 112 } : bar)),
-    })
+    const favorable = fixture(
+      {
+        ...source,
+        bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 112 } : bar)),
+      },
+      retainedJevProtocolV42Document,
+    )
     const admitted = Result.getOrThrow(makeEntryProposals(favorable))
     expect(admitted.proposals.map((proposal) => proposal.source.setup)).toEqual([EntrySetup.SupportRecovery])
     expect(admitted.rejections).toEqual([{ setup: EntrySetup.BaseBreakout, reason: ProposalRejection.Unfunded }])
+  })
+
+  test('v44 keeps the existing modeled reward-to-risk cutoff for crypto', () => {
+    expect(hasRequiredRewardRiskRatio(defaultJevProtocolDocument, MarketKind.Crypto, 119n, 100n)).toBe(false)
+    expect(hasRequiredRewardRiskRatio(defaultJevProtocolDocument, MarketKind.Crypto, 120n, 100n)).toBe(true)
+  })
+
+  test('v44 retains the 15 bps long stop floor while accepting positive targets rejected by v43', () => {
+    const subRatioSource = {
+      ...source,
+      bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 112 } : bar)),
+    }
+    const subRatio = fixture(subRatioSource, retainedJevProtocolV43Document)
+    const rejectedSubRatio = Result.getOrThrow(makeEntryProposals(subRatio))
+    expect(rejectedSubRatio.proposals).toEqual([])
+    expect(rejectedSubRatio.rejections).toEqual([
+      { setup: EntrySetup.SupportRecovery, reason: ProposalRejection.Unfunded },
+      { setup: EntrySetup.BaseBreakout, reason: ProposalRejection.Unfunded },
+    ])
+
+    const active = Result.getOrThrow(makeEntryProposals(fixture(subRatioSource)))
+    expect(active.proposals.map((proposal) => proposal.source.setup)).toContain(EntrySetup.SupportRecovery)
+
+    const favorable = fixture(
+      {
+        ...source,
+        bars: source.bars.map((bar, index) => (index === 4 ? { ...bar, high: 113 } : bar)),
+      },
+      retainedJevProtocolV43Document,
+    )
+    const admitted = Result.getOrThrow(makeEntryProposals(favorable))
+    expect(admitted.proposals.map((proposal) => proposal.source.setup)).toEqual([EntrySetup.SupportRecovery])
+
+    const makeStopFloorChart = (supportLow: number) =>
+      Result.getOrThrow(
+        makeNativeChartEvidence({
+          symbol: 'AAPL',
+          windowEndAt: '2026-10-25T07:00:00.000Z',
+          bars: [
+            { minuteBeforeWindowEnd: 5, open: 100.0, high: 100.5, low: supportLow, close: 100.0, volume: 100 },
+            { minuteBeforeWindowEnd: 4, open: 100.0, high: 100.5, low: 99.95, close: 100.0, volume: 100 },
+            { minuteBeforeWindowEnd: 3, open: 100.0, high: 100.5, low: 99.95, close: 100.0, volume: 100 },
+            { minuteBeforeWindowEnd: 2, open: 100.0, high: 120.0, low: 99.95, close: 100.0, volume: 100 },
+            { minuteBeforeWindowEnd: 1, open: 100.0, high: 100.2, low: 99.95, close: 100.0, volume: 100 },
+          ],
+        }),
+      )
+    const economics = Result.getOrThrow(
+      jevEntryEconomics({
+        feeAt: '2026-09-04T14:15:00.000Z',
+        protocol: defaultJevProtocolDocument,
+        symbol: 'AAPL',
+        bidMicros: 100_000_000n,
+        askMicros: 100_000_000n,
+        capitalMicros: '100000000000',
+        cryptoFeeTier: null,
+      }),
+    )
+    if (economics === null) throw new Error('Expected funded stop floor test quantity')
+
+    // bid = 100.00: low = 99.86 -> stop = 99.85 (15 bps) admitted; low = 99.87 -> stop = 99.86 (14 bps) rejected
+    const baseAssessments = fixture().assessments
+    const tightChart = makeStopFloorChart(99.87)
+    const tightResult = Result.getOrThrow(
+      makeEntryProposals({
+        chart: tightChart,
+        assessments: {
+          ...baseAssessments,
+          barsHash: tightChart.barsHash,
+          pngHash: tightChart.pngHash,
+          support: {
+            ...baseAssessments.support,
+            anchor: { status: 'ASSESSED', barId: tightChart.bars[0]!.id, probability: 0.8 },
+          },
+          resistance: {
+            ...baseAssessments.resistance,
+            anchor: { status: 'ASSESSED', barId: tightChart.bars[3]!.id, probability: 0.8 },
+          },
+          base: { ...baseAssessments.base, presence: { status: 'ASSESSED', probability: 0.1 } },
+        },
+        economics,
+        protocol: defaultJevProtocolDocument,
+        bidMicros: 100_000_000n,
+      }),
+    )
+    expect(tightResult.proposals).toEqual([])
+    expect(tightResult.rejections).toContainEqual({
+      setup: EntrySetup.SupportRecovery,
+      reason: ProposalRejection.InvalidPrices,
+    })
+    expect(
+      Result.getOrThrow(
+        makeEntrySourceCandidates({
+          chart: tightChart,
+          economics,
+          protocol: defaultJevProtocolDocument,
+          bidMicros: 100_000_000n,
+        }),
+      ).supportBarIds,
+    ).toEqual([])
+    expect(
+      Result.getOrThrow(
+        mayHaveRetainedFundableSourceProposal({
+          chart: tightChart,
+          economics,
+          protocol: defaultJevProtocolDocument,
+          bidMicros: 100_000_000n,
+        }),
+      ),
+    ).toBe(false)
+
+    const validChart = makeStopFloorChart(99.86)
+    const validResult = Result.getOrThrow(
+      makeEntryProposals({
+        chart: validChart,
+        assessments: {
+          ...baseAssessments,
+          barsHash: validChart.barsHash,
+          pngHash: validChart.pngHash,
+          support: {
+            ...baseAssessments.support,
+            anchor: { status: 'ASSESSED', barId: validChart.bars[0]!.id, probability: 0.8 },
+          },
+          resistance: {
+            ...baseAssessments.resistance,
+            anchor: { status: 'ASSESSED', barId: validChart.bars[3]!.id, probability: 0.8 },
+          },
+          base: { ...baseAssessments.base, presence: { status: 'ASSESSED', probability: 0.1 } },
+        },
+        economics,
+        protocol: defaultJevProtocolDocument,
+        bidMicros: 100_000_000n,
+      }),
+    )
+    expect(validResult.proposals.map((proposal) => proposal.source.setup)).toEqual([EntrySetup.SupportRecovery])
+    expect(validResult.proposals[0]?.stopPriceMicros).toBe('99850000')
+    expect(
+      Result.getOrThrow(
+        makeEntrySourceCandidates({
+          chart: validChart,
+          economics,
+          protocol: defaultJevProtocolDocument,
+          bidMicros: 100_000_000n,
+        }),
+      ).supportBarIds,
+    ).toEqual([validChart.bars[0]!.id])
+    expect(
+      Result.getOrThrow(
+        mayHaveRetainedFundableSourceProposal({
+          chart: validChart,
+          economics,
+          protocol: defaultJevProtocolDocument,
+          bidMicros: 100_000_000n,
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('rejects an incoherent consolidation and a quote that has not broken its high', () => {
@@ -235,7 +408,7 @@ describe('source-anchored complete entry proposals', () => {
     const input = fixture({
       ...source,
       bars: source.bars.map((bar, index) =>
-        index === 0 ? { ...bar, low: 97.00000000000001 } : index === 4 ? { ...bar, high: 112 } : bar,
+        index === 0 ? { ...bar, low: 97.00000000000001 } : index === 4 ? { ...bar, high: 113 } : bar,
       ),
     })
     const result = Result.getOrThrow(makeEntryProposals(input))

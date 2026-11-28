@@ -1,6 +1,6 @@
 # Penpot
 
-The official Penpot Helm chart (1.14.0 / Penpot 2.19.3) runs in the dedicated
+The official Penpot Helm chart (1.16.0 / Penpot 2.19.5) runs in the dedicated
 `penpot` namespace, reconciled by the platform ApplicationSet.
 
 - Private HTTPS: <https://penpot.ide-newton.ts.net> (Tailscale ingress).

@@ -42,6 +42,10 @@ const liveConnection: typeof connection = Object.freeze({
 })
 
 describe('Alpaca read request builders', () => {
+  test('reads open orders flat so filled bracket parents cannot hide live children', () => {
+    expect(ordersUrl(connection, { status: OrderCollection.Open, limit: 500 }).searchParams.get('nested')).toBe('false')
+  })
+
   test('binds every fixed read endpoint to the verified connection', () => {
     expect(accountUrl(connection).toString()).toBe(`${alpacaSandboxBaseUrl}/v2/account`)
     expect(accountConfigurationUrl(connection).toString()).toBe(`${alpacaSandboxBaseUrl}/v2/account/configurations`)
