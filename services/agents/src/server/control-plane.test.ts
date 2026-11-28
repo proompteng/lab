@@ -34,7 +34,7 @@ describe('Agents control-plane runtime', () => {
     process.env.AGENTS_PROMETHEUS_METRICS_ENABLED = 'true'
     try {
       recordAgentRunOutcome('Succeeded', { runtime: 'job' })
-      const runtime = await createAgentsControlPlaneRuntime({ routeSources: [] })
+      const runtime = await createAgentsControlPlaneRuntime({ routeModules: [] })
       const response = await runtime.handleHttpRequest(new Request('http://agents.test/metrics'))
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toContain('text/plain')
