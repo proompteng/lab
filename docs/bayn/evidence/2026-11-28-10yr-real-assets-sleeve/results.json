@@ -1,0 +1,2188 @@
+{
+  "schemaVersion": "bayn.wave24b.real-assets-sleeve.v1",
+  "decision": {
+    "requestedScope": "seven-etf",
+    "evaluatedScope": "six-etf-tip-absent",
+    "missing": ["TIP"],
+    "verdict": "DO NOT PROMOTE"
+  },
+  "archive": {
+    "bucket": "agents-artifacts",
+    "manifestKey": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/MANIFEST.json",
+    "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+    "tape": {
+      "key": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz",
+      "bytes": 9338659,
+      "sha256": "fdda4017ee662fae548d8111a970ea90d83b3e8ee6f61abd6153be0fe83547d2",
+      "raw": {
+        "bytes": 29435892,
+        "sha256": "e5331bb57e6f6427449d0cd3ab59291f56e508cb8c3961557bfd1374a635c9a8"
+      }
+    },
+    "rows": 450712
+  },
+  "coverage": [
+    {
+      "ticker": "GLD",
+      "inManifest": true,
+      "rows": 2741
+    },
+    {
+      "ticker": "SLV",
+      "inManifest": true,
+      "rows": 2741
+    },
+    {
+      "ticker": "DBC",
+      "inManifest": true,
+      "rows": 2741
+    },
+    {
+      "ticker": "USO",
+      "inManifest": true,
+      "rows": 2741
+    },
+    {
+      "ticker": "XLE",
+      "inManifest": true,
+      "rows": 2741
+    },
+    {
+      "ticker": "SHY",
+      "inManifest": true,
+      "rows": 2741
+    },
+    {
+      "ticker": "TIP",
+      "inManifest": false,
+      "rows": 0
+    },
+    {
+      "ticker": "SPY",
+      "inManifest": true,
+      "rows": 2741
+    },
+    {
+      "ticker": "IEF",
+      "inManifest": true,
+      "rows": 2741
+    }
+  ],
+  "protocol": {
+    "trendSessions": 126,
+    "regimeSessions": 63,
+    "preciousWeight": 0.5,
+    "deadband": 0.1,
+    "costsOneWayBps": [0, 2, 5, 10],
+    "primaryCostOneWayBps": 10,
+    "controlCostRoundTripBps": 10,
+    "sleeveWeight": 0.25,
+    "stressLookbackSessions": 63,
+    "equityDrawdown": 0.05,
+    "ratesDrawdown": 0.03,
+    "maxAbsCorrelation": 0.3,
+    "bootstrap": {
+      "draws": 5000,
+      "meanBlock": 10,
+      "seed": 38477862
+    },
+    "bootstrapLowerTail": 0.05
+  },
+  "controls": {
+    "ids": {
+      "SPY": "buy-and-hold",
+      "F4": "F4-42-1-LQD-parity",
+      "O1": "ensemble/base/21/0.05",
+      "B0": "B0/30/1.4/opposite_band/inverse_vol_parity"
+    },
+    "sources": {
+      "daily": {
+        "prefix": "bayn-research-datasets/2026-11-27-sip-10yr-sp100",
+        "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+        "name": "alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz",
+        "sha256": "fdda4017ee662fae548d8111a970ea90d83b3e8ee6f61abd6153be0fe83547d2",
+        "bytes": 9338659,
+        "rawSha256": "e5331bb57e6f6427449d0cd3ab59291f56e508cb8c3961557bfd1374a635c9a8",
+        "rawBytes": 29435892,
+        "rows": 450712
+      },
+      "macro": {
+        "prefix": "bayn-research-datasets/2026-11-27-sip-10yr-sp100-supplement-dia-uup",
+        "manifestSha256": "ea0324abff46b2a44ea718dfbac625b9c434a1d21addc77eb5491d0249a79355",
+        "name": "alpaca_sip_daily_dia_uup_20160104_20261125.tsv.gz",
+        "sha256": "0c8daf58178d0de84f9c8183ab01ba0708fcac395f0623d901864ed5ad96d620",
+        "bytes": 100078,
+        "rows": 5482
+      },
+      "intraday": {
+        "development": {
+          "manifest": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/MANIFEST.json",
+          "manifestSha256": "c18d9c4d537ae17a6322dc8a2d5a9338b8851706d58c5ea62f02a31b37ea0eb0",
+          "calendar": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/calendar_2016_2023.json",
+          "calendarSha256": "0165400d9544973b0971a2397969e65bd2543beff5d8bd47510f09b015ef7f86",
+          "bars": "bayn-research-datasets/2026-11-27-sip-8yr-5m-unseen-v2/alpaca_sip_5m_rth_exact62_20160104_20231229.tsv.gz",
+          "rows": 8641719,
+          "memberBytes": 174597176
+        },
+        "holdout": {
+          "manifest": "bayn-research-datasets/2026-11-27-sip-multiyear/MANIFEST.json",
+          "manifestSha256": "5df0cfe213c69e9a6489dde46553db610edb2632b5e54fb76a6347740abcdead",
+          "calendar": "bayn-research-datasets/2026-11-27/calendar_2024_2026.json",
+          "calendarSha256": "b7a02f0c79aa479de2eba14e6168826cabaf8eef15df4c94cf1f199511752b71",
+          "bars": "bayn-research-datasets/2026-11-27-sip-multiyear/alpaca_sip_5m_rth_62sym_20240102_20261125.tsv.gz",
+          "rows": 3923737
+        },
+        "shy": {
+          "manifest": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/MANIFEST.json",
+          "manifestSha256": "ffaa9d30d69d38307f69ec77f07c12cdd82c7407131a110bc3b88421b0f1676e",
+          "bars": "bayn-research-datasets/2026-11-27-sip-10yr-sp100/alpaca_sip_daily_10yr_sp100_etfs_20160104_20261125.tsv.gz",
+          "rows": 450712
+        }
+      }
+    },
+    "oracle": {
+      "foldOrder": ["train", "validation", "holdout", "full"],
+      "B0": [
+        {
+          "roundTripBps": 2,
+          "pinned": [33107.45, 29982.77, 40443.36, 103533.58],
+          "reproduced": [33107.451215012465, 29982.766727238843, 40443.35896153737, 103533.57690378872]
+        },
+        {
+          "roundTripBps": 5,
+          "pinned": [14806, 23345.9, 31628.26, 69780.16],
+          "reproduced": [14805.99691699041, 23345.89505536258, 31628.2632341435, 69780.15520649655]
+        }
+      ],
+      "F4": [
+        {
+          "roundTripBps": 10,
+          "pinned": [0.426060485, 0.078919864, 0.372083365, 1.111094304],
+          "reproduced": [0.42606048459710877, 0.07891986395953055, 0.3720833647617776, 1.1110943035402752]
+        },
+        {
+          "roundTripBps": 20,
+          "pinned": [0.41836733, 0.077613006, 0.36920683, 1.092765661],
+          "reproduced": [0.41836732995904646, 0.077613006309742, 0.3692068298591753, 1.092765661249179]
+        }
+      ],
+      "O1": [
+        {
+          "roundTripBps": 2,
+          "pinned": [0.3457835155, 0.1258225331, 0.2832680135, 0.9442965714],
+          "reproduced": [0.34578351552848874, 0.12582253314008618, 0.28326801353111986, 0.9442965714470313]
+        },
+        {
+          "roundTripBps": 5,
+          "pinned": [0.340562174, 0.1236780518, 0.2803505836, 0.9286692789],
+          "reproduced": [0.3405621739507052, 0.12367805183257508, 0.28035058356373144, 0.9286692789006974]
+        },
+        {
+          "roundTripBps": 10,
+          "pinned": [0.3319073922, 0.120115304, 0.2755039391, 0.9029113849],
+          "reproduced": [0.3319073922424056, 0.12011530401341775, 0.27550393908871973, 0.9029113849269141]
+        }
+      ]
+    }
+  },
+  "evidence": {
+    "bounds": {
+      "full": {
+        "from": "2016-01-05",
+        "through": "2026-11-25",
+        "sessions": 2740
+      },
+      "train": {
+        "from": "2016-01-05",
+        "through": "2021-12-31",
+        "sessions": 1510
+      },
+      "validation": {
+        "from": "2022-01-03",
+        "through": "2023-12-29",
+        "sessions": 501
+      },
+      "holdout": {
+        "from": "2024-01-02",
+        "through": "2026-11-25",
+        "sessions": 729
+      },
+      "oos": {
+        "from": "2022-01-03",
+        "through": "2026-11-25",
+        "sessions": 1230
+      },
+      "year2022": {
+        "from": "2022-01-03",
+        "through": "2022-12-30",
+        "sessions": 251
+      }
+    },
+    "benchmarks": {
+      "full": {
+        "SPY": {
+          "net": 3.199086008905552,
+          "cagr": 0.14106936188593733,
+          "sharpe": 0.8397290823180884,
+          "maxDrawdown": 0.33793888166449926,
+          "calmar": 0.4174404590294789
+        },
+        "IEF": {
+          "net": 0.11642008246422941,
+          "cagr": 0.010179954777359557,
+          "sharpe": 0.1875044042321072,
+          "maxDrawdown": 0.23927851866065253,
+          "calmar": 0.04254437395526041
+        },
+        "SHY": {
+          "net": 0.2004117041611666,
+          "cagr": 0.01694171888321927,
+          "sharpe": 1.0868979830313403,
+          "maxDrawdown": 0.057008086253367396,
+          "calmar": 0.29718097899170476
+        },
+        "B0": {
+          "net": 0.10107707730363136,
+          "cagr": 0.008895092229149082,
+          "sharpe": 0.14652287313904158,
+          "maxDrawdown": 0.23293306873706565,
+          "calmar": 0.038187331139271787
+        },
+        "F4": {
+          "net": 1.1124604152929054,
+          "cagr": 0.07120123928504074,
+          "sharpe": 1.2425886883657018,
+          "maxDrawdown": 0.10038434247762973,
+          "calmar": 0.7092863042949917
+        },
+        "O1": {
+          "net": 0.9041427792814367,
+          "cagr": 0.061021510298192805,
+          "sharpe": 0.8859845621666838,
+          "maxDrawdown": 0.2066903843671315,
+          "calmar": 0.2952314907393274
+        }
+      },
+      "train": {
+        "SPY": {
+          "net": 1.6117295523787205,
+          "cagr": 0.17376206940641592,
+          "sharpe": 1.0007111232452999,
+          "maxDrawdown": 0.33793888166449926,
+          "calmar": 0.5141819389072972
+        },
+        "IEF": {
+          "net": 0.19488236720834795,
+          "cagr": 0.030159791904357247,
+          "sharpe": 0.5822730971122427,
+          "maxDrawdown": 0.0893917329449978,
+          "calmar": 0.3373890505390961
+        },
+        "SHY": {
+          "net": 0.0826349066313854,
+          "cagr": 0.013338670293626675,
+          "sharpe": 1.3531895782986842,
+          "maxDrawdown": 0.010716871832006092,
+          "calmar": 1.2446421402363463
+        },
+        "B0": {
+          "net": -0.15868237019498033,
+          "cagr": -0.02842402635551633,
+          "sharpe": -0.36049046847058064,
+          "maxDrawdown": 0.21401955814629825,
+          "calmar": -0.13281041509340188
+        },
+        "F4": {
+          "net": 0.4269833036226347,
+          "cagr": 0.061134830577640464,
+          "sharpe": 1.1468729411248815,
+          "maxDrawdown": 0.10038434247762973,
+          "calmar": 0.6090076307593899
+        },
+        "O1": {
+          "net": 0.33276928379266324,
+          "cagr": 0.04910760577244799,
+          "sharpe": 0.7098890910952755,
+          "maxDrawdown": 0.2066903843671315,
+          "calmar": 0.23759018070826726
+        }
+      },
+      "validation": {
+        "SPY": {
+          "net": 0.03243825291069369,
+          "cagr": 0.0161868084696144,
+          "sharpe": 0.17973027106833578,
+          "maxDrawdown": 0.24496487119437893,
+          "calmar": 0.06607808046391359
+        },
+        "IEF": {
+          "net": -0.12057241449304823,
+          "cagr": -0.06258267330364797,
+          "sharpe": -0.6089493364714358,
+          "maxDrawdown": 0.19527047599715774,
+          "calmar": -0.32049224535386955
+        },
+        "SHY": {
+          "net": 0.0012223278554956973,
+          "cagr": 0.0006146369518318373,
+          "sharpe": 0.03665914879456307,
+          "maxDrawdown": 0.049707999456742646,
+          "calmar": 0.012364950481797449
+        },
+        "B0": {
+          "net": 0.11855884032783726,
+          "cagr": 0.057974261811057026,
+          "sharpe": 0.5930422465830131,
+          "maxDrawdown": 0.07268080183904757,
+          "calmar": 0.7976557817763439
+        },
+        "F4": {
+          "net": 0.07891986395953055,
+          "cagr": 0.038946930929744106,
+          "sharpe": 0.649122992360832,
+          "maxDrawdown": 0.05614209579742957,
+          "calmar": 0.6937206453829475
+        },
+        "O1": {
+          "net": 0.12011530401341775,
+          "cagr": 0.05871449402145679,
+          "sharpe": 0.8930983178073402,
+          "maxDrawdown": 0.06092838202229289,
+          "calmar": 0.9636640933608565
+        }
+      },
+      "holdout": {
+        "SPY": {
+          "net": 0.5572648458379479,
+          "cagr": 0.1654554364243943,
+          "sharpe": 1.0322427377061136,
+          "maxDrawdown": 0.18754263088722145,
+          "calmar": 0.8822284066383326
+        },
+        "IEF": {
+          "net": 0.062435083669933444,
+          "cagr": 0.021156224302716353,
+          "sharpe": 0.38205965058638436,
+          "maxDrawdown": 0.06897686149797155,
+          "calmar": 0.30671480034414883
+        },
+        "SHY": {
+          "net": 0.1074335322843174,
+          "cagr": 0.03590442500701929,
+          "sharpe": 2.2364039088241525,
+          "maxDrawdown": 0.009765625000000222,
+          "calmar": 3.676613120718692
+        },
+        "B0": {
+          "net": 0.1700351184286788,
+          "cagr": 0.055783638473533514,
+          "sharpe": 0.6282072296721505,
+          "maxDrawdown": 0.09126703170630324,
+          "calmar": 0.6112134626339655
+        },
+        "F4": {
+          "net": 0.3720833647617776,
+          "cagr": 0.11555132195272533,
+          "sharpe": 1.8463422869852937,
+          "maxDrawdown": 0.06156550278337514,
+          "calmar": 1.8768842408272879
+        },
+        "O1": {
+          "net": 0.27550393908871973,
+          "cagr": 0.08775723772612265,
+          "sharpe": 1.2593011267348877,
+          "maxDrawdown": 0.06334988817561482,
+          "calmar": 1.3852784946178156
+        }
+      },
+      "oos": {
+        "SPY": {
+          "net": 0.6077797967561751,
+          "cagr": 0.10217687982285772,
+          "sharpe": 0.6417698896189405,
+          "maxDrawdown": 0.24496487119437893,
+          "calmar": 0.41710829526157106
+        },
+        "IEF": {
+          "net": -0.0656652796102728,
+          "cagr": -0.013819054052964796,
+          "sharpe": -0.1405613889293601,
+          "maxDrawdown": 0.19527047599715774,
+          "calmar": -0.0707687835674961
+        },
+        "SHY": {
+          "net": 0.10878717913894809,
+          "cagr": 0.021382495910601707,
+          "sharpe": 1.0408864747551276,
+          "maxDrawdown": 0.049707999456742646,
+          "calmar": 0.43016206937093454
+        },
+        "B0": {
+          "net": 0.30875312521242293,
+          "cagr": 0.05667536872577794,
+          "sharpe": 0.6122518331655082,
+          "maxDrawdown": 0.09126703170630379,
+          "calmar": 0.6209840252957781
+        },
+        "F4": {
+          "net": 0.48036799724991175,
+          "cagr": 0.08368985875421009,
+          "sharpe": 1.3507426867003867,
+          "maxDrawdown": 0.061565502783374804,
+          "calmar": 1.3593628732097314
+        },
+        "O1": {
+          "net": 0.4287114825026719,
+          "cagr": 0.07583268384358455,
+          "sharpe": 1.1133768521901677,
+          "maxDrawdown": 0.06334988817561471,
+          "calmar": 1.1970452675996173
+        }
+      },
+      "year2022": {
+        "SPY": {
+          "net": -0.1817529219104016,
+          "cagr": -0.1824065768122074,
+          "sharpe": -0.7097009167853751,
+          "maxDrawdown": 0.24496487119437893,
+          "calmar": -0.7446234062984006
+        },
+        "IEF": {
+          "net": -0.15152745356744024,
+          "cagr": -0.1520827256982097,
+          "sharpe": -1.5659966415158262,
+          "maxDrawdown": 0.18177204912209355,
+          "calmar": -0.8366672787852989
+        },
+        "SHY": {
+          "net": -0.038842862963465175,
+          "cagr": -0.038994558231527865,
+          "sharpe": -1.6618469663298234,
+          "maxDrawdown": 0.049707999456742646,
+          "calmar": -0.784472492510226
+        },
+        "B0": {
+          "net": 0.12147960548198555,
+          "cagr": 0.12199197903166281,
+          "sharpe": 1.0146971305858596,
+          "maxDrawdown": 0.07268080183904757,
+          "calmar": 1.6784622065922632
+        },
+        "F4": {
+          "net": -0.015568220989101378,
+          "cagr": -0.015629758517509584,
+          "sharpe": -0.17954057827950556,
+          "maxDrawdown": 0.05614209579742957,
+          "calmar": -0.2783964206449376
+        },
+        "O1": {
+          "net": 0.05304339384108325,
+          "cagr": 0.05326025266245216,
+          "sharpe": 0.7964813165023308,
+          "maxDrawdown": 0.056115937855509834,
+          "calmar": 0.9491109780538527
+        }
+      }
+    },
+    "byCost": [
+      {
+        "oneWayBps": 0,
+        "windows": {
+          "full": {
+            "sleeve": {
+              "net": 1.362203309794248,
+              "cagr": 0.0822666836850503,
+              "sharpe": 0.6189833886607048,
+              "maxDrawdown": 0.1664339399448055,
+              "calmar": 0.4942903094905547,
+              "tradeSessions": 408,
+              "annualTradedNotionalOverNav": 28.168965644052157,
+              "meanCostBps": 0
+            },
+            "correlations": {
+              "B0": -0.002900076339345886,
+              "F4": 0.5832076171632112,
+              "O1": 0.5387693145278947,
+              "SPY": 0.1650579633790508,
+              "IEF": 0.08765488797862739
+            },
+            "stress": {
+              "equity": {
+                "sessions": 518,
+                "meanSleeveBps": 1.9677518542311163,
+                "meanExcessShyBps": 0.9464079006812031
+              },
+              "rates": {
+                "sessions": 601,
+                "meanSleeveBps": 0.9257593914238356,
+                "meanExcessShyBps": 0.2147038688033037
+              },
+              "joint": {
+                "sessions": 207,
+                "meanSleeveBps": 3.2135423552623803,
+                "meanExcessShyBps": 2.5259609650320534
+              }
+            },
+            "base": {
+              "net": 0.66630399923988,
+              "cagr": 0.048081162153731594,
+              "sharpe": 0.980880403831872,
+              "maxDrawdown": 0.09374496338280258,
+              "calmar": 0.5128932842759213
+            },
+            "withSleeve": {
+              "net": 0.849618041467574,
+              "cagr": 0.05819023821030345,
+              "sharpe": 0.9325791678750921,
+              "maxDrawdown": 0.09092599593056105,
+              "calmar": 0.6399736138688273
+            },
+            "withShy": {
+              "net": 0.5389773561658482,
+              "cagr": 0.04044684717253677,
+              "sharpe": 1.0751603494864612,
+              "maxDrawdown": 0.06736056157079817,
+              "calmar": 0.6004529390691882
+            },
+            "sharpeLift": -0.04830123595677993,
+            "calmarLift": 0.12708032959290605,
+            "sharpeLiftVsShy": -0.14258118161136912,
+            "calmarLiftVsShy": 0.039520674799639166,
+            "attributionBpsPerSession": {
+              "B0": 0.12339828811748324,
+              "F4": 0.6983883770424015,
+              "O1": 0.6117839437755564,
+              "sleeve": 0.8893585802818222,
+              "resetCost": 0,
+              "net": 2.322929189217265
+            }
+          },
+          "train": {
+            "sleeve": {
+              "net": 0.2688776219897122,
+              "cagr": 0.04054161285716207,
+              "sharpe": 0.3913778333298352,
+              "maxDrawdown": 0.14416129744649364,
+              "calmar": 0.281223973252664,
+              "tradeSessions": 215,
+              "annualTradedNotionalOverNav": 26.51215751971121,
+              "meanCostBps": 0
+            },
+            "correlations": {
+              "B0": -0.017486834073614097,
+              "F4": 0.5469394763012612,
+              "O1": 0.46999454480693875,
+              "SPY": 0.18247363677293696,
+              "IEF": 0.07529555881394939
+            },
+            "stress": {
+              "equity": {
+                "sessions": 219,
+                "meanSleeveBps": -1.7696108782304396,
+                "meanExcessShyBps": -3.4316765981440773
+              },
+              "rates": {
+                "sessions": 170,
+                "meanSleeveBps": 0.6164989776541844,
+                "meanExcessShyBps": 0.26321979464594136
+              },
+              "joint": {
+                "sessions": 20,
+                "meanSleeveBps": 4.025613804523265,
+                "meanExcessShyBps": 1.7905154127448863
+              }
+            },
+            "base": {
+              "net": 0.17798256233114196,
+              "cagr": 0.02771378265272939,
+              "sharpe": 0.6312527561144399,
+              "maxDrawdown": 0.09374496338280258,
+              "calmar": 0.2956295640072057
+            },
+            "withSleeve": {
+              "net": 0.2079036010216062,
+              "cagr": 0.032024849830217805,
+              "sharpe": 0.6074902644316214,
+              "maxDrawdown": 0.09092599593056105,
+              "calmar": 0.3522078532378655
+            },
+            "withShy": {
+              "net": 0.15475825941438592,
+              "cagr": 0.024304249527930866,
+              "sharpe": 0.7278580833385492,
+              "maxDrawdown": 0.06736056157079817,
+              "calmar": 0.3608082973356197
+            },
+            "sharpeLift": -0.02376249168281852,
+            "calmarLift": 0.05657828923065983,
+            "sharpeLiftVsShy": -0.12036781890692783,
+            "calmarLiftVsShy": -0.008600444097754179,
+            "attributionBpsPerSession": {
+              "B0": -0.25987461776566767,
+              "F4": 0.6027100366333059,
+              "O1": 0.5008464974753767,
+              "sleeve": 0.46590786727605027,
+              "resetCost": 0,
+              "net": 1.3095897836190642
+            }
+          },
+          "validation": {
+            "sleeve": {
+              "net": 0.10991611940468893,
+              "cagr": 0.05385455902492331,
+              "sharpe": 0.4332040845223075,
+              "maxDrawdown": 0.1555665086406024,
+              "calmar": 0.34618350373434703,
+              "tradeSessions": 82,
+              "annualTradedNotionalOverNav": 35.78810198030456,
+              "meanCostBps": 0
+            },
+            "correlations": {
+              "B0": -0.015868989835701744,
+              "F4": 0.5587025877103245,
+              "O1": 0.6298193093635491,
+              "SPY": 0.1483560321216166,
+              "IEF": 0.22413974965180378
+            },
+            "stress": {
+              "equity": {
+                "sessions": 223,
+                "meanSleeveBps": 4.987355271135215,
+                "meanExcessShyBps": 4.7359119329241635
+              },
+              "rates": {
+                "sessions": 300,
+                "meanSleeveBps": 1.7903710182167558,
+                "meanExcessShyBps": 1.397329555324922
+              },
+              "joint": {
+                "sessions": 183,
+                "meanSleeveBps": 1.5889700777265803,
+                "meanExcessShyBps": 1.3950557837223991
+              }
+            },
+            "base": {
+              "net": 0.1096403490121205,
+              "cagr": 0.0537228462834094,
+              "sharpe": 1.0184681116412873,
+              "maxDrawdown": 0.038276850632587345,
+              "calmar": 1.4035336083181296
+            },
+            "withSleeve": {
+              "net": 0.11318701944562282,
+              "cagr": 0.055415559047911955,
+              "sharpe": 0.8600229089365913,
+              "maxDrawdown": 0.05646525878468989,
+              "calmar": 0.9814098126995117
+            },
+            "withShy": {
+              "net": 0.08205192856003451,
+              "cagr": 0.04046288046387936,
+              "sharpe": 0.9760356337986967,
+              "maxDrawdown": 0.029242182115237547,
+              "calmar": 1.3837161776923248
+            },
+            "sharpeLift": -0.15844520270469598,
+            "calmarLift": -0.4221237956186179,
+            "sharpeLiftVsShy": -0.11601272486210545,
+            "calmarLiftVsShy": -0.40230636499281314,
+            "attributionBpsPerSession": {
+              "B0": 0.6129961212027006,
+              "F4": 0.3979815582556538,
+              "O1": 0.5878956546251728,
+              "sleeve": 0.625772259485175,
+              "resetCost": 0,
+              "net": 2.2246455935687024
+            }
+          },
+          "holdout": {
+            "sleeve": {
+              "net": 0.6772869837840754,
+              "cagr": 0.19575458872593066,
+              "sharpe": 1.0577368311456306,
+              "maxDrawdown": 0.16643393994480493,
+              "calmar": 1.1761698893317638,
+              "tradeSessions": 111,
+              "annualTradedNotionalOverNav": 26.36456641674405,
+              "meanCostBps": 0
+            },
+            "correlations": {
+              "B0": 0.018368175754401778,
+              "F4": 0.6550964441983269,
+              "O1": 0.6218499421159895,
+              "SPY": 0.1648310048070776,
+              "IEF": -0.007392278029765403
+            },
+            "stress": {
+              "equity": {
+                "sessions": 76,
+                "meanSleeveBps": 3.8771054915925185,
+                "meanExcessShyBps": 2.443001401372731
+              },
+              "rates": {
+                "sessions": 131,
+                "meanSleeveBps": -0.6529369268741442,
+                "meanExcessShyBps": -2.5565588285229093
+              },
+              "joint": {
+                "sessions": 4,
+                "meanSleeveBps": 73.4773668062208,
+                "meanExcessShyBps": 57.94210077138457
+              }
+            },
+            "base": {
+              "net": 0.27477381690035885,
+              "cagr": 0.08754195950982546,
+              "sharpe": 1.5663450629993494,
+              "maxDrawdown": 0.04215086221390074,
+              "calmar": 2.076872332185779
+            },
+            "withSleeve": {
+              "net": 0.3755666672111524,
+              "cagr": 0.11652948871249968,
+              "sharpe": 1.4892321946563547,
+              "maxDrawdown": 0.055218415571787194,
+              "calmar": 2.110337421054838
+            },
+            "withShy": {
+              "net": 0.23166627304834053,
+              "cagr": 0.07468589246776736,
+              "sharpe": 1.745084230010523,
+              "maxDrawdown": 0.0302536027943191,
+              "calmar": 2.468661103787334
+            },
+            "sharpeLift": -0.07711286834299469,
+            "calmarLift": 0.03346508886905886,
+            "sharpeLiftVsShy": -0.25585203535416823,
+            "calmarLiftVsShy": -0.3583236827324958,
+            "attributionBpsPerSession": {
+              "B0": 0.5808105974561173,
+              "F4": 1.1030222731053578,
+              "O1": 0.8579891245404582,
+              "sleeve": 1.9476127961361926,
+              "resetCost": 0,
+              "net": 4.489434791238123
+            }
+          },
+          "oos": {
+            "sleeve": {
+              "net": 0.8616478601696165,
+              "cagr": 0.13578487358550073,
+              "sharpe": 0.8334408439434007,
+              "maxDrawdown": 0.16643393994480526,
+              "calmar": 0.8158484599387077,
+              "tradeSessions": 193,
+              "annualTradedNotionalOverNav": 30.202933341413825,
+              "meanCostBps": 0
+            },
+            "correlations": {
+              "B0": 0.005390874563718571,
+              "F4": 0.6159626565479442,
+              "O1": 0.6216108252588602,
+              "SPY": 0.15525971686292903,
+              "IEF": 0.09574600039569407
+            },
+            "stress": {
+              "equity": {
+                "sessions": 299,
+                "meanSleeveBps": 4.705151313793259,
+                "meanExcessShyBps": 4.153098553666943
+              },
+              "rates": {
+                "sessions": 431,
+                "meanSleeveBps": 1.0477414571798465,
+                "meanExcessShyBps": 0.19556765675400345
+              },
+              "joint": {
+                "sessions": 187,
+                "meanSleeveBps": 3.1266897938441036,
+                "meanExcessShyBps": 2.604618243351536
+              }
+            },
+            "base": {
+              "net": 0.4145404630968268,
+              "cagr": 0.07363777694498164,
+              "sharpe": 1.3476945628567845,
+              "maxDrawdown": 0.042150862213901075,
+              "calmar": 1.7470052349414666
+            },
+            "withSleeve": {
+              "net": 0.5312629583215316,
+              "cagr": 0.0912208041544269,
+              "sharpe": 1.252502679155758,
+              "maxDrawdown": 0.05646525878468989,
+              "calmar": 1.615520872794808
+            },
+            "withShy": {
+              "net": 0.3327268660943077,
+              "cagr": 0.06061245775751378,
+              "sharpe": 1.433127522461239,
+              "maxDrawdown": 0.030253602794319545,
+              "calmar": 2.003478996190644
+            },
+            "sharpeLift": -0.09519188370102638,
+            "calmarLift": -0.1314843621466586,
+            "sharpeLiftVsShy": -0.1806248433054809,
+            "calmarLiftVsShy": -0.387958123395836,
+            "attributionBpsPerSession": {
+              "B0": 0.5939203107870429,
+              "F4": 0.815847152666576,
+              "O1": 0.7479754428920371,
+              "sleeve": 1.409204577549071,
+              "resetCost": 0,
+              "net": 3.566947483894726
+            }
+          },
+          "year2022": {
+            "sleeve": {
+              "net": 0.1424313951369105,
+              "cagr": 0.14303763077833098,
+              "sharpe": 0.8421348072424624,
+              "maxDrawdown": 0.1541459438891658,
+              "calmar": 0.9279363904714747,
+              "tradeSessions": 37,
+              "annualTradedNotionalOverNav": 35.66451508726593,
+              "meanCostBps": 0
+            },
+            "correlations": {
+              "B0": -0.050579951965613726,
+              "F4": 0.545889280844893,
+              "O1": 0.7057314640099119,
+              "SPY": 0.17456468010950743,
+              "IEF": 0.13956752291744992
+            },
+            "stress": {
+              "equity": {
+                "sessions": 184,
+                "meanSleeveBps": 7.904829319409839,
+                "meanExcessShyBps": 9.082873421779048
+              },
+              "rates": {
+                "sessions": 184,
+                "meanSleeveBps": 3.3239643932655936,
+                "meanExcessShyBps": 4.641476853289553
+              },
+              "joint": {
+                "sessions": 155,
+                "meanSleeveBps": 5.073313886546659,
+                "meanExcessShyBps": 5.954988907479131
+              }
+            },
+            "base": {
+              "net": 0.05407929148075974,
+              "cagr": 0.05430049359995959,
+              "sharpe": 0.9555215513984598,
+              "maxDrawdown": 0.038276850632587345,
+              "calmar": 1.4186249051987148
+            },
+            "withSleeve": {
+              "net": 0.0780398213389748,
+              "cagr": 0.07836261335370898,
+              "sharpe": 1.0443701669644554,
+              "maxDrawdown": 0.05646525878468989,
+              "calmar": 1.387802252930724
+            },
+            "withShy": {
+              "net": 0.030355591625704337,
+              "cagr": 0.030478354835620225,
+              "sharpe": 0.6990016572117274,
+              "maxDrawdown": 0.029242182115237547,
+              "calmar": 1.0422736140384863
+            },
+            "sharpeLift": 0.08884861556599555,
+            "calmarLift": -0.030822652267990858,
+            "sharpeLiftVsShy": 0.34536850975272804,
+            "calmarLiftVsShy": 0.3455286388922376,
+            "attributionBpsPerSession": {
+              "B0": 1.2143113977765845,
+              "F4": -0.12996630395815628,
+              "O1": 0.5377373675486936,
+              "sleeve": 1.4831878781981922,
+              "resetCost": 0,
+              "net": 3.1052703395653123
+            }
+          }
+        },
+        "holdoutTests": {
+          "excessShyMeanP": 0.0617876424715057,
+          "sharpeLiftLower95": -0.5994060045639853
+        }
+      },
+      {
+        "oneWayBps": 2,
+        "windows": {
+          "full": {
+            "sleeve": {
+              "net": 1.2219519600687292,
+              "cagr": 0.07619127194905029,
+              "sharpe": 0.5800475012961904,
+              "maxDrawdown": 0.16750968923529574,
+              "calmar": 0.454846954208283,
+              "tradeSessions": 408,
+              "annualTradedNotionalOverNav": 28.166418394026245,
+              "meanCostBps": 0.22354300312719244
+            },
+            "correlations": {
+              "B0": -0.0029811011393070332,
+              "F4": 0.5830740492868923,
+              "O1": 0.5388202179321733,
+              "SPY": 0.164846699714258,
+              "IEF": 0.08763955188474874
+            },
+            "stress": {
+              "equity": {
+                "sessions": 518,
+                "meanSleeveBps": 1.7018277491133185,
+                "meanExcessShyBps": 0.6804837955634055
+              },
+              "rates": {
+                "sessions": 601,
+                "meanSleeveBps": 0.6059622634611039,
+                "meanExcessShyBps": -0.10509325915942797
+              },
+              "joint": {
+                "sessions": 207,
+                "meanSleeveBps": 2.8367464740983,
+                "meanExcessShyBps": 2.149165083867973
+              }
+            },
+            "base": {
+              "net": 0.6644811203347003,
+              "cagr": 0.04797565928322034,
+              "sharpe": 0.9788276315674003,
+              "maxDrawdown": 0.09376965293486339,
+              "calmar": 0.5116331113707586
+            },
+            "withSleeve": {
+              "net": 0.8187611881112893,
+              "cagr": 0.05655419249393301,
+              "sharpe": 0.9078893615921452,
+              "maxDrawdown": 0.09178537672812015,
+              "calmar": 0.6161568924149394
+            },
+            "withShy": {
+              "net": 0.5373736745842417,
+              "cagr": 0.04034708604671189,
+              "sharpe": 1.0726027193621177,
+              "maxDrawdown": 0.06738617669117775,
+              "calmar": 0.5987442533150001
+            },
+            "sharpeLift": -0.0709382699752551,
+            "calmarLift": 0.10452378104418081,
+            "sharpeLiftVsShy": -0.16471335776997253,
+            "calmarLiftVsShy": 0.017412639099939287,
+            "attributionBpsPerSession": {
+              "B0": 0.1233980423785928,
+              "F4": 0.6983881048626612,
+              "O1": 0.6117837968028527,
+              "sleeve": 0.8335231649129867,
+              "resetCost": -0.005570360342466402,
+              "net": 2.261522748614631
+            }
+          },
+          "train": {
+            "sleeve": {
+              "net": 0.2291744258731354,
+              "cagr": 0.035035792108837116,
+              "sharpe": 0.3471717326636731,
+              "maxDrawdown": 0.14990980177770563,
+              "calmar": 0.2337124837293167,
+              "tradeSessions": 215,
+              "annualTradedNotionalOverNav": 26.509617956740158,
+              "meanCostBps": 0.21039379330746175
+            },
+            "correlations": {
+              "B0": -0.017951067943443196,
+              "F4": 0.5467629818464804,
+              "O1": 0.47003337481819263,
+              "SPY": 0.18229575569013548,
+              "IEF": 0.07578611895891241
+            },
+            "stress": {
+              "equity": {
+                "sessions": 219,
+                "meanSleeveBps": -2.01007161039082,
+                "meanExcessShyBps": -3.6721373303044578
+              },
+              "rates": {
+                "sessions": 170,
+                "meanSleeveBps": 0.3094605953115484,
+                "meanExcessShyBps": -0.04381858769669462
+              },
+              "joint": {
+                "sessions": 20,
+                "meanSleeveBps": 3.432698444884086,
+                "meanExcessShyBps": 1.1976000531057074
+              }
+            },
+            "base": {
+              "net": 0.17732653523674458,
+              "cagr": 0.027618243923408947,
+              "sharpe": 0.6291813694087083,
+              "maxDrawdown": 0.09376965293486339,
+              "calmar": 0.2945328585421322
+            },
+            "withSleeve": {
+              "net": 0.19745791495874387,
+              "cagr": 0.030530031647596934,
+              "sharpe": 0.5808696072359206,
+              "maxDrawdown": 0.09178537672812015,
+              "calmar": 0.33262413617400877
+            },
+            "withShy": {
+              "net": 0.15414818647879147,
+              "cagr": 0.02421391810612117,
+              "sharpe": 0.725246607121237,
+              "maxDrawdown": 0.06738617669117775,
+              "calmar": 0.35933064161052597
+            },
+            "sharpeLift": -0.04831176217278765,
+            "calmarLift": 0.038091277631876586,
+            "sharpeLiftVsShy": -0.14437699988531638,
+            "calmarLiftVsShy": -0.026706505436517203,
+            "attributionBpsPerSession": {
+              "B0": -0.25987454915668123,
+              "F4": 0.6027097813623224,
+              "O1": 0.5008464289155313,
+              "sleeve": 0.4132628489273819,
+              "resetCost": -0.004894571211032401,
+              "net": 1.252049938837522
+            }
+          },
+          "validation": {
+            "sleeve": {
+              "net": 0.09421295610911717,
+              "cagr": 0.04632836258174722,
+              "sharpe": 0.3838868579318865,
+              "maxDrawdown": 0.16097917329951672,
+              "calmar": 0.287791033039715,
+              "tradeSessions": 82,
+              "annualTradedNotionalOverNav": 35.78617546650638,
+              "meanCostBps": 0.28401726560719365
+            },
+            "correlations": {
+              "B0": -0.015345344490325825,
+              "F4": 0.5584169269985866,
+              "O1": 0.6298540174639097,
+              "SPY": 0.14774759475734348,
+              "IEF": 0.22350811472097942
+            },
+            "stress": {
+              "equity": {
+                "sessions": 223,
+                "meanSleeveBps": 4.6596593774412,
+                "meanExcessShyBps": 4.4082160392301475
+              },
+              "rates": {
+                "sessions": 300,
+                "meanSleeveBps": 1.4619487064583383,
+                "meanExcessShyBps": 1.0689072435665044
+              },
+              "joint": {
+                "sessions": 183,
+                "meanSleeveBps": 1.2276647315792664,
+                "meanExcessShyBps": 1.0337504375750852
+              }
+            },
+            "base": {
+              "net": 0.10936685608545949,
+              "cagr": 0.053592205230501344,
+              "sharpe": 1.016114160209405,
+              "maxDrawdown": 0.038308197009991996,
+              "calmar": 1.3989748777924158
+            },
+            "withSleeve": {
+              "net": 0.10888261622309581,
+              "cagr": 0.05336085612153507,
+              "sharpe": 0.8299283992033263,
+              "maxDrawdown": 0.05677530314895585,
+              "calmar": 0.9398603470515583
+            },
+            "withShy": {
+              "net": 0.0817995465789807,
+              "cagr": 0.04034080600099155,
+              "sharpe": 0.9732081530962642,
+              "maxDrawdown": 0.02927205139125566,
+              "calmar": 1.3781338882536405
+            },
+            "sharpeLift": -0.18618576100607875,
+            "calmarLift": -0.4591145307408575,
+            "sharpeLiftVsShy": -0.1432797538929379,
+            "calmarLiftVsShy": -0.4382735412020822,
+            "attributionBpsPerSession": {
+              "B0": 0.6129950447640621,
+              "F4": 0.39798139686375084,
+              "O1": 0.5878954818792477,
+              "sleeve": 0.5547343668591777,
+              "resetCost": -0.006263740331919949,
+              "net": 2.1473425500343213
+            }
+          },
+          "holdout": {
+            "sleeve": {
+              "net": 0.6520351993900486,
+              "cagr": 0.18950068116679186,
+              "sharpe": 1.0293113064883415,
+              "maxDrawdown": 0.1675096892352954,
+              "calmar": 1.13128190991153,
+              "tradeSessions": 111,
+              "annualTradedNotionalOverNav": 26.361576647783966,
+              "meanCostBps": 0.20921886228399983
+            },
+            "correlations": {
+              "B0": 0.01833293556808808,
+              "F4": 0.6550885597638096,
+              "O1": 0.6219361876726094,
+              "SPY": 0.1648094783153774,
+              "IEF": -0.00753426336808339
+            },
+            "stress": {
+              "equity": {
+                "sessions": 76,
+                "meanSleeveBps": 3.7190580993013307,
+                "meanExcessShyBps": 2.2849540090815426
+              },
+              "rates": {
+                "sessions": 131,
+                "meanSleeveBps": -0.9695388763384823,
+                "meanExcessShyBps": -2.873160777987248
+              },
+              "joint": {
+                "sessions": 4,
+                "meanSleeveBps": 73.47247634041516,
+                "meanExcessShyBps": 57.937210305578915
+              }
+            },
+            "base": {
+              "net": 0.2744029097642571,
+              "cagr": 0.08743256577900893,
+              "sharpe": 1.564493193392247,
+              "maxDrawdown": 0.042169468190705106,
+              "calmar": 2.0733618309723103
+            },
+            "withSleeve": {
+              "net": 0.3697138392990682,
+              "cagr": 0.11488499253739337,
+              "sharpe": 1.4696730142776087,
+              "maxDrawdown": 0.05522888479700239,
+              "calmar": 2.080161367727434
+            },
+            "withShy": {
+              "net": 0.2313203908820347,
+              "cagr": 0.07458155757200235,
+              "sharpe": 1.7427479890867075,
+              "maxDrawdown": 0.030271811150990757,
+              "calmar": 2.4637296130053783
+            },
+            "sharpeLift": -0.09482017911463836,
+            "calmarLift": 0.006799536755123903,
+            "sharpeLiftVsShy": -0.2730749748090988,
+            "calmarLiftVsShy": -0.3835682452779441,
+            "attributionBpsPerSession": {
+              "B0": 0.5808102714912735,
+              "F4": 1.1030218897638564,
+              "O1": 0.8579888328612623,
+              "sleeve": 1.8956168068378416,
+              "resetCost": -0.006493622638418591,
+              "net": 4.430944178315823
+            }
+          },
+          "oos": {
+            "sleeve": {
+              "net": 0.8076783191208998,
+              "cagr": 0.1289598039276545,
+              "sharpe": 0.7979071091319847,
+              "maxDrawdown": 0.16750968923529574,
+              "calmar": 0.769864743444832,
+              "tradeSessions": 193,
+              "annualTradedNotionalOverNav": 30.200376654434315,
+              "meanCostBps": 0.23968552900344686
+            },
+            "correlations": {
+              "B0": 0.0055614028813652195,
+              "F4": 0.61586669612969,
+              "O1": 0.6216835945287402,
+              "SPY": 0.15502065107595772,
+              "IEF": 0.09542133194769131
+            },
+            "stress": {
+              "equity": {
+                "sessions": 299,
+                "meanSleeveBps": 4.420576778315347,
+                "meanExcessShyBps": 3.868524018189031
+              },
+              "rates": {
+                "sessions": 431,
+                "meanSleeveBps": 0.7229118773483997,
+                "meanExcessShyBps": -0.12926192307744344
+              },
+              "joint": {
+                "sessions": 187,
+                "meanSleeveBps": 2.773008295404633,
+                "meanExcessShyBps": 2.250936744912065
+              }
+            },
+            "base": {
+              "net": 0.4137803493913308,
+              "cagr": 0.07351955197809712,
+              "sharpe": 1.3456417948914203,
+              "maxDrawdown": 0.04216946819070533,
+              "calmar": 1.7434308548928235
+            },
+            "withSleeve": {
+              "net": 0.5188518655989292,
+              "cagr": 0.08940289454847017,
+              "sharpe": 1.2290759374214104,
+              "maxDrawdown": 0.05677530314895585,
+              "calmar": 1.5746792987421394
+            },
+            "withShy": {
+              "net": 0.33204184054963926,
+              "cagr": 0.06050074403268568,
+              "sharpe": 1.4305921045076737,
+              "maxDrawdown": 0.03027181115099087,
+              "calmar": 1.9985835578491757
+            },
+            "sharpeLift": -0.11656585747000991,
+            "calmarLift": -0.16875155615068405,
+            "sharpeLiftVsShy": -0.2015161670862633,
+            "calmarLiftVsShy": -0.42390425910703633,
+            "attributionBpsPerSession": {
+              "B0": 0.5939196791414098,
+              "F4": 0.8158468597289361,
+              "O1": 0.7479751996563921,
+              "sleeve": 1.3494524959197025,
+              "resetCost": -0.006399987650161822,
+              "net": 3.500794246796286
+            }
+          },
+          "year2022": {
+            "sleeve": {
+              "net": 0.13435080702927937,
+              "cagr": 0.13492065865236924,
+              "sharpe": 0.8020297051713655,
+              "maxDrawdown": 0.1550921314386685,
+              "calmar": 0.869938773816671,
+              "tradeSessions": 37,
+              "annualTradedNotionalOverNav": 35.66302523531769,
+              "meanCostBps": 0.28303988281998177
+            },
+            "correlations": {
+              "B0": -0.05012076752912513,
+              "F4": 0.5456134201368747,
+              "O1": 0.7060779661278782,
+              "SPY": 0.1741006047724417,
+              "IEF": 0.1390628654753798
+            },
+            "stress": {
+              "equity": {
+                "sessions": 184,
+                "meanSleeveBps": 7.605628851588626,
+                "meanExcessShyBps": 8.783672953957833
+              },
+              "rates": {
+                "sessions": 184,
+                "meanSleeveBps": 3.041093435994579,
+                "meanExcessShyBps": 4.358605896018539
+              },
+              "joint": {
+                "sessions": 155,
+                "meanSleeveBps": 4.750409564158111,
+                "meanExcessShyBps": 5.632084585090584
+              }
+            },
+            "base": {
+              "net": 0.05392796313877657,
+              "cagr": 0.05414853051638935,
+              "sharpe": 0.9529860951718255,
+              "maxDrawdown": 0.038308197009991996,
+              "calmar": 1.4134972340845404
+            },
+            "withSleeve": {
+              "net": 0.07592585888385939,
+              "cagr": 0.07623960154094678,
+              "sharpe": 1.0179973647395528,
+              "maxDrawdown": 0.05677530314895585,
+              "calmar": 1.342830373638417
+            },
+            "withShy": {
+              "net": 0.030217404536243775,
+              "cagr": 0.030339600706961622,
+              "sharpe": 0.6959615568175197,
+              "maxDrawdown": 0.02927205139125566,
+              "calmar": 1.036469918060641
+            },
+            "sharpeLift": 0.06501126956772729,
+            "calmarLift": -0.07066686044612336,
+            "sharpeLiftVsShy": 0.3220358079220331,
+            "calmarLiftVsShy": 0.30636045557777614,
+            "attributionBpsPerSession": {
+              "B0": 1.2143093796260047,
+              "F4": -0.12996614705993148,
+              "O1": 0.5377372369604633,
+              "sleeve": 1.4124273197611599,
+              "resetCost": -0.007445853823061721,
+              "net": 3.027061935464639
+            }
+          }
+        },
+        "holdoutTests": {
+          "excessShyMeanP": 0.06898620275944811,
+          "sharpeLiftLower95": -0.6188984903395572
+        }
+      },
+      {
+        "oneWayBps": 5,
+        "windows": {
+          "full": {
+            "sleeve": {
+              "net": 1.0270077623531706,
+              "cagr": 0.06714083439659002,
+              "sharpe": 0.5216282768932413,
+              "maxDrawdown": 0.1691189476781182,
+              "calmar": 0.39700361975039167,
+              "tradeSessions": 408,
+              "annualTradedNotionalOverNav": 28.162042998384486,
+              "meanCostBps": 0.5587706944123908
+            },
+            "correlations": {
+              "B0": -0.0031014503293901995,
+              "F4": 0.5828275487776897,
+              "O1": 0.5388547094570921,
+              "SPY": 0.16451662529507713,
+              "IEF": 0.08760901041960024
+            },
+            "stress": {
+              "equity": {
+                "sessions": 518,
+                "meanSleeveBps": 1.3030194415690344,
+                "meanExcessShyBps": 0.2816754880191211
+              },
+              "rates": {
+                "sessions": 601,
+                "meanSleeveBps": 0.12627353324081525,
+                "meanExcessShyBps": -0.5847819893797166
+              },
+              "joint": {
+                "sessions": 207,
+                "meanSleeveBps": 2.271611667746203,
+                "meanExcessShyBps": 1.5840302775158759
+              }
+            },
+            "base": {
+              "net": 0.6617505372949453,
+              "cagr": 0.04781742471245254,
+              "sharpe": 0.9757484552826903,
+              "maxDrawdown": 0.09380668609075227,
+              "calmar": 0.5097443125343122
+            },
+            "withSleeve": {
+              "net": 0.7734392887866557,
+              "cagr": 0.0541049123613635,
+              "sharpe": 0.8708395989567698,
+              "maxDrawdown": 0.09307286526128766,
+              "calmar": 0.5813177902009606
+            },
+            "withShy": {
+              "net": 0.5349712826781501,
+              "cagr": 0.040197462148603424,
+              "sharpe": 1.0687662453802271,
+              "maxDrawdown": 0.06742459814994517,
+              "calmar": 0.5961839336321816
+            },
+            "sharpeLift": -0.10490885632592051,
+            "calmarLift": 0.07157347766664846,
+            "sharpeLiftVsShy": -0.19792664642345736,
+            "calmarLiftVsShy": -0.014866143431220946,
+            "attributionBpsPerSession": {
+              "B0": 0.12339767277146396,
+              "F4": 0.698387697109898,
+              "O1": 0.6117835768490398,
+              "sleeve": 0.7497768508219965,
+              "resetCost": -0.013926398300418313,
+              "net": 2.1694193992519772
+            }
+          },
+          "train": {
+            "sleeve": {
+              "net": 0.17192437173965236,
+              "cagr": 0.02682982357210162,
+              "sharpe": 0.28082499646057385,
+              "maxDrawdown": 0.16672922184192596,
+              "calmar": 0.1609185437063856,
+              "tradeSessions": 215,
+              "annualTradedNotionalOverNav": 26.50526964171103,
+              "meanCostBps": 0.5258982071768065
+            },
+            "correlations": {
+              "B0": -0.018645313463164538,
+              "F4": 0.5464395796633469,
+              "O1": 0.4700422117743112,
+              "SPY": 0.18201001214288792,
+              "IEF": 0.0765110715270474
+            },
+            "stress": {
+              "equity": {
+                "sessions": 219,
+                "meanSleeveBps": -2.3706757326414163,
+                "meanExcessShyBps": -4.032741452555054
+              },
+              "rates": {
+                "sessions": 170,
+                "meanSleeveBps": -0.15101974903913526,
+                "meanExcessShyBps": -0.5042989320473782
+              },
+              "joint": {
+                "sessions": 20,
+                "meanSleeveBps": 2.5432510098631345,
+                "meanExcessShyBps": 0.308152618084756
+              }
+            },
+            "base": {
+              "net": 0.17634317850161474,
+              "cagr": 0.027474952328327307,
+              "sharpe": 0.6260742759770624,
+              "maxDrawdown": 0.09380668609075227,
+              "calmar": 0.29288906231851064
+            },
+            "withSleeve": {
+              "net": 0.18195769727403976,
+              "cagr": 0.02829174445613436,
+              "sharpe": 0.5409099682213302,
+              "maxDrawdown": 0.09307286526128766,
+              "calmar": 0.3039741430191245
+            },
+            "withShy": {
+              "net": 0.15323368049791886,
+              "cagr": 0.024078435783217556,
+              "sharpe": 0.7213293556878975,
+              "maxDrawdown": 0.06742459814994517,
+              "calmar": 0.35711648929178136
+            },
+            "sharpeLift": -0.08516430775573225,
+            "calmarLift": 0.01108508070061387,
+            "sharpeLiftVsShy": -0.18041938746656727,
+            "calmarLiftVsShy": -0.05314234627265685,
+            "attributionBpsPerSession": {
+              "B0": -0.25987444655225644,
+              "F4": 0.6027093994371354,
+              "O1": 0.5008463257515245,
+              "sleeve": 0.33429436649394095,
+              "resetCost": -0.01223590923278505,
+              "net": 1.1657397358975596
+            }
+          },
+          "validation": {
+            "sleeve": {
+              "net": 0.07107046586620491,
+              "cagr": 0.035138109041323196,
+              "sharpe": 0.3099522241867099,
+              "maxDrawdown": 0.16903472014841237,
+              "calmar": 0.20787509814830918,
+              "tradeSessions": 82,
+              "annualTradedNotionalOverNav": 35.78280445904689,
+              "meanCostBps": 0.7099762789493432
+            },
+            "correlations": {
+              "B0": -0.014559292428266963,
+              "F4": 0.5579275251892543,
+              "O1": 0.6298367455159196,
+              "SPY": 0.14681944923132498,
+              "IEF": 0.22253725931657029
+            },
+            "stress": {
+              "equity": {
+                "sessions": 223,
+                "meanSleeveBps": 4.16818694851607,
+                "meanExcessShyBps": 3.916743610305018
+              },
+              "rates": {
+                "sessions": 300,
+                "meanSleeveBps": 0.9693567077099045,
+                "meanExcessShyBps": 0.5763152448180708
+              },
+              "joint": {
+                "sessions": 183,
+                "meanSleeveBps": 0.6857815871304702,
+                "meanExcessShyBps": 0.49186729312628896
+              }
+            },
+            "base": {
+              "net": 0.1089567425815563,
+              "cagr": 0.0533962737816942,
+              "sharpe": 1.0125832189426256,
+              "maxDrawdown": 0.03835521476220638,
+              "calmar": 1.392151604748897
+            },
+            "withSleeve": {
+              "net": 0.10245714485323898,
+              "cagr": 0.05028627371260064,
+              "sharpe": 0.7847905902680623,
+              "maxDrawdown": 0.05724004091332935,
+              "calmar": 0.8785156843046664
+            },
+            "withShy": {
+              "net": 0.08142108359630473,
+              "cagr": 0.04015772097647119,
+              "sharpe": 0.9689669049050134,
+              "maxDrawdown": 0.029316853658878816,
+              "calmar": 1.3697827687695654
+            },
+            "sharpeLift": -0.2277926286745633,
+            "calmarLift": -0.5136359204442307,
+            "sharpeLiftVsShy": -0.18417631463695106,
+            "calmarLiftVsShy": -0.491267084464899,
+            "attributionBpsPerSession": {
+              "B0": 0.612993431126114,
+              "F4": 0.39798114698510495,
+              "O1": 0.5878952208153218,
+              "sleeve": 0.44818920051176614,
+              "resetCost": -0.015665075810620092,
+              "net": 2.031393923627686
+            }
+          },
+          "holdout": {
+            "sleeve": {
+              "net": 0.614870799782874,
+              "cagr": 0.18018166371896838,
+              "sharpe": 0.986666642982105,
+              "maxDrawdown": 0.16911894767811753,
+              "calmar": 1.0654138178644914,
+              "tradeSessions": 111,
+              "annualTradedNotionalOverNav": 26.356454900696026,
+              "meanCostBps": 0.5229455337439683
+            },
+            "correlations": {
+              "B0": 0.018281700208489054,
+              "F4": 0.6550493855688183,
+              "O1": 0.6220407221292185,
+              "SPY": 0.16476888328854583,
+              "IEF": -0.007746331611011237
+            },
+            "stress": {
+              "equity": {
+                "sessions": 76,
+                "meanSleeveBps": 3.482057456080875,
+                "meanExcessShyBps": 2.047953365861087
+              },
+              "rates": {
+                "sessions": 131,
+                "meanSleeveBps": -1.444605049607545,
+                "meanExcessShyBps": -3.34822695125631
+              },
+              "joint": {
+                "sessions": 4,
+                "meanSleeveBps": 73.46514114533132,
+                "meanExcessShyBps": 57.929875110495075
+              }
+            },
+            "base": {
+              "net": 0.27384675076469867,
+              "cagr": 0.08726849562749539,
+              "sharpe": 1.5617153675903035,
+              "maxDrawdown": 0.04219737652582978,
+              "calmar": 2.0681023990692116
+            },
+            "withSleeve": {
+              "net": 0.3609829231090953,
+              "cagr": 0.1124232593217136,
+              "sharpe": 1.4403293718277261,
+              "maxDrawdown": 0.05524459256850023,
+              "calmar": 2.0350092940284608
+            },
+            "withShy": {
+              "net": 0.2308017492372143,
+              "cagr": 0.07442507406658683,
+              "sharpe": 1.7392436148892358,
+              "maxDrawdown": 0.03029912308732441,
+              "calmar": 2.4563441605913154
+            },
+            "sharpeLift": -0.12138599576257736,
+            "calmarLift": -0.0330931050407508,
+            "sharpeLiftVsShy": -0.2989142430615097,
+            "calmarLiftVsShy": -0.4213348665628547,
+            "attributionBpsPerSession": {
+              "B0": 0.5808097787291301,
+              "F4": 1.103021320015787,
+              "O1": 0.8579883992497814,
+              "sleeve": 1.817642370905385,
+              "resetCost": -0.016233066420466565,
+              "net": 4.34322880247962
+            }
+          },
+          "oos": {
+            "sleeve": {
+              "net": 0.7296404198371802,
+              "cagr": 0.11879862839227817,
+              "sharpe": 0.7446048841683679,
+              "maxDrawdown": 0.1691189476781173,
+              "calmar": 0.7024560525198313,
+              "tradeSessions": 193,
+              "annualTradedNotionalOverNav": 30.19596801348772,
+              "meanCostBps": 0.5991263494739626
+            },
+            "correlations": {
+              "B0": 0.005817982323480943,
+              "F4": 0.615684623498639,
+              "O1": 0.6217549149269362,
+              "SPY": 0.15465178862613702,
+              "IEF": 0.09492941153656383
+            },
+            "stress": {
+              "equity": {
+                "sessions": 299,
+                "meanSleeveBps": 3.9937861410743474,
+                "meanExcessShyBps": 3.441733380948032
+              },
+              "rates": {
+                "sessions": 431,
+                "meanSleeveBps": 0.23564675362965884,
+                "meanExcessShyBps": -0.6165270467961842
+              },
+              "joint": {
+                "sessions": 187,
+                "meanSleeveBps": 2.242559331690916,
+                "meanExcessShyBps": 1.7204877811983488
+              }
+            },
+            "base": {
+              "net": 0.41264094327611645,
+              "cagr": 0.07334223872883783,
+              "sharpe": 1.3425626255951295,
+              "maxDrawdown": 0.042197376525830776,
+              "calmar": 1.7380757944499696
+            },
+            "withSleeve": {
+              "net": 0.5004253476048701,
+              "cagr": 0.08668196868195044,
+              "sharpe": 1.1939305003763436,
+              "maxDrawdown": 0.05724004091332935,
+              "calmar": 1.5143589574507976
+            },
+            "withShy": {
+              "net": 0.33101496135233366,
+              "cagr": 0.060333195341078616,
+              "sharpe": 1.4267889639233904,
+              "maxDrawdown": 0.030299123087324298,
+              "calmar": 1.9912521945666188
+            },
+            "sharpeLift": -0.14863212521878588,
+            "calmarLift": -0.223716836999172,
+            "sharpeLiftVsShy": -0.23285846354704676,
+            "calmarLiftVsShy": -0.4768932371158212,
+            "attributionBpsPerSession": {
+              "B0": 0.5939187298274139,
+              "F4": 0.8158464202691437,
+              "O1": 0.7479748363264773,
+              "sleeve": 1.2598407136962773,
+              "resetCost": -0.016001714147675476,
+              "net": 3.4015789859716397
+            }
+          },
+          "year2022": {
+            "sleeve": {
+              "net": 0.12233503218675978,
+              "cagr": 0.12285120749445144,
+              "sharpe": 0.741806533600614,
+              "maxDrawdown": 0.15650921638525184,
+              "calmar": 0.7849455152343856,
+              "tradeSessions": 37,
+              "annualTradedNotionalOverNav": 35.6608162258635,
+              "meanCostBps": 0.707555877497292
+            },
+            "correlations": {
+              "B0": -0.0494283828719409,
+              "F4": 0.545156785741315,
+              "O1": 0.7065424592071421,
+              "SPY": 0.17339072677884163,
+              "IEF": 0.13829479327051925
+            },
+            "stress": {
+              "equity": {
+                "sessions": 184,
+                "meanSleeveBps": 7.156884920366921,
+                "meanExcessShyBps": 8.33492902273613
+              },
+              "rates": {
+                "sessions": 184,
+                "meanSleeveBps": 2.616840381839885,
+                "meanExcessShyBps": 3.9343528418638454
+              },
+              "joint": {
+                "sessions": 155,
+                "meanSleeveBps": 4.266116062670387,
+                "meanExcessShyBps": 5.1477910836028595
+              }
+            },
+            "base": {
+              "net": 0.05370101103316549,
+              "cagr": 0.05392062663083741,
+              "sharpe": 0.949182947604673,
+              "maxDrawdown": 0.03835521476220638,
+              "calmar": 1.405822571067143
+            },
+            "withSleeve": {
+              "net": 0.07276321770676208,
+              "cagr": 0.07306345290774185,
+              "sharpe": 0.9784272660018315,
+              "maxDrawdown": 0.05724004091332935,
+              "calmar": 1.2764395647160998
+            },
+            "withShy": {
+              "net": 0.03001015840658483,
+              "cagr": 0.030131504299089062,
+              "sharpe": 0.6914014357060145,
+              "maxDrawdown": 0.029316853658878816,
+              "calmar": 1.0277877922948093
+            },
+            "sharpeLift": 0.029244318397158464,
+            "calmarLift": -0.12938300635104327,
+            "sharpeLiftVsShy": 0.28702583029581696,
+            "calmarLiftVsShy": 0.24865177242129044,
+            "attributionBpsPerSession": {
+              "B0": 1.2143063317750749,
+              "F4": -0.12996592233071033,
+              "O1": 0.5377370425458621,
+              "sleeve": 1.306297664722958,
+              "resetCost": -0.01859879925724072,
+              "net": 2.909776317455947
+            }
+          }
+        },
+        "holdoutTests": {
+          "excessShyMeanP": 0.07878424315136973,
+          "sharpeLiftLower95": -0.6455817369530596
+        }
+      },
+      {
+        "oneWayBps": 10,
+        "windows": {
+          "full": {
+            "sleeve": {
+              "net": 0.7394022322759097,
+              "cagr": 0.05222782765570133,
+              "sharpe": 0.4242949933451179,
+              "maxDrawdown": 0.2088342733510281,
+              "calmar": 0.25009222297487504,
+              "tradeSessions": 408,
+              "annualTradedNotionalOverNav": 28.153818368532693,
+              "meanCostBps": 1.1172150146243134
+            },
+            "correlations": {
+              "B0": -0.003301091839072082,
+              "F4": 0.5822965163448941,
+              "O1": 0.5388015540005423,
+              "SPY": 0.16393324890169575,
+              "IEF": 0.08754011893495249
+            },
+            "stress": {
+              "equity": {
+                "sessions": 518,
+                "meanSleeveBps": 0.6385919537451802,
+                "meanExcessShyBps": -0.3827519998047329
+              },
+              "rates": {
+                "sessions": 601,
+                "meanSleeveBps": -0.6728338266062871,
+                "meanExcessShyBps": -1.383889349226819
+              },
+              "joint": {
+                "sessions": 207,
+                "meanSleeveBps": 1.3301116020113402,
+                "meanExcessShyBps": 0.642530211781013
+              }
+            },
+            "base": {
+              "net": 0.6572095082875384,
+              "cagr": 0.04755375304583387,
+              "sharpe": 0.9706164481761825,
+              "maxDrawdown": 0.09386840489148107,
+              "calmar": 0.5066002037726067
+            },
+            "withSleeve": {
+              "net": 0.7004209924140299,
+              "cagr": 0.050036661601487564,
+              "sharpe": 0.8090737807483711,
+              "maxDrawdown": 0.09521397934763198,
+              "calmar": 0.5255180168323886
+            },
+            "withShy": {
+              "net": 0.5309756296082808,
+              "cagr": 0.039948136419303726,
+              "sharpe": 1.0623720469914817,
+              "maxDrawdown": 0.06748863065654731,
+              "calmar": 0.5919239437913861
+            },
+            "sharpeLift": -0.16154266742781143,
+            "calmarLift": 0.018917813059781907,
+            "sharpeLiftVsShy": -0.2532982662431106,
+            "calmarLiftVsShy": -0.0664059269589975,
+            "attributionBpsPerSession": {
+              "B0": 0.12339705691183026,
+              "F4": 0.698387016161649,
+              "O1": 0.6117832082698378,
+              "sleeve": 0.6102697572332664,
+              "resetCost": -0.027862697136228607,
+              "net": 2.0159743414403546
+            }
+          },
+          "train": {
+            "sleeve": {
+              "net": 0.08239556135336801,
+              "cagr": 0.013301279813149325,
+              "sharpe": 0.17027602329291072,
+              "maxDrawdown": 0.2088342733510281,
+              "calmar": 0.06369299253284585,
+              "tradeSessions": 215,
+              "annualTradedNotionalOverNav": 26.49724324497622,
+              "meanCostBps": 1.0514779065466744
+            },
+            "correlations": {
+              "B0": -0.019796670922769353,
+              "F4": 0.5457482676251093,
+              "O1": 0.4699266509500421,
+              "SPY": 0.1814843138933659,
+              "IEF": 0.07769526147791055
+            },
+            "stress": {
+              "equity": {
+                "sessions": 219,
+                "meanSleeveBps": -2.9714845540075565,
+                "meanExcessShyBps": -4.633550273921195
+              },
+              "rates": {
+                "sessions": 170,
+                "meanSleeveBps": -0.9181978035053795,
+                "meanExcessShyBps": -1.2714769865136224
+              },
+              "joint": {
+                "sessions": 20,
+                "meanSleeveBps": 1.0606397549816626,
+                "meanExcessShyBps": -1.1744586367967158
+              }
+            },
+            "base": {
+              "net": 0.17470607267318572,
+              "cagr": 0.027236176993564953,
+              "sharpe": 0.620895752430915,
+              "maxDrawdown": 0.09386840489148107,
+              "calmar": 0.29015276253018274
+            },
+            "withSleeve": {
+              "net": 0.156579632624269,
+              "cagr": 0.02457369772009499,
+              "sharpe": 0.4742781365680477,
+              "maxDrawdown": 0.09521397934763198,
+              "calmar": 0.2580891785897839
+            },
+            "withShy": {
+              "net": 0.15171111157730266,
+              "cagr": 0.023852671398832737,
+              "sharpe": 0.7148005063514993,
+              "maxDrawdown": 0.06748863065654731,
+              "calmar": 0.35343243990561996
+            },
+            "sharpeLift": -0.1466176158628673,
+            "calmarLift": -0.03206358394039882,
+            "sharpeLiftVsShy": -0.2405223697834516,
+            "calmarLiftVsShy": -0.09534326131583604,
+            "attributionBpsPerSession": {
+              "B0": -0.2598742758515469,
+              "F4": 0.6027087647510719,
+              "O1": 0.5008461518607951,
+              "sleeve": 0.20276218763971382,
+              "resetCost": -0.024478634123870687,
+              "net": 1.0219641942761641
+            }
+          },
+          "validation": {
+            "sleeve": {
+              "net": 0.03358909407670385,
+              "cagr": 0.016756405109501715,
+              "sharpe": 0.18696146064692476,
+              "maxDrawdown": 0.18565932878961633,
+              "calmar": 0.09025350473225927,
+              "tradeSessions": 82,
+              "annualTradedNotionalOverNav": 35.77615146329984,
+              "meanCostBps": 1.4196885501309464
+            },
+            "correlations": {
+              "B0": -0.013248888467005763,
+              "F4": 0.5569502591182223,
+              "O1": 0.6296239999918049,
+              "SPY": 0.14523215271244513,
+              "IEF": 0.2208598082635179
+            },
+            "stress": {
+              "equity": {
+                "sessions": 223,
+                "meanSleeveBps": 3.349483997592537,
+                "meanExcessShyBps": 3.0980406593814855
+              },
+              "rates": {
+                "sessions": 300,
+                "meanSleeveBps": 0.1489271300106232,
+                "meanExcessShyBps": -0.24411433288121048
+              },
+              "joint": {
+                "sessions": 183,
+                "meanSleeveBps": -0.2168790983901049,
+                "meanExcessShyBps": -0.4107933923942862
+              }
+            },
+            "base": {
+              "net": 0.10827355563447427,
+              "cagr": 0.053069801698812036,
+              "sharpe": 1.0066982804446698,
+              "maxDrawdown": 0.03843357284574933,
+              "calmar": 1.380818845851367
+            },
+            "withSleeve": {
+              "net": 0.0918340400861899,
+              "cagr": 0.04518352758231803,
+              "sharpe": 0.709611306472518,
+              "maxDrawdown": 0.058013793792818236,
+              "calmar": 0.7788411105069202
+            },
+            "withShy": {
+              "net": 0.08079060514901193,
+              "cagr": 0.03985265037470609,
+              "sharpe": 0.9618980871986339,
+              "maxDrawdown": 0.029391519714708214,
+              "calmar": 1.3559234351112126
+            },
+            "sharpeLift": -0.2970869739721518,
+            "calmarLift": -0.6019777353444469,
+            "sharpeLiftVsShy": -0.2522867807261159,
+            "calmarLiftVsShy": -0.5770823246042924,
+            "attributionBpsPerSession": {
+              "B0": 0.6129907563155698,
+              "F4": 0.39798070759415555,
+              "O1": 0.5878947755217269,
+              "sleeve": 0.2707189054697828,
+              "resetCost": -0.031358965789493584,
+              "net": 1.8382261791117422
+            }
+          },
+          "holdout": {
+            "sleeve": {
+              "net": 0.5547698213474221,
+              "cagr": 0.1648096204192513,
+              "sharpe": 0.9155677428164773,
+              "maxDrawdown": 0.17179246857476793,
+              "calmar": 0.9593530018315235,
+              "tradeSessions": 111,
+              "annualTradedNotionalOverNav": 26.34673957030491,
+              "meanCostBps": 1.0455055385041625
+            },
+            "correlations": {
+              "B0": 0.018195426451851182,
+              "F4": 0.6549140183008527,
+              "O1": 0.6221493957402902,
+              "SPY": 0.16468317971494567,
+              "IEF": -0.008097698066186118
+            },
+            "stress": {
+              "equity": {
+                "sessions": 76,
+                "meanSleeveBps": 3.086984446112139,
+                "meanExcessShyBps": 1.6528803558923504
+              },
+              "rates": {
+                "sessions": 131,
+                "meanSleeveBps": -2.2363178793713816,
+                "meanExcessShyBps": -4.139939781020146
+              },
+              "joint": {
+                "sessions": 4,
+                "meanSleeveBps": 73.45229538052584,
+                "meanExcessShyBps": 57.9170293456896
+              }
+            },
+            "base": {
+              "net": 0.27292035671849324,
+              "cagr": 0.0869950998852218,
+              "sharpe": 1.5570856016834513,
+              "maxDrawdown": 0.04224388873753371,
+              "calmar": 2.0593534943180227
+            },
+            "withSleeve": {
+              "net": 0.3465555914150611,
+              "cagr": 0.10833264221577688,
+              "sharpe": 1.3913984680377605,
+              "maxDrawdown": 0.05527078269185237,
+              "calmar": 1.9600345234797354
+            },
+            "withShy": {
+              "net": 0.2299378305494717,
+              "cagr": 0.07416431845150329,
+              "sharpe": 1.733402958371304,
+              "maxDrawdown": 0.03034464138479176,
+              "calmar": 2.4440664007541457
+            },
+            "sharpeLift": -0.16568713364569088,
+            "calmarLift": -0.09931897083828733,
+            "sharpeLiftVsShy": -0.3420044903335435,
+            "calmarLiftVsShy": -0.4840318772744103,
+            "attributionBpsPerSession": {
+              "B0": 0.5808089486421815,
+              "F4": 1.1030203772347418,
+              "O1": 0.8579876801278065,
+              "sleeve": 1.6877065292768423,
+              "resetCost": -0.03246942491863572,
+              "net": 4.197054110362929
+            }
+          },
+          "oos": {
+            "sleeve": {
+              "net": 0.6069931311442891,
+              "cagr": 0.10206637154245835,
+              "sharpe": 0.6557968031053201,
+              "maxDrawdown": 0.19125075219692156,
+              "calmar": 0.5336782750917789,
+              "tradeSessions": 193,
+              "annualTradedNotionalOverNav": 30.1875000242809,
+              "meanCostBps": 1.1979166676301947
+            },
+            "correlations": {
+              "B0": 0.006244256712183955,
+              "F4": 0.6152812827796111,
+              "O1": 0.6217732853321836,
+              "SPY": 0.15401210544619023,
+              "IEF": 0.094096640481955
+            },
+            "stress": {
+              "equity": {
+                "sessions": 299,
+                "meanSleeveBps": 3.2827617035707632,
+                "meanExcessShyBps": 2.730708943444448
+              },
+              "rates": {
+                "sessions": 431,
+                "meanSleeveBps": -0.5760545317736984,
+                "meanExcessShyBps": -1.4282283321995415
+              },
+              "joint": {
+                "sessions": 187,
+                "meanSleeveBps": 1.358932120410236,
+                "meanExcessShyBps": 0.8368605699176686
+              }
+            },
+            "base": {
+              "net": 0.4107439697799071,
+              "cagr": 0.0730467811712674,
+              "sharpe": 1.3374306314903275,
+              "maxDrawdown": 0.04224388873753404,
+              "calmar": 1.729168013511141
+            },
+            "withSleeve": {
+              "net": 0.4702152315753554,
+              "cagr": 0.08216298717687787,
+              "sharpe": 1.1353475533464124,
+              "maxDrawdown": 0.058013793792818236,
+              "calmar": 1.4162664050260605
+            },
+            "withShy": {
+              "net": 0.3293052521752273,
+              "cagr": 0.06005400589998655,
+              "sharpe": 1.4204503613287296,
+              "maxDrawdown": 0.03034464138479187,
+              "calmar": 1.9790646110612604
+            },
+            "sharpeLift": -0.20208307814391513,
+            "calmarLift": -0.3129016084850804,
+            "sharpeLiftVsShy": -0.28510280798231724,
+            "calmarLiftVsShy": -0.5627982060351999,
+            "attributionBpsPerSession": {
+              "B0": 0.5939171483530493,
+              "F4": 0.8158456825274779,
+              "O1": 0.7479742287394756,
+              "sleeve": 1.110543277628602,
+              "resetCost": -0.03201711595627782,
+              "net": 3.2362632212923255
+            }
+          },
+          "year2022": {
+            "sleeve": {
+              "net": 0.10259161002444706,
+              "cagr": 0.1030207088986812,
+              "sharpe": 0.6413322114464861,
+              "maxDrawdown": 0.1588651814983777,
+              "calmar": 0.6484788417890879,
+              "tradeSessions": 37,
+              "annualTradedNotionalOverNav": 35.656938748551305,
+              "meanCostBps": 1.414957886847274
+            },
+            "correlations": {
+              "B0": -0.04826573185418411,
+              "F4": 0.5442804474417282,
+              "O1": 0.7071684916559909,
+              "SPY": 0.17217067993031954,
+              "IEF": 0.13698544712735525
+            },
+            "stress": {
+              "equity": {
+                "sessions": 184,
+                "meanSleeveBps": 6.409418509719625,
+                "meanExcessShyBps": 7.587462612088834
+              },
+              "rates": {
+                "sessions": 184,
+                "meanSleeveBps": 1.9101830489524725,
+                "meanExcessShyBps": 3.2276955089764323
+              },
+              "joint": {
+                "sessions": 155,
+                "meanSleeveBps": 3.4594710010410874,
+                "meanExcessShyBps": 4.341146021973559
+              }
+            },
+            "base": {
+              "net": 0.05332286525142371,
+              "cagr": 0.05354089543538887,
+              "sharpe": 0.9428444680179261,
+              "maxDrawdown": 0.03843357284574933,
+              "calmar": 1.393076195394891
+            },
+            "withSleeve": {
+              "net": 0.06751539832651576,
+              "cagr": 0.06779330275769846,
+              "sharpe": 0.9124736957190883,
+              "maxDrawdown": 0.058013793792818236,
+              "calmar": 1.1685721330310734
+            },
+            "withShy": {
+              "net": 0.029664840182283436,
+              "cagr": 0.029784769692407398,
+              "sharpe": 0.6838013145975772,
+              "maxDrawdown": 0.029391519714708214,
+              "calmar": 1.0133797088927794
+            },
+            "sharpeLift": -0.030370772298837778,
+            "calmarLift": -0.22450406236381748,
+            "sharpeLiftVsShy": 0.22867238112151111,
+            "calmarLiftVsShy": 0.15519242413829404,
+            "attributionBpsPerSession": {
+              "B0": 1.214301191025125,
+              "F4": -0.1299655807608535,
+              "O1": 0.5377367169784268,
+              "sleeve": 1.1294963121924473,
+              "resetCost": -0.03715220941580932,
+              "net": 2.7144164300193325
+            }
+          }
+        },
+        "holdoutTests": {
+          "excessShyMeanP": 0.09898020395920816,
+          "sharpeLiftLower95": -0.6906347520897027
+        }
+      }
+    ],
+    "gates": {
+      "positiveExcess": false,
+      "positiveStress": true,
+      "orthogonal": false,
+      "portfolio": false
+    }
+  }
+}
