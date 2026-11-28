@@ -119,13 +119,6 @@ spec:
                     name: chideat-validating-webhook-configuration
                     jqPathExpressions:
                       - .webhooks[].clientConfig.caBundle
-              - name: cockroach-operator-system
-                path: argocd/applications/cockroach-operator
-                namespace: cockroach-operator-system
-                annotations:
-                  argocd.argoproj.io/sync-wave: "-1"
-                automation: auto
-                enabled: "true"
               - name: spicedb-operator
                 path: argocd/applications/spicedb-operator
                 namespace: spicedb-operator
