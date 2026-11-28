@@ -141,6 +141,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Check enrolled guest API protocol
         id: cutover
@@ -160,6 +161,7 @@ jobs:
         id: filter
         uses: ./.github/actions/affected-inputs
         with:
+          dependency-aware-push: 'true'
           workspaces: |
             proompteng: ['', 'apps/landing', 'packages/backend', 'packages/design']
             app: ['', 'apps/app', 'packages/design']

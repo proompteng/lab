@@ -98,11 +98,9 @@ describe('landing browser validation workflow', () => {
   })
 
   test('does not duplicate pull-request browser validation', () => {
-    const trigger = tengriWorkflow.match(/on:\n[\s\S]*?\n\nconcurrency:/)?.[0]
+    const { on } = Bun.YAML.parse(tengriWorkflow) as { on: Record<string, unknown> }
 
-    expect(trigger).toContain('push:')
-    expect(trigger).toContain('workflow_dispatch:')
-    expect(trigger).not.toContain('pull_request:')
+    expect(Object.keys(on).sort()).toEqual(['push', 'workflow_dispatch'])
     expect(tengriWorkflow.indexOf('- name: Build desktop for browser acceptance')).toBeLessThan(
       tengriWorkflow.indexOf('- name: Run Tengri desktop browser suite'),
     )

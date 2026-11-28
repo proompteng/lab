@@ -216,7 +216,7 @@ test('OpenCode PR validation selects the PR head without publication secrets', (
   const image = property(property(validation, 'jobs'), 'image')
   expect(property(image, 'secrets')).toBeUndefined()
   expect(property(image, 'if')).toBeUndefined()
-  expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
+  expect(property(property(property(publication, 'jobs'), 'image'), 'needs')).toBe('changes')
   expect(property(property(validation, 'permissions'), 'contents')).toBe('read')
   const source = text(property(property(image, 'with'), 'source_revision')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
   expect(
@@ -948,6 +948,8 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     expect(run('push', base).affected).toEqual({ bayn: true, landing: true })
     expect(run('push', initial, 'true').affected).toEqual({ bayn: false, landing: true })
     expect(run('push', base, 'true').affected).toEqual({ bayn: true, landing: true })
+    expect(() => run('push', '0'.repeat(40), 'true')).toThrow()
+    expect(() => run('push', '1'.repeat(40), 'true')).toThrow()
     expect(() => run('push', initial, 'typo')).toThrow()
     expect(run('workflow_dispatch', '')).toEqual({
       affected: { bayn: true, landing: true },
