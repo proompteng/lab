@@ -1,13 +1,18 @@
 import { expect, test } from 'bun:test'
-import { Result, Schema } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { MarketCalendarObservationSchema } from '../../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../../broker/alpaca/normalizers'
-import { OrderSide, OrderStatus, OrderType, TimeInForce } from '../../execution/contracts'
+import { BrokerAccess, grantedCapitalAuthority } from '../../execution/authority'
+import { IntentState, OrderSide, OrderStatus, OrderType, TimeInForce } from '../../execution/contracts'
+import { IntentStore, type StoredIntent } from '../../execution/intents/domain'
+import { MutationOperation } from '../../broker/alpaca-mutations/model'
+import { MutationEventType, MutationStore } from '../../execution/mutations/model'
 import { JevContractError } from '../../jev/contract'
 import { decideJevExit, JevExitReason, oppositeAlphaBandCrossed } from '../../jev/exit'
 import { canonicalHashV1Result } from '../../hash'
-import { currentProtectionEvidenceVersion, decodeJevPortfolio, JevPurpose } from '../../jev/portfolio'
+import { currentProtectionEvidenceVersion, decodeJevPortfolio, JevPositionStore, JevPurpose } from '../../jev/portfolio'
 import { jevPricingQuery } from '../../jev/runtime'
 import { IntradaySnapshotPurpose } from '../../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../../market-data/intraday/verification'
@@ -15,6 +20,7 @@ import { constructStreamingSnapshot } from '../../market-data/streaming/snapshot
 import { reconciledStateHash } from '../../simulation-reconciliation/broker-model'
 import { pureEtfCheckpointMinutes } from '../../market-data/intraday/trailing-baseline'
 import { executionCycleCloseSchedule } from '../../observe-composition/execution-window'
+import { advancePositionProtection } from '../../observe-composition/position-protection-interpreter'
 import { loadActiveStrategyProtocol } from '../../strategy'
 import { nativeAlphaDecisionFixture } from './alpha-decision.test-support'
 import { actualAlphaProtectionPrices } from './exit-plan'
@@ -202,7 +208,13 @@ test('a held long exits below the open/previous-close anchor even when checkpoin
 })
 
 test('a completed SMH opposite-band break authorizes only that leg while QQQ protection stays armed', async () => {
-  const { cycle, document } = await nativeAlphaDecisionFixture({
+  const {
+    cycle,
+    document,
+    reconciliation: baseReconciliation,
+    riskPolicy,
+    strategy,
+  } = await nativeAlphaDecisionFixture({
     pureEtf: true,
     snapshot: { minutesFromOpen: 30, profiles: regular, quoteSpreadBps: 6 },
   })
@@ -346,6 +358,191 @@ test('a completed SMH opposite-band break authorizes only that leg while QQQ pro
   expect(exit.reason).toBe(JevExitReason.OppositeBandExit)
   expect(exit.targetWeights).toEqual({ SMH: 0 })
   expect(Result.isFailure(decideJevExit({ ...evidence, symbol: 'QQQ' }))).toBe(true)
+
+  // Regression: advancePositionProtection must request PositionCheckpoint so streaming inputs supply the completed bar.
+  const observedPurposes: (IntradaySnapshotPurpose | undefined)[] = []
+  const unused = () => Effect.die('Unexpected protection operation')
+  const qqqStoredProtection: StoredIntent = {
+    intent: {
+      schemaVersion: 'bayn.execution-intent.v5',
+      intentId: protectionIntentId,
+      strategyName: 'jev',
+      clientOrderId: 'qqq-stop-id',
+      cycleId: cycle.identity.cycleId,
+      accountId,
+      authorityGenerationHash: document.bindings.authorityGenerationHash,
+      decisionHash: document.contentHash,
+      policyHash: document.bindings.policyHash,
+      symbol: 'QQQ',
+      side: OrderSide.Sell,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: '1000000000',
+      limitPriceMicros: qqqProtection.profitLimitPriceMicros,
+      notionalLimitMicros: qqqProtection.profitLimitPriceMicros,
+      protection: {
+        _tag: 'Oco',
+        stopPriceMicros: qqqProtection.stopPriceMicros,
+        stopLimitPriceMicros: qqqProtection.stopLimitPriceMicros,
+        profitLimitPriceMicros: qqqProtection.profitLimitPriceMicros,
+        entryDecisionHash: document.contentHash,
+      },
+      createdAt: '2026-09-04T14:00:10.000Z',
+      state: IntentState.Acknowledged,
+    },
+    stateVersion: 2,
+    updatedAt: '2026-09-04T14:00:10.000Z',
+  }
+  const qqqProfitOrder = {
+    schemaVersion: 'bayn.order.v3' as const,
+    accountId,
+    brokerOrderId: 'qqq-profit',
+    clientOrderId: 'qqq-profit-id',
+    intentId: protectionIntentId,
+    symbol: 'QQQ',
+    side: OrderSide.Sell,
+    orderType: OrderType.Limit,
+    timeInForce: TimeInForce.Day,
+    quantityAtoms: '1000000000',
+    filledQuantityAtoms: '0',
+    limitPriceMicros: qqqProtection.profitLimitPriceMicros,
+    status: OrderStatus.New,
+    observedAt,
+  }
+  const materialWithOco = {
+    ...material,
+    orders: [...material.orders, qqqProfitOrder].toSorted((left, right) =>
+      left.brokerOrderId.localeCompare(right.brokerOrderId),
+    ),
+  }
+  const ocoStateHash = Result.getOrThrow(reconciledStateHash(materialWithOco))
+  const ocoReceipt = { ...receipt, expectedHash: ocoStateHash, observedHash: ocoStateHash }
+  const ocoWithId = { ...ocoReceipt, reconciliationId: Result.getOrThrow(canonicalHashV1Result(ocoReceipt)) }
+  const brokerStateWithOco = {
+    ...materialWithOco,
+    unknownOrderCount: 0,
+    reconciliation: { ...ocoWithId, contentHash: Result.getOrThrow(canonicalHashV1Result(ocoWithId)) },
+  }
+  const managedBySymbol = (symbol: string) => {
+    const decoded = Result.getOrThrow(
+      decodeJevPortfolio({
+        ...managed,
+        brokerState: brokerStateWithOco,
+        managedSymbol: symbol,
+      }),
+    )
+    if (decoded.purpose !== JevPurpose.Manage) throw new Error('Expected managed portfolio')
+    return decoded
+  }
+  const protectionResult = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(observedAt))
+      return yield* advancePositionProtection({
+        input: {
+          accountId,
+          authorityGenerationHash: document.bindings.authorityGenerationHash,
+          reconciliationIntervalMs: 30_000,
+          reconciliationPassTimeoutMs: 30_000,
+          strategy,
+          intradayMarketData: {
+            check: Effect.void,
+            verifyReference: unused,
+            loadSnapshot: (request) => {
+              observedPurposes.push(request.purpose)
+              return Effect.succeed(Result.getOrThrow(constructStreamingSnapshot(cut, request)))
+            },
+          },
+        },
+        cycle,
+        document,
+        protocol: policy.sharedProtocol,
+        policy: riskPolicy,
+        reconciliation: {
+          ...baseReconciliation,
+          brokerState: brokerStateWithOco,
+          report: { ...baseReconciliation.report, reconciliation: brokerStateWithOco.reconciliation },
+          riskContext: {
+            ...baseReconciliation.riskContext,
+            authority: { ...baseReconciliation.riskContext.authority, updatedAt: observedAt },
+            authorityObservedAt: observedAt,
+          },
+        },
+        closeDue: false,
+        closeExpiresAt: '2026-09-04T20:00:00.000Z',
+        capability: {
+          _tag: 'Mutation',
+          executionProgram: {
+            _tag: 'ExecutionProgram',
+            schemaVersion: 'bayn.execution-program.v1',
+            authority: {
+              brokerAccess: BrokerAccess.Mutation,
+              brokerIdentity: baseReconciliation.riskContext.brokerIdentity,
+              capitalAuthority: grantedCapitalAuthority(document.bindings.authorityGenerationHash),
+              strategy: strategy.provenance.strategy,
+            },
+            recordReconciliation: unused,
+            invalidateBrokerState: unused(),
+            dryRunSubmit: unused,
+            submit: unused,
+            submitProtectionClose: unused,
+            cancel: unused,
+            recover: unused,
+            cancelProtectionOrder: unused,
+          },
+        },
+      })
+    }).pipe(
+      Effect.provideService(IntentStore, {
+        read: () => Effect.succeed(Option.none()),
+        protectionForCycle: () => Effect.succeed([qqqStoredProtection]),
+        beginProtectionCancel: unused,
+        recordProtectionCancelAccepted: unused,
+        commit: unused,
+      }),
+      Effect.provideService(MutationStore, {
+        latest: (intentId, operation) =>
+          Effect.succeed(
+            intentId === protectionIntentId && operation === MutationOperation.Submit
+              ? {
+                  schemaVersion: 'bayn.paper-mutation-event.v1' as const,
+                  eventId: 'a'.repeat(64),
+                  mutationId: 'b'.repeat(64),
+                  intentId: protectionIntentId,
+                  sequence: 2,
+                  operation: MutationOperation.Submit,
+                  eventType: MutationEventType.SubmitAccepted,
+                  requestHash: 'c'.repeat(64),
+                  consistencyDelayMs: 1_000,
+                  brokerOrderId: 'qqq-stop',
+                  occurredAt: '2026-09-04T14:00:10.000Z',
+                }
+              : undefined,
+          ),
+        authorizeSubmit: unused,
+        beginSubmit: unused,
+        submitAccepted: unused,
+        submitRejected: unused,
+        submitDenied: unused,
+        submitUnknown: unused,
+        beginCancel: unused,
+        cancelAccepted: unused,
+        cancelUnknown: unused,
+        recoveryFound: unused,
+        recoveryNotFound: unused,
+        recoveryUnknown: unused,
+      }),
+      Effect.provideService(JevPositionStore, {
+        read: ({ managedSymbol }) => Effect.succeed(managedBySymbol(managedSymbol ?? 'SMH')),
+      }),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(observedPurposes).toContain(IntradaySnapshotPurpose.PositionCheckpoint)
+  expect(observedPurposes).not.toContain(IntradaySnapshotPurpose.Liquidation)
+  expect(protectionResult).toMatchObject({
+    _tag: 'Ready',
+    exitTarget: { reason: JevExitReason.OppositeBandExit, targetWeights: { SMH: 0 } },
+  })
 })
 
 test('short protection is anchored above the actual fill and capped at 150 bp', async () => {

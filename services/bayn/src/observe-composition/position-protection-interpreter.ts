@@ -259,12 +259,19 @@ export const advancePositionProtection = (request: {
             pureEtfCheckpointMinutes.some((minute) => minute === checkpoint) &&
             minuteEnd > Date.parse(plan.levels.sourceEndAt) &&
             minuteEnd <= regular.closeMs - 30 * 60_000 &&
-            now > minuteEnd + protocol.decisionDelaySeconds * 1000
+            now >= minuteEnd + protocol.decisionDelaySeconds * 1000
           ) {
             const marketData = input.intradayMarketData
             const snapshot = yield* Effect.gen(function* () {
               const query = yield* Effect.fromResult(
-                jevPricingQuery(cycle, protocol, calendar, observedAt, [symbol], IntradaySnapshotPurpose.Liquidation),
+                jevPricingQuery(
+                  cycle,
+                  protocol,
+                  calendar,
+                  observedAt,
+                  [symbol],
+                  IntradaySnapshotPurpose.PositionCheckpoint,
+                ),
               )
               return yield* loadIntradaySnapshot(marketData, query)
             }).pipe(
